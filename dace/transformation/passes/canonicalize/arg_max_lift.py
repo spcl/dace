@@ -1436,29 +1436,12 @@ class ArgMaxLift(ppl.Pass):
 
     def _verify_affine_seed(self, loop: LoopRegion, sdfg: SDFG, value_carrier: str, idx_carrier: Optional[str],
                             array: str, base: Any, coeff: Any, start: Any, transform: Optional[str]) -> bool:
-        """Verify the pre-loop seed sits where the rewrite assumes: the value
-        carrier must be seeded ``value_carrier := [f](array[Q])`` with ``Q`` equal
-        to the gather's seed-iteration position ``base + coeff*(start-1)``, and --
-        when an index carrier is present -- ``idx_carrier := (start-1)``.
+        """Check the pre-loop seed is ``value_carrier := [f](array[base + coeff*(start-1)])`` and, with
+        an index carrier, ``idx_carrier := start-1``.
 
-        This is the load-bearing assumption of every rewrite that DROPS the
-        pre-loop bind and reconstructs the seed positionally: the transform+index
-        buffer, whose ``buf[0] = f(a[base + coeff*(start-1)])`` stands in for the
-        seed and whose index bind ``idx_carrier := (start-1) + idx_buf`` yields the
-        seed's init index, and the plain symbol value-only reduction, whose emitted
-        slice extends down to that same seed position. Nothing in the match forces
-        the seed to read there -- a loop seeded from anywhere else reduces over a
-        set that both omits the real seed and includes an element the loop never
-        gathers -- so refuse when it cannot be proven.
-
-        ``idx_carrier`` is ``None`` on the value-only path, where there is no index
-        to check and the position comparison alone is the requirement.
-
-        Handles the real frontend shape, where the seed is spread over a pre-loop
-        chain with indirection: ``base`` / ``coeff`` carry the secondary-IV symbol
-        ``k`` (bound pre-loop to ``inc``), and the value seed is ``maxv :=
-        abs(a_index)`` with ``a_index := a[0]`` on an earlier edge. Both the
-        position comparison and the gather lookup substitute the chain's bindings.
+        Rewrites that drop the pre-loop bind reconstruct the seed positionally; a seed read anywhere
+        else would change the reduced set, so refuse unless proven. Substitutes the frontend's pre-loop
+        binding chain (secondary IV ``k := inc``, ``maxv := abs(a_index)``, ``a_index := a[0]``).
         """
         preloop = self._collect_preloop_assignments(loop, sdfg)
         if value_carrier not in preloop:
@@ -1846,33 +1829,11 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
 
     def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG):
-        """Replace a transformed argmax/argmin-WITH-INDEX over a (possibly
-        strided) gather -- TSVC s318, ``maxv = max(|a[k]|)`` with ``k = inc*i``
-        and ``index`` tracking the iteration of the max -- with a single
-        :class:`~dace.libraries.standard.nodes.ArgReduce` reading the gather
-        DIRECTLY, yielding the value + the slice-local index.
-
-        The gather is affine ``a[gather_base + gather_coeff*i]``; iteration
-        ``i = iter_lo + j`` reads array position ``pos_lo + coeff*j`` with
-        ``pos_lo = base + coeff*(start-1)`` (the seed sits at ``i = start-1``,
-        where ``index`` still holds its init value). That is exactly a strided
-        slice ``a[pos_lo : pos_hi : coeff]``, which the ArgReduce takes as its
-        operand, with ``transform=f`` applied per element as it reads. So there
-        is no buffer: the abs and the arg-reduction happen in one streaming pass
-        over ``a``. Staging ``buf[j] = f(a[pos_lo + coeff*j])`` first, as this
-        used to, wrote and re-read a whole extra copy of the array to hold a
-        value the scan computes in a register. The recovered iteration index is
-        ``index := iter_lo + idx_buf`` (``idx_buf`` is slice-local). Both carrier
-        seeds are dropped from the inbound iedges -- the slice's first element
-        subsumes them.
-
-        Under a non-strict guard (``m.last_wins``) the sequential loop keeps the
-        LAST extreme while the ArgReduce scan keeps the first, so the scan runs
-        over a REVERSED copy (``buf[j]`` <-> iteration ``i = end - j``, i.e.
-        array position ``base + coeff*end - coeff*j``) and the index maps back as
-        ``index := end - idx_buf``. A memlet range walks upward, so reversing the
-        order is the one case that still needs a materialised gather; no
-        non-strict guard occurs in TSVC.
+        """Replace a transformed argmax/argmin with index over an affine gather (TSVC s318,
+        ``max(|a[inc*i]|)``) by one ``ArgReduce`` reading the strided slice ``a[pos_lo : pos_hi : coeff]``
+        directly, ``transform`` applied per element; ``index := iter_lo + idx_buf``. Both carrier seeds
+        are dropped (the slice's first element subsumes them). Under ``m.last_wins`` the scan runs over
+        a materialized reversed gather and ``index := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
         start = symbolic.simplify(m.iter_start)

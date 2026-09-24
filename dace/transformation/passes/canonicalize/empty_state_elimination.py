@@ -30,23 +30,9 @@ from dace.transformation import transformation
 def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optional[Dict[str, str]]:
     """Merge the assignments of two consecutive interstate edges onto one edge.
 
-    Across the two original edges the assignments are ordered: ``second`` sees
-    the values ``first`` wrote. On one edge they are not: an assignment may not
-    read a symbol the same edge writes at all -- validation rejects that shape
-    as a race (``validation.py``, "Race condition: inter-state assignment"),
-    because codegen emits the assignments of one edge sequentially in an
-    unspecified order. So a symbol written by either side and read by the other
-    blocks the merge, in **both** directions:
-
-    * ``second`` reads what ``first`` writes -- the read would silently change
-      from the updated value to the stale one;
-    * ``first`` reads what ``second`` writes -- sequentially that read sees the
-      old value, on the merged edge it may see the new one.
-
-    A left-hand-side collision needs no guard: ``second`` overwrites ``first``
-    both when run in sequence and in the merged dict, so the resulting value is
-    the same either way -- and the overwritten right-hand side is not carried
-    onto the merged edge, so it cannot race.
+    One edge's assignments run in unspecified order (validation rejects reading a symbol the same
+    edge writes), so a symbol written on either side and read on the other blocks the merge, in both
+    directions. A left-hand-side collision is fine: ``second`` wins either way.
 
     :param first: Assignments of the edge entering the empty state.
     :param second: Assignments of the edge leaving it.

@@ -1477,34 +1477,19 @@ class WavefrontSkew(ppl.Pass):
 
     def _rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[object, object],
                        vb: Tuple[object, object], tau: Tuple[int, int], plan: TilePlan) -> None:
-        """Lower the wavefront as a skewed TILING -- four loops instead of two::
+        """Lower the wavefront as a skewed tiling::
 
-            for T in [t_lo .. t_hi]:              # tile diagonal, pinned sequential
-              parallel for P in [p_lo .. p_hi]:   # tile column, lifted to a Map
+            for T in [t_lo .. t_hi]:              # tile diagonal, sequential
+              parallel for P in [p_lo .. p_hi]:   # tile column, a Map
                 for u in [u0 + I*Bi .. min(u_hi, u0 + I*Bi + Bi - 1)]:
                   for v in [max(v_lo, v0 + J*Bj) .. min(v_hi, v0 + J*Bj + Bj - 1)]:
                       <original body>
 
-        with ``(I, J)`` the tile indices read back from ``(T, P)`` through the same
-        unimodular complement ``skew_bounds`` used (``I = a*(T - b*P), J = P`` when
-        ``|a| == 1``; ``I = P, J = b*(T - a*P)`` when ``|b| == 1``). The triangular
-        clip folds into the ``v`` lower bound exactly as the ISL projection does
-        untiled. ``u`` and ``v`` keep their original names, so the body is reused
-        verbatim -- no substitution, no memlet rewrite.
-
-        Why this and not the element-granularity diagonal: the untiled form walks a
-        stride-``N`` anti-diagonal and forks a parallel region per diagonal, which
-        measured 0.17-0.18x of the plain sequential nest at N=768 on 4 threads. The
-        tiled form gives the innermost loop unit stride and cuts the number of
-        parallel regions by the tile area; the same shapes measure 2.04-2.16x.
-
-        Bit-exactness is unchanged by the tiling. Each cell is still written exactly
-        once; :func:`tiling_legal` proves every summand a cell reads is the final
-        value of a cell from a strictly earlier tile diagonal (or from the same tile,
-        where the original sequential ``(u, v)`` order is preserved verbatim); and no
-        statement's own evaluation order is touched. So every read sees the very
-        value the sequential nest gave it, in the same order -- no reassociation, no
-        renormalisation, bit-for-bit."""
+        ``(I, J)`` come back from ``(T, P)`` through the unimodular complement ``skew_bounds`` used;
+        ``u`` / ``v`` keep their names so the body is reused verbatim. The element diagonal measured
+        0.17-0.18x of sequential (N=768, 4 threads), the tiled form 2.04-2.16x. Bit-exact:
+        :func:`tiling_legal` proves every read sees its sequential value.
+        """
         a, b = tau
         v = inner.loop_variable
         nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
@@ -1580,29 +1565,13 @@ class WavefrontSkew(ppl.Pass):
 
     def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
                           plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
-        """Turn a tile's two sequential interior loops into a diagonal over a PARALLEL Map.
+        """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
 
-        The tile interior is the same shape as the nest that contains it -- a 2-D nest whose
-        dependences the same ``tau`` orders -- so this is :meth:`_rewrite` applied a second time,
-        one level down, and nothing new has to be proven. Legality carries over for free: ISL
-        decided ``tau`` over the WHOLE domain, and the tile interior is a subset of it, so a
-        schedule with no violating pair in the whole domain has none in a part of it.
-
-        What it buys is the reason the GPU lowering tiles at all. The tile-column Map is the grid,
-        one block per tile; without this the block would run its tile on a single thread. With it,
-        the block's threads walk the intra-tile anti-diagonal together, and that anti-diagonal is
-        at most ``min(Bi, Bj)`` wide -- one wavefront at the default 64. The Map carries
-        ``is_warp_tile``, which is a REQUEST, not a schedule: the device offload assigns every
-        nested scope ``Sequential`` (correctly -- a kernel launch inside a kernel is not
-        expressible) and ``PromoteWarpTiles`` reads the tag afterwards to give it
-        ``GPU_ThreadBlock``.
-
-        The clip is what makes this ISL's job rather than arithmetic. A boundary tile is partial,
-        and a triangular domain clips ``v`` against ``u`` itself, so the anti-diagonal's extent is
-        not ``min(Bi, Bj)`` at the edges. Both clips go in as plain affine constraints and the
-        projection returns exact bounds, which is why no guard is emitted inside the body.
-
-        Falls back to leaving the interior sequential -- correct, just narrow -- whenever the
+        :meth:`_rewrite` applied one level down; legality carries over since the tile interior is a
+        subset of the domain ISL checked ``tau`` on. On GPU the tile-column Map is the grid and this
+        Map (tagged ``is_warp_tile``, promoted to ``GPU_ThreadBlock`` by ``PromoteWarpTiles``) lets the
+        block's threads walk the intra-tile anti-diagonal. Partial and triangular clips go to ISL as
+        affine constraints, so no in-body guard is needed. Leaves the interior sequential when the
         projection is not renderable.
         """
         u_sym, v_sym = sym(u), sym(v)

@@ -1302,30 +1302,18 @@ class SplitStatements(ppl.Pass):
                        rmw: list[str],
                        in_names: dict[str, None],
                        cone=None) -> list[dict[str, None]] | None:
-        """Coalesce the output groups into the FEWEST loops that free the parallel work: TWO.
+        """Coalesce the output groups into two loops: CARRIED and FREE.
 
-        What the split is FOR is peeling the data-parallel statements out of a loop that carries a
-        recurrence. So there are only ever two kinds of group: CARRIED (it writes an array the loop
-        also reads, and that recurrence is what forces the loop to stay sequential) and FREE (it
-        reads nothing the loop writes -- ``rmw_confined`` has already proved no other group reads a
-        carried array). Every FREE group is parallel together with every other, and every CARRIED
-        group is already sequential, so one loop of each is the whole benefit; anything finer just
-        adds full-length passes over the data. A reduction hand-unrolled into eleven accumulators is
-        the case that makes this concrete -- eleven carried groups, eleven sweeps, no parallelism
-        gained, and the re-roll that would have lifted it to ONE ``Reduce`` no longer matches.
-
-        Returns ``None`` when one side is empty: nothing to peel, and the loop stands as it was.
-
-        CARRIED is decided per NAME by :func:`carries_across_iterations`, not by membership in
-        ``rmw``: ``a[i] = a[i] + b[i] * c[i]`` reads and writes ``a`` yet carries nothing, and
-        reading it as carried puts the loop's only parallel statement on the sequential side and
-        refuses the split for want of a free group (TSVC ``s222``).
+        The split peels data-parallel statements out of a recurrence; finer splits only add sweeps
+        (eleven hand-unrolled accumulators would become eleven loops and break the re-roll). CARRIED is
+        decided per name by :func:`carries_across_iterations`, not by ``rmw`` membership:
+        ``a[i] = a[i] + b[i] * c[i]`` carries nothing (TSVC s222). Returns ``None`` if a side is empty.
 
         :param body: The body being split.
         :param groups: The independent output groups.
         :param rmw: Names the loop both reads and writes.
         :param in_names: The names whose values enter ``body`` from outside.
-        :param cone: A :func:`read_cone` memo shared with the caller's other analyses of ``body``.
+        :param cone: A :func:`read_cone` memo shared with the caller.
         """
         recurrences = [n for n in rmw if carries_across_iterations(body, n, in_names, cone)]
         carried: dict[str, None] = {}

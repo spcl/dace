@@ -394,39 +394,16 @@ class LoopToConditionalReduce(ppl.Pass):
     # rewrite
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
-        """Turn the guarded update into an UNCONDITIONAL masked reduction by
-        SPLICING a mask tasklet in front of the update tasklet's addend input
-        and hoisting the (now unconditional) true-branch state into the loop::
+        """Turn the guarded update into an unconditional masked reduction::
 
             masked_val = (__addend if (cond) else IDENTITY)   # spliced-in mask
-            __out      = __acc OP __masked                    # the ORIGINAL update
+            __out      = __acc OP __masked                    # the original update
 
-        Folding the guard into the masked value via the reduction identity is
-        value-exact -- a false iteration contributes the neutral element, so
-        ``OP`` leaves the accumulator unchanged, which is exactly the sequential
-        semantics of the original guarded update. The update tasklet keeps its
-        PLAIN (non-WCR) write and the loop-carried scalar, so the loop stays
-        sequential through ``parallelize``; the downstream ``reduction_to_wcr_map``
-        stage then lifts the "compute then accumulate" shape to a parallel
-        WCR-on-scalar map whose codegen emits an OpenMP ``reduction(OP:acc)``
-        clause (CPU) / a block/warp tree-reduce (GPU) -- the fast tree reduction
-        -- instead of the guarded atomic. See the module docstring for why the
-        mask must be a SEPARATE tasklet.
-
-        Reusing the true-branch state (rather than synthesising a fresh one) is
-        what makes a COMPUTED addend work: the addend's producer subgraph
-        (``a -> a_index -> _Mult_ -> product``, for ``s += a[i]*a[i]``) lives in
-        that state, so hoisting the state carries the producer with it and the
-        mask reads a genuinely-defined value. The matcher already guarantees the
-        state's only non-transient write is the accumulator, so hoisting it out
-        of the guard moves no stores -- only the addend's loads/arithmetic, whose
-        masked-out results are discarded by the identity.
-
-        The cond expression is resolved against iedge symbol bindings; the
-        addend's array gather is rewritten to the mask's ``__addend`` connector
-        and every array read the guard still names is WIRED as an additional
-        mask input. Returns ``True`` on a successful rewrite, ``False`` if a
-        guard read cannot be expressed as a mask input (loop left untouched).
+        Value-exact: a false iteration adds the identity. The update keeps its plain write, so
+        ``reduction_to_wcr_map`` later lifts it to a parallel reduction instead of a guarded atomic.
+        The true-branch state is hoisted (not rebuilt) so a computed addend's producer moves with it;
+        the matcher guarantees its only non-transient write is the accumulator. Guard reads are wired
+        as extra mask inputs. Returns ``False`` (loop untouched) if a guard read cannot be wired.
         """
         loop = m.loop
         true_state = m.true_state
@@ -519,30 +496,12 @@ class LoopToConditionalReduce(ppl.Pass):
                       sdfg: SDFG,
                       addend_conn_name: str = '__addend',
                       guard_inputs: Optional[Dict[str, tuple]] = None) -> Optional[str]:
-        """Resolve the cond expression to use only tasklet input connectors.
+        """Rewrite the cond expression over tasklet input connectors only.
 
-        Steps:
-
-        1. Walk iedges in the loop body and collect symbol bindings
-           ``sym := <expr_str>``.
-        2. AST-rewrite the cond expression: substitute each ``Name(sym)``
-           whose ``sym`` is in the bindings with the parsed RHS, and
-           substitute any ``Subscript(Name(arr), idx)`` that matches an
-           existing tasklet input edge's memlet with the corresponding
-           connector ``Name(__inN)``.
-        3. Any subscript that does NOT match the addend gather (the guard reads
-           an element other than the addend, or the addend is a computed
-           expression the guard's read cannot map onto) is allocated its own
-           ``__guardN`` connector and recorded in ``guard_inputs`` as
-           ``conn -> (array_name, index_str)``, for the caller to wire as a real
-           mask input. Returns ``None`` if such a read is not expressible as a
-           mask input -- see :meth:`_wireable_guard_read`.
-        4. Unparse back to a Python expression string.
-
-        We use AST-level substitution rather than ``dace.symbolic.subs`` to
-        preserve Python subscript syntax (``a[i]``) -- ``pystr_to_symbolic``
-        would convert that to sympy's ``Subscript(a, i)`` representation
-        which is not valid Python.
+        Substitutes iedge-bound symbols by their RHS and subscripts matching an input edge by its
+        connector; any other read gets a ``__guardN`` connector recorded in ``guard_inputs`` for the
+        caller to wire (``None`` if not wireable, see :meth:`_wireable_guard_read`). AST-level, since
+        ``pystr_to_symbolic`` would turn ``a[i]`` into a non-Python sympy ``Subscript``.
         """
         cond_text = m.cond_codeblock.as_string.strip()
         if guard_inputs is None:

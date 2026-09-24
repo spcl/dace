@@ -673,25 +673,15 @@ class RerollUnrolledLoops(ppl.Pass):
         return list(groups.values())
 
     def _try_reroll_chain(self, loop: LoopRegion, step: int) -> bool:
-        """Re-roll a lane chain whose lanes READ PAST their own position (TSVC ``s116``).
+        """Re-roll a lane chain whose lanes read past their own position (TSVC s116).
 
-        :meth:`_try_reroll` keys a lane on the offset an edge carries, so a lane that reads
-        ``a[i + k + 1]`` while storing to ``a[i + k]`` contributes TWO offsets and the ``m`` lanes
-        look like ``m + 1`` of them -- ``step < m*g`` then meets the read-modify-write refusal and
-        the chain is left unrolled. Here a lane is a VALUE COMPONENT of the body instead, and its
-        offset is the offset it STORES at; the read-ahead is one more boundary edge of that
-        component, at a relative offset every lane must agree on.
-
-        Legality, given ``m`` lanes at ``{0, g, ..., (m-1)g}`` with ``step == m*g`` (every position
-        stored exactly once) and one shared set of relative offsets: lane ``k`` reading relative
-        ``r > 0`` reads a position lane ``k + r/g`` has not stored yet, and the re-rolled step-``g``
-        loop reads that same position ``r/g`` iterations early -- also unstored. For ``r < 0`` both
-        forms read a position already stored. That holds only while the lanes RUN in ascending
-        offset order, which is checked: in a descending body lane ``k``'s read-ahead would see a
-        stored value the ascending re-rolled loop does not.
+        A lane is a value component keyed by the offset it STORES at; the read-ahead is a boundary edge
+        at a relative offset all lanes share. With ``step == m*g``, a read at ``r > 0`` sees an unstored
+        position in both forms and ``r < 0`` a stored one, provided lanes run in ascending offset order
+        (checked).
 
         :param loop: The candidate loop region.
-        :param step: The loop's constant step, read once by the caller.
+        :param step: The loop's constant step.
         :returns: ``True`` if the loop matched and was re-rolled.
         """
         loop_var = loop.loop_variable
@@ -779,32 +769,17 @@ class RerollUnrolledLoops(ppl.Pass):
         return True
 
     def _try_reroll_accumulator_reduction(self, loop: LoopRegion, step: int) -> bool:
-        """Re-roll a hand-unrolled *reduction* into a single-lane step-``g`` loop.
+        """Re-roll a hand-unrolled reduction (TSVC s352, s31111) into one step-``g`` lane.
 
-        The lane-decomposition path (:meth:`_try_reroll`) cannot handle a manually
-        unrolled reduction (TSVC ``s352`` dot, ``s31111`` sum): the ``m`` lanes are
-        joined by an associative left-fold into one carried scalar accumulator, so
-        a bidirectional lane walk reaches every node from every lane (no separable
-        lane component). This matcher instead follows the fold dataflow with a
-        FORWARD-only reach from each lane's reads:
-
-        * a node reached forward from exactly one offset is that lane's private
-          computation (``s352``'s per-lane ``_Mult_`` ``a[i+k]*b[i+k]``);
-        * a node reached from >= 2 offsets is a fold node -- it must be an
-          associative merge tasklet of the single commutative fold op, or a
-          transparent spine carrier (SSA transient / ``__out = __inp`` copy-back).
-
-        Soundness: the loop must read each covered position exactly once
-        (``step == m*g``), write exactly one carried scalar accumulator (a pure
-        reduction with no other output), reduce with a commutative-associative op,
-        and have structurally identical lanes (same read arrays + same private
-        non-fold ops per offset). Keeping lane 0 and re-rolling to step ``g`` then
-        recomputes the identical reduction over every position. The GC-splice
-        rewrite drops the other lanes' reads, deletes their now-broken private ops,
-        and collapses each fold tasklet that lost a term to its surviving input.
+        Lanes fold into one carried scalar, so the lane walk of :meth:`_try_reroll` finds no separable
+        lane. Instead a forward reach from each lane's reads classifies nodes: reached from one offset =
+        private lane work, from several = fold node (a merge of the single commutative op or a
+        transparent spine carrier). Requires ``step == m*g``, exactly one carried scalar output, a
+        commutative-associative op and identical lanes; lane 0 is kept and fold tasklets that lose a
+        term collapse to their surviving input.
 
         :param loop: The candidate loop region.
-        :param step: The loop's constant step, read once by the caller.
+        :param step: The loop's constant step.
         :returns: ``True`` if it matched and was re-rolled.
         """
         loop_var = loop.loop_variable

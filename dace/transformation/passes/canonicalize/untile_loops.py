@@ -194,27 +194,12 @@ def _is_zero(expr) -> bool:
 
 
 def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
-    """Classify an outer-loop stride as a tile size.
+    """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``.
 
-    Returns ``(K_expr, K_const)`` where ``K_expr`` is the simplified
-    stride expression and ``K_const`` is its value if the stride is a
-    concrete integer literal ``> 1``, else ``None``. Returns ``None``
-    entirely when the stride cannot be used as a tile:
-
-    * a concrete literal ``<= 1`` (``1`` is already untiled; ``<= 0`` is
-      not a forward tile);
-    * a symbolic stride that SymPy can prove is non-positive.
-
-    A **bare symbol** tile (e.g. a block-size parameter ``BS``) is accepted
-    (``K_const=None``): DaCe treats every symbol as non-negative by
-    convention -- we do *not* rely on SymPy sign assumptions -- and the
-    collapse to a unit-stride ``[start, N)`` traversal is sound for any
-    ``K >= 1`` (even the degenerate ``K == 1`` symbolic case). A **compound
-    symbolic expression** (e.g. ``s1 - s2`` or ``N // 4``) is *not* assumed
-    positive and is refused: it is not a plausible tile size and its sign
-    cannot be trusted. Symbolic tiles admit only a unit inner stride
-    (single-level untile) -- see :func:`_match_inner_case` -- because a
-    concrete stride cannot be proven to divide a symbol.
+    ``K_const`` is set for a concrete literal ``> 1``. Refused: literals ``<= 1``, provably
+    non-positive symbolic strides, and compound symbolic expressions (``N // 4``). A bare symbol
+    (``BS``) is accepted since DaCe symbols are nonnegative; symbolic tiles allow only a unit inner
+    stride (see :func:`_match_inner_case`).
     """
     try:
         s = symbolic.simplify(expr)
@@ -342,36 +327,15 @@ def _match_inner_case(inner: LoopRegion,
                       K_expr: symbolic.SymbolicType,
                       K_const: Optional[int],
                       outer_limit=None) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
-    """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)``.
+    """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)`` or ``None``.
 
-    ``clamped`` says the inner bound carried the remainder clamp. The caller MUST honour it:
-    an unclamped tile overshoots its last span and the collapsed bound has to round up to the
-    tile boundary, while a clamped one covers the parent range exactly and rounding up walks
-    off the end of the array.
+    * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``);
+    * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``).
 
-    * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``),
-    * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``),
-
-    with the inner stride ``S`` returned alongside. ``S == 1`` is the
-    classic single-level untile; ``S > 1`` (with ``S | K``) is the
-    cascade-tile intermediate level the fixpoint pass collapses one rung
-    at a time. The new loop after the rewrite uses step ``S`` (not always
-    1), so a subsequent fixpoint iteration can collapse it with the next
-    inner.
-
-    ``K_expr`` is the (possibly symbolic) outer tile size; ``K_const`` is
-    its concrete value or ``None`` when it is symbolic. A concrete tile with a
-    concrete stride admits a cascade rung iff ``S | K``. When either the tile or
-    the stride is symbolic, the rung is a whole tile only under ``K % S == 0``,
-    which cannot be proven -- ``needs_div_assumption`` is then ``True`` and the
-    caller records that relation as a runtime-trapped assumption. (The source
-    nest ``for iii in range(ii, ii+K, S): for i in range(iii, iii+S)`` already
-    requires ``S | K`` -- else its last inner tile overshoots ``ii+K`` and the
-    numpy oracle overshoots identically -- so the assumption never diverges from
-    the reference on any input the kernel is valid for.) A unit inner stride
-    needs no assumption.
-
-    Returns ``None`` if neither shape matches.
+    ``S > 1`` (with ``S | K``) is a cascade rung collapsed one level per fixpoint sweep. With a
+    symbolic tile or stride, ``S | K`` cannot be proven, so ``needs_div_assumption`` asks the caller
+    to record it (the source nest requires it anyway). ``clamped`` (remainder clamp present) must be
+    honored: an unclamped tile rounds the collapsed bound up, a clamped one must not.
     """
     stride = loop_analysis.get_loop_stride(inner)
     start = loop_analysis.get_init_assignment(inner)
