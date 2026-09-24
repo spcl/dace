@@ -83,6 +83,7 @@ from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
@@ -98,25 +99,6 @@ def count_applied(result) -> int:
     if not result:
         return 0
     return sum(len(applied) for applied in result.values())
-
-
-def _next_id(sdfg: SDFG) -> int:
-    used: Dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
-        for s in list(sd.symbols.keys()):
-            if s.startswith(UNTILE_PREFIX):
-                tail = s[len(UNTILE_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-        for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(UNTILE_PREFIX):
-                tail = cfg.loop_variable[len(UNTILE_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-    n = 0
-    while n in used:
-        n += 1
-    return n
 
 
 def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFlowRegion]:
@@ -926,7 +908,7 @@ class UntileLoops(ppl.Pass):
         # ``inner_stride > 1`` is an intermediate cascade rung that the
         # fixpoint pass collapses with its own inner on a subsequent
         # iteration.
-        k_var = f"{UNTILE_PREFIX}{_next_id(sdfg)}"
+        k_var = f"{UNTILE_PREFIX}{lowest_free_suffix(sdfg, (UNTILE_PREFIX, ))}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
         # Exclusive upper bound for the collapsed iterator is the union of the
         # tile spans the original nest actually visits. The outer walks tile

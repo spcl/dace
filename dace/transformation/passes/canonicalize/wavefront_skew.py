@@ -77,6 +77,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
                                                                          skew_label, tile_label, WAVEFRONT_TILE_COLUMN,
@@ -1468,7 +1469,7 @@ class WavefrontSkew(ppl.Pass):
         and lift it to a parallel Map. The substitution matches the unimodular
         family ``skew_bounds`` used: ``p = v`` when ``|a| == 1``, else ``p = u``."""
         a, b = tau
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
@@ -1543,7 +1544,7 @@ class WavefrontSkew(ppl.Pass):
         renormalisation, bit-for-bit."""
         a, b = tau
         v = inner.loop_variable
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
@@ -1694,7 +1695,7 @@ class WavefrontSkew(ppl.Pass):
         which is what a fixed block over a ramping wavefront costs and the only way to pay it.
         """
         a, b = tau
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         d_var = f'{SKEW_T_PREFIX}{nid}'
         k_var = f'{SKEW_P_PREFIX}{nid}'
         sdfg.add_symbol(d_var, dace.int64)
@@ -1819,26 +1820,6 @@ def substitute_by_name(expr, subs: Dict[str, object]):
         if s.name in subs:
             mp[s] = subs[s.name]
     return e.subs(mp)
-
-
-def _next_id(sdfg: SDFG) -> int:
-    """Lowest ``<N>`` no existing ``_skew_(t|p)_<N>`` symbol uses."""
-    used: Dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
-        for s in list(sd.symbols.keys()):
-            for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
-                if s.startswith(pre) and s[len(pre):].isdigit():
-                    used[int(s[len(pre):])] = None
-        for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
-                    lv = cfg.loop_variable
-                    if lv.startswith(pre) and lv[len(pre):].isdigit():
-                        used[int(lv[len(pre):])] = None
-    n = 0
-    while n in used:
-        n += 1
-    return n
 
 
 __all__ = ['WavefrontSkew']
