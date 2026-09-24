@@ -554,11 +554,15 @@ class LiftMapReductionToReduce(ppl.Pass):
         # the fold with the identity reproduces ``init (op) fold``.
         # Ordering edges seed nothing; overwriting one with a real memlet would leave the
         # accumulator with no writer and read uninitialized memory as the identity.
+        slot = copy.deepcopy(info.write_edge.data.subset)  # the fixed accumulator element, not always [0]
         init_edges = [e for e in state.in_edges(acc_in_node) if not e.data.is_empty()]
         if not init_edges:
             return False
         for ie in init_edges:
             if not isinstance(ie.src, nodes.Tasklet):
+                return False
+            # a seed of another element does not initialise the accumulator
+            if ie.data.data != acc or ie.data.subset != slot:
                 return False
             val = _const_assign_value(ie.src.code.as_string)
             if val is None or val != identity_val:
@@ -594,7 +598,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         if self._vectorized:
             red.implementation = "vectorized"
         state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
-        state.add_edge(red, '_out', acc_out_node, None, dace.Memlet(f"{acc}[0]"))
+        state.add_edge(red, '_out', acc_out_node, None, dace.Memlet(data=acc, subset=slot))
 
         # If the reduced trip depends on data-dependent symbols (spmv
         # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by an
