@@ -313,6 +313,37 @@ def test_ordering_memlet_is_not_an_in_state_init():
     assert np.allclose(dot[0], 7.0 + a.sum()), f"seed dropped: got {dot[0]}, want {7.0 + a.sum()}"
 
 
+def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
+
+    @dace.program
+    def reduce_then_read(a: dace.float64[8], s: dace.float64[1], out: dace.float64[1]):
+        for i in dace.map[0:8]:
+            s[0] += a[i]
+        out[0] = 2.0 * s[0]
+
+    sdfg = reduce_then_read.to_sdfg(simplify=True)
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) is None
+    s, out = np.ones(1), np.zeros(1)
+    sdfg(a=np.arange(8.0), s=s, out=out)
+    assert out[0] == 58.0
+
+
+def test_in_state_seed_is_written_before_the_reduction_map():
+
+    @dace.program
+    def seed_reduce_read(a: dace.float64[8], s: dace.float64[1], c: dace.float64[1]):
+        s[0] = 5.0
+        for i in dace.map[0:8]:
+            s[0] += a[i]
+        c[0] = s[0] * 2.0
+
+    sdfg = seed_reduce_read.to_sdfg(simplify=True)
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    s, c = np.ones(1), np.zeros(1)
+    sdfg(a=np.arange(8.0), s=s, c=c)
+    assert c[0] == 66.0
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()

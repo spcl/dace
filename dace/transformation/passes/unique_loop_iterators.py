@@ -18,6 +18,8 @@ Python/SDFG API inputs.
 from collections import Counter
 from typing import List, Optional, Set, Union
 
+import sympy
+
 import dace
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
@@ -136,7 +138,8 @@ class UniqueLoopIterators(ppl.Pass):
         init = loop_analysis.get_init_assignment(loop)
         if stride is not None and init is not None:
             diff = loop_end - init + stride
-            return init + dace.symbolic.int_floor(diff, stride) * stride
+            # A loop that never runs leaves the iterator at ``init``.
+            return init + sympy.Max(0, dace.symbolic.int_floor(diff, stride)) * stride
         if stride is not None:
             # Init unknown: last-attained + step (exact when step == 1).
             return loop_end + stride
@@ -235,7 +238,7 @@ class UniqueLoopIterators(ppl.Pass):
         duplicated = {v for v, count in Counter(loop_vars).items() if count > 1}
         # Names to re-check for dead-declaration removal once every loop below is renamed
         # (only populated when ``assign_loop_iterator_post_value`` is off, see below).
-        dead_symbol_candidates: List[str] = []
+        dead_symbol_candidates: List[tuple[LoopRegion, str]] = []
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -280,13 +283,26 @@ class UniqueLoopIterators(ppl.Pass):
                 # sees exactly the same per-name verdicts a walk repeated after each rename
                 # would -- including the duplicated-name case, where the walk must wait for
                 # every sibling sharing that name to be renamed before the name reads as dead.
-                dead_symbol_candidates.append(old_name)
+                dead_symbol_candidates.append((cfg, old_name))
 
             self._next_id += 1
 
         if dead_symbol_candidates:
             used = sdfg.used_symbols(all_symbols=False)
-            for old_name in dead_symbol_candidates:
+            # A name still used once every loop is renamed is read after its loop: it needs the exit value.
+            still_read = {old_name for _, old_name in dead_symbol_candidates if old_name in used}
+            if still_read:
+                self._block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
+                self._blocks_reading = self._collect_symbol_readers(sdfg, still_read)
+                for loop, old_name in dead_symbol_candidates:
+                    post_value = self._compute_post_value(loop)
+                    if old_name in still_read and post_value is not None and self._post_value_needed(
+                            loop, old_name, self._block_reach, self._blocks_reading):
+                        post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names)
+                        loop.parent_graph.add_state_after(loop,
+                                                          f"{_POST_VALUE_STATE_PREFIX}_{loop.loop_variable}",
+                                                          assignments={old_name: f"({post_value_str})"})
+            for _, old_name in dead_symbol_candidates:
                 if old_name in sdfg.symbols and old_name not in used:
                     # The rename scoped to each loop's own subtree left no
                     # surviving reference to ``old_name`` anywhere in ``sdfg``.

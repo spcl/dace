@@ -833,5 +833,20 @@ def test_loop_and_map_coexist_no_collision_value_preserving():
     assert np.allclose(got_a, ref_a) and np.allclose(got_b, ref_b)
 
 
+def test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value():
+
+    @dace.program
+    def empty_strided(C: dace.int64[1]):
+        for i in range(3, N, 2):
+            C[0] = 0
+        C[0] = i
+
+    sdfg = empty_strided.to_sdfg(simplify=True)
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, {})
+    C = np.zeros(1, dtype=np.int64)
+    sdfg(C=C, N=0)
+    assert sdfg.free_symbols == {'N'} and C[0] == 3
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
