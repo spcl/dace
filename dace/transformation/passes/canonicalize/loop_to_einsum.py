@@ -94,6 +94,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
+from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_with_state
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 
@@ -1139,7 +1140,7 @@ class LoopToEinsum(ppl.Pass):
 
     def _replace_with_einsum(self, parent: ControlFlowRegion, loop: LoopRegion, spec: EinsumSpec) -> None:
         from dace.libraries.blas.nodes.einsum import Einsum
-        state = self._replace_loop_with_state(parent, loop, loop.label + '_einsum')
+        state = replace_loop_with_state(parent, loop, loop.label + '_einsum')
         node = Einsum(loop.label + '_einsum')
         node.einsum_str = spec.einsum_str
         node.alpha = spec.alpha
@@ -1180,31 +1181,13 @@ class LoopToEinsum(ppl.Pass):
 
     def _replace_with_transpose(self, parent: ControlFlowRegion, loop: LoopRegion, spec: TransposeSpec) -> None:
         from dace.libraries.linalg.nodes.transpose import Transpose
-        state = self._replace_loop_with_state(parent, loop, loop.label + '_transpose')
+        state = replace_loop_with_state(parent, loop, loop.label + '_transpose')
         node = Transpose(loop.label + '_transpose', dtype=spec.dtype)
         state.add_node(node)
         state.add_edge(state.add_read(spec.src), None, node, '_inp',
                        Memlet(data=spec.src, subset=copy.deepcopy(spec.src_subset)))
         state.add_edge(node, '_out', state.add_write(spec.dst), None,
                        Memlet(data=spec.dst, subset=copy.deepcopy(spec.dst_subset)))
-
-    def _replace_loop_with_state(self, parent: ControlFlowRegion, loop: LoopRegion, label: str) -> SDFGState:
-        """Splice ``loop`` out of ``parent``, replacing it with a fresh (returned)
-        state that inherits the loop's in/out interstate edges. Mirrors
-        ``LoopToReduce._lift``'s CFG surgery."""
-        import dace
-        was_start = parent.start_block is loop
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-        state = parent.add_state(label, is_start_block=was_start)
-        for e in in_edges:
-            parent.add_edge(e.src, state, e.data)
-        for e in out_edges:
-            cond = e.data.condition.as_string if e.data.condition is not None else "1"
-            parent.add_edge(state, e.dst, dace.InterstateEdge(condition=cond,
-                                                              assignments=dict(e.data.assignments or {})))
-        parent.remove_node(loop)
-        return state
 
 
 __all__ = ["LoopToEinsum"]

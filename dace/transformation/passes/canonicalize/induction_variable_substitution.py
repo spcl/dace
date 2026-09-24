@@ -62,9 +62,11 @@ import copy
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
+from dace import memlet as mm
 from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -91,7 +93,6 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     pattern matching; the codegen still emits the cast from the original tasklet
     body, only this pass's analysis treats it as a no-op.
     """
-    from dace import dtypes
     TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
     def visit_Call(self, node):
@@ -418,7 +419,6 @@ def closed_form_state(parent: ControlFlowRegion,
     The closed-form RHS reads the seed via the tasklet's ``__in`` connector, NOT via a bare
     ``accum[subset]`` expression -- the SDFG dataflow is what actually wires the read.
     """
-    from dace import memlet as mm
 
     new_state = parent.add_state(label, is_start_block=is_start_block)
     accum_r = new_state.add_read(accum_name)
@@ -638,8 +638,6 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
 def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, state: SDFGState, iv: TaskletIV,
                                 plan: UseSitePlan, start, end, stride) -> None:
     """Commit the rewrite :func:`plan_use_site_substitution` validated."""
-    import dace
-    from dace import memlet as mm
 
     t = trip_index(loop, start, stride)
     # Splice first (the edges still name their consumer + connector), then re-point.
@@ -670,7 +668,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
     for oe in list(parent.out_edges(loop)):
         parent.add_edge(iv_post, oe.dst, oe.data)
         parent.remove_edge(oe)
-    parent.add_edge(loop, iv_post, dace.InterstateEdge())
+    parent.add_edge(loop, iv_post, InterstateEdge())
 
 
 # Iedge-based IV substitution (multi-statement bodies)
@@ -719,7 +717,6 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     Requires an exhaustive conditional (an ``else`` branch): with an implicit
     fall-through some path skips the increment and the hoist would be unsound.
     """
-    import dace
     for cb in [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]:
         conds = [c for c, _ in cb.branches]
         branches = [br for _, br in cb.branches]
@@ -787,14 +784,14 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                 for ie in list(loop.in_edges(cb)):
                     loop.add_edge(ie.src, hoist, ie.data)
                     loop.remove_edge(ie)
-                loop.add_edge(hoist, cb, dace.InterstateEdge(assignments={sym: new_rhs}))
+                loop.add_edge(hoist, cb, InterstateEdge(assignments={sym: new_rhs}))
                 if was_start:
                     loop.start_block = loop.node_id(hoist)
             else:
                 for oe in list(loop.out_edges(cb)):
                     loop.add_edge(hoist, oe.dst, oe.data)
                     loop.remove_edge(oe)
-                loop.add_edge(cb, hoist, dace.InterstateEdge(assignments={sym: new_rhs}))
+                loop.add_edge(cb, hoist, InterstateEdge(assignments={sym: new_rhs}))
             return True
     return False
 
@@ -956,13 +953,12 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         # after the loop; harmless (dead) when ``sym`` is loop-local.
         end = loop_analysis.get_loop_end(loop)
         if end is not None:
-            import dace
             post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), end))
             dsym_post = parent.add_state(loop.label + '_dsym_post')
             for oe in list(parent.out_edges(loop)):
                 parent.add_edge(dsym_post, oe.dst, oe.data)
                 parent.remove_edge(oe)
-            parent.add_edge(loop, dsym_post, dace.InterstateEdge(assignments={sym: post_val}))
+            parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
         return True
     return False
 
@@ -1126,7 +1122,6 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 
     # 5. Materialize ``sym + trip_count * step`` for later readers (and the next outer iteration) on
     #    the iedge into a spliced ``iv_post`` state; existing exit edges are rerouted from it.
-    import dace
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
     post_loop_expr = symbolic.simplify(sym_sym + trip_count * step)
     post_loop_value = symbolic.symstr(post_loop_expr)
@@ -1146,7 +1141,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     for oe in existing_out:
         parent.add_edge(iv_post, oe.dst, oe.data)
         parent.remove_edge(oe)
-    iv_edge_out = dace.InterstateEdge(assignments={sym_name: post_loop_value})
+    iv_edge_out = InterstateEdge(assignments={sym_name: post_loop_value})
     parent.add_edge(loop, iv_post, iv_edge_out)
 
     return True
@@ -1605,7 +1600,6 @@ def shift_rotation_reads(plan: RotationPlan) -> None:
     them would lose the order they enforce (in a two-stage delay line they are the WAR guard on the
     stage this very read feeds).
     """
-    from dace import memlet as mm
 
     src_data, src_subset = plan.src_data, plan.src_subset
     assert src_data is not None and src_subset is not None  # the caller dispatches on plan.remat
@@ -1633,7 +1627,6 @@ def emit_remat_clone(sdfg: SDFG, st: SDFGState, source: RematSource, hint: str) 
     clone is BUILT rather than deep-copied so it carries only the code and the connector types -- no
     guid, no debug info, nothing that would make two nodes claim to be one.
     """
-    from dace import memlet as mm
 
     producer = source.producer
     clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
@@ -1660,7 +1653,6 @@ def rematerialize_rotation_reads(sdfg: SDFG, plan: RotationPlan) -> None:
     (:func:`pure_producer`) so a second evaluation yields the same value, and every container the
     chain reads from memory was proven unwritten in the body, so reading it late reads the same bytes.
     """
-    from dace import memlet as mm
 
     remat = plan.remat
     assert remat is not None  # the caller dispatches on plan.remat

@@ -35,6 +35,7 @@ import sympy
 
 from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
@@ -520,9 +521,7 @@ def square_output_ok(sdfg: SDFG, array: str, n) -> bool:
 
 def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: str) -> SDFGState:
     """Splice ``loop`` out of ``parent``, replacing it with a fresh (returned) state
-    that inherits the loop's in/out interstate edges. Mirrors ``LoopToEinsum``'s CFG
-    surgery."""
-    import dace
+    that inherits the loop's in/out interstate edges."""
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
     out_edges = list(parent.out_edges(loop))
@@ -532,7 +531,7 @@ def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: 
     for edge in out_edges:
         condition = edge.data.condition.as_string if edge.data.condition is not None else "1"
         parent.add_edge(state, edge.dst,
-                        dace.InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {})))
+                        InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {})))
     parent.remove_node(loop)
     return state
 
