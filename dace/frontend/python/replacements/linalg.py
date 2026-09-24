@@ -5,7 +5,7 @@ Contains linear algebra function and operator replacements.
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor
+from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
@@ -319,6 +319,59 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
     state.add_memlet_path(chlsky_node, out, src_conn="_b", memlet=Memlet.from_array(*out_arr))
 
     return out_arr[0]
+
+
+def add_eigh(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str, uplo: str | StringLiteral):
+    """Add an ``Eigh`` node over ``inp_op`` and return the names of its ``(w, v)`` outputs.
+
+    A stack of matrices ``(..., n, n)`` is solved one matrix per point of a map over the leading
+    dimensions, which is what numpy does too.
+    """
+    if not isinstance(inp_op, str) or inp_op not in sdfg.arrays:
+        raise SyntaxError()
+    uplo = str(uplo)
+    if uplo not in ('L', 'U'):
+        raise ValueError(f"UPLO argument must be 'L' or 'U', not {uplo!r}")
+    inp_arr = sdfg.arrays[inp_op]
+    if len(inp_arr.shape) < 2:
+        raise ValueError(f'eigh needs at least a 2-dimensional array, not {len(inp_arr.shape)}-dimensional')
+    w_name, _ = pv.add_temp_transient(inp_arr.shape[:-1], complex_to_scalar(inp_arr.dtype), storage=inp_arr.storage)
+    v_name, _ = pv.add_temp_transient(inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage)
+
+    from dace.libraries.linalg import Eigh
+    node = Eigh('eigh', lower=uplo == 'L')
+    batch = inp_arr.shape[:-2]
+    index = [f'__eigh_i{d}' for d in range(len(batch))]
+    matrix = ', '.join(index + [f'0:{s}' for s in inp_arr.shape[-2:]])
+    vector = ', '.join([*index, f'0:{inp_arr.shape[-1]}'])
+    memlets = (Memlet(f'{inp_op}[{matrix}]'), Memlet(f'{w_name}[{vector}]'), Memlet(f'{v_name}[{matrix}]'))
+    inp, w_out, v_out = state.add_read(inp_op), state.add_write(w_name), state.add_write(v_name)
+    if batch:
+        entry, exit_node = state.add_map('eigh_batch', {i: f'0:{s}' for i, s in zip(index, batch, strict=True)})
+        state.add_memlet_path(inp, entry, node, dst_conn='_a', memlet=memlets[0])
+        state.add_memlet_path(node, exit_node, w_out, src_conn='_w', memlet=memlets[1])
+        state.add_memlet_path(node, exit_node, v_out, src_conn='_v', memlet=memlets[2])
+    else:
+        state.add_edge(inp, None, node, '_a', memlets[0])
+        state.add_edge(node, '_w', w_out, None, memlets[1])
+        state.add_edge(node, '_v', v_out, None, memlets[2])
+    return w_name, v_name
+
+
+@oprepo.replaces('dace.linalg.eigh')
+@oprepo.replaces('numpy.linalg.eigh')
+def eigh(pv: ProgramVisitor,
+         sdfg: SDFG,
+         state: SDFGState,
+         inp_op: str,
+         UPLO: str | StringLiteral = 'L') -> tuple[str, str]:
+    return add_eigh(pv, sdfg, state, inp_op, UPLO)
+
+
+@oprepo.replaces('dace.linalg.eigvalsh')
+@oprepo.replaces('numpy.linalg.eigvalsh')
+def eigvalsh(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str, UPLO: str | StringLiteral = 'L') -> str:
+    return add_eigh(pv, sdfg, state, inp_op, UPLO)[0]
 
 
 @oprepo.replaces('dace.tensordot')

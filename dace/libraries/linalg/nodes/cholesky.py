@@ -30,6 +30,24 @@ GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
 SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
 
 
+def device_solver_implementation(node, state, connector):
+    """The vendor GPU solver for ``node`` when its ``connector`` operand is GPU-resident, else ``None``.
+
+    A storage-aware pick for a node expanded with no implementation set: without it
+    ``apply_gpu_transformations + expand_library_nodes`` lands on the library default (OpenBLAS)
+    for a device matrix, whose host call then reads ``GPU_Global`` memory. WHICH device solver
+    follows the configured backend -- cuSolverDn on an AMD node names an environment that is not
+    installed.
+    """
+    in_edges = [e for e in state.in_edges(node) if e.dst_conn == connector]
+    if in_edges:
+        outer = state.memlet_path(in_edges[0])[0].src
+        if (isinstance(outer, dace.sdfg.nodes.AccessNode)
+                and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global):
+            return 'rocSOLVER' if common.get_gpu_backend() == 'hip' else 'cuSolverDn'
+    return None
+
+
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
@@ -209,25 +227,11 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         }, **kwargs)
         self.lower = lower
 
-    def expand(self, state, sdfg=None, *args, **kwargs):
-        # Storage-aware auto-pick: the device solver for GPU input, OpenBLAS otherwise.
-        # Without this, ``apply_gpu_transformations + expand_library_nodes`` lands
-        # on OpenBLAS for a GPU-resident matrix (alphabetical default), which
-        # then puts ``_info`` on GPU storage but writes it from a CPU library and
-        # fails validation. WHICH device solver follows the configured backend --
-        # picking cuSolverDn on an AMD node names an environment that is not
-        # installed, which lands back on the CPU library this exists to avoid.
-        actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
+    def expand(self, state_or_sdfg, *args, **kwargs):
         if self.implementation is None:
-            in_edges = list(state.in_edges_by_connector(self, "_a"))
-            if in_edges:
-                outer = state.memlet_path(in_edges[0])[0].src
-                if isinstance(outer, dace.sdfg.nodes.AccessNode):
-                    if actual_sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global:
-                        self.implementation = ('rocSOLVER' if common.get_gpu_backend() == 'hip' else 'cuSolverDn')
-        if sdfg is not None:
-            return super().expand(state, sdfg, *args, **kwargs)
-        return super().expand(state, *args, **kwargs)
+            state = state_or_sdfg if isinstance(state_or_sdfg, dace.SDFGState) else args[0]
+            self.implementation = device_solver_implementation(self, state, "_a")
+        return super().expand(state_or_sdfg, *args, **kwargs)
 
     def validate(self, sdfg, state):
         """

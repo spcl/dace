@@ -8,3 +8,4 @@ from .potrf import Potrf
 from .potrs import Potrs
 from .geqrf import Geqrf
 from .orgqr import Orgqr
+from .syevd import Syevd
