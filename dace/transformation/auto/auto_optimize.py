@@ -26,6 +26,7 @@ from dace.transformation import helpers as xfh, pass_pipeline as ppl
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.linalg.environments import cutensor, hiptensor
 
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
@@ -393,7 +394,14 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # ``FindFirst``, ``ScatterConflictCheck``, ``Symmetrize``'s parallel bounding box). Without
             # it every one of them fell through to the serial ``pure`` loop here while canonicalize
             # took the device form, so the GPU column compared library selection, not pipelines.
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'cuFFT', 'CUB', 'CUDA', 'pure']
+            #
+            # The tensor library is listed only where this host can build against it. A caller's
+            # own priority list is followed by this one (``set_fast_implementations``), so a vendor
+            # listed here unconditionally is picked whenever the caller's list names nothing the node
+            # implements: a TensorDot took hipTENSOR on ROCm 6.3, whose hipTensor lacks the v2
+            # header the expansion includes, and cp2k_grid_integrate failed to compile on mi200.
+            tensor = ['cuTENSOR'] if cutensor.cuTensor.is_installed() else []
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', *tensor, 'cuFFT', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
             # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
             # compared column against column, so a node that takes a tuned expansion under one and
@@ -403,8 +411,10 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # ``IntegerSort``, ``ArgReduce``, ``FindFirst``, ``ScatterConflictCheck``,
             # ``Symmetrize``), and their emitted code names the backend-neutral ``gpucub`` /
             # ``gpu*`` aliases, so one expansion serves both. Each node's own environment still
-            # gates whether the library is actually present.
-            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', 'hipTENSOR', 'hipFFT', 'CUB', 'CUDA', 'pure']
+            # gates whether the library is actually present, except the tensor library's, which is
+            # gated here as in the CUDA row.
+            tensor = ['hipTENSOR'] if hiptensor.hipTensor.is_installed() else []
+            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', *tensor, 'hipFFT', 'CUB', 'CUDA', 'pure']
         else:
             return ['GPUAuto', 'pure']
     elif device == dtypes.DeviceType.CPU:

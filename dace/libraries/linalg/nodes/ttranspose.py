@@ -318,14 +318,20 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
 
         Named by backend rather than hardcoded: a cuTENSOR delegate on an AMD build selects an
         environment that is not installed, and the configure step fails for a graph that has a
-        working expansion available.
+        working expansion available. For the same reason a backend whose tensor library this host
+        cannot build against gets the pure permutation instead, the availability rule
+        :func:`~dace.transformation.auto.auto_optimize.find_fast_library` applies to the
+        ``hipTENSOR`` / ``cuTENSOR`` keys: on ROCm 6.3, whose hipTensor lacks the v2 header, the
+        delegation carried ``dace_hiptensor.h`` into the build even where an fp64 permute had
+        already fallen back to the pure map.
         """
         from dace.codegen.common import get_gpu_backend  # Avoid import loop
         try:
             backend = get_gpu_backend()
         except RuntimeError:
             backend = 'cuda'
-        return ExpandHipTensor if backend == 'hip' else ExpandCuTensor
+        delegate = ExpandHipTensor if backend == 'hip' else ExpandCuTensor
+        return delegate if delegate.environments[0].is_installed() else ExpandPure
 
     @staticmethod
     def expansion(node, state, sdfg, **kwargs):
