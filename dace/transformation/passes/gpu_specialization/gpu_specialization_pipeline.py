@@ -72,9 +72,6 @@ class GPUCodegenPreprocessPipeline(Pipeline):
 
     def __init__(self):
         # Local imports: avoid circular import in ``dace.transformation`` package init.
-        # ``AssignmentAndCopyKernelToMemsetAndMemcpy`` is deliberately NOT imported here any more:
-        # extended moved it into the canonicalize pipeline, so running it here too would apply it
-        # twice.
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
             AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules, NormalizeHostLevelGPUSchedulesEarly,
             ReinferConnectorTypes, SynchronizeStreamUnawareGPUCallbacks)
