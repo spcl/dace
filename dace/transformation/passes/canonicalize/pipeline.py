@@ -631,76 +631,22 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
         return PrivatizeArrays()
 
 
-# Per-target knob presets. ``canonicalize(..., target='cpu'|'gpu')`` picks one
-# of these and any explicit knob arg overrides the preset value. Verdicts are
-# justified by the perf tests in ``tests/ab_perf/``; cite the test ID alongside
-# every knob that has a per-target asymmetry.
+# Per-target knob presets; explicit knob args to ``canonicalize(..., target=...)`` override them.
+# Per-target asymmetries cite their A/B test in ``tests/ab_perf/``.
 #
-# ``interchange_carry_with_map`` (LoopToScan): the post-L2M ``LoopRegion[jk]
-# { Map[jl] }`` shape is interchanged in place to ``Map[jl] { LoopRegion[jk] }``
-# so the carry runs SEQUENTIAL per-thread.
-#   - CPU win (``tests/ab_perf/test_for_1133_ab.py``): 4.6-5.2x at klev in {90,
-#     96}, klon=20480, both fp32 and fp64. Fewer parallel-Map invocations and
-#     no kernel-launch-style per-jk barrier; the column carry runs in a
-#     register on a single thread.
-#   - GPU loss (same test): 0.73-0.80x. The kernel is BW-bound and Variant A's
-#     stream of short, contiguously-coalesced kernels saturates BW better than
-#     Variant B's single kernel where each thread carries the accumulator
-#     across ``klev`` global-memory loads with a true RAW dep chain.
-# ``peel_limit`` (BestEffortLoopPeeling): TSVC corpus
-# (``tests/corpus/measure_parallelization.py`` ``_PEEL_LIMIT = 4``) is the
-# coverage anchor. ``peel_limit=4`` lifts every boundary-conflict TSVC
-# kernel that's lift-able with peeling; higher values add cost without
-# adding lifts on the corpus. Same value on both targets -- the per-loop
-# search runs at canonicalize time, not in the kernel.
-#
-# ``break_anti_dependence`` (BreakAntiDependence): snapshot-renames pure
-# read-ahead anti-dep loops so LoopToMap lifts them at the cost of a
-# transient + one copy per call. AB verdict
-# (``tests/ab_perf/test_canon_knobs_ab.py``, N=1M, kernel ``A[i] =
-# A[i+1] + B[i]`` -- single-pass, low arithmetic intensity):
-#   - CPU: off=117ms, on=136ms (off wins 1.16x). The CPU auto-vectoriser
-#     handles the sequential read-ahead well; the snapshot copy
-#     out-costs the parallel speedup on THIS trivial kernel.
-#   - GPU: off=12490ms, on=151ms (on wins 82.6x).
-# Default is ON for both: realistic chained-anti-dep graphs (many
-# anti-dep loops + arithmetic per element) benefit from parallelization
-# more than this single-pass benchmark shows; the 16% CPU loss on the
-# trivial case is the worst case, not the typical case.
-# ``scatter_to_guarded_maps`` (ScatterToGuardedMaps): inserts a sort +
-# duplicate-count guard around scatter-shaped loops and lifts them to
-# parallel Maps. AB verdict (``tests/ab_perf/test_scatter_ab.py``,
-# N=1M, permutation idx):
-#   - CPU: B (guarded) ~1.04x A (unguarded). Sort overhead is small and
-#     the sorted-idx pattern is cache-friendlier; B also handles
-#     non-permutation idx safely. On.
-#   - GPU: B (guarded) ~1.03x A. Same reasoning. On.
-# Both targets default to True; the knob exists so the AB harness can
-# measure off-vs-on without resorting to pre-canonicalize hand-wiring.
-# ``privatize_scatter_reductions`` (PrivatizeScatterReduction): surface a
-# data-dependent scatter reduction (``hist[bin[i]] (+)= w[i]``) to a whole-buffer
-# map WCR so CPU codegen privatises the accumulator with an OpenMP array-section
-# ``reduction(op:hist[0:n])`` clause instead of a contended per-element atomic
-# (azimint_hist: ~200x -> ~1x vs numpy). CPU-only: the clause path is gated on
-# ``openmp_array_reductions`` (an OpenMP feature); on GPU a scatter accumulate stays
-# an ``atomicAdd`` and this privatisation does not apply, so the knob defaults off.
-# ``reconstruct_wavefront_nest`` (ReconstructWavefrontNest): rebuilds an imperfect
-# Map-plus-LoopRegion stencil body (polybench ``seidel_2d``'s slice-vectorized neighbor
-# sum beside its sequential in-row scan) into the single ``LoopRegion`` ``WavefrontSkew``
-# requires, committing only when a deepcopy trial proves it unlocks a skew. Off by default
-# on both targets: on the corpus kernel it targets, the Map's slice-normalized range and the
-# scan's direct-index range do not line up (a real offset, not just a DOALL refusal), so the
-# reconstruction never actually fires there yet -- ON is safe (mutate-on-provable-win only)
-# but unproven to help; flip once a corpus win is measured.
-# ``normalize_loop_and_map_origin`` (NormalizeLoopAndMapOrigin): rebase every Map range /
-# ``LoopRegion`` counter to a 0-based begin, KEEPING the stride (``b:e:s`` -> ``0:(e-b):s``,
-# ``p -> p + b``) -- unlike ``NormalizeLoopsAndMaps`` (dropped from this pipeline, see the
-# ``normalize`` comment below), which folds the stride into the index and cost a parallel map
-# on TSVC ``s172``. Two ranges of equal trip count but different origin (a slice-vectorized
-# Map ``0:N-3`` beside a sequential scan ``LoopRegion`` ``1:N-2``, polybench ``seidel_2d``)
-# become the identical ``0:N-3`` once both are rebased. Corpus verdict (transform-only,
-# ``tests/corpus/measure_parallelization.py``, 4 corpora): see the AB note on the knob's wiring
-# below for the measured totals and default.
+# ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
+#   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win) -- test_for_1133_ab.py.
+# ``peel_limit``: 4 lifts every peelable TSVC boundary-conflict kernel; higher adds cost only.
+# ``break_anti_dependence``: snapshot-rename read-ahead anti-deps. On ``A[i] = A[i+1] + B[i]``
+#   CPU off wins 1.16x, GPU on wins 82.6x (test_canon_knobs_ab.py). ON for both: the CPU loss is
+#   the trivial-kernel worst case.
+# ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU (test_scatter_ab.py).
+# ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
+#   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
+# ``reconstruct_wavefront_nest``: rebuild seidel_2d's Map+Loop body for ``WavefrontSkew``. Off:
+#   safe but never fires on the corpus yet (range offsets do not line up).
+# ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
+#   folded it and lost TSVC s172's map); see the AB note at its wiring below.
 CPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': True,
     'peel_limit': 4,
@@ -809,155 +755,49 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     unique_loop_iterators_fission = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     unique_loop_iterators_unroll = UniqueLoopIterators(assign_loop_iterator_post_value=False)
 
-    # clean: unique loop iterators -> split tasklets -> the leading SimplifyPass
-    # (only here and, twice, in 'reduce'). Trivial-tasklet elimination now opens the
-    # 'reduce' recipe (after simplify), not here.
-    # NormalizeNegativeStride runs first so every downstream matcher
-    # (LoopToMap's affine subset classifier, LoopToScan's ``stride != 1``
-    # refusal, RerollUnrolledLoops) only ever sees positive-stride loops.
-    # ContinueToCondition runs explicitly after the initial cleanup passes (it is
-    # also inside SimplifyPass, but running it here lifts ``continue`` -> guarding
-    # condition before the structural transforms, the same way the break lift is
-    # applied early). A no-op on kernels without a ``continue`` (e.g. the current
-    # TSVC corpus emits none); it hardens the pipeline for kernels that do.
-    # RewriteModuloToPyMod runs first: every floored modulo spelling becomes ``py_mod`` up front.
-    # SimplifyPass's own FuseStates does this: it drives StateFusionExtended (and BlockFusion)
-    # to a fixpoint, so no second fusion follows it. Merging adjacent states up front collapses
-    # multi-state loop/branch bodies into the single-state shape the main
-    # LoopFission path (and the reduction lifts) require, so a body that was
-    # split across states becomes fissionable / liftable instead of being left
-    # alone. The later _structural_cleanup runs only have to mop up what the
-    # transforms re-introduce.
-    # RemoveViews runs at the very FRONT of the pipeline -- before every semantic and
-    # structural pass (loop_to_symm, normalize_reduction, and the clean block below).
-    # Folding View access nodes into their backing array up front means no downstream
-    # matcher (the symm / reduction lifts, LoopToMap's subset classifier, StateFusion's
-    # memlet rename) ever has to reason through a slice/reshape view. Library-node operand
-    # views are preserved (see ``RemoveViews._is_library_node_operand``), so BLAS/MatMul
-    # expansions still see their squeezed 2-D operands. The later ``_structural_cleanup``
-    # RemoveViews calls only have to mop up views the transforms (re)introduce.
-    # Every stage assumes structured control flow: raise it first, and stop if anything stays unstructured.
+    # clean: raise structured control flow (required by every stage), then RemoveViews up front so
+    # no matcher reasons through a view (library-node operand views are kept for BLAS expansions).
     s += [('clean', ControlFlowRaising()), ('clean', RequireStructuredControlFlow()), ('clean', RemoveViews())]
 
-    # loop_to_symm (semantic lift, BEFORE normalize_reduction): the hand-written
-    # symmetric matrix-multiply nest (polybench symm) is recognised on its raw
-    # frontend shape -- a 2-D map whose NestedSDFG boundary carries a triangular
-    # self-scatter ``C[0:i, j]`` plus a point-write ``C[i, j]`` fed by a symmetric
-    # operand -- and replaced by a ``Symm`` BLAS node (vendor dsymm / cublasDsymm).
-    # It must run before normalize_reduction, which would otherwise rewrite that
-    # boundary WCR into a seeded-local reduction the recogniser no longer matches. A
-    # strict, no-op-on-any-deviation match (gated on the semantic-lifting knobs, like
-    # LiftEinsum), so the vectorizer path (semantic_lifting=False) leaves symm as the
-    # plain reduction nest.
+    # loop_to_symm: lift the polybench symm MAP form (triangular self-scatter ``C[0:i, j]`` plus
+    # point write) to ``Symm``. Must precede normalize_reduction, which rewrites that boundary WCR.
     if semantic_lifting and lift:
         s += [('loop_to_symm', LoopToSymm())]
 
-    # lift_inv (semantic lift, on the raw frontend shape, gated like loop_to_symm):
-    # recognise ``A^-1`` written as ``solve(A, eye(N))`` -- a ``Solve`` library
-    # node whose RHS operand is a freshly-built identity matrix
-    # (``numpy.eye`` / ``numpy.identity``: a square ``val = 1 if i == j else 0``
-    # mapped tasklet) -- and replace the ``Solve`` + identity-construction map
-    # with a single ``Inv`` node (getrf + getri, the direct inverse that never
-    # materialises an identity RHS). It runs BEFORE ``MapToForLoop`` lowers the
-    # identity map to a loop and before the ITE-lowering passes rewrite its
-    # ``1 if ... else 0`` body, so the identity is still its raw mapped-tasklet
-    # form. A strict no-op on any deviation (non-identity RHS, shifted diagonal,
-    # a reused identity), like the other semantic lifts.
+    # lift_inv: ``solve(A, eye(N))`` -> ``Inv``. Runs on the raw frontend shape, before MapToForLoop
+    # and ITE lowering rewrite the identity-construction map.
     if semantic_lifting and lift:
         s += [('lift_inv', LiftInv())]
 
-    # privatize_scatter (BEFORE normalize_reduction): surface a data-dependent scatter
-    # reduction (``hist[bin[i]] (+)= w[i]`` -- the azimint histogram) onto the whole-buffer
-    # ``NestedSDFG -> MapExit -> accumulator`` WCR edge chain, so CPU codegen privatises the
-    # accumulator with an OpenMP array-section ``reduction(op:hist[0:n])`` clause (each thread
-    # a private copy, uncontended accumulate, runtime tree-merge) instead of the contended
-    # per-element atomic (~200x on azimint_hist). Must run BEFORE ``NormalizeWCR``: surfacing
-    # the WCR here makes the outer edge non-plain, so ``NormalizeWCR`` skips the scatter and
-    # its unsound drop-WCR shortcut (which turns ``oc[bin] (+)= w`` into a partial plain
-    # ``oc[bin] = w`` over a per-iteration whole-array buffer, reading the rest uninitialised)
-    # never fires. CPU-only (the clause path needs OpenMP array reductions); off for GPU.
+    # privatize_scatter: surface ``hist[bin[i]] (+)= w[i]`` as a whole-buffer map-exit WCR so CPU
+    # emits an OpenMP array-section reduction (~200x on azimint_hist). Must precede NormalizeWCR,
+    # whose drop-WCR shortcut would otherwise produce a partial plain write. CPU only.
     if privatize_scatter_reductions:
         s += [('privatize_scatter', PrivatizeScatterReduction())]
 
-    # normalize_reduction (FIRST, on the frontend shape): a masked reduction emitted as an
-    # in-nsdfg WCR into a write-only output connector (plain map-exit edge) is rewritten to
-    # the seeded-local + map-exit-WCR shape the frontend already emits for the equivalent
-    # polybench reduction (symm). Downstream then treats it like any map-exit reduction:
-    # WCRToAugAssign keeps the scalar WCR and MapToForLoop's map-exit-WCR refusal keeps it a
-    # parallel map, so it is neither severed nor double-counted. (This used to also credit
-    # MapFusionVertical's seeded-reduction guard, which is dead code -- see its docstring.)
-    # Idempotent, so the vectorizer can also run it standalone.
+    # normalize_reduction: an in-nsdfg WCR into a write-only connector -> the seeded-local +
+    # map-exit-WCR shape, so downstream treats it as any map-exit reduction. Idempotent.
     s += [('normalize_reduction', NormalizeWCR())]
 
-    # A loop with a ``continue`` is not splittable, so SplitStatements / IVS below cannot handle
-    # it. ``ContinueToCondition`` rewrites the skip into a guarded body HERE -- before those
-    # stages -- so they only ever see the resulting continue-free loop. A ``break`` loop has a
-    # data-dependent trip count and no closed-form induction variable, and nothing rewrites it:
-    # it reaches the later stages as a sequential LoopRegion and stays one.
-    #
-    # ``CollapseNoOpCast`` leads the block: a Fortran kind coercion / numpy ``astype`` lands as
-    # ``__out = dace.float64(__inp)`` where ``__out`` ALREADY has that dtype. Every downstream
-    # matcher reads tasklet bodies textually, so the redundant call hides an otherwise-plain
-    # assignment from all of them -- and from ``TrivialTaskletElimination`` inside the
-    # ``SimplifyPass`` five entries below, whose predicate is the exact string
-    # ``out = in`` (``trivial_tasklet_elimination.py:85``) and which separately refuses any
-    # endpoint dtype mismatch, so it can never collapse the cast itself. Rewriting to the plain
-    # assignment first is what lets that Simplify fold the copy away in the same block. A
-    # genuine cast (differing dtypes) fails the pass's own equality check and is kept.
+    # CollapseNoOpCast first: ``__out = dace.float64(__inp)`` with matching dtypes hides a plain copy
+    # from every textual matcher, TrivialTaskletElimination included. RewriteModuloToPyMod makes every
+    # floored modulo ``py_mod``. NormalizeNegativeStride gives downstream positive strides only.
+    # ContinueToCondition turns ``continue`` into a guard before SplitStatements / IVS (``break``
+    # loops stay sequential). SimplifyPass's FuseStates collapses multi-state bodies for fission.
     s += [('clean', CollapseNoOpCast()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
           ('clean', unique_loop_iterators), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
 
-    # loop_to_rank_k_update (semantic lift, gated like loop_to_symm): the
-    # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
-    # recognised in one walk -- an outer row loop whose body beta-scales a triangular row slice
-    # of a square C and then accumulates onto that same slice in an inner k loop -- and
-    # replaced by a ``Syrk`` / ``Syr2k`` BLAS node (vendor dsyrk / dsyr2k, which compute
-    # only the referenced triangle: half the flops of the equivalent gemm, and threaded).
-    #
-    # The lift runs HERE, right after the clean block's SimplifyPass + StateFusionExtended,
-    # because -- unlike loop_to_symm, which matches a raw frontend map+NestedSDFG
-    # boundary -- the lift matches the *dataflow expression* of a single fused body state.
-    # The frontend spreads each slice statement over several states and staging
-    # temporaries; StateFusionExtended collapses that into the one-state-per-loop-body
-    # shape the recogniser resolves through. The lift must still run BEFORE 'prep'
-    # (SplitStatements) and 'lower' (MapToForLoop) rewrite the body.
-    #
-    # A strict, no-op-on-any-deviation match (gated on the semantic-lifting knobs, like
-    # LiftEinsum / LoopToSymm), so the vectorizer path (semantic_lifting=False) leaves
-    # syrk / syr2k as plain reduction nests.
-    # LoopToSymm runs a SECOND time here, for the same reason: its npbench slice form
-    # (``C[:i, j] += alpha*B[i, j]*A[i, :i]`` plus a ``B[:i, j] @ A[i, :i]`` inner product --
-    # the spelling the corpus carries) is a two-level LoopRegion nest whose body statements
-    # the frontend spreads over several states, so it only becomes matchable once the clean
-    # block's StateFusionExtended has collapsed each body to one state. The earlier
-    # 'loop_to_symm' entry stays where it is: the polybench MAP form it matches must be seen
-    # before normalize_reduction rewrites that boundary WCR. Each form is a clean no-op for
-    # the other, so running the pass at both points lifts whichever spelling is present.
+    # loop_to_rank_k_update: syrk / syr2k nests -> ``Syrk`` / ``Syr2k``. Matches the dataflow of one
+    # fused body state, so it runs after the clean block's state fusion and before prep / lower.
+    # LoopToSymm runs again for the same reason: the npbench slice form only becomes matchable after
+    # fusion. Each form is a no-op for the other.
     if semantic_lifting and lift:
         s += [('loop_to_symm', LoopToSymm()), ('loop_to_rank_k_update', LoopToRankKUpdate())]
 
-    # prep (still maps): push guarding conditionals into maps, then split
-    # statements -- replicate a conditional / gather-scatter NestedSDFG per
-    # independent output so it can fission later (SplitStatements subsumes the
-    # former ConditionalComponentFission and also handles forward-read anti-deps).
-    #
-    # ConvertLengthOneArraysToScalars leads the stage: the frontend spells a scalar temporary as a
-    # ``(1,)`` transient Array, and every consumer downstream of here -- the statement split's
-    # dependency walk, fission, WCR handling -- keys on the descriptor, so the two spellings take
-    # different paths for the same value. Normalize to Scalar first. TRANSIENTS ONLY
-    # (``preserve_abi`` left clear): a signature-level length-1 array is the caller's contract and
-    # is not touched.
-    #
-    # ForwardStoreToLoad runs immediately before the split, and only there. A body that stores
-    # ``a[i]`` and reads it back at the same ``i`` (TSVC ``s323``) makes ``a`` cross between the
-    # two statements, and with a second array carried the other way the split has no provable
-    # order and refuses. Feeding the in-iteration reader from the stored value -- the store to
-    # ``a`` stays -- leaves one crossing array, which the split does order; downstream that is
-    # what lets ``LoopToScan`` see the prefix sum. Later is too late (the split has already
-    # refused) and earlier buys nothing.
-    # Define the reserved thread-count symbol before anything can want it. A pass rather than
-    # frame code so it is visible in the IR, inherited by nested SDFGs through symbol_mapping,
-    # and emitted by whatever already emits tasklets -- including the standalone CPF frame.
+    # prep (still maps): SupplyNumThreads defines the thread-count symbol in the IR. MoveIfIntoMap,
+    # then ConvertLengthOneArraysToScalars (transients only; the ABI keeps its arrays) so the split
+    # sees one spelling. ForwardStoreToLoad right before SplitStatements: feeding an in-iteration
+    # reread from the store leaves one crossing array the split can order (TSVC s323).
     s += [('prep', SupplyNumThreads())]
     s += [('prep', PatternApplyOnceEverywhere([MoveIfIntoMap()])), ('prep', ConvertLengthOneArraysToScalars()),
           ('prep', ForwardStoreToLoad()), ('prep', SplitStatements())]
@@ -965,15 +805,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     if break_anti_dependence:
         s += [('prep', BreakAntiDependence(forward_reads=True))]
 
-    # WCRToAugAssign BEFORE lower: rewrite every conflict-free (injective) WCR back to
-    # an explicit RMW while maps are still maps; what stays WCR is a genuine reduction
-    # that MapToForLoop then refuses to lower (kept parallel -> OMP reduction), so the
-    # in-state producer->consumer edge is never severed by the map->loop round-trip.
+    # Revert conflict-free WCRs while maps are still maps; the remaining WCRs are true reductions
+    # MapToForLoop keeps parallel.
     s += [('lower', RevertNonReductionWCR())]
-    # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
-    # structural cleanup (no SimplifyPass). ``MapToForLoop`` is state-local, so the matcher resumes
-    # in the region of each lowering instead of re-walking the SDFG: quadratic in the map count
-    # otherwise (warpx_field_gather lowers 3300 maps).
+    # lower: every map -> LoopRegion. State-local matching avoids a quadratic re-walk
+    # (warpx_field_gather lowers 3300 maps).
     lower_maps = MapToForLoop()
     lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
     s += [('lower', PatternApplyOnceEverywhere([lower_maps], state_local=True))]
@@ -981,61 +817,20 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('lower', PatternApplyOnceEverywhere([PruneConnectors()]))]
     s += [('lower', InlineSDFGs())]
     s += _fold_scalar_slices('lower')
-    # Splices out the empty *_pre_state / *_post_state boundary states MapToForLoop leaves: inside a
-    # guard branch they make the body look like a heterogeneous [empty, empty, loop] chain and send
-    # MoveIfIntoLoop down its imperfect path to wrap *empty* states. ``EmptyStateElimination`` is a
-    # member of the cleanup block, so the block alone is what does it -- a standalone copy of it
-    # stood here and ran on a graph the block had just swept.
+    # The cleanup's EmptyStateElimination splices out MapToForLoop's empty boundary states, which
+    # would send MoveIfIntoLoop down its imperfect path.
     s += _structural_cleanup('lower')
 
-    # NormalizeNegativeStride again, now that every map is a LoopRegion. The
-    # pass only ever rewrites LoopRegions, so the earlier 'clean' invocation
-    # reached the loops the frontend emitted but not the maps -- a negative-
-    # stride Map became a negative-stride loop here, after its only chance to
-    # be normalized. Downstream (RerollUnrolledLoops, LoopToScan's stride != 1
-    # refusal, LoopToMap's affine subset classifier) all run past this point
-    # and do rely on the positive-stride invariant.
+    # Again for loops that were maps at 'clean'.
     s += [('lower', NormalizeNegativeStride())]
 
-    # reroll: re-roll a hand-unrolled lane chain (a step-``S`` loop whose body is
-    # ``m`` lanes at equally-spaced offsets ``{0, g, ..., (m-1)g}``) back to a
-    # step-``g`` loop, so the lanes do not survive normalization as a strided
-    # ``S*i + k`` access that blocks LoopToMap. Runs right after the maps are
-    # lowered to loops, while the loop is still in step-``S`` form (before
-    # normalize rescales it).
+    # reroll: a step-``S`` loop of ``m`` equally spaced lanes -> a step-``g`` loop, while the loop
+    # is still in step-``S`` form.
     s += [('reroll', RerollUnrolledLoops())]
 
-    # reduce: front-loaded reduction + parallelization-prep recipe, applied right
-    # after lowering. Order follows the classical recipe:
-    #
-    #   trivial_tasklet_elim  -- drop ``__out = __inp`` copies, exposing the bare RMW
-    #     spine of accumulators (so downstream passes see the canonical shape);
-    #   WCRToAugAssign        -- normalise WCR writes back into explicit ``a = a + b``
-    #     augmented assignments, so every reduction reaches loop_to_reduce in one shape;
-    #
-    # "specialize -> unroll -> IV -> LICM -> simplify" block
-    #   PrivatizeScalars + SymbolProp + ConstProp -- specialize the symbols and fold
-    #     constants into bounds/guards (visible accumulator initializers, concrete
-    #     trip counts for unroll);
-    #   ShortLoopUnroll       -- fully unroll tiny constant-trip loops to straight-
-    #     line code (now that ConstProp has revealed the constant trip counts);
-    #   unique_loop_iterators_unroll -- give the loops that survive (and any the unroll
-    #     cloned) unique ``_loop_it_<N>`` names before reduction passes read them;
-    #   InductionVariableSubstitution -- collapse single-tasklet 'acc = acc OP const'
-    #     loops to their O(1) closed form (the classical IV / scalar-evolution shape;
-    #     red-dragon-book Ch. 9.6). Runs BEFORE LICM so IV-eliminated loops don't
-    #     hold up LICM-eligible expressions in their bodies;
-    #   LoopInvariantCodeMotion -- hoist loop-invariant tasklets out of loop bodies
-    #     and map scopes to the preheader (red-dragon-book Ch. 9.5);
-    #   SimplifyPass          -- clean up the staged hoists, fused states, and the
-    #     IV-eliminated-loop placeholders before loop_to_reduce reads the body;
-    #
-    #   loop_to_reduce        -- lift the augmented-assignment accumulator loops
-    #     to ``Reduce`` library nodes.
-    #
-    # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
-    # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
-    # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
+    # reduce: drop copy tasklets, revert WCRs to augassign, privatize + propagate symbols and
+    # constants; then (below) untile, unroll short loops, IVS before LICM, SimplifyPass, and
+    # loop_to_reduce. AugAssignToWCR is deliberately absent: reductions become Reduce nodes.
     s += [('reduce', EliminateTrivialTasklets()), ('reduce', RevertNonReductionWCR()),
           ('reduce', _PrivatizeScalarsStage()), ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()),
           ('reduce', ConstantPropagation())]
@@ -1070,294 +865,108 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # separate stage rather than widening ``ScalarFission``, so the scalar path never becomes a
     # fallback for an unproven array.
     s += [('reduce', ppl.Pipeline([ArrayFission()]))]
-    # PromoteConstantIndexAccess + BufferExpansion: both privatize loop-carried
-    # false dependences that block ``LoopToMap``. PCIA promotes ``arr[c]``
-    # constant-index slot writes-then-reads on a SHARED array to a per-iteration
-    # scalar; BufferExpansion adds a per-iteration dimension to a transient
-    # SCRATCH buffer that is fully (re)written then read on every iteration.
-    # Both run AFTER ``ShortLoopUnroll`` because unrolling can make the
-    # constant-index / scratch-buffer pattern concrete (loop-variable indices
-    # become literals; trip-1 trivial loops collapse). They are otherwise no-ops
-    # on loops ``LoopToMap`` already accepts -- a built-in ``can_be_applied``
-    # pre/post probe inside each pass leaves the SDFG untouched when the
-    # privatization wouldn't unblock a refusal.
+    # Privatize false carried deps that block LoopToMap: constant-index slots of a shared array
+    # (PCIA) and fully rewritten scratch buffers (BufferExpansion). After ShortLoopUnroll, which can
+    # make the pattern concrete; each probes and no-ops unless it unblocks a refusal.
     s += [('reduce', PromoteConstantIndexAccess()), ('reduce', BufferExpansion())]
-    # HoistInductionVariableUpdates runs BEFORE InductionVariableSubstitution: it
-    # fissions IV-eligible updates out of compound bodies into sibling single-statement
-    # loops so the IVSub matcher (which requires a single tasklet in the body) catches
-    # them. Together they turn O(N) recurrences with surrounding loop work into O(1)
-    # straight-line plus the surviving body. MaterializeLoopExitSymbols then handles
-    # the surviving body-defined IV symbols (``k = k + step`` on an interstate edge)
-    # whose final value is read after the loop: it materialises the closed-form exit
-    # under a fresh ``_loop_exit_<sym>_<N>`` symbol and rewrites every downstream
-    # reader so the "loop-defined symbol used after the loop" refusal disappears.
-    # Reduce PREP only (the loop-lifting LoopTo* passes moved AFTER fission +
-    # LoopStridePermutation -- see 'loop_to_x' below -- so the pipeline shape is
-    # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap).
-    # PromoteConstInputs runs FIRST so any promotable secondary-IV scalar becomes
-    # a symbol before the following SimplifyPass collapses the update into a clean
-    # ``k := k + inc`` iedge, which InductionVariableSubstitution then closes to
-    # ``a[k + (i-1)*inc]`` (the strided-argmax lift).
+    # IV fixpoint: PromoteConstInputs, then HoistInductionVariableUpdates fissions IV updates out of
+    # compound bodies so single-tasklet IVS closes them (O(N) -> O(1)).
     s += [('reduce', IvSubstitutionFissionFixpoint(max_rounds=iv_split_rounds))]
-    # MaterializeLoopExitSymbols runs AFTER the rounds, not between IVS and LICM as it used to:
-    # it materialises the exit value of whatever counters SURVIVE, so it wants the settled graph.
+    # MaterializeLoopExitSymbols after the rounds: it wants the settled set of surviving counters.
     s += [('reduce', MaterializeLoopExitSymbols()), ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass())]
 
-    # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
-    # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
-    # upward) so the later body-assigns-range-symbol
-    # refuse-check sees the cleaned-up shape.
-    # The frontend promotes a computed index (``i * inc``, ``i + M``) to a scalar and then to an
-    # interstate symbol used in the subset (``a[__sym_i_times_inc]``). ``SymbolPropagation``
-    # deliberately does NOT substitute a loop-variable RHS back into the graph (``replace_dict``
-    # sizes descriptors), so the opaque symbol reaches every structural matcher below --
-    # ``expr.coeff(loop_var)`` reads 0, the loop variable is "absent", and LoopToMap / LoopToScan
-    # / ParallelizeUnderConstraint all decline a loop that is plainly parallel. Recover the direct
-    # arithmetic here, before the lifting stages; genuine data-dependent gathers (``a[idx[i]]``)
-    # are left alone. ``RemoveUnusedSymbols`` then sweeps the now-dead promotion symbols.
+    # index_subsets: the frontend hides computed indices (``i * inc``) behind interstate symbols that
+    # SymbolPropagation does not substitute back, so every affine matcher sees the loop variable as
+    # absent. Recover the arithmetic (data-dependent gathers stay), then drop the dead symbols.
     s += [('index_subsets', PropagateIndexSubsets()), ('index_subsets', RemoveUnusedSymbols())]
-    # ``PropagateIndexSubsets`` exposes fresh loop-invariant arithmetic on
-    # interstate edges; without a following propagation/cleanup the
-    # ``reduction_to_wcr_map`` stage can build WCR memlet subsets that reference
-    # nested connector arrays as if they were symbols and then inline the
-    # nested SDFG, leaving free ``__tmp_*`` symbols behind
-    # (``split_tasklets_test::test_add_missing_symbols_honors_integer_cast``).
-    # This narrow cleanup (not a full ``SimplifyPass``) folds those expressions
-    # and removes the now-dead dataflow.
+    # Fold the exposed arithmetic; otherwise reduction_to_wcr_map can leak free ``__tmp_*`` symbols
+    # (split_tasklets_test::test_add_missing_symbols_honors_integer_cast).
     s += [('index_subsets', PropagateAndPrune())]
 
+    # cascade_iedges_up (post-reduce): lift invariant iedge assignments (``kfdia_plus_1 = kfdia + 1``)
+    # past every enclosing loop for the later body-assigns-range-symbol check.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
-    # distribute (BEFORE loop_to_symmetrize / loop_to_x): split a linear-chain loop
-    # across a forward per-iteration producer->consumer dependence -- atax's two
-    # matvecs coupled through ``tmp``, and covariance's per-column normalize ->
-    # transpose-mirror -- so the LoopToEinsum / LoopToSymmetrize lifts below each see
-    # a single-contraction / pure-copy loop. Placed here so the mirror is already its
-    # own triangular loop when LoopToSymmetrize matches.
+    # distribute: split loops across a forward producer->consumer dependence (atax, covariance) so
+    # LoopToEinsum / LoopToSymmetrize see one contraction / pure copy each.
     s += [('distribute', DistributeProducerConsumerLoop())]
 
-    # loop_to_symmetrize (BEFORE break_antidep): lift a triangular in-place
-    # matrix-symmetrization nest (``for i: for j in i+1:M: X[j,i] = X[i,j]``) to a
-    # ``Symmetrize`` library node whose expansion is the parallel triangular copy.
-    # It runs here, before break_antidep / fission, so the in-place symmetric
-    # read/write is recognised as one semantic op rather than snapshot-renamed by
-    # BreakAntiDependence into a whole-matrix copy + plain map. Canonicalize does
-    # NOT expand the node -- it stays a library node for codegen to lower.
+    # loop_to_symmetrize: before break_antidep, which would snapshot-rename the in-place copy. The
+    # Symmetrize node stays unexpanded for codegen.
     s += [('loop_to_symmetrize', LoopToSymmetrize())]
 
-    # peel / break_antidep (optional knobs, off by default): last-resort attempts to
-    # unblock loops LoopToMap would refuse, run BEFORE move_if / fission so the
-    # transform sees the whole guarded loop. Peeling splits a boundary iteration off
-    # and prunes the now-dead boundary guard (e.g. ``if i == 0: A[N-1] += 1``),
-    # leaving a disjoint-write remainder; break_anti_dependence snapshot-renames a
-    # pure read-ahead WAR (``a[i] = a[i+1]``). Both target loops that FAIL
-    # parallelization (peel via a LoopToMap-can-apply pre-filter, break_antidep via
-    # WAR detection), so they no-op on already-mappable loops, and both only PROBE
-    # ``can_be_applied`` -- the actual LoopToMap is the 'parallelize' stage. (Loop
-    # reversal is intentionally NOT a separate pass: reversing a loop only changes a
-    # dependence's direction, never removes one, so it cannot make a dependent loop
-    # parallelizable while preserving values -- clearing the anti-dependence does.)
+    # peel / break_antidep: last-resort unblocking before move_if / fission. Both only target loops
+    # LoopToMap refuses and only probe ``can_be_applied``. Loop reversal is not a pass: it flips a
+    # dependence's direction, never removes one.
     if peel_limit > 0:
-        # rotate (BEFORE peel): a loop-carried DELAY LINE (``x = b[i]`` read one iteration later)
-        # has no ``a*i + b`` write subset, so LoopToMap refuses a whole loop over a carry whose
-        # value is just a shifted array element. Substituting the shifted read and deleting the
-        # update makes the body DOALL; the one iteration the shifted read does not cover is peeled
-        # off the front, which is why this shares ``peel_limit`` -- and its "runs more often than we
-        # peel it" assumption -- instead of owning a knob. Runs before ``BestEffortLoopPeeling`` so
-        # the peel search sees the already-unblocked loop and nominates nothing further for it.
+        # rotate: a delay line (``x = b[i]`` read one iteration later) -> shifted read, first
+        # iteration peeled; shares ``peel_limit``. Before peel so the search sees the DOALL loop.
         s += [('rotate', LoopCarriedRotationSubstitution(peel_limit))]
         s += [('peel', BestEffortLoopPeeling(peel_limit))]
     if break_anti_dependence:
         s += [('break_antidep', BreakAntiDependence())]
-    # Re-prep the freshly-unblocked loops: peel/break-antidep PROBE mappability with
-    # the prep recipe but only APPLY the peel / snapshot-rename, so the peeled
-    # remainder (and any body-assigned range symbol the peel introduced) still needs
-    # scalar + array fission and symbol/constant propagation -- the same prep the reduce
-    # stage ran -- before LoopToMap can map it. Only runs when a knob is enabled.
+    # Re-run the reduce-stage prep on the freshly unblocked loops.
     if peel_limit > 0 or break_anti_dependence:
         s += [('peel', _PrivatizeScalarsStage()), ('peel', _PrivatizeArraysStage()), ('peel', SymbolPropagation()),
               ('peel', ConstantPropagation())]
 
-    # move_if_into_loop: push guarding conditionals into loop bodies. The genuine
-    # inner imperfect nest (a bare tasklet beside an inner loop) takes the
-    # free-state path: the bare sibling is wrapped in a trivial single-iteration
-    # loop, spliced out again by 'untrivialize' before LoopToMap.
-    #
-    # Removal probed, NOT proven safe: dropping this standalone run leaves the tsvc
-    # scorecard identical (223 kernels, 35 loops / 226 maps, per-kernel) and adds no
-    # failure to the guard / branchy-polybench suites -- but those already carry two reds
-    # at d2be1fde4 (floyd-warshall's single-nest lift, the coexisting-index-guards
-    # collapse), so they cannot witness a regression here. PerfectLoopNesting does not
-    # subsume it: that pass never runs MoveIfIntoLoop.
+    # move_if_into_loop: push guards into loop bodies; bare siblings of an inner loop get a trivial
+    # loop wrapper, removed at 'untrivialize'. Removal probed but not proven safe (the witnessing
+    # suites already had reds at d2be1fde4); PerfectLoopNesting does not subsume it.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
-    # cascade_iedges_up (post-move-if): MoveIfIntoLoop may bury an invariant
-    # iedge assignment inside the loop it pushed the guard into; lift it back out.
-    #
-    # Collapse to one run probed, NOT proven safe: dropping this and the post-reduce run
-    # (keeping only the pre-parallelize one) leaves the tsvc scorecard untouched
-    # (35 loops / 226 maps, per-kernel identical) and the npbench + polybench numerical
-    # corpus green. Kept anyway: the post-reduce run exists for the body-assigns-range-symbol
-    # refuse-check that runs between it and parallelize, and both comments cite cloudsc
-    # shapes that no gate here covers.
+    # Lift assignments MoveIfIntoLoop buried. Collapsing the cascade runs to one was probed green but
+    # kept: cloudsc shapes no local gate covers depend on them.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
-    # fission: loop distribution + block-level perfect-loop-nesting. Fission clones
-    # a loop into siblings that keep the same ``_loop_it_<N>`` name; re-running
-    # UniqueLoopIterators disambiguates those duplicates so the later LoopToMap is
-    # not blocked by a sibling appearing to read the shared iterator.
-    # break_antidep (before fission): a second whole-array pure-WAR rename, on the now
-    # single-compute-state body. It runs in addition to the earlier 'break_antidep'
-    # stage, which sees the loop before its slice states fuse. The per-edge MIXED shape
-    # -- a body that reads ``a[i+1]`` off the same array a sibling writes at ``a[i]``
-    # (s1244 ``d[i] = a[i] + a[i+1]``), which the whole-array rename skips because that
-    # sibling read is RAW -- is handled earlier, by SplitStatements in 'prep'. Gated on
-    # the same knob as that stage.
+    # fission: a second whole-array WAR rename on the fused body (s1244's mixed shape is handled by
+    # SplitStatements), PerfectLoopNesting, then unique iterators for the cloned siblings.
     if break_anti_dependence:
         s += [('fission', BreakAntiDependence())]
-    # PerfectLoopNesting runs BY DEFAULT (user ruling 2026-09-01), reversing the 2026-08-18
-    # ruling that kept it opt-in. Both rulings are about the same defect, and it is worth
-    # recording precisely because the reversal rests on it being gone:
-    #
-    # THE DEFECT: the pass used to distribute via ``LoopFission``'s node-level grouping, which
-    # carries no dependence distance or direction. A SINGLE application reproduced the CloudSC
-    # read-modify-write miscompile bit-for-bit (tendency_loc_a rel=0.13, measured 2026-08-18 on
-    # the phase-17 staged snapshot) -- the fault was that grouping itself, not a composed fixpoint.
-    #
-    # WHAT CHANGED: PerfectLoopNesting no longer calls that grouping at all; the code path named
-    # above is severed. It now groups with Allen-Kennedy at BLOCK granularity (SCC-equivalent,
-    # emitted in program order) and checks per-parent-iteration disjointness, refusing whatever it
-    # cannot pin -- so a group it cannot prove independent is left fused rather than split blind.
-    #
-    # WHAT IS NOT YET ESTABLISHED: the CloudSC numerics gate has NOT been re-run against the
-    # rebuilt pass. The reversal rests on the offending grouping being gone, not on a fresh
-    # measurement. Re-run tendency_loc_a before treating the miscompile as closed.
-    #
-    # ``canonicalize_mixed_parallelism_test`` exercises the collapsed-2D-map contract here.
+    # PerfectLoopNesting is on by default (ruling 2026-09-01). The old LoopFission-based grouping
+    # miscompiled CloudSC (tendency_loc_a rel=0.13); it now groups Allen-Kennedy at block level and
+    # refuses what it cannot prove. OPEN: the CloudSC numerics gate has not been re-run since.
+    # ``canonicalize_mixed_parallelism_test`` covers the collapsed-2D-map contract.
     if perfect_loop_nesting:
         s += [('fission', PerfectLoopNesting(target=target))]
     s += [('fission', unique_loop_iterators_fission)]
 
-    # untrivialize: splice out the single-iteration trivial-loop scaffold (the
-    # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
-    # before LoopToMap turns it into a sticky NestedSDFG.
-    #
-    # Runs HERE, right after fission, not just before LoopToMap: every matcher
-    # between this point and LoopToMap expects a loop body to be one SDFGState
-    # and refuses a body that is a LoopRegion. ``LoopStridePermutation``'s
-    # ``_perfect_nests`` would absorb the wrapper as a real nest level and
-    # bubble it as if it were an axis; ``AssignmentAndCopyKernelToMemsetAndMemcpy``
-    # and the ``LoopTo*`` lifts refuse outright on ``not isinstance(blocks[0],
-    # SDFGState)``. Leaving the scaffold in place through those stages silently
-    # disabled them. Fission runs first because the fission stage needs the
-    # uniform all-siblings-are-loops shape the scaffold provides.
+    # untrivialize: remove MoveIfIntoLoop's trivial-loop wrappers right after fission (which needs
+    # them); every matcher up to LoopToMap expects a single-state body and refuses a LoopRegion.
     s += [('untrivialize', PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
 
-    # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
-    # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
-    # ``i -> b+s*j``. In a corpus-wide measurement (TSVC, 151 kernels) this
-    # rewrite blocks ``LoopToMap`` on every stride loop it touches -- L2M no
-    # longer recognises ``a[b+s*j]`` as uniquely indexed by ``j`` (it expected
-    # the original ``a[i]`` with stride encoded in the range), and 0 kernels
-    # gained anything from running it. Net: -1 parallel map (s172). Kept the
-    # standalone ``NormalizeLoopsAndMaps`` for callers that want it; just not
-    # wired into the canonicalize pipeline.
-
-    # loop_stride_permutation (after LoopFission, before every LoopTo* lift):
-    # interchange a perfect loop nest so a unit-stride DOALL loop is innermost.
-    # For a recurrence kernel (``aa[j,i] = aa[j-1,i] + ...`` with ``i`` the
-    # unit-stride parallel axis) this turns ``for i: for j:`` into ``for j(seq):
-    # for i(parallel):`` -- the inner ``i`` becomes a contiguous map and ``j``
-    # stays a plain sequential loop, so NO ``Scan`` libnode (over a strided
-    # apply) is needed. Soundness rests on moving only DOALL loops (a parallel
-    # loop is freely interchangeable); see the pass docstring.
+    # NormalizeLoopsAndMaps is not wired in: folding the stride into the index blocks LoopToMap on
+    # every stride loop (TSVC: 0 gains, -1 map on s172).
+    # loop_stride_permutation: interchange a perfect nest so a unit-stride DOALL loop is innermost,
+    # turning recurrences into ``for j(seq): for i(parallel)`` without a Scan. Moves DOALL loops only.
     s += [('loop_stride_permutation', LoopStridePermutation())]
 
-    # fuse_consecutive_loops (right before the LoopTo* lifts): re-join a
-    # hand-tiled main-body loop and its step-1 remainder -- two directly
-    # consecutive, identical-bodied, unit-stride loops over adjacent index
-    # ranges ``[A, B)`` then ``[B, C)`` -- into one loop over ``[A, C)``. Left
-    # split, a reduction tiled this way lifts to two ``Reduce`` nodes writing
-    # the same accumulator whose seed does not chain (the remainder drops the
-    # main partial sum); fused, a single ``Reduce`` over the whole range lifts
-    # correctly. Runs after re-roll has already collapsed the tiled main body to
-    # a unit-stride single-accumulator loop, and before ``loop_to_x`` lifts it.
+    # fuse_consecutive_loops: re-join a hand-tiled main loop and its remainder (``[A, B)`` then
+    # ``[B, C)``) so one Reduce covers the range; split, the remainder drops the main partial sum.
     s += [('fuse_consecutive_loops', FuseConsecutiveLoops())]
 
-    # lift_copy_loops (BEFORE loop_to_x / LoopToReduce): a plain contiguous copy /
-    # zero loop -- ``for i: dst[i] = src[i]`` / ``for i: dst[i] = 0`` -- is lifted to a
-    # Copy / Fill library node here, before the reduction/scan detection runs, so it is
-    # recognised as pure data movement instead of being mis-analysed as a (degenerate)
-    # reduction or left as a naive loop. The earlier structural cleanup has already folded
-    # the frontend ``AccessNode -> scalar-slice -> Tasklet`` bridge into the ``_out = _in``
-    # form the detector matches. Gated on the same ``lift_copy`` knob as the post-parallelize
-    # map lift below; the vectorizer (``semantic_lifting=False``) skips it so copy loops stay
-    # raw loops it can lower. The spliced-in states are tidied at the next cleanup phase
-    # (``lower``), not here -- see :func:`_structural_cleanup` for why the phases are few.
+    # lift_copy_loops: plain copy / zero loops -> Copy / Fill nodes before reduction detection can
+    # misread them. Skipped by the vectorizer (``semantic_lifting=False``).
     if semantic_lifting and lift_copy:
         s += [('lift_copy_loops', AssignmentAndCopyKernelToMemsetAndMemcpy())]
 
-    # normalize_origin (optional knob, off by default): rebase every Map range / LoopRegion
-    # counter to a 0-based begin, keeping the stride -- the LAST point before every ``LoopTo*``
-    # lift (loop_to_x / loop_to_scan / parallelize), so those matchers see the normalized shape.
-    # No Map exists in the SDFG yet at this point ('lower', above, already turned every one into
-    # a LoopRegion, and no stage between there and here reintroduces one), so this only ever
-    # rebases LoopRegions here -- the Map-rebasing half of the pass matters for a caller that
-    # invokes it standalone, or once ``LoopToMap`` (below) creates fresh Maps.
+    # normalize_origin (knob, off): rebase to 0-based begins right before every LoopTo* lift. Only
+    # LoopRegions exist here; the Map half matters for standalone callers.
     if normalize_loop_and_map_origin:
         s += [('normalize_origin', NormalizeLoopAndMapOrigin())]
 
-    # loop_to_x (moved here from the 'reduce' stage so the order is
-    # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap): lift the
-    # accumulator / scan / argmax / find-index / conditional-reduce shapes that
-    # LoopStridePermutation did NOT turn into a sequential-loop + parallel-map.
-    # The reduce PREP (LICM / SimplifyPass / IV substitution / ...) already ran
-    # above; these are the lifting passes only.
-    # LoopToSymmetrize runs earlier (its own stage, before break_antidep).
-    # LoopToEinsum runs FIRST (before LoopToReduce): a contraction loop nest
-    # (matvec / matmul / transpose) must be claimed as a single Einsum node before
-    # LoopToReduce lifts its reduction axis to a Reduce. It probes on a throwaway
-    # copy and is a clean no-op on any nest that does not collapse to one Einsum.
-    # LoopToConditionalReduce folds a guarded accumulator ``if cond: acc OP= x`` into an
-    # UNCONDITIONAL masked reduction -- ``masked = (x if cond else IDENTITY); acc OP= masked``
-    # -- the exact "compute then accumulate" shape an unguarded reduction (``s += a[i]*b[i]``)
-    # has -- so the later ``reduction_to_wcr_map`` stage lifts it to a parallel WCR-on-scalar
-    # Map whose codegen emits the OpenMP ``reduction(op:acc)`` clause (CPU) / block-warp
-    # tree-reduce (GPU), instead of the per-passing-thread guarded atomic the raw conditional
-    # lowers to.
-    # LoopToStreamCompaction runs LAST in loop_to_x, after every reduction-shaped lift has had its
-    # refusal: a guarded ``if cond: acc OP= x`` is a masked REDUCTION and belongs to
-    # LoopToConditionalReduce, whereas this pass claims the complementary shape where the carried
-    # scalar is the write INDEX (``if cond: j += 1; a[j] = f(i)``), which no other lift matches.
-    # It must precede ``parallelize``: it emits three loops -- mask, scan, scatter -- and force-lifts
-    # the two parallel ones itself (it owns the disjointness proof for the cursor-indexed writes;
-    # LoopToMap cannot reconstruct it), leaving the residue for the later stages to fuse and
-    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``PinCarriedTopLevelLoops``
-    # can pin a loop this pass would claim, and a pinned loop is refused here (correctly: the pin
-    # is a directive, not an obstacle).
-    # ``LoopToReduce`` / ``LoopToScan`` are pure matchers -- they touch nothing when they lift
-    # nothing -- so the body normalization each one needs is spelled out here: WCR-to-augassign
-    # for the reduction matcher, the full ``LiftPreprocess`` (which adds copy-tasklet folding,
-    # negative-stride flipping and body-state fusion) for the scan matcher. Order matters: the
-    # extra folds must NOT precede ``LoopToReduce``, whose single-tasklet matcher claims the
-    # un-folded augassign shape.
-    # loop_to_transpose (semantic lift, gated like the other LoopTo* lifts): a hand-written
-    # tensor permutation ``B[i, j] = A[j, i]`` -- a perfect nest whose innermost body is a PURE
-    # copy at permuted point subscripts -- becomes a ``Transpose`` (2-D, BLAS omatcopy) or
-    # ``TensorTranspose`` (N-D, HPTT / cuTENSOR) node.
-    #
-    # Nothing else in the recipe covers this shape, which is why it gets its own slot:
-    # ``LiftEinsum`` refuses a single tensor operand outright ("a unary copy / transpose /
-    # reduction", ``lift_einsum.py:120``), and ``AssignmentAndCopyKernelToMemsetAndMemcpy``
-    # deliberately REJECTS permutations -- the tasklet body ``_out = _in`` is identical for a
-    # copy, a broadcast and a transpose, so it discriminates on subscript order and hands the
-    # permuted case back (``assignment_and_copy_kernel_to_memset_and_memcpy.py:99-109``).
-    # Left unlifted, a transpose nest stays a strided element-wise copy.
-    #
-    # It runs FIRST in the block, ahead of ``LoopToEinsum``: both read a perfect nest of point
-    # subscripts, and the transpose matcher is the strictly narrower one (pure copy, one
-    # operand, bijective permutation), so letting it claim its shape first costs the einsum
-    # matcher nothing -- an einsum needs >= 2 operands and refuses this shape anyway.
+    # loop_to_x: lift the accumulator / scan / argmax / find-index / conditional-reduce shapes left
+    # after LoopFission and LoopStridePermutation, before LoopToMap. Order:
+    # - LoopToTranspose first: pure-copy permutations; nothing else lifts them (LiftEinsum refuses
+    #   one operand, memcpy lifting rejects permutations). Strictly narrower than LoopToEinsum.
+    # - LoopToEinsum before LoopToReduce: a contraction must become one Einsum before its axis
+    #   becomes a Reduce. Probes on a copy; no-op otherwise.
+    # - RevertNonReductionWCR + LoopToReduce, then LiftPreprocess + LoopToScan: both matchers are
+    #   pure, so their prep is explicit here; the extra folds must not precede LoopToReduce.
+    # - LoopToConditionalReduce: ``if c: acc OP= x`` -> unconditional masked reduction, so
+    #   ``reduction_to_wcr_map`` emits an OpenMP / tree reduction instead of guarded atomics.
+    # - LoopToStreamCompaction last: the carried scalar is a write INDEX. Precedes ``parallelize``
+    #   (it owns the cursor disjointness proof) and ``reduction_to_wcr_map`` (whose pins it honors).
     # Re-fold: the stages since 'lower' mint fresh bridges (tsvc s254).
     s += _fold_scalar_slices('loop_to_x')
     if semantic_lifting and lift:
@@ -1434,62 +1043,27 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     if target == 'gpu':
         s += [('parallelize', PatternApplyOnceEverywhere([PerfLoopNesting()]))]
 
-    # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
-    # permissively, where the blocker is an algebraic side condition (TSVC s171's
-    # symbolic-stride in-place update ``a[i*inc] = a[i*inc] + b[i]``, injective iff
-    # ``inc != 0``). Emit a runtime ``ConditionalBlock`` -- parallel Map when the
-    # constraint holds, sequential loop otherwise -- rather than assuming it
-    # (unsound) or leaving it as a WCR-map the vectorizer rejects. Runs BEFORE
-    # ``reduction_to_wcr_map`` so the guarded loop is split out before that stage
-    # would otherwise lift it to a (non-vectorizable, WCR-carrying) reduction map.
-    # ``assume_parallel_guards`` drops the runtime check and lifts unconditionally
-    # (caller asserts the constraint always holds); default keeps the sound guard.
+    # parallelize_guarded: a loop LoopToMap refuses only on an algebraic side condition (s171's
+    # ``a[i*inc]``, injective iff ``inc != 0``) gets a runtime guard: Map if it holds, loop otherwise.
+    # Before reduction_to_wcr_map would claim it. ``assume_parallel_guards`` drops the check.
     s += [('parallelize_guarded', ParallelizeUnderConstraint(assume_constraint=assume_parallel_guards))]
 
-    # reduction_to_wcr_map: full "scalar accumulator loop -> parallel WCR-map
-    # with a true scalar accumulator" pipeline. Loops that survived parallelize
-    # as multi-tasklet 'compute then accumulate' shapes (LoopToReduce keeps
-    # narrow on these -- e.g. ``s += a[i] * b[i]`` for s313/vdotr, ``s += a[i]
-    # * b[ip[i]]`` for the gather-sum s4115 family) become parallel WCR-maps
-    # via ``AugAssignToWCR`` (frontend copy-wrapped RMW -> WCR write) +
-    # ``LoopToMap``. Then the post-L2M NestedSDFG body is inlined and adjacent
-    # states fused so the WCR edge is visible at the top-level MapExit, and
-    # ``PrivatizeReductionAccumulator`` swaps the array-element WCR target for
-    # a transient ``Scalar`` (with init + writeback states) -- the shape the
-    # downstream WCR codegen can lower to a clean OMP ``reduction(op:scalar)``
-    # clause. Folded into one stage because the four steps (AugWCR, L2M,
-    # inline+fuse, privatize) form an atomic logical transformation.
-    # FuseChainedScalarReductions FIRST: a loop that accumulates into the SAME scalar
-    # more than once per iteration (TSVC s319 ``sum_val += a[i]; sum_val += b[i]``) reaches
-    # here as a chained ``acc -> (+incA) -> acc -> (+incB) -> acc`` dataflow whose
-    # intermediate read-back defeats the single-accumulation matcher below, leaving the
-    # reduction loop sequential. Re-associating the chain into one ``acc += (incA + incB)``
-    # (sound by associativity of +/*) exposes the single accumulation that
-    # ``AccumulatorCopyChainToWCR`` + ``LoopToMap`` then lift to a parallel WCR-map.
+    # reduction_to_wcr_map: scalar accumulator loops (s313, s4115) -> parallel WCR maps with a
+    # privatized Scalar accumulator, lowered to an OpenMP ``reduction`` clause. First re-associate
+    # chained accumulations into one (s319 ``sum += a[i]; sum += b[i]``).
     s += [('reduction_to_wcr_map', FuseChainedScalarReductions())]
-    # The normalization steps ``LoopToReduce(wcr-scalar)`` used to run itself, now explicit so
-    # the lifter stays side-effect free on a no-match. Order is load-bearing:
-    # ``AccumulatorCopyChainToWCR`` destroys the augassign shape ``LoopToReduce`` claims and
-    # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
-    # them and ``LoopToReduce`` must not run again after it.
+    # Order: AccumulatorCopyChainToWCR destroys the shape LoopToReduce claims and creates the one
+    # RetargetWCRAccumulator claims, so it sits between them.
     s += [('reduction_to_wcr_map', RevertNonReductionWCR())]
-    # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
-    # a carried dependency; leave DOALL-eligible top-level loops untouched. Nesting alone pins
-    # nothing: whether a reduction map inside a sequential loop earns its OpenMP region is a CPU
-    # question, decided in the ``cpu_specialize`` band by
-    # ``SequentializeUnprofitableParallelScopes``.
+    # Pin top-level loops LoopToMap refuses on a carried dependence. Nesting alone pins nothing;
+    # that CPU question belongs to ``SequentializeUnprofitableParallelScopes``.
     s += [('reduction_to_wcr_map', PinCarriedTopLevelLoops())]
     s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('reduction_to_wcr_map', PropagateMemlets())]
     s += [('reduction_to_wcr_map', ParallelizeLoops(propagate=False))]
-    # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
-    # states whose intermediate transients share names across siblings --
-    # scratch arrays as much as scalars. Renaming each scope's transient
-    # here keeps the downstream structural cleanup's same-name candidate
-    # list short -- defence-in-depth for the StateFusionExtended same-
-    # name writer-merge guard.
+    # Rename per-scope transients LoopToMap cloned, keeping the fusion same-name guard's list short.
     s += [('reduction_to_wcr_map', _PrivatizeScalarsStage()), ('reduction_to_wcr_map', _PrivatizeArraysStage())]
     s += _inline_single_state('reduction_to_wcr_map')
     s += _structural_cleanup('reduction_to_wcr_map')
@@ -1497,85 +1071,38 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # normalize_reduction run is one band too early to see it (tsvc s4115). Idempotent.
     s += [('reduction_to_wcr_map', NormalizeWCR())]
 
-    # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed
-    # adjacent-equal collision count + post-region trap`` guard on each scatter
-    # ``idx`` array, then permissively lifts the now-safe loops. Parallelizes the TSVC
-    # scatter family (s491, vas, s4113) and additionally catches the cases LoopToMap
-    # refused conservatively in the preceding ``parallelize`` stage (+27 maps on the
-    # 151-kernel corpus: 89L/82M/3R -> 52L/109M/3R). The sink-tasklet shape that
-    # previously blocked wiring is gone: the comparison map writes via WCR ``+``
-    # into a ``int64`` counter, and a separate sequential ``trap_state`` reads the
-    # counter as an interstate-edge-bound symbol and traps if positive -- the trap
-    # tasklet has no connectors (the symbol-only convention is satisfied).
-    # ``assume_parallel_guards`` skips the sort + duplicate-count guard entirely
-    # and lifts each scatter unconditionally (caller asserts every idx array is a
-    # permutation); default keeps the sound sort-based guard. A collision takes the
-    # sequential clone rather than aborting: the guard dispatches between the parallel
-    # Map and the original loop, and on GPU the fallback's host copies stay inside it.
+    # scatter: a runtime sort + collision-count guard per scatter ``idx`` array, then a permissive
+    # lift (s491, vas, s4113; +27 maps on the 151-kernel corpus). A collision takes the sequential
+    # clone. ``assume_parallel_guards`` skips the guard.
     if scatter_to_guarded_maps:
         s += [('scatter',
                ScatterToGuardedMaps(emit_unparallelized_else_branch=True, assume_no_conflicts=assume_parallel_guards))]
 
-    # post_l2m: insert assign tasklets at map boundary, then inline the single-state bodies
-    # LoopToMap left -- after LoopToMap. State fusion waits for the ``fuse`` cleanup phase.
-    #
-    # Load-bearing, measured: dropping it leaves tsvc ``va`` (``a[i] = b[i]``) as a plain
-    # Map (0L/0M -> 0L/1M over the corpus) instead of the Memcpy library node
-    # ``AssignmentAndCopyKernelToMemsetAndMemcpy`` lifts it to -- that recogniser matches the
-    # assign tasklet this pass plants on the boundary copy.
+    # post_l2m: plant assign tasklets on map-boundary copies (without them tsvc ``va`` stays a Map
+    # instead of a Memcpy), then inline the single-state bodies.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _inline_single_state('post_l2m')
-    # Rebuild the scope summaries the inline above invalidated (see the note at the first
-    # parallelize stage). An inlined RMW body leaves its whole-array boundary memlet on the
-    # enclosing map exit, and codegen then reads that box as the write set: the outer map param
-    # does not vary it, so a per-element accumulation is emitted as an atomic it does not need.
+    # Rebuild scope summaries: a stale whole-array box on the map exit makes codegen emit atomics.
     s += [('post_l2m', PropagateMemlets())]
 
     # coalesce: prepare the graph for maximal map fusion now that the DOALL
     # loops have become maps -- see ``_coalesce`` for the per-step rationale.
     s += _coalesce()
 
-    # loop_fuse (post-parallelize recovery): every DOALL loop is now a Map, so the
-    # remaining LoopRegions are exactly the sequential residue LoopToMap refused.
-    # ``ReconstructWavefrontNest`` runs FIRST (gated, off by default): a stencil body
-    # whose slice-vectorized statement stayed a Map beside its sequential scan
-    # LoopRegion is an imperfect nest ``WavefrontSkew`` refuses outright, so this
-    # rebuilds the single-LoopRegion body it requires, committing only when a trial
-    # proves the rebuild unlocks a skew. ``FuseLoops`` fuses consecutive same-range
-    # sequential siblings (locality; it cannot touch the already-parallel Maps, which
-    # it never matches). ``WavefrontSkew`` then makes its final parallelization attempt
-    # on those residual 2-D nests (seidel / nussinov and any nest the two passes above
-    # merged), and a second ``LoopToMap`` maps the inner axis it exposes. This is the
-    # single home of wavefront skewing: it only ever runs on what LoopToMap could not take.
+    # loop_fuse: only the sequential residue is still a LoopRegion. ReconstructWavefrontNest (knob)
+    # rebuilds a Map-beside-scan body for WavefrontSkew; FuseLoops fuses same-range siblings;
+    # WavefrontSkew (its single home) skews residual 2-D nests; LoopToMap maps the exposed axis.
     if reconstruct_wavefront_nest:
-        # Same WCRToAugAssign-before-MapToForLoop ordering the 'lower' stage above establishes:
-        # ReconstructWavefrontNest drives MapToForLoop, whose "a surviving WCR output is a genuine
-        # reduction" refusal is only true once the conflict-free ones are already reverted. The
-        # slice statement's ``A[i, 1:-1] += ...`` is a MULTI-element tasklet write at 'lower' time,
-        # which WCRToAugAssign must refuse (a scalar aug-assign tasklet over an array memlet would
-        # codegen ``double* + double*``); only after LoopToMap splits the slice into a per-element
-        # map body is the write scalar and the spurious WCR revertible (polybench seidel_2d).
+        # Revert WCRs before ReconstructWavefrontNest drives MapToForLoop, as in 'lower'. Only now is
+        # seidel_2d's slice write per-element and revertible.
         s += [('loop_fuse', RevertNonReductionWCR())]
-        # ...then tidy, because reverting the WCR is what makes the body inlinable at all: while the
-        # RMW lives in the WCR, the body NestedSDFG's in/out connector for the destination has NO
-        # read AccessNode inside, and ``InlineSDFG`` refuses a connector with no valid matching
-        # access node. Inlining is what replaces the whole-array boundary memlet with the body's
-        # real ``A[i, j+1]``, which every downstream dependence test needs.
+        # Reverting makes the body inlinable; inlining replaces the whole-array boundary memlet.
         s += _inline_single_state('loop_fuse')
         s += [('loop_fuse', ReconstructWavefrontNest())]
-    # GPU only: a state stranded between two loops blocks LoopFusion outright (it matches a two-node
-    # path graph). SinkStateIntoLoop above already recovers the case where the state can be replicated
-    # per iteration; ReorderStateForLoopFusion recovers the disjoint case instead, reordering the state to after the
-    # second loop. GPU-gated because there fusing is worth more than the tidier block order -- one
-    # kernel launch instead of two -- while on CPU the two loops cost about the same either way.
-    # Measured over all four corpora at both targets: it fires ZERO times, so un-gating it to CPU
-    # was not justified. The 14 loop-state-loop chains that exist all die on a RAW, a NestedSDFG in
-    # the second loop, or an interstate assignment -- and tsvc produces no chain at all, because
-    # LoopToMap has consumed the loops before this stage runs.
+    # GPU only: reorder a disjoint state stranded between two loops so they fuse (one launch).
+    # Fires zero times on all four corpora, so it stays GPU-gated.
     if target == 'gpu':
-        # Wrapped because it declares ``depends_on([AccessSets])``: stages are applied with an empty
-        # results dict, so a bare dependency-bearing pass trips ``_assert_self_contained`` -- which
-        # is why the original bare wiring made ``canonicalize(target='gpu')`` raise outright.
+        # Wrapped: it depends on AccessSets and stages run with an empty results dict.
         s += [('loop_fuse', ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [('loop_fuse', FuseLoops())]
     s += [('loop_fuse', WavefrontSkew(target=target))]
@@ -1584,86 +1111,31 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('loop_fuse', ParallelizeLoops(propagate=False))]
     s += _inline_single_state('loop_fuse')
 
-    # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
-    # data-movement out of them -- a contiguous element-wise copy -> a Copy library
-    # node, a constant-zero write -> a Memset node (the map is fissioned first if it
-    # mixes compute with data movement). This is the proper home for a unary copy /
-    # transpose (einsum 'i->i' / 'ij->ji'): LiftEinsum deliberately skips those (it
-    # requires >=2 tensor operands), so without this pass durbin's ``y[i] = z[i]``
-    # would stay a naive map. Must run AFTER the loop->map lifting (it only matches
-    # MapEntry nodes) and before the compute-map transforms / the einsum lift.
+    # lift_copy: contiguous copy / zero maps -> Copy / Memset (fissioning mixed maps first). Home of
+    # unary copies LiftEinsum skips (durbin ``y[i] = z[i]``); matches MapEntry nodes only.
     if semantic_lifting and lift_copy:
         s += [('lift_copy', AssignmentAndCopyKernelToMemsetAndMemcpy())]
         s += _inline_single_state('lift_copy')
 
-    # interchange (post-parallelize, both modes): a sequential loop that survived
-    # parallelize but wraps a parallel map (e.g. a recurrence sweep ``for t {
-    # map[i] }``) is interchanged to ``map[i] { for t }`` so the parallel axis is
-    # outer and the carry runs sequential-per-thread. Target-gated: always on GPU
-    # (one kernel instead of one launch per loop iteration); on CPU only when it
-    # lowers the innermost iterated stride (see MoveLoopIntoMapGated). This is the
-    # loop<->map stride minimizer -- the map-only (MinimizeStridePermutation) and
-    # loop-only (LoopStridePermutation) passes cannot cross that boundary. The
-    # produced ``map { nsdfg { loop } }`` is flattened by the following cleanup.
+    # interchange: ``for t { map[i] }`` -> ``map[i] { for t }``, always on GPU (one kernel), on CPU
+    # only when it lowers the innermost stride. The only loop<->map stride minimizer.
     s += [('interchange', MoveLoopIntoMapGated(target=target))]
     s += _inline_single_state('interchange')
 
-    # TODO(perfect-nesting sift-down; GPU-oriented): a pass that turns an
-    # *imperfect* nest into a perfect one so it can then be interchanged /
-    # collapsed for more parallelism. Given
-    #     for i: pre_body(i); for j: map_body(i, j); post_body(i)
-    # sift the pre/post statements INTO the inner loop guarded by the boundary
-    # iteration (the loop-region analog of the condition sift MoveIfIntoLoop
-    # already does):
-    #     for i: for j: { if j==0: pre_body(i); map_body(i, j); if j==M-1: post_body(i) }
-    # yielding a perfect nest that MinimizeStridePermutation / MapCollapse /
-    # MoveLoopIntoMapGated can then interchange. Mechanics: if the outer body is
-    # not already a NestedSDFG, wrap it as one (nest_state_subgraph); then
-    # collect the pre/post blocks, deep-copy them into guarded ConditionalBlocks
-    # as the nested CFG's first/last blocks. Works for both Maps and LoopRegions
-    # (map -> for-loop first). NOT an automatic transform for loops with real
-    # cross-iteration dependencies (interchange is unsound there) -- it is a
-    # parallelism-enabling rewrite, most valuable on GPU (perfect nest -> one
-    # kernel), less so on CPU. Needs unit tests. See PerfectLoopNesting (the
-    # data-independent statement-fission analog) for the group-analysis prior art.
-
-    # TODO: privatize_reduction -- PrivatizeReductionAccumulator rewrites
-    # WCR-on-array-element reductions to WCR-on-scalar + init + writeback so
-    # the eventual WCR codegen can emit a clean ``#pragma omp parallel for
-    # reduction(op:scalar)`` clause. Standalone-tested correct on s313, but
-    # interacts badly with the trailing _structural_cleanup in the full
-    # pipeline (StateFusion/InlineSDFG re-fuse the new init/writeback states
-    # with the map state in a way that drops the map). Needs further work --
-    # likely a smarter cleanup-skip mechanism for the privatize-introduced
-    # states, or a different ordering w.r.t. the cleanup. Once stable:
-    #
-    # s += [('privatize_reduction', PrivatizeReductionAccumulator())]
-    # s += _structural_cleanup('privatize_reduction')
-
-    # reorder: permute the now-parallel map nests for unit stride (the loops
-    # that were LoopToMap-eligible). Symbolic-safe: undeducible strides ->
-    # no permutation.
+    # TODO(GPU): sift pre/post statements of an imperfect nest into the inner loop under boundary
+    # guards (``if j == 0: pre(i)``), giving a perfect nest to interchange / collapse. Only for loops
+    # without cross-iteration dependences. Prior art: PerfectLoopNesting.
+    # TODO: wire PrivatizeReductionAccumulator (+ a structural cleanup). Correct standalone on s313,
+    # but the trailing cleanup re-fuses its init/writeback states and drops the map.
+    # reorder: permute parallel map nests for unit stride; undeducible strides -> no permutation.
     s += [('reorder', MinimizeStridePermutation())]
 
-    # collapse: fold a perfect parallel map nest (``map i: { map j }``, the
-    # shape maximal LoopFission leaves for a fully-parallel statement) into one
-    # multi-dimensional map (``map[i, j]``). This is the canonical form for a
-    # fully-parallel nest, and -- being N-dimensional -- it no longer matches a
-    # sibling 1-D map for horizontal fusion, so the perfect loop nesting that
-    # maximal fission produced for differently-parallel statements (e.g. a
-    # parallel ``map[i, j]`` beside a carried ``map i: { loop j }``) survives
-    # the fuse stage instead of being re-merged into one mixed-parallelism map.
+    # collapse: ``map i: { map j }`` -> ``map[i, j]``, the canonical fully parallel form. Being N-D it
+    # no longer fuses horizontally with a 1-D sibling, so mixed-parallelism nests stay apart.
     s += [('collapse', PatternApplyOnceEverywhere([MapCollapse()]))]
 
-    # fuse: first recombine adjacent identical-condition ConditionalBlocks
-    # (ConditionFusion -- the inverse of branch-replicated fission, so maps
-    # split across replicated guards become co-located). ConditionFusion
-    # emits the full cartesian product of branch combinations; LiftTrivialIf
-    # drops the provably-unsatisfiable ones (``c and not c``) so the guards'
-    # maps actually co-locate. Then structural-clean so the recombined
-    # branch's maps share a state, then vertical+horizontal map fusion in one
-    # fixpoint (vertical priority; horizontal can expose further vertical
-    # opportunities; no FindSingleUseData).
+    # fuse: ConditionFusion recombines identical guards split by fission, LiftTrivialIf drops the
+    # unsatisfiable combinations, cleanup co-locates the maps, then vertical + horizontal fusion.
     s += [('fuse', FuseConditions(matcher_order=True))]
     s += [('fuse', LiftTrivialIf())]
     s += _inline_single_state('fuse')
@@ -1671,133 +1143,51 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('fuse', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [('fuse', ppl.Pipeline([FuseMaps()]))]
 
-    # A map that only fills a transient for an immediately following reduction is that reduction:
-    # ``maxv = max(|a[i]|)`` reaches here as ``map -> _argf_buf[LEN_1D] -> Reduce``, so the
-    # canonical form allocates a whole problem-size buffer to hold values the reduction consumes
-    # once (s3113: 4.166 GB at XL). Fusing folds the producer in and leaves a WCR map -- the shape
-    # that already IS the exposed parallelism -- with no buffer and no library node. Both guard on
-    # the intermediate being a transient nothing else reads, which is what makes the producer safe
-    # to delete. After MapFusion, so a producer built from several fused maps is matched whole.
+    # A map that only fills a transient for a following reduction is that reduction; fusing drops the
+    # buffer (s3113: 4.166 GB at XL). After MapFusion so multi-map producers match whole.
     s += [('fuse', PatternApplyOnceEverywhere([MapReduceFusion(), MapWCRFusion()]))]
 
-    # normalize_map_body (post-fuse): MapFusion co-locates independent guarded
-    # computations under one map but leaves each as its own NestedSDFG
-    # (``map: { nsdfg1, nsdfg2 }``), which traps two same-condition guards in
-    # separate control-flow graphs where ConditionFusion cannot reach them.
-    # NormalizeMapBody sequences the sibling NestedSDFGs into ONE, so the guards
-    # become consecutive ConditionalBlocks; the follow-up ConditionFusion folds
-    # them (``if c: {s1}; if c: {s2}`` -> ``if c: {s1; s2}``), and the single
-    # merged guard can then hoist out of the map at the terminal hoist_guards
-    # stage. Structural cleanup tidies the spliced states.
+    # normalize_map_body: merge sibling NestedSDFGs in one map body so their same-condition guards
+    # become adjacent, fuse, and later hoist out of the map at hoist_guards.
     s += [('fuse', NormalizeMapBody())]
     s += [('fuse', FuseConditions(matcher_order=True))]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
 
-    # lift: recognize a tensor-contraction map (``map[i, k, j]: c(+)[i, j] =
-    # alpha * a[i, k] * b[k, j]``) as an ``Einsum`` library node so a chain of
-    # matmuls (2mm/3mm/gemm) lowers to one BLAS GEMM per contraction at finalize
-    # instead of a naive WCR loop nest. Runs AFTER fuse (the contraction map is in
-    # final shape; the pipeline deliberately leaves 3-input WCR contractions
-    # un-reduced -- LoopToReduce refuses them -- precisely so they survive to here)
-    # and BEFORE the WCR-normalization stages (LiftEinsum cancels the map's WCR and
-    # folds it into the Einsum's beta, so it must precede normalize_wcr). A runtime
-    # scalar coefficient (gemm's ``alpha``) is wired as the Einsum's explicit
-    # ``_alpha`` connector; ``finalize_for_target`` selects the node's implementation
-    # (fast BLAS if available, else a pure contraction SDFG) and codegen expands it.
-    # Non-contraction maps do not match.
-    # ``lift=False`` skips this optimization entirely (the matmul stays a correct WCR
-    # loop nest) -- a correctness-safe escape hatch while the Einsum lowering is hardened.
-    # ``semantic_lifting=False`` (set by the vectorizer) skips BOTH map->library-node
-    # lifts -- this einsum lift and the lift_copy memset/memcpy above -- so the residual
-    # stays as raw maps the vectorizer can lower (a library node is not vectorizable).
+    # lift: contraction maps (2mm/3mm/gemm) -> ``Einsum`` (one BLAS GEMM each). After fuse (final
+    # shape; LoopToReduce leaves 3-input WCR contractions for this), before normalize_wcr (the WCR
+    # folds into beta). ``alpha`` becomes an explicit connector. ``lift=False`` keeps the WCR nest;
+    # ``semantic_lifting=False`` (vectorizer) skips both map->library lifts.
     if semantic_lifting and lift:
         s += [('lift', PatternApplyOnceEverywhere([LiftEinsum()]))]
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
 
-    # hoist_guards (terminal): hoist any still-invariant guard outward. Run
-    # AFTER fuse -- the dual ``MoveIfIntoLoop`` (prep stage) has already pushed
-    # guards in to enable sibling fusion, so a terminal hoist of a guard that
-    # is STILL invariant w.r.t. the whole remaining loop nest does not undo
-    # that fusion; it lifts the surviving config-flag guards (ICON ``istep ==
-    # 1``, cloudsc ``IWARMRAIN`` etc.) to the cheapest scope. MoveLoopInvariantIfUp's
-    # dead-outside-branch match lifts past per-iteration iedge assignments
-    # (``start = jb // 4``), which stay in the now-guarded loop body.
-    #
-    # Target-gated. On CPU a guard is hoisted as far as it will go: every level
-    # it clears removes a re-evaluation from an enclosing iteration, and a guard
-    # that stalls partway is still strictly cheaper than one left innermost. On
-    # GPU a partial hoist is not a win but a hazard -- a guard stalled between
-    # two levels of a map chain splits the nest at that level, so what would
-    # have been one kernel becomes a branch around several launches. There the
-    # hoist is all-or-nothing (``require_full_hoist``): take it only when the
-    # guard clears the complete chain and the whole nest stays one kernel.
+    # hoist_guards: after fuse, hoist still-invariant config guards (ICON ``istep == 1``, cloudsc
+    # ``IWARMRAIN``) outward; this does not undo MoveIfIntoLoop's fusion. CPU hoists as far as it
+    # goes; GPU requires a full hoist, since a guard stalled mid-chain splits the kernel.
     s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=(target == 'gpu')))]
 
-    # By this point fully-parallel guarded nests are collapsed maps, so the
-    # surviving invariant guard sits inside a map body (not a loop) where
-    # MoveLoopInvariantIfUp cannot reach it. MoveMapInvariantIfUp is its map
-    # analogue / the inverse of MoveIfIntoMap: a guard whose condition does not
-    # depend on the map parameters is lifted out of the map, one map copy per
-    # branch (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else
-    # { map[i, j]: B }``), so each branch is a clean unconditional parallel map.
-    # Same target gate as the loop-side hoist above: on GPU a guard that stalls
-    # between two levels of a map chain splits the nest there, so take the
-    # hoist only when it clears the whole chain and the nest stays one kernel.
+    # The map analog (inverse of MoveIfIntoMap): one map copy per branch. Same GPU gate.
     s += [('hoist_guards', MoveMapInvariantIfUp(require_full_hoist=(target == 'gpu')))]
 
-    # normalize_wcr: WCR edges sourced from a Tasklet/NestedSDFG get an intermediate
-    # private AccessNode inserted, so every WCR edge sources from an AccessNode (the
-    # canonical reduction shape the downstream codegen recognises). Necessary because
-    # the codegen's WCR if-branch only fires for scalar-typed CodeNode outputs:
-    # vectorization-style map-body NSDFGs (pointer-typed output) would otherwise lose
-    # the reduction and produce a parallel race.
+    # normalize_wcr: source every WCR edge from an AccessNode; codegen's WCR branch only fires for
+    # scalar CodeNode outputs, so pointer-typed nsdfg outputs would race.
     s += [('normalize_wcr', NormalizeWCRSource())]
 
-    # revert_nonreduction_wcr: WCRs that never became a genuine reduction (left in
-    # sequential loops, or injective in-place updates) go back to explicit aug-assigns;
-    # WCRToAugAssign's injectivity gate keeps real in-map reductions + scatters as WCR.
+    # Revert WCRs that never became genuine reductions; the injectivity gate keeps real ones.
     s += [('revert_nonreduction_wcr', RevertNonReductionWCR())]
 
-    # relax_powers: freeze a provable non-negative integer ``base ** exp`` to the exact integer
-    # ``ipow`` on the size / subscript / bound sites WHILE the loop-iterator ranges that prove the
-    # exponent non-negative are still live. This must be a canonicalization pass, NOT deferred to
-    # codegen: an earlier ``SimplifyPass`` folds ``R**i * R**(K-i-1)`` (both exponents
-    # range-nonnegative inside the enclosing loop) into ``R**(K-1)``, and by codegen that size is a
-    # persistent state-struct allocation OUTSIDE any loop -- the range that proved ``K-1 >= 0`` is
-    # gone, so the codegen-time relax leaves a ``dace::math::pow`` (double) size that is not
-    # integral (``new complex128[...]`` -> compile error, stockham_fft).
-    # (This does NOT harm ``N**2``-style sizes: freezing ``N**2 -> ipow(N, 2)`` is value-exact;
-    # an earlier suspicion that it miscompiled gramschmidt was a misdiagnosis -- that was an
-    # uninitialized WCR read whose layout the relax merely perturbed.)
+    # relax_powers: provable nonnegative integer ``base ** exp`` -> ``ipow`` while the loop ranges
+    # that prove it are live. By codegen a folded size (``R**(K-1)``) sits outside any loop and would
+    # stay a double ``pow`` (stockham_fft compile error). Value-exact for ``N**2`` sizes.
     s += [('relax_powers', RelaxIntegerPowers())]
 
-    # end (reclaim): the two reclaimers, on their own -- NOT a SimplifyPass. These are the only parts of
-    # the former terminal simplify the recipe actually relied on; the rest of ``SIMPLIFY_PASSES``
-    # (inlining, state fusion, control-flow raising, scalar-to-symbol promotion, constant
-    # propagation) is either done by dedicated stages above or actively unwanted this late.
-    #
-    # ``DeadDataflowElimination`` first: ``SplitStatements`` replicates a statement per independent
-    # output, and a replica whose output no later stage consumes (``fission_dep_then_indep``'s
-    # ``nested_sdfg_a`` chain -- an uninitialized read feeding a write nothing reads back) is orphaned
-    # only AFTER the ``reduce`` simplifies have run, by the fission / parallelize stages that drop its
-    # consumer. Nothing else in the recipe removes a dead chain.
-    #
-    # ``ArrayElimination`` second, on the smaller graph: ``MapFusionVertical`` mints a fresh
-    # ``__map_fusion_<x>`` carrier per fused edge, so a value consumed by two fused consumers (the
-    # ``fuse_diamond`` shape) ends up with a second carrier that is a plain copy of the first. The
-    # post-fuse ``RedundantArray`` below cannot fold that -- it only redirects a transient's WRITERS,
-    # which is impossible while the SOURCE still has another reader -- and the mirrored
-    # ``RedundantSecondArray`` is unsafe to run bare (it would redirect a copy's READERS onto a WAR
-    # carrier, TSVC s212). ``ArrayElimination`` is the pass that carries the ``_is_war_carrier`` /
-    # ``_state_has_read_write_sibling_carrier`` guards for exactly that case.
-    #
-    # Wrapped in a ``Pipeline`` because both declare dependencies (``ControlFlowBlockReachability`` /
-    # ``AccessSets``, ``StateReachability`` / ``FindAccessStates``), the same way ``ScalarFission`` /
-    # ``ArrayFission`` are above. Placed where the terminal simplify used to sit, so the reclamation
-    # point is unchanged and the stages after it see the graph they were written against.
+    # end: the two reclaimers the former terminal SimplifyPass was needed for, nothing else.
+    # DeadDataflowElimination drops SplitStatements replicas orphaned by fission / parallelize.
+    # ArrayElimination then folds duplicate ``__map_fusion_<x>`` carriers (fuse_diamond) with the WAR
+    # guards bare RedundantSecondArray lacks (TSVC s212). Wrapped: both declare dependencies.
     s += [('end', ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
 
     # ...then tidy the state machine, with the recipe's own between-phase helper rather than a
