@@ -19,9 +19,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-
-#: ``{PatternNode: node}`` binding for one candidate.
-Binding = Dict[Any, nodes.Node]
+from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import Binding, apply_at_candidates
 
 
 def trivial_tasklet_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
@@ -87,37 +85,4 @@ class EliminateTrivialTasklets(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: Number of eliminated tasklets, or ``None`` if none.
         """
-        applied = 0
-        changed = True
-        while changed:
-            changed = False
-            for sd in sdfg.all_sdfgs_recursive():
-                for state in sd.states():
-                    count = self._eliminate_state(sd, state)
-                    applied += count
-                    changed = changed or count > 0
-        return applied or None
-
-    def _eliminate_state(self, sdfg: SDFG, state: SDFGState) -> int:
-        """Eliminate every acceptable copy tasklet in one state, restarting after each removal.
-
-        :param sdfg: The SDFG owning ``state``.
-        :param state: The state to rewrite in place.
-        :returns: Number of removals performed in ``state``.
-        """
-        applied = 0
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        changed = True
-        while changed:
-            changed = False
-            for expr_index, binding in trivial_tasklet_candidates(state):
-                xform = TrivialTaskletElimination()
-                xform.setup_match(sdfg, cfg_id, state_id, {k: state.node_id(v) for k, v in binding.items()}, expr_index)
-                if not xform.can_be_applied(state, expr_index, sdfg):
-                    continue
-                xform.apply(state, sdfg)
-                applied += 1
-                changed = True
-                break
-        return applied
+        return apply_at_candidates(sdfg, TrivialTaskletElimination, trivial_tasklet_candidates) or None

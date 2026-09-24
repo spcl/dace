@@ -54,6 +54,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
 def _const_pos_int(value) -> Optional[int]:
@@ -136,14 +137,11 @@ def _node_side_subset(state, edge, node):
     return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
-def _extract_permutation_copy(state: SDFGState):
-    """Match a pure cross-array copy of one ``d``-D array to a DISTINCT ``d``-D
-    array in ``state``: read one array at a single point, pass the value through
-    only copy-passthrough nodes (transient scratch AccessNodes and/or
-    ``__out = __inp`` copy tasklets), and write a DIFFERENT array at a single
-    point.
+def match_copy_chain(state: SDFGState):
+    """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
+    only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
 
-    :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
+    :returns: ``(src, sink, read_subset, write_subset)`` or ``None``.
     """
     sdfg = state.sdfg
     access = [n for n in state.nodes() if isinstance(n, nodes.AccessNode)]
@@ -156,25 +154,33 @@ def _extract_permutation_copy(state: SDFGState):
     if len(sources) != 1 or len(sinks) != 1:
         return None
     src, sink = sources[0], sinks[0]
-    if src.data == sink.data:
-        return None  # in-place -- LoopToSymmetrize's domain
-    in_array, out_array = src.data, sink.data
-    # Any intermediate access node must be a transient scratch (not an operand).
     for n in access:
         if n is src or n is sink:
             continue
         desc = sdfg.arrays.get(n.data)
         if desc is None or not desc.transient:
             return None
-    src_oes = [e for e in state.out_edges(src) if e.data is not None and not e.data.is_empty()]
-    sink_ies = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
+    src_oes = value_edges(state.out_edges(src))
+    sink_ies = value_edges(state.in_edges(sink))
     if len(src_oes) != 1 or len(sink_ies) != 1:
         return None
-    read_subset = _node_side_subset(state, src_oes[0], src)
-    write_subset = _node_side_subset(state, sink_ies[0], sink)
+    return src, sink, _node_side_subset(state, src_oes[0], src), _node_side_subset(state, sink_ies[0], sink)
+
+
+def _extract_permutation_copy(state: SDFGState):
+    """Match a pure copy chain from one ``d``-D array to a DISTINCT one, both at a single point.
+
+    :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
+    """
+    m = match_copy_chain(state)
+    if m is None:
+        return None
+    src, sink, read_subset, write_subset = m
+    if src.data == sink.data:
+        return None  # in-place -- LoopToSymmetrize's domain
     if read_subset is None or write_subset is None:
         return None
-    return in_array, out_array, read_subset, write_subset
+    return src.data, sink.data, read_subset, write_subset
 
 
 def _axis_affine(idx, loop_var_syms):

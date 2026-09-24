@@ -185,33 +185,10 @@ CMP_AST_TO_RTYPE = {
 
 
 class _Match(NamedTuple):
-    """A successfully matched argmax/argmin loop.
-
-    :param op: ``Max`` or ``Min``.
-    :param loop: The :class:`LoopRegion` to rewrite.
-    :param parent: ``loop.parent_graph`` (cached).
-    :param carrier_name: The carrier scalar's data name (``x`` in s314).
-    :param carrier_kind: ``'scalar'`` or ``'length_one_array'``.
-    :param carrier_subset: The carrier's single-point subset (``[0]``).
-    :param input_array: The reduced-over array's data name (``a`` in s314).
-    :param iter_start: Loop start expression.
-    :param iter_end: Loop inclusive end expression.
-    :param idx_carrier_name: The index carrier symbol (``index`` in s315), when
-        the true-branch ALSO tracks the argmax/argmin position; ``None`` for the
-        value-only shape. Only the symbol-carrier path supports it (the index is
-        bound via an iedge, like the value carrier).
-    :param gather_base: Constant term ``b`` of the affine gather index
-        ``a[b + c*i]`` (``0`` for the plain ``a[i]`` gather).
-    :param gather_coeff: Loop-variable coefficient ``c`` of the affine gather
-        index (``1`` for the plain ``a[i]`` gather; a non-unit / symbolic ``c``
-        is the strided gather of TSVC s318, where ``c = inc``).
-    :param last_wins: True iff an index is tracked AND the resolved tie rule is
-        last-occurrence -- under the default ``tie_break='infer'`` that is
-        exactly "the guard is NON-STRICT (``>=`` / ``<=``)", i.e. the sequential
-        loop keeps the LAST occurrence of the extreme. The rewrite then
-        arg-reduces over the REVERSED gather (see the module docstring's
-        tie-breaking note). ``False`` -> first-occurrence, the plain forward
-        arg-reduce. Resolved by :meth:`ArgMaxLift._resolve_last_wins`.
+    """A matched argmax/argmin loop. Fields are the carrier (``x`` in s314) and input array, the
+    loop bounds, the optional index carrier (``index`` in s315, symbol carriers only), the optional
+    unary gather transform, the affine gather ``a[gather_base + gather_coeff*i]`` (s318: ``c = inc``)
+    and ``last_wins`` (non-strict guard under ``tie_break='infer'``: reduce over the reversed gather).
     """
     op: dtypes.ReductionType
     loop: LoopRegion
@@ -230,33 +207,11 @@ class _Match(NamedTuple):
 
 
 class _Match2D(NamedTuple):
-    """A matched 2-D contiguous argmax/argmin over a nested ``for i: for j:`` loop.
+    """A matched 2-D contiguous argmax/argmin over ``for i: for j:`` (TSVC s3110 / s13110).
 
-    The TSVC ``s3110`` / ``s13110`` shape: a value carrier ``maxv`` plus two index
-    carriers ``xindex := i`` (outer) / ``yindex := j`` (inner), all symbols,
-    updated together inside ``if aa[i, j] OP maxv``. When the full ``aa[i, j]``
-    access is a contiguous subset, the nested reduction is a single flat
-    arg-reduce over ``aa`` viewed as 1-D; the flat index ``m`` decomposes back to
-    ``xindex = m // ncols`` / ``yindex = m % ncols`` (``ncols`` = the contiguous /
-    inner dimension size).
-
-    :param op: ``Max`` or ``Min``.
-    :param outer_loop: The outer (``i``) LoopRegion -- the rewrite removes it
-        (and the inner loop it contains).
-    :param inner_loop: The inner (``j``) LoopRegion.
-    :param parent: ``outer_loop.parent_graph`` (cached).
-    :param carrier_name: The value carrier symbol (``maxv``).
-    :param x_idx_name: The outer index carrier symbol (``xindex := i``).
-    :param y_idx_name: The inner index carrier symbol (``yindex := j``).
-    :param input_array: The reduced-over 2-D array (``aa``).
-    :param ncols: The contiguous (inner) dimension size used to decompose the
-        flat index -- ``aa.shape[1]`` for a C-contiguous array.
-    :param last_wins: True iff the resolved tie rule is last-occurrence -- under
-        the default ``tie_break='infer'`` that is exactly "the guard is
-        NON-STRICT (``>=`` / ``<=``)", i.e. the sequential nest keeps the LAST
-        (row-major) occurrence of the extreme; the rewrite then arg-reduces over
-        the reversed flat order. The 2-D nest always tracks both indices, so the
-        knob always applies here.
+    Value carrier plus ``xindex := i`` / ``yindex := j``; the nest becomes one flat arg-reduce over
+    ``aa`` whose index ``m`` decomposes to ``m // ncols`` / ``m % ncols``. ``last_wins`` as in
+    :class:`_Match`, always applicable here.
     """
     op: dtypes.ReductionType
     outer_loop: LoopRegion
@@ -336,8 +291,6 @@ class GuardReadWiring(ast.NodeTransformer):
             self.refused = True
             return node
         idx = node.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             self.refused = True
             return node
@@ -873,8 +826,6 @@ class ArgMaxLift(ppl.Pass):
         if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
             return None
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if not isinstance(idx, ast.Tuple) or len(idx.elts) != 2:
             return None
         d0, d1 = idx.elts
@@ -1092,8 +1043,6 @@ class ArgMaxLift(ppl.Pass):
             return None
         array = left.value.id
         idx = left.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             return None
         try:
@@ -1166,8 +1115,6 @@ class ArgMaxLift(ppl.Pass):
             if arr not in sdfg.arrays:
                 continue
             idx = tree.slice
-            if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-                idx = idx.value
             # Only a single 1-D affine index is handled; a multi-dim subscript
             # ``a[i, j]`` (ast.Tuple / Slice) is refused (the 2-D argmax of TSVC
             # s3110 / s13110 is out of scope).
@@ -1380,8 +1327,6 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
             return False
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             return False
         try:
@@ -1491,29 +1436,12 @@ class ArgMaxLift(ppl.Pass):
 
     def _verify_affine_seed(self, loop: LoopRegion, sdfg: SDFG, value_carrier: str, idx_carrier: Optional[str],
                             array: str, base: Any, coeff: Any, start: Any, transform: Optional[str]) -> bool:
-        """Verify the pre-loop seed sits where the rewrite assumes: the value
-        carrier must be seeded ``value_carrier := [f](array[Q])`` with ``Q`` equal
-        to the gather's seed-iteration position ``base + coeff*(start-1)``, and --
-        when an index carrier is present -- ``idx_carrier := (start-1)``.
+        """Check the pre-loop seed is ``value_carrier := [f](array[base + coeff*(start-1)])`` and, with
+        an index carrier, ``idx_carrier := start-1``.
 
-        This is the load-bearing assumption of every rewrite that DROPS the
-        pre-loop bind and reconstructs the seed positionally: the transform+index
-        buffer, whose ``buf[0] = f(a[base + coeff*(start-1)])`` stands in for the
-        seed and whose index bind ``idx_carrier := (start-1) + idx_buf`` yields the
-        seed's init index, and the plain symbol value-only reduction, whose emitted
-        slice extends down to that same seed position. Nothing in the match forces
-        the seed to read there -- a loop seeded from anywhere else reduces over a
-        set that both omits the real seed and includes an element the loop never
-        gathers -- so refuse when it cannot be proven.
-
-        ``idx_carrier`` is ``None`` on the value-only path, where there is no index
-        to check and the position comparison alone is the requirement.
-
-        Handles the real frontend shape, where the seed is spread over a pre-loop
-        chain with indirection: ``base`` / ``coeff`` carry the secondary-IV symbol
-        ``k`` (bound pre-loop to ``inc``), and the value seed is ``maxv :=
-        abs(a_index)`` with ``a_index := a[0]`` on an earlier edge. Both the
-        position comparison and the gather lookup substitute the chain's bindings.
+        Rewrites that drop the pre-loop bind reconstruct the seed positionally; a seed read anywhere
+        else would change the reduced set, so refuse unless proven. Substitutes the frontend's pre-loop
+        binding chain (secondary IV ``k := inc``, ``maxv := abs(a_index)``, ``a_index := a[0]``).
         """
         preloop = self._collect_preloop_assignments(loop, sdfg)
         if value_carrier not in preloop:
@@ -1591,8 +1519,6 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
             return None
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         try:
             return ast.unparse(idx)
         except Exception:  # pragma: no cover -- defensive
@@ -1730,25 +1656,12 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
 
     def _rewrite_with_index(self, m: _Match, sdfg: SDFG):
-        """Replace an argmax/argmin-with-index loop (TSVC s315) with an
-        :class:`~dace.libraries.standard.nodes.ArgReduce` libnode.
+        """Replace an argmax/argmin-with-index loop (TSVC s315) with a two-output ``ArgReduce``.
 
-        The lift mirrors the symbol-carrier value-only path but uses the
-        two-output ``ArgReduce`` (value + index). Both outputs are fresh
-        transient SCALARS -- ``val_buf`` (the array's dtype) and ``idx_buf``
-        (``int64``) -- bound back to the carrier symbols after the reduce:
-        ``carrier := val_buf`` and ``idx_carrier := slice_lo + idx_buf`` (the
-        ``ArgReduce`` index is slice-local; ``slice_lo`` recovers the
-        original-array position). The pre-loop seed iedges binding either
-        carrier are dropped -- the reduce subsumes them (the seed position is
-        kept by extending the input slice down to ``start - 1``).
-
-        Under a non-strict guard (``m.last_wins``) the sequential loop keeps the
-        LAST occurrence of the extreme while the ArgReduce scan keeps the first.
-        The scan is then run over a REVERSED copy of the slice (``rev[j] =
-        a[end-j]``, materialised by a parallel map), whose first extreme IS the
-        forward slice's last one; the position maps back as ``idx_carrier :=
-        end - idx_buf``.
+        Value and index land in fresh transient scalars bound back as ``carrier := val_buf`` and
+        ``idx_carrier := slice_lo + idx_buf``; the seed iedges are dropped (the slice extends to
+        ``start - 1``). Under ``m.last_wins`` the scan runs over a reversed copy and
+        ``idx_carrier := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
         start = symbolic.simplify(m.iter_start)
@@ -1903,33 +1816,11 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
 
     def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG):
-        """Replace a transformed argmax/argmin-WITH-INDEX over a (possibly
-        strided) gather -- TSVC s318, ``maxv = max(|a[k]|)`` with ``k = inc*i``
-        and ``index`` tracking the iteration of the max -- with a single
-        :class:`~dace.libraries.standard.nodes.ArgReduce` reading the gather
-        DIRECTLY, yielding the value + the slice-local index.
-
-        The gather is affine ``a[gather_base + gather_coeff*i]``; iteration
-        ``i = iter_lo + j`` reads array position ``pos_lo + coeff*j`` with
-        ``pos_lo = base + coeff*(start-1)`` (the seed sits at ``i = start-1``,
-        where ``index`` still holds its init value). That is exactly a strided
-        slice ``a[pos_lo : pos_hi : coeff]``, which the ArgReduce takes as its
-        operand, with ``transform=f`` applied per element as it reads. So there
-        is no buffer: the abs and the arg-reduction happen in one streaming pass
-        over ``a``. Staging ``buf[j] = f(a[pos_lo + coeff*j])`` first, as this
-        used to, wrote and re-read a whole extra copy of the array to hold a
-        value the scan computes in a register. The recovered iteration index is
-        ``index := iter_lo + idx_buf`` (``idx_buf`` is slice-local). Both carrier
-        seeds are dropped from the inbound iedges -- the slice's first element
-        subsumes them.
-
-        Under a non-strict guard (``m.last_wins``) the sequential loop keeps the
-        LAST extreme while the ArgReduce scan keeps the first, so the scan runs
-        over a REVERSED copy (``buf[j]`` <-> iteration ``i = end - j``, i.e.
-        array position ``base + coeff*end - coeff*j``) and the index maps back as
-        ``index := end - idx_buf``. A memlet range walks upward, so reversing the
-        order is the one case that still needs a materialised gather; no
-        non-strict guard occurs in TSVC.
+        """Replace a transformed argmax/argmin with index over an affine gather (TSVC s318,
+        ``max(|a[inc*i]|)``) by one ``ArgReduce`` reading the strided slice ``a[pos_lo : pos_hi : coeff]``
+        directly, ``transform`` applied per element; ``index := iter_lo + idx_buf``. Both carrier seeds
+        are dropped (the slice's first element subsumes them). Under ``m.last_wins`` the scan runs over
+        a materialized reversed gather and ``index := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
         start = symbolic.simplify(m.iter_start)

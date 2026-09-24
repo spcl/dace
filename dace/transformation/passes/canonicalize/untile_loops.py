@@ -83,6 +83,7 @@ from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
@@ -98,25 +99,6 @@ def count_applied(result) -> int:
     if not result:
         return 0
     return sum(len(applied) for applied in result.values())
-
-
-def _next_id(sdfg: SDFG) -> int:
-    used: Dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
-        for s in list(sd.symbols.keys()):
-            if s.startswith(UNTILE_PREFIX):
-                tail = s[len(UNTILE_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-        for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(UNTILE_PREFIX):
-                tail = cfg.loop_variable[len(UNTILE_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-    n = 0
-    while n in used:
-        n += 1
-    return n
 
 
 def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFlowRegion]:
@@ -212,27 +194,12 @@ def _is_zero(expr) -> bool:
 
 
 def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
-    """Classify an outer-loop stride as a tile size.
+    """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``.
 
-    Returns ``(K_expr, K_const)`` where ``K_expr`` is the simplified
-    stride expression and ``K_const`` is its value if the stride is a
-    concrete integer literal ``> 1``, else ``None``. Returns ``None``
-    entirely when the stride cannot be used as a tile:
-
-    * a concrete literal ``<= 1`` (``1`` is already untiled; ``<= 0`` is
-      not a forward tile);
-    * a symbolic stride that SymPy can prove is non-positive.
-
-    A **bare symbol** tile (e.g. a block-size parameter ``BS``) is accepted
-    (``K_const=None``): DaCe treats every symbol as non-negative by
-    convention -- we do *not* rely on SymPy sign assumptions -- and the
-    collapse to a unit-stride ``[start, N)`` traversal is sound for any
-    ``K >= 1`` (even the degenerate ``K == 1`` symbolic case). A **compound
-    symbolic expression** (e.g. ``s1 - s2`` or ``N // 4``) is *not* assumed
-    positive and is refused: it is not a plausible tile size and its sign
-    cannot be trusted. Symbolic tiles admit only a unit inner stride
-    (single-level untile) -- see :func:`_match_inner_case` -- because a
-    concrete stride cannot be proven to divide a symbol.
+    ``K_const`` is set for a concrete literal ``> 1``. Refused: literals ``<= 1``, provably
+    non-positive symbolic strides, and compound symbolic expressions (``N // 4``). A bare symbol
+    (``BS``) is accepted since DaCe symbols are nonnegative; symbolic tiles allow only a unit inner
+    stride (see :func:`_match_inner_case`).
     """
     try:
         s = symbolic.simplify(expr)
@@ -360,36 +327,15 @@ def _match_inner_case(inner: LoopRegion,
                       K_expr: symbolic.SymbolicType,
                       K_const: Optional[int],
                       outer_limit=None) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
-    """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)``.
+    """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)`` or ``None``.
 
-    ``clamped`` says the inner bound carried the remainder clamp. The caller MUST honour it:
-    an unclamped tile overshoots its last span and the collapsed bound has to round up to the
-    tile boundary, while a clamped one covers the parent range exactly and rounding up walks
-    off the end of the array.
+    * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``);
+    * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``).
 
-    * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``),
-    * ``'B'`` -- inner ``range(i, i + K, S)`` (body uses ``ii``),
-
-    with the inner stride ``S`` returned alongside. ``S == 1`` is the
-    classic single-level untile; ``S > 1`` (with ``S | K``) is the
-    cascade-tile intermediate level the fixpoint pass collapses one rung
-    at a time. The new loop after the rewrite uses step ``S`` (not always
-    1), so a subsequent fixpoint iteration can collapse it with the next
-    inner.
-
-    ``K_expr`` is the (possibly symbolic) outer tile size; ``K_const`` is
-    its concrete value or ``None`` when it is symbolic. A concrete tile with a
-    concrete stride admits a cascade rung iff ``S | K``. When either the tile or
-    the stride is symbolic, the rung is a whole tile only under ``K % S == 0``,
-    which cannot be proven -- ``needs_div_assumption`` is then ``True`` and the
-    caller records that relation as a runtime-trapped assumption. (The source
-    nest ``for iii in range(ii, ii+K, S): for i in range(iii, iii+S)`` already
-    requires ``S | K`` -- else its last inner tile overshoots ``ii+K`` and the
-    numpy oracle overshoots identically -- so the assumption never diverges from
-    the reference on any input the kernel is valid for.) A unit inner stride
-    needs no assumption.
-
-    Returns ``None`` if neither shape matches.
+    ``S > 1`` (with ``S | K``) is a cascade rung collapsed one level per fixpoint sweep. With a
+    symbolic tile or stride, ``S | K`` cannot be proven, so ``needs_div_assumption`` asks the caller
+    to record it (the source nest requires it anyway). ``clamped`` (remainder clamp present) must be
+    honored: an unclamped tile rounds the collapsed bound up, a clamped one must not.
     """
     stride = loop_analysis.get_loop_stride(inner)
     start = loop_analysis.get_init_assignment(inner)
@@ -707,23 +653,9 @@ class UntileLoops(ppl.Pass):
         return False
 
     def _maps_to_loops(self, sdfg: SDFG) -> int:
-        """Pre-round-trip step: lower every Map to a LoopRegion.
-
-        Sequence:
-
-        1. ``MapExpansion`` -- split multi-dim Maps so ``MapToForLoop``
-           (which only accepts uni-dim Maps) can handle them.
-        2. ``MapToForLoop`` -- each uni-dim Map becomes a LoopRegion at
-           the parent CFR. With ``inline_after=True`` (default), the
-           wrapping NSDFG is flattened in-place when it isn't itself
-           Map-scoped. NSDFGs that were created INSIDE another Map's
-           scope are left wrapped (per-iteration narrowing is
-           intentional inside a Map) and become un-scoped only after
-           their enclosing Map gets converted too.
-        3. ``ExpandNestedSDFGInputs`` + ``InlineMultistateSDFG`` --
-           post-sweep that catches the leftover wrappers from (2) once
-           every Map has become a LoopRegion. Run as a fixpoint to
-           handle deeply-nested cases.
+        """Lower every Map to a LoopRegion: ``MapExpansion`` (``MapToForLoop`` takes 1-D maps only),
+        ``MapToForLoop`` (inlining unscoped wrappers), then a fixpoint of ``ExpandNestedSDFGInputs`` +
+        ``InlineMultistateSDFG`` for wrappers that were map-scoped until their enclosing map lowered.
         """
         from dace.transformation.dataflow.map_expansion import MapExpansion
         from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -920,42 +852,15 @@ class UntileLoops(ppl.Pass):
         if needs_div_assumption:
             record_assumption(sdfg, sympy.Eq(sympy.Mod(K_expr, inner_stride), 0))
 
-        # Synthesise the new iterator with step = ``inner_stride`` and
-        # rewrite both loops in place. ``inner_stride == 1`` is the
-        # classic single-level untile (collapsed loop runs unit stride);
-        # ``inner_stride > 1`` is an intermediate cascade rung that the
-        # fixpoint pass collapses with its own inner on a subsequent
-        # iteration.
-        k_var = f"{UNTILE_PREFIX}{_next_id(sdfg)}"
+        # New iterator with step ``inner_stride``; > 1 is a cascade rung collapsed on a later sweep.
+        k_var = f"{UNTILE_PREFIX}{lowest_free_suffix(sdfg, (UNTILE_PREFIX, ))}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
-        # Exclusive upper bound for the collapsed iterator is the union of the
-        # tile spans the original nest actually visits. The outer walks tile
-        # origins ``ii = outer_start + m*K`` for every ``ii < stop`` (where
-        # ``stop = outer_end + 1`` is the outer's exclusive upper bound), and the
-        # inner covers ``[ii, ii + K)``. So the last visited element is
-        # ``last_origin + K`` where ``last_origin`` is the largest origin below
-        # ``stop`` -- i.e. the union end is ``stop`` rounded UP to the next tile
-        # boundary above ``outer_start``: ``outer_start + ceil((stop -
-        # outer_start) / K) * K``.
-        #
-        # When the tile evenly divides the span (the classic ``for i in
-        # range(0, N, K): for ii in range(0, K)`` shape with ``K | N``,
-        # ``outer_start == 0``) this reduces to exactly ``stop == N`` -- the old
-        # ``outer_end + 1`` formula. But a tiled stencil walks the interior with
-        # ``stop = LEN - 1 - K`` (NOT a tile multiple), so the last tile overshoots
-        # ``stop`` and ``outer_end + 1`` truncated the final tile (missed its tail
-        # rows/cols). The earlier ``outer_end + outer_stride`` over-shot the other
-        # way (a full extra tile). The round-up is the exact union.
-        #
-        # One shape rounds up to a WRONG bound: a rung that walks a fixed-width window carved out
-        # by an enclosing loop (``for iiii in range(iii, iii + T2, T3)`` inside the ``T2`` tile).
-        # There the window IS the union, and the source nest is only well formed when the rung
-        # divides it -- otherwise its own last tile overshoots the window, exactly as for the
-        # cascade-stride rung above. With a symbolic width the round-up cannot fold, so it leaves
-        # ``T3*int_ceil(T2, T3)`` where the enclosing rung expects ``T2``, and the next fixpoint
-        # sweep no longer recognises the pair (measured on ``jacobi2d_triple_tiled_sym``: the
-        # cascade stalled with two of three levels collapsed). Take the window as the union and
-        # record the divisibility, same contract as the stride rung.
+        # Exclusive bound = union of visited tiles: ``stop`` rounded up to a tile boundary above
+        # ``outer_start``. Equals ``N`` when ``K | N``; a tiled stencil's interior stop is not a tile
+        # multiple, so ``outer_end + 1`` would truncate the last tile.
+        # Exception: a rung walking a fixed window of an enclosing tile (``range(iii, iii + T2, T3)``)
+        # takes the window as the union and records divisibility, else the symbolic round-up stalls
+        # the cascade (jacobi2d_triple_tiled_sym).
         stop_excl = symbolic.simplify(outer_end + 1)
         span = symbolic.simplify(stop_excl - outer_start_sym)
         if clamped:

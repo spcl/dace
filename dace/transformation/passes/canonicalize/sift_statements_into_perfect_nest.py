@@ -54,27 +54,7 @@ from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
-
-
-def _linear_order(region: ControlFlowRegion) -> Optional[List]:
-    """Blocks of ``region`` in order iff it is a plain linear chain (unconditional edges;
-    interstate assignments are allowed -- they carry statement prep); else ``None``.
-
-    Mirrors ``move_if_into_loop._linear_order`` so the two passes agree on what a
-    siftable chain is.
-    """
-    blocks = list(region.nodes())
-    edges = list(region.edges())
-    if not blocks or len(edges) != len(blocks) - 1:
-        return None
-    for e in edges:
-        if e.data.condition.as_string not in ('1', 'True', '(1)'):
-            return None
-    succ = {e.src: e.dst for e in edges}
-    order = [region.start_block]
-    while order[-1] in succ:
-        order.append(succ[order[-1]])
-    return order if len(order) == len(blocks) else None
+from dace.transformation.passes.move_if_into_loop import _linear_order
 
 
 def _provably_nonempty(loop: LoopRegion) -> bool:

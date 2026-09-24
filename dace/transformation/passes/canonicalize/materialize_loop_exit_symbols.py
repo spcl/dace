@@ -51,12 +51,13 @@ from dace import SDFG, properties, symbolic
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
-#: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
-#: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
-LITERAL_NAMES = dict.fromkeys(['True', 'False', 'None'])
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
+
+#: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
+#: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
+LITERAL_NAMES = dict.fromkeys(['True', 'False', 'None'])
 
 #: Prefix for the materialised post-loop symbol; self-identifying in dumps and
 #: collision-free against frontend or user-chosen names.

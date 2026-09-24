@@ -93,7 +93,10 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
+from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
+from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_with_state
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
 class EinsumSpec(NamedTuple):
@@ -219,26 +222,10 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
 
 
 def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None], live: Dict[str, None]) -> bool:
-    """Cheap NECESSARY conditions for the probe to collapse to one ``Einsum`` /
-    ``Transpose``. The probe pipeline (two ``SimplifyPass`` runs, ``LoopToMap``,
-    inlining, ...) costs seconds on a large nest and is pure waste on a nest that
-    cannot possibly lift, so screen the candidate structurally first:
-
-    1. Exactly ONE written array survives the probe as a boundary (non-transient)
-       descriptor. The lifted node writes exactly one output; any second visible
-       write would need a tasklet / map / loop, all of which the acceptance test in
-       :func:`_extract_einsum` / :func:`_extract_transpose` refuses. (Writes to
-       purely-internal transients do not count -- simplification removes them.)
-    2. At least TWO iteration dimensions. ``LiftEinsum`` needs a free output index
-       plus a second (contracted or outer-product) index, and the transpose shape
-       needs exactly two map parameters -- neither is reachable from a single axis.
-    3. A multiplication somewhere, OR a nest of pure copies. ``LiftEinsum`` requires
-       the fused tasklet's expression to be the PRODUCT of its input connectors, and
-       no pipeline step synthesizes a ``*``; the transpose shape instead needs the
-       map scope to hold nothing but ``__out = __inp`` copies.
-
-    (2) and (3) read the nest's states and the bodies of its ``NestedSDFG`` nodes, which the
-    probe inlines, so a nested body is screened like the nest itself."""
+    """Cheap necessary conditions for the (seconds-long) probe to collapse to one ``Einsum`` /
+    ``Transpose``: exactly one written non-transient array, at least two iteration dimensions, and a
+    multiplication or only pure copies. Nested SDFG bodies are screened too (the probe inlines them).
+    """
     boundary: Dict[str, None] = {}
     for name in written:
         desc = root.arrays.get(name)
@@ -492,16 +479,6 @@ def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Dat
     """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
     return all(
         symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape))
-
-
-def _is_copy_tasklet(node: nodes.Tasklet) -> bool:
-    """A single-input single-output pure copy ``__out = __inp``."""
-    code = node.code.as_string.strip()
-    if code.count('=') != 1:
-        return False
-    lhs, rhs = (s.strip() for s in code.split('=', 1))
-    return len(node.in_connectors) == 1 and len(node.out_connectors) == 1 and rhs in node.in_connectors and \
-        lhs in node.out_connectors
 
 
 def _boundary_axis_order(edges, probe: SDFG, transient_ok: bool):
@@ -813,7 +790,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
     # Locate the single write leaving the scope.
     write_node = None
     if entry is not None:
-        out_edges = [e for e in state.in_edges(state.exit_node(entry)) if e.data is not None and not e.data.is_empty()]
+        out_edges = value_edges(state.in_edges(state.exit_node(entry)))
         if len(out_edges) != 1:
             return None
         out_edge = out_edges[0]
@@ -844,7 +821,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         accumulates = True
     else:
         adder = out_edge.src
-        in_edges = [e for e in state.in_edges(adder) if e.data is not None and not e.data.is_empty()]
+        in_edges = value_edges(state.in_edges(adder))
         if _is_sum_tasklet(adder) and len(in_edges) == 2:
             # Aug-assign encoding: one input re-reads the output slot, the other is the product.
             visited[adder] = None
@@ -1147,7 +1124,7 @@ class LoopToEinsum(ppl.Pass):
 
     def _replace_with_einsum(self, parent: ControlFlowRegion, loop: LoopRegion, spec: EinsumSpec) -> None:
         from dace.libraries.blas.nodes.einsum import Einsum
-        state = self._replace_loop_with_state(parent, loop, loop.label + '_einsum')
+        state = replace_loop_with_state(parent, loop, loop.label + '_einsum')
         node = Einsum(loop.label + '_einsum')
         node.einsum_str = spec.einsum_str
         node.alpha = spec.alpha
@@ -1188,31 +1165,13 @@ class LoopToEinsum(ppl.Pass):
 
     def _replace_with_transpose(self, parent: ControlFlowRegion, loop: LoopRegion, spec: TransposeSpec) -> None:
         from dace.libraries.linalg.nodes.transpose import Transpose
-        state = self._replace_loop_with_state(parent, loop, loop.label + '_transpose')
+        state = replace_loop_with_state(parent, loop, loop.label + '_transpose')
         node = Transpose(loop.label + '_transpose', dtype=spec.dtype)
         state.add_node(node)
         state.add_edge(state.add_read(spec.src), None, node, '_inp',
                        Memlet(data=spec.src, subset=copy.deepcopy(spec.src_subset)))
         state.add_edge(node, '_out', state.add_write(spec.dst), None,
                        Memlet(data=spec.dst, subset=copy.deepcopy(spec.dst_subset)))
-
-    def _replace_loop_with_state(self, parent: ControlFlowRegion, loop: LoopRegion, label: str) -> SDFGState:
-        """Splice ``loop`` out of ``parent``, replacing it with a fresh (returned)
-        state that inherits the loop's in/out interstate edges. Mirrors
-        ``LoopToReduce._lift``'s CFG surgery."""
-        import dace
-        was_start = parent.start_block is loop
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-        state = parent.add_state(label, is_start_block=was_start)
-        for e in in_edges:
-            parent.add_edge(e.src, state, e.data)
-        for e in out_edges:
-            cond = e.data.condition.as_string if e.data.condition is not None else "1"
-            parent.add_edge(state, e.dst, dace.InterstateEdge(condition=cond,
-                                                              assignments=dict(e.data.assignments or {})))
-        parent.remove_node(loop)
-        return state
 
 
 __all__ = ["LoopToEinsum"]

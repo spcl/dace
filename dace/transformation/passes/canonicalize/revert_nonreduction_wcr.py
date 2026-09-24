@@ -14,7 +14,7 @@ stage that is 396 states and 368 applications, i.e. 165494 graph collapses to fi
 and it is 31% of the whole canonicalization. Six WCR edges are cheaper to look at than one
 isomorphism.
 """
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from dace import SDFG
 from dace.sdfg import nodes
@@ -85,6 +85,45 @@ def wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
                     yield 5, {WCRToAugAssign.nested: src, WCRToAugAssign.map_exit: dst, WCRToAugAssign.output: out}
 
 
+#: Enumerates ``(expr_index, binding)`` candidates in one state.
+CandidateFn = Callable[[SDFGState], Iterator[Tuple[int, Binding]]]
+
+
+def apply_at_candidates(sdfg: SDFG, xform_type: type, candidates: CandidateFn) -> int:
+    """Apply ``xform_type`` at every candidate it accepts, over ``sdfg`` and its nested SDFGs, to a fixpoint.
+
+    Each state restarts its enumeration after every rewrite; the outer sweep repeats until nothing
+    changes, because the transformations' legality can depend on whole-SDFG state.
+
+    :param sdfg: The SDFG to transform in place.
+    :param xform_type: The single-state pattern transformation to apply.
+    :param candidates: Yields ``(expr_index, binding)`` pairs for one state.
+    :returns: Number of applications.
+    """
+    applied = 0
+    changed = True
+    while changed:
+        changed = False
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                cfg_id = state.parent_graph.cfg_id
+                state_id = state.block_id
+                restart = True
+                while restart:
+                    restart = False
+                    for expr_index, binding in candidates(state):
+                        xform = xform_type()
+                        ids = {k: state.node_id(v) for k, v in binding.items()}
+                        xform.setup_match(sd, cfg_id, state_id, ids, expr_index)
+                        if not xform.can_be_applied(state, expr_index, sd):
+                            continue
+                        xform.apply(state, sd)
+                        applied += 1
+                        changed = restart = True
+                        break
+    return applied
+
+
 @transformation.explicit_cf_compatible
 class RevertNonReductionWCR(ppl.Pass):
     """Apply ``WCRToAugAssign`` at every WCR site it accepts, to a fixpoint."""
@@ -109,37 +148,4 @@ class RevertNonReductionWCR(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: Number of reverted WCRs, or ``None`` if none.
         """
-        applied = 0
-        changed = True
-        while changed:
-            changed = False
-            for sd in sdfg.all_sdfgs_recursive():
-                for state in sd.states():
-                    count = self._revert_state(sd, state)
-                    applied += count
-                    changed = changed or count > 0
-        return applied or None
-
-    def _revert_state(self, sdfg: SDFG, state: SDFGState) -> int:
-        """Revert every acceptable WCR site in one state, restarting after each rewrite.
-
-        :param sdfg: The SDFG owning ``state``.
-        :param state: The state to rewrite in place.
-        :returns: Number of rewrites performed in ``state``.
-        """
-        applied = 0
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        changed = True
-        while changed:
-            changed = False
-            for expr_index, binding in wcr_candidates(state):
-                xform = WCRToAugAssign()
-                xform.setup_match(sdfg, cfg_id, state_id, {k: state.node_id(v) for k, v in binding.items()}, expr_index)
-                if not xform.can_be_applied(state, expr_index, sdfg):
-                    continue
-                xform.apply(state, sdfg)
-                applied += 1
-                changed = True
-                break
-        return applied
+        return apply_at_candidates(sdfg, WCRToAugAssign, wcr_candidates) or None

@@ -39,7 +39,7 @@ from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks, _is_per_iter_subset
+from dace.transformation.passes.loop_fission import _linear_blocks, _is_per_iter_subset
 
 
 def _interstate_reads(block) -> List[str]:
@@ -104,27 +104,13 @@ def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[s
 
 
 def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List]]:
-    """Partition ``loop``'s linear body blocks into ordered groups, allowing a
-    FORWARD flow dependence (an earlier block writes a container -- at the
-    aligned per-iteration index -- that a later block reads at that same index)
-    to cross a group boundary. Everything else merges. ``None`` if the body is
-    not a plain linear chain of >= 2 blocks or nothing splits.
+    """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
-    Merge ``Bi``, ``Bj`` (``i < j``) sharing container ``X`` iff:
-
-    - ``X`` is WRITTEN by the later ``Bj`` -- a backward anti (WAR) / output
-      (WAW) / flow-back edge (later group -> earlier group), always fatal; or
-    - ``X`` is a forward producer->consumer (``Bi`` writes, ``Bj`` reads) whose
-      dependence is NOT provably aligned per-iteration on BOTH sides. A scalar
-      accumulator (``s = s + a[i]``; not per-iter), a future read (``a[i+1]``),
-      or any cross-iteration / unanalyzable subset falls here: distributing it
-      would let the consumer see the wrong (final, or not-yet-overwritten)
-      value. Only the aligned same-index case (atax ``tmp[i]``, covariance
-      ``cov[i,j]``) -- where the producer loop fully materialises ``X`` before
-      the consumer loop reads exactly its own index -- is safe to split.
-
-    (Conservative: a legal-but-offset forward read like ``b[i-1]`` is kept
-    fused rather than reasoned about -- soundness over completeness.)
+    ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
+    flow), or if ``Bi`` writes and ``Bj`` reads ``X`` without a provably aligned per-iteration index
+    on both sides (scalar accumulators, ``a[i+1]``, offsets like ``b[i-1]``). The aligned case (atax
+    ``tmp[i]``, covariance ``cov[i,j]``) splits. ``None`` if not a linear chain of >= 2 blocks or
+    nothing splits.
     """
     order = _linear_blocks(loop)
     if order is None or len(order) < 2:
@@ -191,24 +177,9 @@ class DistributeProducerConsumerLoop(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        count = 0
-        changed = True
-        # Each split rebuilds the CFG, so restart the scan after applying one
-        # (mirrors ``LoopFission.apply_pass``); distributing an outer loop can
-        # expose a newly-splittable inner one on the next sweep.
-        while changed:
-            changed = False
-            for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-                if not isinstance(loop, LoopRegion):
-                    continue
-                groups = _forward_flow_groups(loop)
-                if groups is None:
-                    continue
-                LoopFission._fission_blocks(loop, groups)
-                count += 1
-                changed = True
-                break
-        return count or None
+        # Function-local: ``perfect_loop_nesting`` imports this module.
+        from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops
+        return distribute_loops(sdfg) or None
 
 
 __all__ = ['DistributeProducerConsumerLoop', '_forward_flow_groups']

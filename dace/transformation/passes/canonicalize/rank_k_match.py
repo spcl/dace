@@ -33,10 +33,12 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, data as dt, subsets, symbolic
+from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
 # producer edges; a well-formed state bottoms out in a handful of steps).
@@ -101,7 +103,7 @@ class StateValueResolver:
         """
         if depth > MAX_RESOLVE_DEPTH:
             raise ValueError("rank-k resolve: dataflow too deep")
-        producers = [e for e in self.state.in_edges(node) if e.data is not None and not e.data.is_empty()]
+        producers = value_edges(self.state.in_edges(node))
         if not producers:
             return self.leaf(node.data, index)  # a read node: the value on state entry
         if len(producers) != 1:
@@ -214,6 +216,11 @@ def expressions_equal(actual: sympy.Basic, expected: sympy.Basic) -> bool:
         return bool(symbolic.simplify(sympy.expand(actual - expected)) == 0)
     except Exception:
         return False
+
+
+def full_memlet(root: SDFG, name: str) -> mm.Memlet:
+    """A whole-array memlet on ``name``, with a fresh ``Range`` (memlets never share subsets)."""
+    return mm.Memlet(data=name, subset=subsets.Range([(0, s - 1, 1) for s in root.arrays[name].shape]))
 
 
 def unit_stride(loop: LoopRegion) -> bool:
@@ -364,7 +371,7 @@ def triangle_of(subset: subsets.Subset, row: str, n) -> Optional[str]:
 
 def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subsets.Subset]:
     """The subset of the single memlet writing ``sink``."""
-    edges = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
+    edges = value_edges(state.in_edges(sink))
     if len(edges) != 1:
         return None
     return edges[0].data.subset
@@ -514,9 +521,7 @@ def square_output_ok(sdfg: SDFG, array: str, n) -> bool:
 
 def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: str) -> SDFGState:
     """Splice ``loop`` out of ``parent``, replacing it with a fresh (returned) state
-    that inherits the loop's in/out interstate edges. Mirrors ``LoopToEinsum``'s CFG
-    surgery."""
-    import dace
+    that inherits the loop's in/out interstate edges."""
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
     out_edges = list(parent.out_edges(loop))
@@ -526,7 +531,7 @@ def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: 
     for edge in out_edges:
         condition = edge.data.condition.as_string if edge.data.condition is not None else "1"
         parent.add_edge(state, edge.dst,
-                        dace.InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {})))
+                        InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {})))
     parent.remove_node(loop)
     return state
 

@@ -139,21 +139,19 @@ def test_an_side_subset_separates_the_two_ends(build_sdfg):
 
 @pytest.mark.parametrize('build_sdfg', ORIENTATIONS)
 def test_canonicalize_node_side_subset_separates_the_two_ends(build_sdfg):
-    """``LoopToSymmetrize`` / ``LoopToTranspose`` share a ``_node_side_subset`` helper that resolves
+    """``LoopToSymmetrize`` / ``LoopToTranspose`` share one ``_node_side_subset`` helper that resolves
     an endpoint's region on a copy edge. ``LoopToSymmetrize`` matches in-place transposed self-copies
     by construction, and it derives ``source_upper`` -- which triangle survives -- from which of the
     two regions is the read. Swapping them mirrors the wrong triangle.
     """
-    from dace.transformation.passes.canonicalize.loop_to_symmetrize import _node_side_subset as symmetrize_side
-    from dace.transformation.passes.canonicalize.loop_to_transpose import _node_side_subset as transpose_side
+    from dace.transformation.passes.canonicalize.loop_to_transpose import _node_side_subset
 
     sdfg = build_sdfg(f'node_side_{build_sdfg.__name__}')
     state = sdfg.states()[0]
     edge = state.edges()[0]
 
-    for side in (symmetrize_side, transpose_side):
-        assert str(side(state, edge, edge.src)) == f'{READ[0]}, {READ[1]}'
-        assert str(side(state, edge, edge.dst)) == f'{WRITE[0]}, {WRITE[1]}'
+    assert str(_node_side_subset(state, edge, edge.src)) == f'{READ[0]}, {READ[1]}'
+    assert str(_node_side_subset(state, edge, edge.dst)) == f'{WRITE[0]}, {WRITE[1]}'
 
 
 if __name__ == '__main__':

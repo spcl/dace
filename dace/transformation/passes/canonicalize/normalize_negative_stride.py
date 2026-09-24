@@ -31,7 +31,7 @@ Out of scope:
   through the new positive-iterator form.
 * While loops (no ``loop_variable``).
 """
-from typing import Dict, Optional
+from typing import Optional
 
 import dace
 from dace import SDFG, properties, symbolic
@@ -39,6 +39,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
 POS_ITER_PREFIX = '_loop_pos_'
@@ -51,26 +52,6 @@ def _is_negative(value) -> bool:
     except Exception:
         return False
     return s.is_number and s.is_negative
-
-
-def _next_id(sdfg: SDFG) -> int:
-    """Lowest ``<N>`` no existing ``_loop_pos_<N>`` symbol uses anywhere in the SDFG tree."""
-    used: Dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
-        for s in list(sd.symbols.keys()) + list(sd.free_symbols):
-            if s.startswith(POS_ITER_PREFIX):
-                tail = s[len(POS_ITER_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-        for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(POS_ITER_PREFIX):
-                tail = cfg.loop_variable[len(POS_ITER_PREFIX):]
-                if tail.isdigit():
-                    used[int(tail)] = None
-    n = 0
-    while n in used:
-        n += 1
-    return n
 
 
 @properties.make_properties
@@ -115,7 +96,7 @@ class NormalizeNegativeStride(ppl.Pass):
             return False
 
         old_var = loop.loop_variable
-        new_var = f"{POS_ITER_PREFIX}{_next_id(sdfg)}"
+        new_var = f"{POS_ITER_PREFIX}{lowest_free_suffix(sdfg, (POS_ITER_PREFIX, ), with_free_symbols=True)}"
         # Declare the new iterator. Inherit the old variable's dtype where
         # known so downstream type-inference doesn't have to redo the work.
         new_var_dtype = sdfg.symbols.get(old_var, dace.int64)

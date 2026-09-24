@@ -467,17 +467,10 @@ def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: 
 def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str):
     """Add ``key = rhs`` so it dominates ``child`` inside ``dest``.
 
-    Mirrors the placement strategy of
-    :class:`~dace.transformation.interstate.move_loop_invariant_if_up.MoveLoopInvariantIfUp._move`:
-    put the assignment on every in-edge of ``child`` within ``dest``;
-    if ``child`` has no in-edges (it is ``dest``'s start block), prepend a
-    fresh hoist state with the assignment on its outgoing edge.
-
-    ``_lands_without_race`` may have found that some in-edge already carries an assignment
-    ``rhs`` reads (a transitive chain, e.g. ``s1 = K + 1`` hoisted just ahead of
-    ``s2 = 2 * s1``): co-placing them on that edge would race, so instead every in-edge of
-    ``child`` is reconnected one hop earlier and ``key = rhs`` lands on the new edge into
-    ``child``, after all of them.
+    As in ``MoveLoopInvariantIfUp._move``: on every in-edge of ``child``, or on the edge out of a
+    fresh hoist state when ``child`` is the start block. If an in-edge already assigns something
+    ``rhs`` reads (``s1 = K + 1`` then ``s2 = 2 * s1``), the in-edges are rerouted one hop earlier so
+    ``key = rhs`` lands after them without a race.
 
     :param dest: The region the assignment is placed in.
     :param child: The block the assignment must dominate within ``dest``.

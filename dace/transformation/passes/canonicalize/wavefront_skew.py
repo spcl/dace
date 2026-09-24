@@ -77,6 +77,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
                                                                          skew_label, tile_label, WAVEFRONT_TILE_COLUMN,
@@ -94,49 +95,12 @@ SKEW_P_PREFIX = '_skew_p_'
 #: NOT better -- 256 leaves 3 tile columns at N=768, fewer than the thread count.
 DEFAULT_TILE_SIZE = 64
 
-#: Default extent of a skewed tile on each axis for the GPU lowering. A tile diagonal replaces one
-#: kernel launch per ELEMENT anti-diagonal with one per TILE anti-diagonal: at N = 16746 that is
-#: 523 launches instead of 33,491, and it restores unit stride to the innermost access, which the
-#: element diagonal walks N-1 elements (131 KB) apart -- a separate memory transaction per lane.
-#: 128 makes the intra-tile anti-diagonal at most 128 wide -- two CDNA wavefronts, the low end of
-#: the 2-4 warps a thread block wants. One wavefront per block leaves nothing for the scheduler to
-#: overlap against a memory stall; more than four buys nothing here, because the anti-diagonal
-#: ramps and the extra lanes are masked off for most of the tile.
-#:
-#: What the size actually trades, at N = 16746 (the campaign size):
-#:
-#:   B     launches   peak blocks   block width   CUs touched
-#:   64         523           262            64           262
-#:  128         261           131           128           131
-#:  256         131            66           256            66
-#:
-#: ``peak blocks * block width`` is ~N for every row, and so is the total barrier count: the
-#: dependence caps instantaneous parallelism at N however the nest is tiled, and tiling only
-#: changes the KIND of barrier. A bigger tile converts kernel launches into ``__syncthreads``,
-#: which are far cheaper; it also concentrates the work on fewer CUs, and this is a memory-bound
-#: stencil, so aggregate bandwidth pulls the other way.
-#:
-#: The end-to-end A/B through the benchmark could not separate 64 from 128 -- with the arms swapped
-#: to control for order it moved with the ARM ORDER, not the tile. A standalone kernel reproducing
-#: this exact schedule at n=22820, fp64, does separate them, and says SMALLER:
-#:
-#:   B      launches   tiles/diagonal   time
-#:   32         1427              714   43.27 ms
-#:   64          713              357   44.48 ms
-#:  128          357              179   47.18 ms
-#:  256          179               90   51.22 ms
-#:
-#: Monotonic in TILES PER DIAGONAL, which is what sets how many blocks are resident at once. The
-#: dependence caps instantaneous parallelism at about N, so 357 tiles x 64 lanes is ~23k threads on
-#: a device that wants ~300k: this kernel is parallelism-starved, and every step that shrinks the
-#: tile buys back occupancy. 64 rather than 32 because a 32-wide block is half a gfx942 wavefront
-#: and wastes half of every one; the 2.8% that costs is not worth the misalignment.
-#:
-#: NOT a bandwidth question, which is why staging the tile in shared memory does not help: the same
-#: kernel with all memory traffic removed still takes 11% of the runtime, and the real thing moves
-#: its ~8.3 GB at ~211 GB/s against ~3300 GB/s achievable here, so the neighbour reads are already
-#: cache-resident. Staging measured 0.79x at B=64 -- an extra load phase, store phase and two
-#: barriers on a 127-step critical path cost more than the traffic they save at this occupancy.
+#: Default skewed-tile extent per axis for the GPU lowering. One launch per TILE anti-diagonal
+#: instead of per element (N = 16746: 523 launches, not 33,491) and unit innermost stride.
+#: The dependence caps parallelism near N whatever the tiling; the kernel is parallelism-starved,
+#: so smaller tiles win on occupancy (standalone, n=22820 fp64: B=32/64/128/256 ->
+#: 43.3/44.5/47.2/51.2 ms). 64, not 32: a 32-wide block wastes half a gfx942 wavefront. Not
+#: bandwidth-bound (~211 of ~3300 GB/s); shared-memory staging measured 0.79x at B=64.
 DEFAULT_GPU_TILE_SIZE = 64
 
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
@@ -1287,13 +1251,13 @@ class WavefrontSkew(ppl.Pass):
             return None
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions()):
-                if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
+            for region in list(sd.all_control_flow_regions()):
+                if not (isinstance(region, LoopRegion) and region.loop_variable):
                     continue
-                parent = cfg.parent_graph
-                if parent is None or cfg not in parent.nodes():
+                parent = region.parent_graph
+                if parent is None or region not in parent.nodes():
                     continue  # stale snapshot: a prior skew removed this node
-                if self._try_skew(cfg, sd):
+                if self._try_skew(region, sd):
                     skewed += 1
         return skewed or None
 
@@ -1468,7 +1432,7 @@ class WavefrontSkew(ppl.Pass):
         and lift it to a parallel Map. The substitution matches the unimodular
         family ``skew_bounds`` used: ``p = v`` when ``|a| == 1``, else ``p = u``."""
         a, b = tau
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
@@ -1513,37 +1477,22 @@ class WavefrontSkew(ppl.Pass):
 
     def _rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[object, object],
                        vb: Tuple[object, object], tau: Tuple[int, int], plan: TilePlan) -> None:
-        """Lower the wavefront as a skewed TILING -- four loops instead of two::
+        """Lower the wavefront as a skewed tiling::
 
-            for T in [t_lo .. t_hi]:              # tile diagonal, pinned sequential
-              parallel for P in [p_lo .. p_hi]:   # tile column, lifted to a Map
+            for T in [t_lo .. t_hi]:              # tile diagonal, sequential
+              parallel for P in [p_lo .. p_hi]:   # tile column, a Map
                 for u in [u0 + I*Bi .. min(u_hi, u0 + I*Bi + Bi - 1)]:
                   for v in [max(v_lo, v0 + J*Bj) .. min(v_hi, v0 + J*Bj + Bj - 1)]:
                       <original body>
 
-        with ``(I, J)`` the tile indices read back from ``(T, P)`` through the same
-        unimodular complement ``skew_bounds`` used (``I = a*(T - b*P), J = P`` when
-        ``|a| == 1``; ``I = P, J = b*(T - a*P)`` when ``|b| == 1``). The triangular
-        clip folds into the ``v`` lower bound exactly as the ISL projection does
-        untiled. ``u`` and ``v`` keep their original names, so the body is reused
-        verbatim -- no substitution, no memlet rewrite.
-
-        Why this and not the element-granularity diagonal: the untiled form walks a
-        stride-``N`` anti-diagonal and forks a parallel region per diagonal, which
-        measured 0.17-0.18x of the plain sequential nest at N=768 on 4 threads. The
-        tiled form gives the innermost loop unit stride and cuts the number of
-        parallel regions by the tile area; the same shapes measure 2.04-2.16x.
-
-        Bit-exactness is unchanged by the tiling. Each cell is still written exactly
-        once; :func:`tiling_legal` proves every summand a cell reads is the final
-        value of a cell from a strictly earlier tile diagonal (or from the same tile,
-        where the original sequential ``(u, v)`` order is preserved verbatim); and no
-        statement's own evaluation order is touched. So every read sees the very
-        value the sequential nest gave it, in the same order -- no reassociation, no
-        renormalisation, bit-for-bit."""
+        ``(I, J)`` come back from ``(T, P)`` through the unimodular complement ``skew_bounds`` used;
+        ``u`` / ``v`` keep their names so the body is reused verbatim. The element diagonal measured
+        0.17-0.18x of sequential (N=768, 4 threads), the tiled form 2.04-2.16x. Bit-exact:
+        :func:`tiling_legal` proves every read sees its sequential value.
+        """
         a, b = tau
         v = inner.loop_variable
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
@@ -1616,29 +1565,13 @@ class WavefrontSkew(ppl.Pass):
 
     def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
                           plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
-        """Turn a tile's two sequential interior loops into a diagonal over a PARALLEL Map.
+        """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
 
-        The tile interior is the same shape as the nest that contains it -- a 2-D nest whose
-        dependences the same ``tau`` orders -- so this is :meth:`_rewrite` applied a second time,
-        one level down, and nothing new has to be proven. Legality carries over for free: ISL
-        decided ``tau`` over the WHOLE domain, and the tile interior is a subset of it, so a
-        schedule with no violating pair in the whole domain has none in a part of it.
-
-        What it buys is the reason the GPU lowering tiles at all. The tile-column Map is the grid,
-        one block per tile; without this the block would run its tile on a single thread. With it,
-        the block's threads walk the intra-tile anti-diagonal together, and that anti-diagonal is
-        at most ``min(Bi, Bj)`` wide -- one wavefront at the default 64. The Map carries
-        ``is_warp_tile``, which is a REQUEST, not a schedule: the device offload assigns every
-        nested scope ``Sequential`` (correctly -- a kernel launch inside a kernel is not
-        expressible) and ``PromoteWarpTiles`` reads the tag afterwards to give it
-        ``GPU_ThreadBlock``.
-
-        The clip is what makes this ISL's job rather than arithmetic. A boundary tile is partial,
-        and a triangular domain clips ``v`` against ``u`` itself, so the anti-diagonal's extent is
-        not ``min(Bi, Bj)`` at the edges. Both clips go in as plain affine constraints and the
-        projection returns exact bounds, which is why no guard is emitted inside the body.
-
-        Falls back to leaving the interior sequential -- correct, just narrow -- whenever the
+        :meth:`_rewrite` applied one level down; legality carries over since the tile interior is a
+        subset of the domain ISL checked ``tau`` on. On GPU the tile-column Map is the grid and this
+        Map (tagged ``is_warp_tile``, promoted to ``GPU_ThreadBlock`` by ``PromoteWarpTiles``) lets the
+        block's threads walk the intra-tile anti-diagonal. Partial and triangular clips go to ISL as
+        affine constraints, so no in-body guard is needed. Leaves the interior sequential when the
         projection is not renderable.
         """
         u_sym, v_sym = sym(u), sym(v)
@@ -1694,7 +1627,7 @@ class WavefrontSkew(ppl.Pass):
         which is what a fixed block over a ramping wavefront costs and the only way to pay it.
         """
         a, b = tau
-        nid = _next_id(sdfg)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         d_var = f'{SKEW_T_PREFIX}{nid}'
         k_var = f'{SKEW_P_PREFIX}{nid}'
         sdfg.add_symbol(d_var, dace.int64)
@@ -1819,26 +1752,6 @@ def substitute_by_name(expr, subs: Dict[str, object]):
         if s.name in subs:
             mp[s] = subs[s.name]
     return e.subs(mp)
-
-
-def _next_id(sdfg: SDFG) -> int:
-    """Lowest ``<N>`` no existing ``_skew_(t|p)_<N>`` symbol uses."""
-    used: Dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
-        for s in list(sd.symbols.keys()):
-            for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
-                if s.startswith(pre) and s[len(pre):].isdigit():
-                    used[int(s[len(pre):])] = None
-        for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
-                    lv = cfg.loop_variable
-                    if lv.startswith(pre) and lv[len(pre):].isdigit():
-                        used[int(lv[len(pre):])] = None
-    n = 0
-    while n in used:
-        n += 1
-    return n
 
 
 __all__ = ['WavefrontSkew']
