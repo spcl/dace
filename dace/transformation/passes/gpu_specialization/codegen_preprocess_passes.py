@@ -69,10 +69,11 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
         from dace.sdfg.scope import is_devicelevel_gpu
         from dace.transformation.helpers import wrap_code_node_in_unit_gpu_map
         from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-            is_already_lowered_gpu_runtime_call, is_host_callback_tasklet, is_pipeline_sync_tasklet)
+            GPU_ACCESSIBLE_STORAGES, is_already_lowered_gpu_runtime_call, is_host_callback_tasklet,
+            is_pipeline_sync_tasklet, touches_gpu_memory)
         kernel_internal_schedules = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                                      dtypes.ScheduleType.GPU_Warp)
-        gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
+        gpu_storage = GPU_ACCESSIBLE_STORAGES
         modified = False
 
         host_gpu_tasklets = []
@@ -89,9 +90,7 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
                   # A host callback invokes a host function pointer: it must stay on the host, and is
                   # ordered against the streams by ``SynchronizeStreamUnawareGPUCallbacks`` instead.
                   and not is_host_callback_tasklet(node)):
-                touches_gpu_data = any(not e.data.is_empty() and state.parent.arrays[e.data.data].storage in gpu_storage
-                                       for e in state.all_edges(node))
-                if touches_gpu_data:
+                if touches_gpu_memory(state.parent, state, node):
                     host_gpu_tasklets.append((state, node))
 
         # Wrap after the scan: wrapping mutates the graphs being traversed.
@@ -167,8 +166,8 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
         from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (DEVICE_SYNC_TASKLET_LABEL,
                                                                                        STREAM_CONNECTOR,
                                                                                        dependency_edge,
-                                                                                       is_host_callback_tasklet)
-        gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
+                                                                                       is_host_callback_tasklet,
+                                                                                       touches_gpu_memory)
 
         targets = []
         for cursdfg in sdfg.all_sdfgs_recursive():
@@ -178,8 +177,7 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
                         continue
                     if STREAM_CONNECTOR in node.code.as_string:
                         continue
-                    if not any(not e.data.is_empty() and cursdfg.arrays[e.data.data].storage in gpu_storage
-                               for e in state.all_edges(node)):
+                    if not touches_gpu_memory(cursdfg, state, node):
                         continue
                     # Re-application must not stack a second fence (or repeat the warning).
                     if any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node)):
@@ -238,8 +236,7 @@ class AddThreadBlockMaps(ppl.Pass):
     """Tile every ``GPU_Device`` map lacking an inner ``GPU_ThreadBlock`` map (via
     :class:`AddThreadBlockMap`) and infer the resulting ``(grid, block)`` dimensions.
 
-    Returns ``{'kernel_dimensions_map': ..., 'tb_inserted_kernels': set(MapEntry)}`` in
-    ``pipeline_results``. Tiled late on purpose: tiling first leaks the inner-map outer-loop
+    Returns ``{'kernel_dimensions_map': ...}`` in ``pipeline_results``. Tiled late on purpose: tiling first leaks the inner-map outer-loop
     symbol into host-side ``cudaMalloc`` size expressions for kernel-hoisted transients.
     """
 
@@ -260,10 +257,7 @@ class AddThreadBlockMaps(ppl.Pass):
             for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
         kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, tb_inserted_kernels) or {}
-        return {
-            'kernel_dimensions_map': kernel_dimensions_map,
-            'tb_inserted_kernels': tb_inserted_kernels,
-        }
+        return {'kernel_dimensions_map': kernel_dimensions_map}
 
 
 @properties.make_properties
@@ -277,12 +271,8 @@ class ReinferConnectorTypes(ppl.Pass):
     """
 
     def modifies(self) -> ppl.Modifies:
-        # ``Modifies`` has no ``Connectors`` flag; connectors live on the code nodes that carry
-        # them. ``infer_connector_types`` retypes ANY dataflow node's connectors -- map entries
-        # and exits included -- so this must be ``Nodes``, not just tasklets and nested SDFGs;
-        # under-declaring would stop a downstream ``should_reapply(Modifies.Scopes)`` from firing.
-        # ``Descriptors`` is kept as a conservative over-declaration (the pass only reads them,
-        # but over-declaring costs re-runs, never correctness).
+        # No ``Connectors`` flag exists; re-inference retypes any node's connectors, hence ``Nodes``.
+        # ``Descriptors`` is a conservative over-declaration.
         return ppl.Modifies.Nodes | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -319,10 +309,8 @@ class ReinferConnectorTypes(ppl.Pass):
             infer_types.infer_connector_types(nsdfg)
         after = self._connector_types(sdfg)
 
-        # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
-        # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``
-        # returns False -- so an ADDED connector would be silently counted as unchanged. Iterating
-        # ``after`` alone would likewise miss a REMOVED one.
+        # Sentinel over the key union: ``typeclass != None`` is False, so ``None`` would hide an
+        # added connector, and iterating ``after`` alone would miss a removed one.
         missing = object()
         changed = sum(1 for key in before.keys() | after.keys()
                       if before.get(key, missing) is not after.get(key, missing)

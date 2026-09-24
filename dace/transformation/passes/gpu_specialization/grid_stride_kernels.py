@@ -185,9 +185,6 @@ class GridStrideKernels(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
-
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Tuple[int, int]]:
         """Rewrite and annotate ``sdfg`` in place.
 

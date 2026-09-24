@@ -193,9 +193,6 @@ class ContiguousAxisToThreads(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
-
     def promote(self, state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, collapse: MapCollapse) -> bool:
         children = state.scope_children()[outer]
         inners = [c for c in children if isinstance(c, nodes.MapEntry)]

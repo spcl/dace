@@ -1,13 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Scope-emission strategies (RAII bracket managers) for the experimental CUDA codegen."""
-from abc import ABC, abstractmethod
 from typing import Optional
 
 from dace import dtypes, subsets, symbolic
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
@@ -63,30 +61,15 @@ def emit_dim_index_definitions(scope_map,
     return map_range, sym_indices, sym_coords
 
 
-class ScopeGenerationStrategy(ABC):
-    """Base strategy for generating GPU scope code.
-
-    Subclasses set ``SCHEDULE`` (matched by ``applicable()`` against the source MapEntry's
-    schedule) and ``SCOPE_COMMENT``, implement ``generate()``, and reuse the
-    ``_dispatch_and_deallocate`` tail.
-    """
+class ScopeGenerationStrategy:
+    """Base strategy for generating the GPU scope of map schedule ``SCHEDULE``."""
 
     SCHEDULE: dtypes.ScheduleType = None
-    SCOPE_COMMENT: str = ""
 
     def __init__(self, codegen: ExperimentalCUDACodeGen):
         self.codegen: ExperimentalCUDACodeGen = codegen
         self._dispatcher: TargetDispatcher = codegen._dispatcher
         self._current_kernel_spec: KernelSpec = codegen._current_kernel_spec
-
-    def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-        return dfg_scope.source_nodes()[0].map.schedule == self.SCHEDULE
-
-    @abstractmethod
-    def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        raise NotImplementedError('Abstract class')
 
     def _dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                                  entry_node: nodes.MapEntry, function_stream: CodeIOStream,
@@ -106,21 +89,13 @@ class ScopeGenerationStrategy(ABC):
 class KernelScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_Device
-    SCOPE_COMMENT = "Kernel scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         self._generate_kernel_signature(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
-                          cfg=cfg,
-                          dfg_scope=dfg_scope,
-                          state_id=state_id,
-                          function_stream=function_stream,
-                          callsite_stream=callsite_stream,
-                          comment=self.SCOPE_COMMENT) as scope_manager:
+        with ScopeManager(cfg, dfg_scope, state_id, callsite_stream) as scope_manager:
 
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
@@ -185,27 +160,20 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_ThreadBlock
-    SCOPE_COMMENT = "ThreadBlock Scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
-                          cfg=cfg,
-                          dfg_scope=dfg_scope,
-                          state_id=state_id,
-                          function_stream=function_stream,
-                          callsite_stream=callsite_stream,
-                          comment=self.SCOPE_COMMENT) as scope_manager:
+        with ScopeManager(cfg, dfg_scope, state_id, callsite_stream) as scope_manager:
 
             node = dfg_scope.source_nodes()[0]
             scope_map = node.map
             kernel_block_dims = self._current_kernel_spec.block_dims
 
-            map_range, symbolic_indices, _sym_coords = emit_dim_index_definitions(
-                scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
-                self._dispatcher)
+            map_range, symbolic_indices, _ = emit_dim_index_definitions(scope_map, 'threadIdx',
+                                                                        self._current_kernel_spec.gpu_index_ctype,
+                                                                        callsite_stream, cfg, state_id, node,
+                                                                        self._dispatcher)
 
             symbolic_index_bounds = [
                 idx + (block_dim * rng[2]) - 1
@@ -265,19 +233,11 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 class WarpScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_Warp
-    SCOPE_COMMENT = "WarpLevel Scope"
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
-                          cfg=cfg,
-                          dfg_scope=dfg_scope,
-                          state_id=state_id,
-                          function_stream=function_stream,
-                          callsite_stream=callsite_stream,
-                          comment=self.SCOPE_COMMENT) as scope_manager:
+        with ScopeManager(cfg, dfg_scope, state_id, callsite_stream) as scope_manager:
 
             kernel_spec = self._current_kernel_spec
             block_dims = kernel_spec.block_dims
@@ -422,62 +382,34 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
 
 class ScopeManager:
-    """RAII context manager that balances ``{`` / ``}`` for a generated scope.
-
-    Optional ``debug`` mode annotates each bracket with ``comment`` for readability.
-    """
+    """RAII context manager that balances ``{`` / ``}`` for a generated scope."""
 
     def __init__(self,
-                 frame_codegen: DaCeCodeGenerator,
-                 sdfg: SDFG,
                  cfg: ControlFlowRegion,
                  dfg_scope: ScopeSubgraphView,
                  state_id: int,
-                 function_stream: CodeIOStream,
                  callsite_stream: CodeIOStream,
-                 comment: str = None,
-                 brackets_on_enter: bool = True,
-                 debug: bool = False):
-        """Initialize the scope manager.
-
-        :param frame_codegen: frame codegen used for in-scope array (de)allocation.
-        :param comment: block label surfaced in ``debug`` mode.
-        :param brackets_on_enter: open a bracket on ``__enter__`` (default).
-        """
-        self.frame_codegen = frame_codegen
-        self.sdfg = sdfg
+                 brackets_on_enter: bool = True):
+        """:param brackets_on_enter: open a bracket on ``__enter__`` (default)."""
         self.cfg = cfg
-        self.dfg_scope = dfg_scope
         self.state_id = state_id
-        self.function_stream = function_stream
         self.callsite_stream = callsite_stream
-        self.comment = comment
         self.brackets_on_enter = brackets_on_enter
-        self.debug = debug
         self._opened = 0
-
-        self.entry_node = self.dfg_scope.source_nodes()[0]
-        self.exit_node = self.dfg_scope.sink_nodes()[0]
+        self.entry_node = dfg_scope.source_nodes()[0]
+        self.exit_node = dfg_scope.sink_nodes()[0]
 
     def __enter__(self):
-        """Open a bracket when ``brackets_on_enter`` is set (the default)."""
         if self.brackets_on_enter:
             self.open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """Write the closing bracket for every bracket opened by this manager."""
-        for i in range(self._opened):
-            line = "}"
-            if self.debug:
-                line += f" // {self.comment} (close {i + 1})"
-            self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
+        self.close_through(0)
 
     def open(self, condition: str = None):
         """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{``."""
         line = f"if ({condition}) {{" if condition else "{"
-        if self.debug:
-            line += f" // {self.comment} (open {self._opened + 1})"
         self.callsite_stream.write(line, self.cfg, self.state_id, self.entry_node)
         self._opened += 1
 
@@ -489,13 +421,8 @@ class ScopeManager:
     def close_through(self, mark: int):
         """Close every bracket opened since ``mark``, leaving the rest to ``__exit__``.
 
-        Lets a caller emit code after its guards close but still inside the enclosing scope --
-        a thread-block reduction folds once every thread is past the bounds guard, yet must
-        still see the register partials the scope declared.
+        Lets a thread-block reduction fold after its guards close, still inside the scope.
         """
         while self._opened > mark:
-            line = "}"
-            if self.debug:
-                line += f" // {self.comment} (close {self._opened})"
-            self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
+            self.callsite_stream.write("}", self.cfg, self.state_id, self.exit_node)
             self._opened -= 1

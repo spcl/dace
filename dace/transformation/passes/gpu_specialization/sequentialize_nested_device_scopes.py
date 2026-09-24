@@ -34,9 +34,6 @@ class SequentializeNestedDeviceScopes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
-
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Sequentialize every re-entered device scope.
 

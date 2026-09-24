@@ -5,6 +5,7 @@ implicit copy edge to an ``Auto``-impl ``CopyLibraryNode``.
 Raises if any transient ``GPU_Global -> GPU_Global`` copy survives inside a
 kernel after the hoist -- those need manual restructuring.
 """
+import math
 import warnings
 from typing import Any, Dict, List
 
@@ -48,12 +49,7 @@ def _is_register_demotable(desc, max_elements: int) -> bool:
     ``cudaMalloc``) and ``prod(shape) <= max_elements`` (larger arrays go through
     ``MoveArrayOutOfKernel`` instead of a per-thread slab).
     """
-    if not has_literal_shape(desc):
-        return False
-    total = 1
-    for dim in desc.shape:
-        total *= int(dim)
-    return total <= max_elements
+    return has_literal_shape(desc) and math.prod(int(dim) for dim in desc.shape) <= max_elements
 
 
 def _has_wcr_incoming(sdfg, data_name: str) -> bool:
@@ -120,20 +116,11 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             if not isinstance(node, nodes.AccessNode):
                 continue
             desc = node.desc(parent)
-            # ``data.View`` subclasses ``data.Array``, but a view is a pointer into another
-            # container -- codegen dispatches it to ``allocate_view`` and never allocates it, so
-            # there is nothing to hoist. Passing one to ``MoveArrayOutOfKernel`` reshapes the view
-            # descriptor and hangs a second access node off the kernel exit, which destroys the
-            # unique view edge ``sdutil.get_view_edge`` needs.
+            # A view is never allocated; hoisting it would break its unique view edge.
             if not isinstance(desc, data.Array) or isinstance(desc, data.View) or not desc.transient:
                 continue
-            # A symbolically-sized device-local transient is the second thing that cannot stay in
-            # the kernel, and it is the one no guard used to catch: codegen emits it as a stack
-            # array, and inside device code that is a VLA, which nvcc refuses outright while the
-            # host compiler accepts it (npbench bout_arakawa, ``double jpp[(NZ - 2)];``). It has no
-            # per-thread form either, so it takes the same route as an in-kernel ``GPU_Global``
-            # array: promote it here and let ``MoveArrayOutOfKernel`` give it one slice per map
-            # iteration outside the kernel.
+            # A symbolically-sized device-local transient would be a VLA, which nvcc rejects
+            # (npbench bout_arakawa): it takes the same route as an in-kernel GPU_Global array.
             needs_global = (desc.storage == dtypes.StorageType.GPU_Global
                             or (desc.storage in DEVICE_LOCAL_STORAGE and not has_literal_shape(desc)))
             if not needs_global:
@@ -153,21 +140,11 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             else:
                 transients_outside.add((node.data, desc))
 
-        # Only hoist transients defined *solely* inside the kernel -- if the same
-        # (name, desc) pair also appears outside, leave the inner one alone.
-        to_hoist = set()
-        for data_name, desc, kernel_entry in transients_in_kernels:
-            if (data_name, desc) in transients_outside:
-                continue
-            to_hoist.add((data_name, desc, kernel_entry))
-
+        # Only hoist transients defined solely inside the kernel (decided before any mutation).
+        to_hoist = [entry for entry in transients_in_kernels if entry[:2] not in transients_outside]
         for data_name, desc, kernel_entry in to_hoist:
-            # Demote small, WCR-free, literal-shape transients to per-thread
-            # Register storage (see the two helpers for why each condition is
-            # required); anything else falls through to ``MoveArrayOutOfKernel``.
-            # Persistent / external transients must not be demoted to Register;
-            # the combination is rejected by validation and cannot be allocated
-            # as a per-thread variable across SDFG invocations anyway.
+            # Demote small, WCR-free, literal-shape, non-persistent transients to per-thread
+            # Register storage; anything else goes through ``MoveArrayOutOfKernel``.
             if (desc.lifetime not in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
                     and _is_register_demotable(desc, self.register_demotion_max_elements)
                     and not _has_wcr_incoming(sdfg, data_name)):

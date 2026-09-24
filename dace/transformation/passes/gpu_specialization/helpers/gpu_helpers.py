@@ -2,7 +2,7 @@
 """Shared utilities for the GPU-specialization passes: canonical stream names,
 node/connector predicates (single source of truth so passes don't reimplement
 scope walks), and the stream-wiring idempotency signal."""
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -54,6 +54,16 @@ def is_stream_wiring_applied(sdfg: SDFG) -> bool:
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
+def collect_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+    """Every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy, keyed by node."""
+    return {
+        n: n.gpu_stream_id
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for n in state.nodes() if n.gpu_stream_id is not None
+    }
+
+
 def enclosing_map_chain(state: SDFGState,
                         node: nodes.Node,
                         schedule: Optional[dtypes.ScheduleType] = None) -> List[nodes.MapEntry]:
@@ -103,17 +113,13 @@ def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
     """Weakly-connected components of ``graph``'s dataflow, as node sets.
 
     Single source of truth for the WCC partition used by both the stream scheduler and the
-    state-splitter, via ``OrderedDiGraph.nx`` (tracks DaCe's graph internals rather than
-    re-deriving connectivity)."""
-    import networkx as nx
-    return [set(c) for c in nx.weakly_connected_components(graph.nx)]
+    state-splitter, via ``OrderedDiGraph.nx``."""
+    from dace import graphlib
+    return [set(c) for c in graphlib.weakly_connected_components(graph.nx)]
 
 
-# Storages that mark a copy/fill library node as "GPU-relevant" (its expansion emits a
-# cudaMemcpy / cudaMemset). Hoisted to module scope because it is consulted per node visited
-# and rebuilding the set on every call shows up in profiles.
-_GPU_COPY_STORAGES = frozenset(
-    {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned})
+#: Storages a GPU runtime call touches (GPU_Global, GPU_Shared, CPU_Pinned); a frozenset for fast lookups.
+GPU_ACCESSIBLE_STORAGES = frozenset(dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
 
 
 def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
@@ -122,12 +128,19 @@ def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state) in _GPU_COPY_STORAGES or node.dst_storage(state) in _GPU_COPY_STORAGES)
+        return (node.src_storage(state) in GPU_ACCESSIBLE_STORAGES
+                or node.dst_storage(state) in GPU_ACCESSIBLE_STORAGES)
     if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
-            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in _GPU_COPY_STORAGES:
+            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in GPU_ACCESSIBLE_STORAGES:
                 return True
     return False
+
+
+def touches_gpu_memory(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
+    """True iff a non-empty memlet on any edge of ``node`` accesses GPU-accessible storage."""
+    return any(not e.data.is_empty() and sdfg.arrays[e.data.data].storage in GPU_ACCESSIBLE_STORAGES
+               for e in state.all_edges(node))
 
 
 def is_gpu_kernel_launcher(node) -> bool:

@@ -171,7 +171,12 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
         # already on the kernel's stream and are filtered out by the caller.
         scope_chain = enclosing_map_chain(state, entry)
         if scope_chain:
-            _route_through_seq_scope(state, scope_chain, entry, in_conn, accessed_slot, stream_array_name)
+            thread_stream_through_seq_scope(state,
+                                            scope_chain,
+                                            entry,
+                                            in_conn,
+                                            get_source_access=lambda: state.add_access(stream_array_name),
+                                            memlet_factory=lambda: Memlet(accessed_slot))
             continue
 
         prev_access = _link_top_level_consumer(state, entry, exit_, in_conn, accessed_slot, stream_array_name,
@@ -215,20 +220,6 @@ def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.Ma
     state.add_edge(scope_chain[-1], out_conn, target, target_conn, memlet_factory())
 
 
-def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
-                             accessed_slot: str, stream_array_name: str):
-    """Top-level seq-scope routing: source is a fresh ``gpu_streams[<i>]``
-    AccessNode, memlet is the matching slice on the chain edges."""
-    thread_stream_through_seq_scope(
-        state,
-        scope_chain,
-        target,
-        target_conn,
-        get_source_access=lambda: state.add_access(stream_array_name),
-        memlet_factory=lambda: Memlet(accessed_slot),
-    )
-
-
 def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
     if isinstance(node, nodes.MapEntry):
         return node, state.exit_node(node)
@@ -238,7 +229,7 @@ def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
 # Sync-tasklet emission.
 
 
-def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
+def insert_state_end_syncs(sync_state: Dict[SDFGState, Set[int]], assignments: Dict[Node, int]):
     """Emit one fused ``cudaStreamSynchronize`` tasklet at the end of each
     state, syncing every stream the state must wait on.
 
@@ -279,7 +270,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, Set[int]], as
                            dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
-def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]):
+def insert_per_node_syncs(sync_node: Dict[Node, SDFGState], assignments: Dict[Node, int]):
     """Emit a sync tasklet on the path between ``node`` and its successors,
     syncing the node's bound stream via a single ``__stream_<id>`` connector
     (single-stream form of :func:`insert_state_end_syncs`)."""
