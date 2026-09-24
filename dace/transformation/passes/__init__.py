@@ -1,5 +1,6 @@
 from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
+from .predicate_to_integer_array import PredicateToIntegerArray
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination

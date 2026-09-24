@@ -1088,7 +1088,7 @@ def forward_substitute_conditions(stree: tn.ScheduleTreeScope) -> int:
     Replace the values a condition reads by the expressions that compute them.
 
     A condition that reads a symbol or a single-element container (``if mask:``) is rewritten in terms of the value
-    assigned to it (``mask = (nord[k] == 0)`` makes it ``if nord[k] == 0:``) when the assignment reaches the
+    assigned to it (``mask = (order[k] == 0)`` makes it ``if order[k] == 0:``) when the assignment reaches the
     condition unchanged: it is the last write of that name before the condition, in the same scope or an enclosing
     one, and nothing in between writes the name or anything the value reads. Loops and maps between the assignment
     and the condition count as "in between" in their entirety (their later iterations run before the condition is

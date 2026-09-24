@@ -408,7 +408,7 @@ def test_substitute_blocked_by_write_to_input_in_between():
 
 
 def test_substitute_constant_scalar_from_outer_scope():
-    """A flag set once at the top reaches guards nested in later loops (``fillc = True`` in FV3)."""
+    """A flag set once at the top reaches guards nested in later loops (e.g. a configuration flag)."""
     sdfg = dace.SDFG('substitute_flag')
     sdfg.add_array('A', [8, 4], dace.float64)
     sdfg.add_array('B', [8, 4], dace.float64)
