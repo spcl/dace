@@ -929,6 +929,68 @@ def test_convert_not_applied(case):
     assert _nodes(stree, tn.IfScope)
 
 
+def _multi_output_tree(code: str, inputs: dict, outputs: dict, guarded: tn.ScheduleTreeNode) -> tn.ScheduleTreeRoot:
+    """``for k in range(8): for i in range(4): <tasklet>; if m: <guarded>`` over ``A``/``B`` (8x4), ``C`` (8) and
+    transient scalars ``m`` (bool) and ``t``."""
+    sdfg = dace.SDFG('multi_output')
+    sdfg.add_array('A', [8, 4], dace.float64)
+    sdfg.add_array('B', [8, 4], dace.float64)
+    sdfg.add_array('C', [8], dace.float64)
+    sdfg.add_scalar('m', dace.bool_, transient=True)
+    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    guard = tn.IfScope(condition=dace.properties.CodeBlock('m'), children=[guarded])
+    inner = dace.sdfg.state.LoopRegion('inner', 'i < 4', 'i', 'i = 0', 'i = i + 1')
+    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    stree.children = []
+    stree.add_child(
+        tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[_tasklet(code, inputs, outputs), guard])]))
+    return stree
+
+
+def test_substitute_output_of_multi_output_tasklet_then_unswitch():
+    """``t = 2 * a; m = c > 0`` (as connectors ``tv``, ``mv``) computes an invariant mask next to a varying value: substituted, the guard reads
+    ``C[k]`` and moves out of the ``i`` loop."""
+    make = lambda: _multi_output_tree('tv = 2 * a\nmv = c > 0', {
+        'a': 'A[k, i]',
+        'c': 'C[k]'
+    }, {
+        'tv': 't[0]',
+        'mv': 'm[0]'
+    }, _tasklet('b = x', {'x': 't[0]'}, {'b': 'B[k, i]'}))
+    stree, reference = make(), make()
+    assert forward_substitute_conditions(stree) == 1
+    assert _conditions(stree) == ['(C[k] > 0)']
+    assert unswitch_invariant_guards(stree) == 1
+    (outer, ) = stree.children
+    assert isinstance(outer.children[0], tn.IfScope)  # Above the ``i`` loop
+    a, c = np.random.rand(8, 4), np.random.rand(8) - 0.5
+    results = []
+    for tree in (reference, stree):
+        b = np.zeros((8, 4))
+        _run(tree, A=a, B=b, C=c)
+        results.append(b)
+    assert np.allclose(results[0], results[1])
+
+
+def test_substitute_through_tasklet_locals():
+    stree = _multi_output_tree('x = a + 1\nmv = x > 1.5', {'a': 'A[k, i]'}, {'mv': 'm[0]'},
+                               _tasklet('b = 1', {}, {'b': 'B[k, i]'}))
+    assert forward_substitute_conditions(stree) == 1
+    assert _conditions(stree) == ['((A[k, i] + 1) > 1.5)']
+
+
+def test_substitute_not_from_tasklet_overwriting_its_input():
+    """``m = b > 0.5`` reads ``B[k, i]``, which the same tasklet overwrites: after it, ``B[k, i] > 0.5`` would read the
+    new value."""
+    stree = _multi_output_tree('mv = b > 0.5\nb2 = 2 * b', {'b': 'B[k, i]'}, {
+        'mv': 'm[0]',
+        'b2': 'B[k, i]'
+    }, _tasklet('o = 1', {}, {'o': 'A[k, i]'}))
+    assert forward_substitute_conditions(stree) == 0
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -948,6 +1010,9 @@ if __name__ == '__main__':
     test_substitute_constant_scalar_from_outer_scope()
     test_substitute_not_across_loop_writing_the_value()
     test_substitute_skips_lossy_conversion()
+    test_substitute_output_of_multi_output_tasklet_then_unswitch()
+    test_substitute_through_tasklet_locals()
+    test_substitute_not_from_tasklet_overwriting_its_input()
     test_pair_complementary_guards('k < 4', 'k >= 4', lambda k, flag: k < 4)
     test_pair_not_when_first_body_writes_condition()
     test_pair_not_for_unrelated_conditions()

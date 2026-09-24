@@ -237,6 +237,68 @@ def _assignment(node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> 
     return None
 
 
+# Largest expression (in AST nodes) substituted for a tasklet output
+_MAX_SUBSTITUTED_NODES = 200
+
+
+class _ReplaceNames(ast.NodeTransformer):
+    """Replaces names by (copies of) expressions."""
+
+    def __init__(self, values: Dict[str, ast.expr]):
+        self.values = values
+
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.values:
+            from dace.frontend.python import astutils  # Avoid import loops
+            return astutils.copy_tree(self.values[node.id])
+        return node
+
+
+def _tasklet_values(node: tn.TaskletNode, containers: Dict[str, data.Data]) -> Dict[str, ast.expr]:
+    """The values a straight-line Python tasklet writes, by written container, as expressions over what it reads
+    (``{'mask': <expr>}`` for ``t = a * 2; mask = t > 1`` writing ``mask``). Empty if the tasklet is not straight-line
+    single assignments over single-element accesses. Outputs whose value reads a container the tasklet also writes are
+    left out: the expression would read the new value where it is substituted."""
+    from dace.frontend.python import astutils  # Avoid import loops
+    if (node.node.language != dtypes.Language.Python or getattr(node.node, 'side_effects', False)
+            or not isinstance(node.in_memlets, dict) or not isinstance(node.out_memlets, dict)):
+        return {}
+    memlets = list(node.in_memlets.values()) + list(node.out_memlets.values())
+    if any(m.subset is None or m.subset.num_elements() != 1 for m in memlets):
+        return {}
+    env: Dict[str, ast.expr] = {c: _access(m, containers) for c, m in node.in_memlets.items()}
+    for statement in node.node.code.code:
+        if isinstance(statement, ast.AnnAssign) and statement.value is None:
+            continue  # A declaration
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            target, value = statement.target.id, statement.value
+        elif (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+              and isinstance(statement.targets[0], ast.Name)):
+            target, value = statement.targets[0].id, statement.value
+        else:
+            return {}
+        env[target] = _ReplaceNames(env).visit(astutils.copy_tree(value))
+    written = {m.data for m in node.out_memlets.values()}
+    result = {}
+    for connector, memlet in node.out_memlets.items():
+        value = env.get(connector)
+        if value is None or sum(1 for _ in ast.walk(value)) > _MAX_SUBSTITUTED_NODES:
+            continue
+        if set(symbolic.symbols_in_ast(value)) & written:
+            continue
+        result[memlet.data] = value
+    return result
+
+
+def _assigned_values(node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> Dict[str, ast.expr]:
+    """The values ``node`` assigns that a condition may use in their place, by target: see :func:`_assignment`, and
+    every output of a straight-line tasklet (:func:`_tasklet_values`)."""
+    if isinstance(node, tn.TaskletNode):
+        return _tasklet_values(node, containers)
+    assigned = _assignment(node, containers)
+    return {} if assigned is None else {assigned[0]: assigned[1]}
+
+
 def _make_scope(scope: tn.ScheduleTreeScope, dim: Optional[int], space, interval, body: list,
                 k: int) -> tn.ScheduleTreeScope:
     """A copy of the loop or map ``scope`` whose iteration space ``space`` (dimension ``dim`` of a map) is restricted
@@ -1094,8 +1156,10 @@ def forward_substitute_conditions(stree: tn.ScheduleTreeScope) -> int:
     one, and nothing in between writes the name or anything the value reads. Loops and maps between the assignment
     and the condition count as "in between" in their entirety (their later iterations run before the condition is
     evaluated again), and must not rebind a name the value reads. Assignments are symbol assignments, single-element
-    copies, and Python tasklets ``out = <expression>`` over single-element inputs; a container's value is only used if
-    the substitution cannot change the outcome (a boolean container, or a literal exact in the container's type).
+    copies, and straight-line Python tasklets over single-element accesses, each of whose outputs is the expression
+    computing it from the tasklet's inputs (``t = a * 2; mask = t > 1`` gives ``mask`` the value ``a * 2 > 1``); a
+    container's value is only used if the substitution cannot change the outcome (a boolean container, or a literal
+    exact in the container's type).
     The assignments themselves are kept (see :func:`remove_dead_assignments`).
 
     :param stree: The schedule tree (or subtree) to transform in place.
@@ -1109,6 +1173,14 @@ def forward_substitute_conditions(stree: tn.ScheduleTreeScope) -> int:
         entry = written_in.get(id(node))
         if entry is None:
             entry = written_in[id(node)] = (node, _in_subtrees([node], _names_written))
+        return entry[1]
+
+    values_of: Dict[int, tuple] = {}  # Assigned values, by node (held so that ids are not reused)
+
+    def values(node: tn.ScheduleTreeNode) -> Dict[str, ast.expr]:
+        entry = values_of.get(id(node))
+        if entry is None:
+            entry = values_of[id(node)] = (node, _assigned_values(node, containers))
         return entry[1]
 
     def reaching(branch: tn.ScheduleTreeScope, name: str) -> Optional[ast.expr]:
@@ -1130,9 +1202,8 @@ def forward_substitute_conditions(stree: tn.ScheduleTreeScope) -> int:
             siblings = parent.children
             position = next(k for k, c in enumerate(siblings) if c is current)
             for sibling in reversed(siblings[:position]):
-                assigned = _assignment(sibling, containers)
-                if assigned is not None and assigned[0] == name:
-                    value = assigned[1]
+                value = values(sibling).get(name)
+                if value is not None:
                     depends = set(symbolic.symbols_in_ast(value))
                     if depends & (between | rebound) or not _substitutable(name, value, sibling, containers):
                         return None
