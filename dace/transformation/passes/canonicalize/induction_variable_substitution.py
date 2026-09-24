@@ -66,15 +66,16 @@ from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.dead_carried_store import reaches
+from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
 SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'])
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
 CLOSED_FORM = {
@@ -353,8 +354,8 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
         # ``dace.float64(step)`` and codegen resolves ``step`` via the symbol-binding path.
         const_val = ast.unparse(other)
 
-    in_edges = [e for e in state.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
-    out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
+    in_edges = value_edges(state.in_edges(tasklet))
+    out_edges = value_edges(state.out_edges(tasklet))
     if len(in_edges) != 1 or len(out_edges) != 1:
         return None
     (in_edge, ) = in_edges
@@ -395,7 +396,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     src_name, src_subset = src.data, in_edge.data.subset
     # ``is_empty()`` FIRST: an empty in-edge is an ORDERING edge (the frontend hangs one off the
     # accumulator to sequence a WAR), never the staging copy that would redirect the trace.
-    staged = [e for e in state.in_edges(src) if e.data is not None and not e.data.is_empty()]
+    staged = value_edges(state.in_edges(src))
     if desc.transient and len(staged) == 1:
         pred = staged[0]
         if not isinstance(pred.src, nodes.AccessNode) or pred.data.subset is None:
@@ -659,7 +660,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
     # Drop every version of the slot nothing reads any more, along with the ordering edges that
     # only sequenced it against the write we just deleted.
     for n in [v for v in state.nodes() if isinstance(v, nodes.AccessNode) and v.data == iv.accum]:
-        if not [e for e in state.out_edges(n) if e.data is not None and not e.data.is_empty()]:
+        if not value_edges(state.out_edges(n)):
             state.remove_node(n)
 
     # The loop no longer updates the accumulator; materialise the value it used to leave behind.
@@ -1501,11 +1502,6 @@ def _body_nodes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGS
 def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode, Any]]:
     """Every DATA write to ``container`` in the body, as ``(chain index, state, node, edge)``."""
     return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in value_edges(st.in_edges(n))]
-
-
-def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
-    """Whether ``dst`` is downstream of ``src`` in ``state`` -- so ``src`` provably ran first."""
-    return dst in dict.fromkeys(sdutil.dfs_conditional(state, sources=[src]))
 
 
 def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var) -> bool:

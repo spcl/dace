@@ -54,6 +54,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
 FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
@@ -173,8 +174,8 @@ class FuseChainedScalarReductions(ppl.Pass):
             op_type = _binop_op(tasklet)
             if op_type is None:
                 continue
-            in_edges = [e for e in st.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
-            out_edges = [e for e in st.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
+            in_edges = value_edges(st.in_edges(tasklet))
+            out_edges = value_edges(st.out_edges(tasklet))
             if len(in_edges) != 2 or len(out_edges) != 1:
                 continue
             chased = _chase_write_to_accum(st, sdfg, out_edges[0])

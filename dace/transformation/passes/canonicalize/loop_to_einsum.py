@@ -95,6 +95,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
 class EinsumSpec(NamedTuple):
@@ -804,7 +805,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
     # Locate the single write leaving the scope.
     write_node = None
     if entry is not None:
-        out_edges = [e for e in state.in_edges(state.exit_node(entry)) if e.data is not None and not e.data.is_empty()]
+        out_edges = value_edges(state.in_edges(state.exit_node(entry)))
         if len(out_edges) != 1:
             return None
         out_edge = out_edges[0]
@@ -835,7 +836,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         accumulates = True
     else:
         adder = out_edge.src
-        in_edges = [e for e in state.in_edges(adder) if e.data is not None and not e.data.is_empty()]
+        in_edges = value_edges(state.in_edges(adder))
         if _is_sum_tasklet(adder) and len(in_edges) == 2:
             # Aug-assign encoding: one input re-reads the output slot, the other is the product.
             visited[adder] = None

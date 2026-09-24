@@ -82,8 +82,8 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     if not isinstance(const_val, (int, float)):
         return False
 
-    in_edges = [e for e in state.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
-    out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
+    in_edges = value_edges(state.in_edges(tasklet))
+    out_edges = value_edges(state.out_edges(tasklet))
     if len(in_edges) != 1 or len(out_edges) != 1:
         return False
     (in_edge, ) = in_edges

@@ -77,6 +77,7 @@ from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, Condition
 from dace.frontend import operations
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 #: AST binop class -> associative reduction operator string.
 BINOP_TO_OP: Dict[type, str] = {
@@ -275,7 +276,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # Identify which tasklet input is the accumulator vs the addend by
         # walking back from each input edge to its source AN.
-        in_edges = [e for e in true_state.in_edges(upd_tasklet) if e.data is not None and not e.data.is_empty()]
+        in_edges = value_edges(true_state.in_edges(upd_tasklet))
         if len(in_edges) != 2:
             return None
         acc_in_conn = None

@@ -67,6 +67,7 @@ from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, Sta
                                                                   replace_loop_with_state, root_sdfg_of,
                                                                   single_body_state, sink_write_subset, written_arrays)
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 #: Stand-ins for the two slice indices while a body state's value expression is resolved:
 #: the row inside the ``C[0:i, j]`` scatter, and the column inside the ``C[i, 0:N]`` finalize.
@@ -161,7 +162,7 @@ def resolve_producer(state: SDFGState, sdfg: SDFG, name: str, depth: int = 0) ->
     found = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
     if len(found) != 1:
         return None
-    edges = [e for e in state.in_edges(found[0]) if e.data is not None and not e.data.is_empty()]
+    edges = value_edges(state.in_edges(found[0]))
     if len(edges) != 1:
         return None
     src = edges[0].src
@@ -613,14 +614,14 @@ def staged_library_node(state: SDFGState, node: nodes.AccessNode) -> Optional[no
     node that produced its value, or ``None`` if anything else intervenes."""
     current = node
     for _ in range(MAX_STAGING_HOPS):
-        producers = [e for e in state.in_edges(current) if e.data is not None and not e.data.is_empty()]
+        producers = value_edges(state.in_edges(current))
         if len(producers) != 1:
             return None
         src = producers[0].src
         if isinstance(src, nodes.LibraryNode):
             return src
         if isinstance(src, nodes.Tasklet):
-            ins = [e for e in state.in_edges(src) if e.data is not None and not e.data.is_empty()]
+            ins = value_edges(state.in_edges(src))
             if len(ins) != 1 or len(src.out_connectors) != 1:
                 return None
             if (src.code.as_string or "").strip() != f"{next(iter(src.out_connectors))} = {ins[0].dst_conn}":
@@ -642,7 +643,7 @@ def library_operand_reads(state: SDFGState, sdfg: SDFG,
             return None
         desc = sdfg.arrays.get(edge.src.data)
         if desc is not None and desc.transient:
-            stage = [e for e in state.in_edges(edge.src) if e.data is not None and not e.data.is_empty()]
+            stage = value_edges(state.in_edges(edge.src))
             if len(stage) != 1 or not isinstance(stage[0].src, nodes.AccessNode):
                 return None
             out.append((stage[0].data.data, stage[0].data.subset))

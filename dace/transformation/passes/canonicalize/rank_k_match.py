@@ -37,6 +37,7 @@ from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
 # producer edges; a well-formed state bottoms out in a handful of steps).
@@ -101,7 +102,7 @@ class StateValueResolver:
         """
         if depth > MAX_RESOLVE_DEPTH:
             raise ValueError("rank-k resolve: dataflow too deep")
-        producers = [e for e in self.state.in_edges(node) if e.data is not None and not e.data.is_empty()]
+        producers = value_edges(self.state.in_edges(node))
         if not producers:
             return self.leaf(node.data, index)  # a read node: the value on state entry
         if len(producers) != 1:
@@ -369,7 +370,7 @@ def triangle_of(subset: subsets.Subset, row: str, n) -> Optional[str]:
 
 def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subsets.Subset]:
     """The subset of the single memlet writing ``sink``."""
-    edges = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
+    edges = value_edges(state.in_edges(sink))
     if len(edges) != 1:
         return None
     return edges[0].data.subset

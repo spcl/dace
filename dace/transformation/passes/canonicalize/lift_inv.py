@@ -52,6 +52,7 @@ from dace.sdfg.state import SDFGState
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
 def full_range(desc) -> Range:
@@ -200,7 +201,7 @@ class LiftInv(ppl.Pass):
 
         # Safe to delete the identity: it is consumed only by this Solve (its sole
         # non-empty out-edge) and appears nowhere else in the SDFG.
-        b_out = [e for e in state.out_edges(b_node) if e.data is not None and not e.data.is_empty()]
+        b_out = value_edges(state.out_edges(b_node))
         if len(b_out) != 1 or b_out[0] is not bin_edge:
             return False
         refs = sum(1 for st in sdfg.all_states() for nd in st.nodes()
@@ -217,7 +218,7 @@ class LiftInv(ppl.Pass):
         two parameters over ``[0:n, 0:n]``, no map inputs, a single input-less
         ``out = 1 if p == q else 0`` tasklet, writing the whole array -- return
         ``(map_entry, map_exit, tasklet)``; else ``None``."""
-        b_in = [e for e in state.in_edges(b_node) if e.data is not None and not e.data.is_empty()]
+        b_in = value_edges(state.in_edges(b_node))
         if len(b_in) != 1:
             return None
         map_exit = b_in[0].src
