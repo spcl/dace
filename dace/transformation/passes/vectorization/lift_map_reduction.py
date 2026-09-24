@@ -63,7 +63,7 @@ _WCR_LAMBDA = {
 
 
 def _free_syms(expr: object) -> set[str]:
-    """The free-symbol NAMES of ``expr``, or an empty set if it does not parse."""
+    # The free-symbol NAMES of ``expr``, or an empty set if it does not parse.
     try:
         return {str(s) for s in symbolic.pystr_to_symbolic(str(expr)).free_symbols}
     except Exception:  # noqa: BLE001 -- an unparseable bound is not a symbol dependence we model
@@ -72,32 +72,8 @@ def _free_syms(expr: object) -> set[str]:
 
 def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEntry,
                                    trip: symbolic.SymbolicType) -> bool:
-    """True if the reduction map's trip count is sized by a param of a map ENCLOSING it --
-    following the scope tree out through nested-SDFG boundaries.
-
-    The lift stages per-iteration products in a transient sized ``(trip,)``, added to the state's
-    SDFG. A descriptor may only be sized by symbols in scope where it LIVES, and a map param is
-    not: it is bound per iteration, inside the map. So a triangular inner reduction -- polybench
-    trmm's ``for k in range(i + 1, M)`` under a ``for i`` map -- would allocate
-    ``_red_buf[M - i - 1]``, and once the owning nested SDFG is inlined the map param ``i`` becomes
-    a free symbol of the whole program: it lands in the compiled signature and the call fails with
-    ``Missing program argument "i"``. (Even passed, one buffer cannot serve the outer map's
-    per-``i`` differing trip counts.)
-
-    Checking the in-state scope alone is not enough. The reduction map is typically top-level
-    within its own body nested SDFG, and the enclosing map lives one boundary OUT, feeding its
-    param in under a different name via ``symbol_mapping`` (trmm: the nest's ``i`` bound to the
-    outer ``computecol`` map's ``i``). So the walk ascends through ``parent_nsdfg_node``,
-    translating the symbol set outward at each boundary, until it reaches the root SDFG.
-
-    Sizing the buffer correctly needs it allocated per outer iteration, inside the enclosing scope,
-    which this lift does not do. So refuse: the reduction stays a plain WCR map, which is correct.
-
-    :param state: The state holding ``map_entry``.
-    :param map_entry: The reduction map being lifted.
-    :param trip: The reduction map's trip count expression.
-    :returns: ``True`` if the lift must be refused.
-    """
+    # True if the reduction map's trip count is sized by a param of a map ENCLOSING it -- following the scope tree out
+    # through nested-SDFG boundaries.
     syms = _free_syms(trip)
     cur_state, node = state, map_entry
     while syms and cur_state is not None:
@@ -120,14 +96,7 @@ def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEn
 
 
 def _const_assign_value(code: str) -> float | None:
-    """Numeric value of a ``_out = <number>`` tasklet, or ``None``.
-
-    Accepts a bare constant or a unary ``+``/``-`` on a constant (the frontend
-    emits ``__out = 0.0`` for a zero seed).
-
-    :param code: The tasklet's Python code string.
-    :returns: The float value, or ``None`` if not a numeric constant assign.
-    """
+    # Numeric value of a ``_out = <number>`` tasklet, or ``None``.
     try:
         tree = ast.parse((code or "").strip())
     except SyntaxError:
@@ -166,11 +135,8 @@ class PureWCRReductionInfo:
 
 def _pure_wcr_map_ok(state: "dace.SDFGState",
                      map_entry: "dace.nodes.MapEntry") -> tuple[nodes.MapExit, list[nodes.Node], str] | None:
-    """Shared map-level guards for a pure-WCR reduction: single-param, unit-step,
-    top-level (within its state) map whose body holds no nested map.
-
-    :returns: ``(map_exit, inner_nodes, param)`` if the map qualifies, else ``None``.
-    """
+    # Shared map-level guards for a pure-WCR reduction: single-param, unit-step, top-level (within its state) map whose
+    # body holds no nested map.
     if not isinstance(map_entry, dace.nodes.MapEntry):
         return None
     if len(map_entry.map.params) != 1:
@@ -194,11 +160,8 @@ def _pure_wcr_map_ok(state: "dace.SDFGState",
 def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
                              inner: list[nodes.Node], param: str,
                              write_edge: MultiConnectorEdge[Memlet]) -> PureWCRReductionInfo | None:
-    """Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED
-    (param-independent) scalar accumulator not read at map entry / aliased in scope.
-
-    :returns: A :class:`PureWCRReductionInfo` for this write, or ``None``.
-    """
+    # Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED (param-independent) scalar accumulator
+    # not read at map entry / aliased in scope.
     from dace.frontend.operations import detect_reduction_type
     body = write_edge.src
     acc = write_edge.data.data
@@ -225,7 +188,7 @@ def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, m
 
 
 def _scalar_wcr_writes(state: dace.SDFGState, map_exit: nodes.MapExit) -> list[MultiConnectorEdge[Memlet]]:
-    """Every scalar-slot (single-element) WCR write edge into ``map_exit``."""
+    # Every scalar-slot (single-element) WCR write edge into ``map_exit``.
     return [
         e for e in state.in_edges(map_exit) if e.data is not None and e.data.data is not None
         and e.data.subset is not None and e.data.subset.num_elements() == 1 and e.data.wcr is not None
@@ -234,15 +197,7 @@ def _scalar_wcr_writes(state: dace.SDFGState, map_exit: nodes.MapExit) -> list[M
 
 def _recognize_pure_wcr_reductions(state: "dace.SDFGState",
                                    map_entry: "dace.nodes.MapEntry") -> "list[PureWCRReductionInfo]":
-    """Recognise EVERY independent pure-WCR scalar reduction on ``map_entry``.
-
-    A map may fold several distinct scalar accumulators at its exit (``s += a[j];
-    cnt += 1`` -- azimint's masked mean). Each is lifted independently; there is no
-    need to fission the map first (a fission that must duplicate a shared body read
-    can hoist it out of the map-param scope). Returns one info per WCR write, or an
-    empty list if the map is not a pure-WCR reduction or two writes target the same
-    accumulator (not independent).
-    """
+    # Recognise EVERY independent pure-WCR scalar reduction on ``map_entry``.
     ok = _pure_wcr_map_ok(state, map_entry)
     if ok is None:
         return []
@@ -263,23 +218,7 @@ def _recognize_pure_wcr_reductions(state: "dace.SDFGState",
 
 def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
                                   map_entry: "dace.nodes.MapEntry") -> PureWCRReductionInfo | None:
-    """Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
-
-    Canonical ``acc = sum(A)`` / ``dot += a[i]*b[i]``: single-param, unit-step,
-    top-level map whose body (any acyclic sub-DAG; the product may fan several
-    tasklets into a private ``_wcr_priv_*`` node) has exactly one scalar
-    ``body -> map_exit`` edge writing the accumulator under ``CR:+`` / ``CR:*``,
-    where the accumulator is a FIXED scalar slot (subset independent of the map
-    param) NOT read at map entry. (Loop-carried RMW is :func:`recognize_map_reduction`.)
-
-    Guards reject look-alikes emitted as the same scalar ``CR:`` MapExit edge:
-    indexed scatter / recurrence ``a[i] (op)= ...`` (subset depends on param),
-    non-additive fold (only ``+`` / ``*`` round-trip the finite-float identity),
-    and nested reduction (trip depends on enclosing param -> lifted buffer's
-    symbolic shape out of scope after re-nest; deferred).
-
-    :returns: A :class:`PureWCRReductionInfo`, or ``None``.
-    """
+    # Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
     infos = _recognize_pure_wcr_reductions(state, map_entry)
     return infos[0] if len(infos) == 1 else None
 
@@ -375,28 +314,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         return count or None
 
     def _lift_pure_wcr(self, state: dace.SDFGState, info: "PureWCRReductionInfo") -> bool:
-        """Lift a pure-WCR boundary reduction to a product buffer + Reduce.
-
-        Redirect the ``CR:op`` map-exit write to a fresh 1-D buffer (drop the WCR
-        -> ordinary per-iteration store the tiler strides), then fold the buffer
-        into the accumulator via a ``Reduce`` libnode.
-
-        The accumulator write keeps its ORIGINAL subset (``acc[i]`` for a per-outer-
-        iteration slot, ``acc[0]`` for a plain scalar) -- never the hard-coded ``[0]``
-        that would clobber the wrong element of an indexed accumulator inside a
-        parallelised outer map (e.g. atax ``tmp[i] = sum_j A[i, j] * x[j]``).
-
-        With ``wcr_free_output`` the fold result rides a plain edge into a fresh
-        ``_partial`` scalar, then an explicit ``acc = acc <op> _partial`` tasklet folds
-        it back -- no WCR anywhere, so the reduction may live INSIDE a body NSDFG (the
-        multi-dim invariant forbids a loose in-NSDFG WCR). The read-back reproduces the
-        original ``acc (op)= fold`` semantics for any prior ``acc``. Otherwise the
-        ``Reduce -> acc`` edge keeps the ``CR:op`` WCR (the top-level ``acc = sum(A)``
-        form codegen lowers to an OpenMP reduction clause).
-
-        :returns: ``True`` if lifted, ``False`` on failed precondition (SDFG
-            unchanged).
-        """
+        # Lift a pure-WCR boundary reduction to a product buffer + Reduce.
         sdfg = state.sdfg
         me, mx, acc, op, write_edge = (info.map_entry, info.map_exit, info.accumulator, info.op, info.write_edge)
         param = me.map.params[0]
@@ -460,19 +378,7 @@ class LiftMapReductionToReduce(ppl.Pass):
 
     @staticmethod
     def _split_inout_connector(state: dace.SDFGState, info: MapReductionInfo) -> MultiConnectorEdge[Memlet] | None:
-        """Give the accumulator distinct in/out connectors on the body NSDFG.
-
-        When the body reads+writes the accumulator through one *inout* connector
-        (s4115 ``sum_val``: same name in in/out_connectors), the feed-identity lift
-        would push two outer arrays (identity in, buffer out) through one connector
-        -- invalid. Split: rename inner write-side access nodes to a fresh array on
-        a new output connector; leave the read on the original.
-
-        :param state: State holding the body node.
-        :param info: Recognised reduction; its ``write_edge`` is replaced on split.
-        :returns: (possibly new) ``body -> map_exit`` write edge, or ``None`` if the
-            inout connector could not be split safely.
-        """
+        # Give the accumulator distinct in/out connectors on the body NSDFG.
         body = info.body
         read_conn, write_conn = info.read_edge.dst_conn, info.write_edge.src_conn
         if not isinstance(body, nodes.NestedSDFG) or read_conn != write_conn:
@@ -508,13 +414,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         return new_we
 
     def _lift(self, state: dace.SDFGState, info: MapReductionInfo) -> bool:
-        """Perform the feed-identity lift for one recognised reduction.
-
-        :param state: The state holding the reduction map.
-        :param info: The recognised reduction.
-        :returns: ``True`` if the lift was applied, ``False`` if a structural /
-            semantic precondition failed (the SDFG is left unchanged).
-        """
+        # Perform the feed-identity lift for one recognised reduction.
         sdfg = state.sdfg
         me, mx = info.map_entry, info.map_exit
         acc = info.accumulator
@@ -615,23 +515,8 @@ class LiftMapReductionToReduce(ppl.Pass):
     @staticmethod
     def _scope_dynamic_range_symbols(state: dace.SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
                                      buf_node: nodes.AccessNode, red: nodes.LibraryNode) -> None:
-        """Wrap the lifted product-map + buffer + ``Reduce`` in a single-iteration
-        map that re-defines the product-map's data-dependent range symbols as
-        dynamic-range connectors.
-
-        Only ``me`` range symbols that are (a) SDFG symbols AND (b) bound by an
-        interstate-edge assignment to a plain ``Scalar`` are scoped; a genuine
-        free/global symbol (``N`` in ``0:N``) is already in scope -> no wrap. The
-        wrap reuses the original symbol names on the connectors: they shadow the
-        interstate-bound symbols with the SAME value, so SDFG-level buffer-shape
-        references stay satisfied while the in-scope copy survives the re-nest.
-
-        :param state: State holding the lifted reduction.
-        :param me: Product-fill map entry (range carries the symbols).
-        :param mx: Product-fill map exit.
-        :param buf_node: Product buffer access node.
-        :param red: The ``Reduce`` library node.
-        """
+        # Wrap the lifted product-map + buffer + ``Reduce`` in a single-iteration map that re-defines the product-map's
+        # data-dependent range symbols as dynamic-range connectors.
         sdfg = state.sdfg
         range_syms = {str(s) for s in me.map.range.free_symbols} & set(sdfg.symbols)
         if not range_syms:

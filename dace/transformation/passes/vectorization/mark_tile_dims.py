@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``MarkTileDims`` — validation-only: pick K innermost params per inner map, build a
+"""``MarkTileDims`` -- validation-only: pick K innermost params per inner map, build a
 :class:`TileDimSpec` per candidate.
 
 First per-map analysis step in the v2 orchestrator. Loud failure on any inner map that can't
@@ -106,13 +106,7 @@ class MarkTileDims(ppl.Pass):
         return False
 
     def _classify_one(self, state: dace.SDFGState, map_entry: MapEntry) -> TileDimSpec | None:
-        """Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
-
-        :param state: The state holding ``map_entry``.
-        :param map_entry: The candidate inner map entry.
-        :returns: Spec when the K innermost params each have step == 1; ``None`` otherwise.
-        :raises NotImplementedError: When ``skip_ineligible`` is ``False`` and map ineligible.
-        """
+        # Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
         # ``__tile_k1_tail`` maps pin K=1 widths=(1,) regardless of orchestrator
         # widths: single-lane scalar-tile remainder over the innermost iter-var only.
         widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else map_tile_widths(
@@ -160,12 +154,7 @@ class MarkTileDims(ppl.Pass):
         )
 
     def _fail_or_skip(self, msg: str) -> TileDimSpec | None:
-        """Either raise or return ``None`` based on ``skip_ineligible``.
-
-        :param msg: Diagnostic message included in the raised error.
-        :returns: ``None`` when ``skip_ineligible`` is True.
-        :raises NotImplementedError: When ``skip_ineligible`` is False.
-        """
+        # Either raise or return ``None`` based on ``skip_ineligible``.
         if self.skip_ineligible:
             return None
         raise NotImplementedError(f"MarkTileDims: {msg}")

@@ -27,11 +27,7 @@ from dace.ordered import OrderedSet
 
 
 def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | None:
-    """If ``tasklet`` is a two-input ``__out = __a <op> __b`` body, return ``(out_conn, [a, b])``.
-
-    Matches the parenthesised (``__out = (__a + __b)``) and bare forms the frontend / tasklet
-    splitter emit. Refuses anything else (a single input, a call, a compound expression).
-    """
+    # If ``tasklet`` is a two-input ``__out = __a <op> __b`` body, return ``(out_conn, [a, b])``.
     if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 2:
         return None
     if tasklet.language is not dace.dtypes.Language.Python:
@@ -74,8 +70,8 @@ class FuseMultiplyAdd(ppl.Pass):
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
 
     def _data_used_elsewhere(self, sdfg: dace.SDFG, state: SDFGState, name: str) -> bool:
-        """True if ``name`` is referenced by any access node other than in ``state`` (a
-        cross-state / cross-scope reuse that would make removing the intermediate unsound)."""
+        # True if ``name`` is referenced by any access node other than in ``state`` (a cross-state / cross-scope reuse
+        # that would make removing the intermediate unsound).
         for s in sdfg.states():
             for n in s.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data == name and s is not state:
@@ -123,7 +119,7 @@ class FuseMultiplyAdd(ppl.Pass):
 
     def _rewrite(self, sdfg: dace.SDFG, state: SDFGState, mul: nodes.Tasklet, mul_ins: list[str],
                  prod: nodes.AccessNode, add: nodes.Tasklet, add_out_conn: str, addend_conn: str) -> None:
-        """Replace the ``mul -> prod -> add`` chain with one ``fma`` tasklet."""
+        # Replace the ``mul -> prod -> add`` chain with one ``fma`` tasklet.
         # Source edges to preserve: the two multiplicands (into ``mul``) and the addend (into ``add``).
         a_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[0])
         b_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[1])

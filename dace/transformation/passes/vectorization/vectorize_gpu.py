@@ -13,7 +13,7 @@ from dace.transformation.passes.vectorization.vectorize_multi_dim import Vectori
 
 
 class VectorizeGPU(VectorizeGPUMultiDim):
-    """Alias of :class:`VectorizeGPUMultiDim` — the CUDA half2 (FP16x2) tile pipeline."""
+    """Alias of :class:`VectorizeGPUMultiDim` -- the CUDA half2 (FP16x2) tile pipeline."""
 
 
 __all__ = ["VectorizeGPU", "VectorizeGPUMultiDim", "_has_gpu_device_map"]

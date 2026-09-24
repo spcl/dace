@@ -5,19 +5,19 @@ A trivial assign tasklet whose body is exactly ``_out = _in`` (one input
 connector, one output connector) and whose only incoming / outgoing edge
 each connects to an :class:`~dace.sdfg.nodes.AccessNode` is a pure copy.
 DaCe's tasklet codegen for a Python-language ``_out = _in`` body with
-tile-pointer connectors emits ``_out = _in;`` — a *pointer* reassignment
+tile-pointer connectors emits ``_out = _in;`` -- a *pointer* reassignment
 of the local variable; the destination transient is never actually
 written. This pass exposes the rewrite as a standalone pipeline step so the
 multi-dim K=1 / K=2 paths can call it directly.
 
 Two rewrites, in order:
 
-1. **Dedup** — when several trivial assign tasklets copy the same
+1. **Dedup** -- when several trivial assign tasklets copy the same
    source element into the same destination element (e.g. ``fp_factor``
    branch lowering emitting one cond-to-merge chain per arm side-by-side),
    collapse them to ONE. Without this step the source's ``out_degree`` would
    exceed 1 and the bypass below would refuse it.
-2. **Bypass** — when at least one side is a transient AND
+2. **Bypass** -- when at least one side is a transient AND
    ``out_degree(src) == 1`` AND ``in_degree(dst) == 1``, drop the
    tasklet and route the producer / consumer of the transient side
    directly. The single-consumer / single-producer guard keeps
@@ -50,9 +50,8 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 
 
 def _is_assign_tasklet(t: dace.nodes.Node) -> bool:
-    """True iff ``t`` is a tasklet with a single in / out connector and a body
-    of the form ``<out_conn> = <in_conn>`` (no arithmetic, no calls).
-    """
+    # True iff ``t`` is a tasklet with a single in / out connector and a body of the form ``<out_conn> = <in_conn>`` (no
+    # arithmetic, no calls).
     if not isinstance(t, dace.nodes.Tasklet):
         return False
     if len(t.in_connectors) != 1 or len(t.out_connectors) != 1:
@@ -65,13 +64,7 @@ def _is_assign_tasklet(t: dace.nodes.Node) -> bool:
 
 def _assign_triple(istate: SDFGState,
                    t: dace.nodes.Tasklet) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]] | None:
-    """Return ``(in_edge, out_edge)`` iff ``t`` is the trivial
-    ``AN -> [_out=_in] -> AN`` triple. ``None`` otherwise.
-
-    Shared gate for the dedup and bypass passes -- collapses six
-    repeated checks (assign body, single in/out edge, both endpoints
-    AccessNodes) into one helper.
-    """
+    # Return ``(in_edge, out_edge)`` iff ``t`` is the trivial ``AN -> [_out=_in] -> AN`` triple.
     if not _is_assign_tasklet(t):
         return None
     in_es = istate.in_edges(t)
@@ -85,19 +78,7 @@ def _assign_triple(istate: SDFGState,
 
 
 def _accessed_in_other_states(inner_sdfg: SDFG, data_name: str, current_state: SDFGState) -> bool:
-    """True iff ``data_name`` has an AccessNode in some state OTHER than ``current_state``.
-
-    A transient that is also accessed in another state is a **cross-state value**:
-    its producer (or consumer) lives in a different state and the data flows
-    through the persistent transient, NOT through an edge in ``current_state``.
-    Its in/out degree *within ``current_state``* is therefore misleading -- a
-    write whose only reader is in the NEXT state shows ``out_degree == 0`` here,
-    yet it is NOT dead. The state-local bypass / dedup rewrites must leave such
-    triples alone, else they delete the sole write (or read) and either produce
-    an isolated node (invalid SDFG) or silently break the cross-state data flow.
-    (cloudsc_one: ``zqx[z1,i,j]`` staged in ``assign_42_12`` and read by the
-    cond1 guard in the next state ``slice_zqx_43_0``.)
-    """
+    # True iff ``data_name`` has an AccessNode in some state OTHER than ``current_state``.
     for st in inner_sdfg.states():
         if st is current_state:
             continue
@@ -108,16 +89,7 @@ def _accessed_in_other_states(inner_sdfg: SDFG, data_name: str, current_state: S
 
 
 def _accumulates_into_destination(pe: MultiConnectorEdge[Memlet]) -> bool:
-    """True iff producer edge ``pe`` folds into what its destination ALREADY holds.
-
-    Re-pointing a write at a different buffer is value-preserving only when the
-    write fully DEFINES the subset it covers. An accumulation does not: it reads
-    the destination's prior contents, so its seed is a separate write that the
-    bypass would leave behind on the abandoned node. Two accumulating forms reach
-    this pass -- a WCR memlet, and a ``Reduce`` library node carrying no
-    ``identity`` (``ExpandReducePure`` emits an initialization state only when an
-    identity exists, so an identity-free node reduces into the output in place).
-    """
+    # True iff producer edge ``pe`` folds into what its destination ALREADY holds.
     if pe.data is not None and pe.data.wcr is not None:
         return True
     return isinstance(pe.src, Reduce) and pe.src.identity is None
@@ -163,24 +135,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
 
     @staticmethod
     def _dedup_identity_assigns(istate: SDFGState) -> int:
-        """Collapse duplicate ``AN(src) -> [_out=_in] -> AN(dst)`` triples.
-
-        FP-factor branch lowering can leave two arms emitting the same
-        ``cond -> float_factor`` assign chain side-by-side -- the cond
-        compute writes ONE tile (``tmp_condition_symbol_to_scalar_4``)
-        and BOTH per-arm assigns route it to ``float___tmp0``. The
-        duplicate out-edges from ``src`` push its out-degree above 1,
-        which would trip :meth:`_bypass_transient_assigns`'s safety
-        guard (intended to keep SSA-like reassignment chains intact).
-        Keep ONE assign per unique copy -- the same source element into the
-        same destination element -- so the bypass can proceed; the other
-        copies route into the same canonical ``dst`` AccessNode (or are
-        removed when both endpoints are the same node) and the cond tile no
-        longer fans out per arm.
-
-        :param istate: Inner state being rewritten.
-        :returns: Number of duplicate tasklets removed.
-        """
+        # Collapse duplicate ``AN(src) -> [_out=_in] -> AN(dst)`` triples.
         seen: dict = {}
         removed = 0
         for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
@@ -215,31 +170,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
 
     @staticmethod
     def _bypass_transient_assigns(istate: SDFGState) -> int:
-        """Bypass ``AN(src) -> [_out=_in] -> AN(dst)`` when one side is transient.
-
-        Only fires when:
-
-        * the tasklet body is the trivial ``_out = _in`` form;
-        * the in-edge ``src`` and out-edge ``dst`` are both AccessNodes;
-        * at least one of ``src`` / ``dst`` is a transient (collapsing a
-          connector -> connector assign would lose the boundary edge);
-        * ``out_degree(src) == 1`` AND ``in_degree(dst) == 1`` (multi-
-          consumer / multi-producer patterns include SSA-like
-          reassignment chains where the bypass would silently fold
-          separate assignments onto one AccessNode and pick the wrong
-          value -- leave those alone);
-        * no producer of ``src`` ACCUMULATES into it (see
-          :func:`_accumulates_into_destination`) -- such a write is seeded by a
-          separate store the bypass cannot carry along.
-
-        Preference: route the source's producer to write into the
-        destination AccessNode (preserving downstream consumers of
-        ``dst``); fall back to the other direction when the source is
-        the transient.
-
-        :param istate: Inner state being rewritten.
-        :returns: Number of bypassed tasklets dropped.
-        """
+        # Bypass ``AN(src) -> [_out=_in] -> AN(dst)`` when one side is transient.
         inner = istate.sdfg
         removed = 0
         for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:

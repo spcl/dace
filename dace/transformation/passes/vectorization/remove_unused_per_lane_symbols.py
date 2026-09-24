@@ -48,11 +48,7 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 
 
 def _symbols_in_code_block(code_block: CodeBlock | str | None) -> set[str]:
-    """Wrap :func:`dace.symbolic.symbols_in_code` for an SDFG ``CodeBlock``-like value.
-
-    Accepts ``None`` (returns empty set), a ``CodeBlock`` instance (reads
-    ``.as_string``), or any other value (str-coerced).
-    """
+    # Wrap :func:`dace.symbolic.symbols_in_code` for an SDFG ``CodeBlock``-like value.
     if code_block is None:
         return set()
     src = code_block.as_string if isinstance(code_block, CodeBlock) else str(code_block)
@@ -60,17 +56,7 @@ def _symbols_in_code_block(code_block: CodeBlock | str | None) -> set[str]:
 
 
 def _collect_referenced_symbols(sdfg: SDFG) -> set[str]:
-    """Walk every place a symbol can appear in ``sdfg`` and return the union.
-
-    Uses :meth:`dace.data.Data.free_symbols`, :meth:`dace.memlet.Memlet.used_symbols`,
-    :meth:`dace.sdfg.InterstateEdge.used_symbols` and
-    :func:`dace.symbolic.symbols_in_code` instead of hand-rolled regex extraction,
-    so any change in DaCe's symbol-tracking semantics flows through here uniformly.
-
-    Conservative: over-reporting (flagging a symbol that isn't really used) keeps
-    the symbol alive, which is safe; under-reporting would delete a still-live
-    symbol and break the SDFG.
-    """
+    # Walk every place a symbol can appear in ``sdfg`` and return the union.
     referenced: set[str] = set()
     # Array descriptors (shape / strides / offset / start_offset).
     for desc in sdfg.arrays.values():
@@ -106,8 +92,7 @@ def _collect_referenced_symbols(sdfg: SDFG) -> set[str]:
 
 
 def _drop_assignment_in_iedges(sdfg: SDFG, sym: str) -> int:
-    """Drop any ``sym = ...`` assignment from any interstate edge in ``sdfg``.
-    Returns the number of assignments removed."""
+    # Drop any ``sym = ...`` assignment from any interstate edge in ``sdfg``.
     dropped = 0
     for edge in sdfg.all_interstate_edges():
         if sym in edge.data.assignments:
@@ -117,8 +102,7 @@ def _drop_assignment_in_iedges(sdfg: SDFG, sym: str) -> int:
 
 
 def _drop_symbol_mapping_in_nsdfgs(sdfg: SDFG, sym: str) -> int:
-    """Drop any entry whose key is ``sym`` from any NestedSDFG node's symbol_mapping.
-    Returns the number of mappings removed."""
+    # Drop any entry whose key is ``sym`` from any NestedSDFG node's symbol_mapping.
     dropped = 0
     for state in sdfg.states():
         for node in state.nodes():
@@ -150,8 +134,7 @@ class RemoveUnusedPerLaneSymbols(ppl.Pass):
         return set()
 
     def _sweep(self, sdfg: SDFG) -> int:
-        """Sweep unused per-lane symbols from ``sdfg`` (one level). Returns the
-        number of symbols removed."""
+        # Sweep unused per-lane symbols from ``sdfg`` (one level).
         removed = 0
         referenced = _collect_referenced_symbols(sdfg)
         # Lane-encoded symbols that are NOT referenced are dead.

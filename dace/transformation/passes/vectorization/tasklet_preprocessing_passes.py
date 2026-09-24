@@ -19,15 +19,7 @@ def _rewrite_python_tasklet_bodies(
         sdfg: SDFG,
         rewrite: Callable[[str], str],
         filter_node: Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool] | None = None) -> int:
-    """Apply ``rewrite`` to every Python tasklet body in ``sdfg`` recursively.
-
-    :param sdfg: the SDFG whose Python tasklets are rewritten in place.
-    :param rewrite: maps a tasklet's source string to its replacement; the
-        code is updated only if the result differs.
-    :param filter_node: optional per-tasklet predicate; if it returns False
-        the rewrite is skipped for that tasklet.
-    :returns: how many tasklet bodies actually changed.
-    """
+    # Apply ``rewrite`` to every Python tasklet body in ``sdfg`` recursively.
     rewritten = 0
     for node, graph in sdfg.all_nodes_recursive():
         if not isinstance(node, dace.sdfg.nodes.Tasklet):
@@ -54,11 +46,7 @@ class PowerOperatorExpander(ast.NodeTransformer):
 
     @staticmethod
     def _is_pow_call(call_node: ast.Call) -> bool:
-        """Return True for the two-arg forms ``pow(x, y)`` and ``math.pow(x, y)``.
-
-        :param call_node: the call node to test.
-        :returns: True if it is a two-argument pow call.
-        """
+        # Return True for the two-arg forms ``pow(x, y)`` and ``math.pow(x, y)``.
         if len(call_node.args) != 2:
             return False
         func = call_node.func
@@ -70,14 +58,8 @@ class PowerOperatorExpander(ast.NodeTransformer):
         return False
 
     def _expand_pow(self, left: ast.AST, right: ast.AST, loc: ast.AST) -> ast.AST:
-        """Expand ``left ** right``: integer exponent to unrolled product, else exp/log.
-
-        :param left: the base expression.
-        :param right: the exponent expression.
-        :param loc: the original node used for source-location copying.
-        :returns: the rewritten expression node.
-        """
-        # Case 1: integer-like exponent → unrolled multiplication
+        # Expand ``left ** right``: integer exponent to unrolled product, else exp/log.
+        # Case 1: integer-like exponent -> unrolled multiplication
         if isinstance(right, ast.Constant):
             val = right.value
             if isinstance(val, int):
@@ -95,11 +77,11 @@ class PowerOperatorExpander(ast.NodeTransformer):
                                              op=ast.Mult(),
                                              right=ast.copy_location(ast.fix_missing_locations(left), left))
                     return ast.copy_location(new_node, loc)
-                # n in {0, 1} → leave the original `left ** right` shape as a BinOp; caller decides
+                # n in {0, 1} -> leave the original `left ** right` shape as a BinOp; caller decides
                 return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
-        # Case 2: non-constant / non-integer exponent → leave it as ``left ** right``
-        # for the tile binop to classify (integer exponent → ``ipow``; otherwise ``std::pow``).
+        # Case 2: non-constant / non-integer exponent -> leave it as ``left ** right``
+        # for the tile binop to classify (integer exponent -> ``ipow``; otherwise ``std::pow``).
         # The former ``exp(right * log(left))`` identity is only valid for a POSITIVE base:
         # ``log(left)`` is NaN for a negative ``left``, so ``sin(x)**2`` -- whose exponent
         # arrives as a connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1 does
@@ -216,18 +198,14 @@ class RemoveMathPrefix(ast.NodeTransformer):
         if isinstance(node.func, ast.Attribute):
             # Check if it is "math.xxx"
             if isinstance(node.func.value, ast.Name) and node.func.value.id == "math":
-                # Replace math.xxx(...) → xxx(...)
+                # Replace math.xxx(...) -> xxx(...)
                 node.func = ast.Name(id=node.func.attr, ctx=ast.Load())
 
         return node
 
 
 def _expand_pow(src: str) -> str:
-    """Expand power operators/calls in Python source.
-
-    :param src: Python source string.
-    :returns: source with ``**``/``pow`` expanded.
-    """
+    # Expand power operators/calls in Python source.
     tree = ast.parse(src)
     tree = PowerOperatorExpander().visit(tree)
     ast.fix_missing_locations(tree)
@@ -235,11 +213,7 @@ def _expand_pow(src: str) -> str:
 
 
 def _remove_dace_float_casts(src: str) -> str:
-    """Remove ``dace.floatNN(...)`` casts from Python source.
-
-    :param src: Python source string.
-    :returns: source with float casts removed.
-    """
+    # Remove ``dace.floatNN(...)`` casts from Python source.
     tree = ast.parse(src)
     tree = DaceCastRemover(call_name="float").visit(tree)
     ast.fix_missing_locations(tree)
@@ -247,11 +221,7 @@ def _remove_dace_float_casts(src: str) -> str:
 
 
 def _remove_dace_int_casts(src: str) -> str:
-    """Remove ``dace.intNN(...)`` casts from Python source.
-
-    :param src: Python source string.
-    :returns: source with int casts removed.
-    """
+    # Remove ``dace.intNN(...)`` casts from Python source.
     tree = ast.parse(src)
     tree = DaceCastRemover(call_name="int").visit(tree)
     ast.fix_missing_locations(tree)
@@ -259,11 +229,7 @@ def _remove_dace_int_casts(src: str) -> str:
 
 
 def _remove_math_prefix_from_source(source: str) -> str:
-    """Rewrite ``math.xxx`` to ``xxx`` in Python source.
-
-    :param source: Python source string.
-    :returns: source with the ``math.`` prefix stripped from calls.
-    """
+    # Rewrite ``math.xxx`` to ``xxx`` in Python source.
     tree = ast.parse(source)
     tree = RemoveMathPrefix().visit(tree)
     ast.fix_missing_locations(tree)
@@ -285,7 +251,7 @@ class PowerExponentCastStripper(ast.NodeTransformer):
     _is_float_cast = staticmethod(re.compile(r"float\d*$").fullmatch)
 
     def _unwrap_float_cast(self, node: ast.AST) -> ast.AST:
-        """Return the inner argument of a single-arg ``[dace.]floatNN(x)`` cast call, else ``node``."""
+        # Return the inner argument of a single-arg ``[dace.]floatNN(x)`` cast call, else ``node``.
         if not (isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords):
             return node
         func = node.func
@@ -313,12 +279,7 @@ class PowerExponentCastStripper(ast.NodeTransformer):
 
 
 def _strip_power_exponent_cast(src: str) -> str:
-    """Strip a redundant float cast on a power exponent in Python source.
-
-    :param src: Python source string.
-    :returns: source with ``base ** float64(e)`` rewritten to ``base ** e`` (unchanged
-        when it carries no power).
-    """
+    # Strip a redundant float cast on a power exponent in Python source.
     if "**" not in src and "pow(" not in src:  # fast path: no power to touch
         return src
     tree = ast.parse(src)
@@ -347,7 +308,7 @@ class ModuloToPyModExpander(ast.NodeTransformer):
 
 
 def _rewrite_modulo(src: str) -> str:
-    """Rename floored modulo calls to ``py_mod`` in a Python source string; ``src`` itself when none."""
+    # Rename floored modulo calls to ``py_mod`` in a Python source string; ``src`` itself when none.
     if not any(name in src for name in FLOORED_MODULO_NAMES):
         return src
     expander = ModuloToPyModExpander()
@@ -362,14 +323,14 @@ _PY_MOD = sympy.Function("py_mod")
 
 
 def _subs_py_mod_symbolic(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Rewrite every floored sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``."""
+    # Rewrite every floored sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``.
     if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod):
         return expr
     return expr.replace(sympy.Mod, _PY_MOD)
 
 
 def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
-    """Whether any component expression of ``subset`` contains a sympy ``Mod``."""
+    # Whether any component expression of ``subset`` contains a sympy ``Mod``.
     if isinstance(subset, dace.subsets.Range):
         exprs = [x for rng in subset.ranges for x in rng]
     elif isinstance(subset, dace.subsets.Indices):
@@ -380,11 +341,7 @@ def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
 
 
 def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
-    """Return a copy of ``subset`` with every ``Mod`` rewritten to ``py_mod``.
-
-    :param subset: a :class:`~dace.subsets.Range` or :class:`~dace.subsets.Indices`.
-    :returns: the rewritten subset (a new object), or ``subset`` for other types.
-    """
+    # Return a copy of ``subset`` with every ``Mod`` rewritten to ``py_mod``.
     if isinstance(subset, dace.subsets.Range):
         return dace.subsets.Range([(_subs_py_mod_symbolic(b), _subs_py_mod_symbolic(e), _subs_py_mod_symbolic(s))
                                    for b, e, s in subset.ranges])
@@ -394,12 +351,7 @@ def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
 
 
 class _BodyRewritePass(ppl.Pass):
-    """Base for vectorization preprocessing passes that rewrite Python tasklet bodies in place.
-
-    Subclasses set ``_rewrite`` (string -> string). The helper walks every tasklet,
-    applies the rewrite to its source, and reinstalls the body if changed.
-    Validation runs once at the end.
-    """
+    # Base for vectorization preprocessing passes that rewrite Python tasklet bodies in place.
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
@@ -461,11 +413,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
 
     @staticmethod
     def _rewritten_codeblock(cb: CodeBlock | None) -> CodeBlock | None:
-        """Return a CodeBlock with floored modulo calls renamed to ``py_mod``; the original if unchanged.
-
-        :param cb: a :class:`CodeBlock` or ``None``.
-        :returns: a new Python CodeBlock when a ``%`` was rewritten, else ``cb``.
-        """
+        # Return a CodeBlock with floored modulo calls renamed to ``py_mod``; the original if unchanged.
         if cb is None or cb.language != dace.dtypes.Language.Python:
             return cb
         src = cb.as_string
@@ -475,7 +423,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return CodeBlock(new, language=dace.Language.Python) if new != src else cb
 
     def _rewrite_control_flow(self, g: SDFG) -> int:
-        """Rename floored modulo calls in loop-bound codeblocks and branch conditions of ``g``."""
+        # Rename floored modulo calls in loop-bound codeblocks and branch conditions of ``g``.
         rewritten = 0
         for cfg in g.all_control_flow_regions(recursive=True):
             if isinstance(cfg, LoopRegion):
@@ -500,7 +448,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return rewritten
 
     def _rewrite_interstate_edges(self, g: SDFG) -> int:
-        """Rename floored modulo calls in interstate-edge conditions and assignment RHS of ``g``."""
+        # Rename floored modulo calls in interstate-edge conditions and assignment RHS of ``g``.
         rewritten = 0
         for e in g.all_interstate_edges(recursive=True):
             ise = e.data
@@ -516,7 +464,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return rewritten
 
     def _rewrite_memlets_and_ranges(self, g: SDFG) -> int:
-        """Rewrite symbolic ``Mod`` in memlet subsets and map ranges of ``g``."""
+        # Rewrite symbolic ``Mod`` in memlet subsets and map ranges of ``g``.
         rewritten = 0
         for state in g.all_states():
             for e in state.edges():

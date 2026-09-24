@@ -35,7 +35,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     see one level down. Maps whose innermost trip is provably a multiple of ``vector_width``
     skipped by default (no remainder needed; wrapping perturbs downstream
     strided/gather detection). ``nest_provably_divisible=True`` nests them anyway
-    — masked-tail tile path needs a body NSDFG for the tile iteration mask.
+    -- masked-tail tile path needs a body NSDFG for the tile iteration mask.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -70,11 +70,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         return False
 
     def _trip_is_provably_divisible(self, map_entry: dace.nodes.MapEntry) -> bool:
-        """Innermost-dim trip provably a multiple of ``vector_width``?
-
-        :param map_entry: map entry whose innermost range is checked.
-        :returns: ``True`` iff trip provably divisible by ``vector_width``.
-        """
+        # Innermost-dim trip provably a multiple of ``vector_width``?
         if not map_entry.map.range.ranges:
             return False
         lb, ub, step = map_entry.map.range[-1]
@@ -89,17 +85,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         return False
 
     def _body_is_nested_reduction(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
-        """True if the body is already a nested reduction: one NestedSDFG plus only boundary
-        reduction AccessNodes (each with a WCR edge to the MapExit -- the partial
-        ``NormalizeWCRSource`` interposed on ``NSDFG -> AccessNode -[wcr]-> MapExit``).
-
-        Re-nesting such a body pulls the boundary WCR back inside, so the caller skips it -- the
-        pass stays idempotent on its own output.
-
-        :param state: the state holding the map.
-        :param map_entry: the map to inspect.
-        :returns: ``True`` iff the body is one NestedSDFG plus only boundary-reduction AccessNodes.
-        """
+        # True if the body is already a nested reduction: one NestedSDFG plus only boundary reduction AccessNodes (each
+        # with a WCR edge to the MapExit -- the partial ``NormalizeWCRSource`` interposed on ``NSDFG -> AccessNode
+        # -[wcr]-> MapExit``).
         map_exit = state.exit_node(map_entry)
         body = [
             k for k in map_body_nodes(state, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
@@ -115,29 +103,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             for k in others)
 
     def _strip_boundary_other_subsets(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
-        """Drop stale ``other_subset`` on the body-NSDFG's boundary edges.
-
-        ``nest_state_subgraph`` deep-copies the original boundary memlet for the
-        reconnected outer edge. If the body staged a global through a scalar element
-        (frontend ``c_slice``-style ``Scalar``), that memlet was a copy *into the
-        scalar* (``a[jk, jc] -> c_slice[0]``) carrying ``other_subset=[0]`` (rank-1
-        scalar side). The reconnected edge now feeds connector ``a`` (rank-2 ``(1,1)``
-        descriptor), and ``validate()`` resolves ``other_subset`` against the
-        memlet-path source AccessNode ``a`` (rank 2) -> rank-1 ``[0]`` fails
-        "other_subset does not match node dimension".
-
-        Boundary edge is a plain pass-through: inner descriptor already defines the
-        connector-side shape, so ``other_subset`` is redundant (same convention as
-        NSDFG/lib-node connector edges; downstream
-        :class:`~dace.transformation.interstate.expand_nested_sdfg_inputs.ExpandNestedSDFGInputs`
-        clears it when widening these memlets). Clearing here keeps the SDFG valid
-        immediately rather than transiently malformed.
-
-        ``data is None`` = structural dependency edge, not data movement -> skip.
-
-        :param state: state holding the freshly nested body NSDFG.
-        :param nsdfg_node: the body :class:`~dace.sdfg.nodes.NestedSDFG` node.
-        """
+        # Drop stale ``other_subset`` on the body-NSDFG's boundary edges.
         for edge in (*state.in_edges(nsdfg_node), *state.out_edges(nsdfg_node)):
             mem = edge.data
             if mem is None or mem.data is None:

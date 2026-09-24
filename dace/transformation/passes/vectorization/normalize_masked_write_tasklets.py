@@ -69,23 +69,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         return count or None
 
     def _mark_conditional_writes_dynamic(self, state: SDFGState, tasklet: nd.Tasklet) -> None:
-        """Mark every out-edge whose connector is written through ``IT`` as a DYNAMIC memlet.
-
-        ``IT(cond, value)`` lowers to ``if (cond) { out = value; }``, so the connector is not
-        assigned on the false path. That is only sound if the WRITE is skipped there too, which in
-        DaCe means a dynamic memlet: a static one stores the connector unconditionally after the
-        tasklet, so the false path would write whatever uninitialised value it happened to hold
-        instead of leaving the destination alone (TSVC s277's guarded ``a[i] += c[i]*d[i]``).
-
-        Enforced here, once, for EVERY producer of the ``IT`` form rather than at each rewrite
-        site. :meth:`_normalize` happens to inherit a dynamic memlet from the frontend (it lowers
-        an already-conditional ``A[mask] = value``), but :meth:`_demote_self_blend` turns an
-        UNCONDITIONAL blend into a conditional write and must convert the memlet with it. Making
-        the invariant explicit keeps the next producer from having to rediscover it.
-
-        :param state: The state holding ``tasklet``.
-        :param tasklet: A tasklet whose body was just rewritten to the ``IT`` form.
-        """
+        # Mark every out-edge whose connector is written through ``IT`` as a DYNAMIC memlet.
         guarded = {
             node.targets[0].id
             for node in ast.walk(ast.parse(tasklet.code.as_string)) if isinstance(node, ast.Assign)
@@ -97,25 +81,8 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                 edge.data.dynamic = True
 
     def _demote_self_blend(self, state: SDFGState, tasklet: nd.Tasklet) -> bool:
-        """Rewrite a SELF-BLEND ``out = ITE(cond, value, out)`` into the masked write
-        ``out = IT(cond, value)``, dropping the now-dead read of the destination.
-
-        ``BranchNormalization`` lowers a single-arm ``if cond: arr[i] = value`` to
-        ``arr[i] = ITE(cond, value, arr[i])`` -- correct, but it reads the destination back and
-        blends it, which :class:`ConvertTaskletsToTileOps` lowers to a ``TileITE`` (load old tile,
-        select, store all lanes). A one-armed ``if`` has no else VALUE at all: the inactive lanes
-        must simply not be written. That is ``IT``, which lowers to a masked ``TileStore`` -- the
-        instruction this pattern is asking for -- and it drops a tile load plus a select.
-
-        Only fires when the else operand is a bare in-connector reading the SAME data and subset
-        the output writes (that is what makes it a no-op arm rather than a real blend), when
-        that connector is not otherwise referenced by the body, and when nothing in the state
-        reads the written element afterwards (that reader needs the old value on unwritten lanes).
-
-        :param state: The state holding ``tasklet`` (for its edges).
-        :param tasklet: The candidate tasklet.
-        :returns: ``True`` if the tasklet was rewritten.
-        """
+        # Rewrite a SELF-BLEND ``out = ITE(cond, value, out)`` into the masked write ``out = IT(cond, value)``, dropping
+        # the now-dead read of the destination.
         parsed = self._parse_self_blend(tasklet)
         if parsed is None:
             return False
@@ -151,11 +118,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         return True
 
     def _parse_self_blend(self, tasklet: nd.Tasklet) -> tuple[str, str, str, str] | None:
-        """Match a lone ``<out> = ITE(<cond>, <value>, <in_conn>)`` body.
-
-        :param tasklet: The candidate tasklet.
-        :returns: ``(out_conn, else_conn, cond_src, value_src)``, or ``None`` if it does not match.
-        """
+        # Match a lone ``<out> = ITE(<cond>, <value>, <in_conn>)`` body.
         assign = single_assignment(tasklet.code.as_string)
         if assign is None:
             return None
@@ -186,7 +149,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         return out_conn, else_arm.id, ast.unparse(cond), ast.unparse(value)
 
     def _normalize(self, tasklet: nd.Tasklet) -> bool:
-        """Rewrite one masked-write bare-if tasklet's body in place. Returns True if changed."""
+        # Rewrite one masked-write bare-if tasklet's body in place.
         try:
             body = ast.parse(tasklet.code.as_string).body
         except (SyntaxError, ValueError):
@@ -276,8 +239,7 @@ class NormalizeTernaryTasklets(ppl.Pass):
         return count or None
 
     def _normalize_ternary(self, tasklet: nd.Tasklet) -> bool:
-        """Rewrite one tasklet's sole assignment in place if its RHS is a ternary.
-        Returns True if changed."""
+        # Rewrite one tasklet's sole assignment in place if its RHS is a ternary.
         try:
             body = ast.parse(tasklet.code.as_string).body
         except (SyntaxError, ValueError):

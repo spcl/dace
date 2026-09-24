@@ -91,11 +91,8 @@ class PrepareReductionForWidening(ppl.Pass):
 
     @staticmethod
     def _map_is_widening_candidate(state: SDFGState, map_exit: nodes.MapExit) -> bool:
-        """True iff ``map_exit``'s map is a tile-widening candidate: innermost (no nested map in its
-        scope) and unit-step on every dim (the shape the widener strides to W).
-
-        The widener only tiles innermost unit-step maps, so an array-slot reduction on any other map
-        is not something widening would reach -- leave it alone (the "only if it helps" gate)."""
+        # True iff ``map_exit``'s map is a tile-widening candidate: innermost (no nested map in its scope) and unit-step
+        # on every dim (the shape the widener strides to W).
         map_entry = state.entry_node(map_exit)
         if map_entry is None:
             return False
@@ -108,21 +105,8 @@ class PrepareReductionForWidening(ppl.Pass):
 
     def _is_array_slot_reduction(self, state: SDFGState, map_exit: nodes.MapExit,
                                  iedge: MultiConnectorEdge[Memlet]) -> bool:
-        """True iff ``iedge`` is a foldable WCR reduction into a genuine multi-element array slot --
-        the shape the widener bails on and this pass privatizes.
-
-        Guards (each leaves the reduction untouched when it fails):
-
-        * ``iedge`` carries a WCR and enters through an ``IN_*`` connector with exactly one matching
-          ``OUT_*`` boundary edge to an :class:`AccessNode`;
-        * the target descriptor is a GENUINE multi-element ``Array`` (a ``Scalar`` / length-1
-          accumulator already widens, so is skipped);
-        * the WCR op is associative / foldable (``+`` / ``*`` / ``min`` / ``max``);
-        * the write slot is a single element independent of the map params (a loop-invariant scalar
-          fold, not a per-iteration indexed scatter);
-        * the accumulator array is not read inside the map scope (a read-back would be a genuine
-          recurrence, not a WCR reduction -- must not be rewritten).
-        """
+        # True iff ``iedge`` is a foldable WCR reduction into a genuine multi-element array slot -- the shape the
+        # widener bails on and this pass privatizes.
         if iedge.data is None or iedge.data.wcr is None:
             return False
         in_conn = iedge.dst_conn

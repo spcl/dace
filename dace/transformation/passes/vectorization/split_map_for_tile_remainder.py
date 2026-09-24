@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``SplitMapForTileRemainder`` — peel a K-dim tile map into a divisible interior
+"""``SplitMapForTileRemainder`` -- peel a K-dim tile map into a divisible interior
 plus masked boundary slabs (``masked_tail`` strategy).
 
 K-slab loop-peeling decomposition (K+1 regions, NOT the 2**K Cartesian corner
@@ -40,7 +40,8 @@ from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
-from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
+                                                                           map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
 # Label suffix marking the fully-in-bounds interior a tile-remainder split
@@ -63,7 +64,7 @@ SCALAR_TAIL_MARKER = "__scalar_tail"
 MASKED_TAIL_MARKER = "__masked_tail"
 
 # Label suffix: boundary region flows through the tile-op pipeline at K=1
-# widths=(1,) — single-lane "scalar tile" remainder. Every tile prep pass treats
+# widths=(1,) -- single-lane "scalar tile" remainder. Every tile prep pass treats
 # it as tile-main pinned K=1 w=1: stride 1 (no W-stride), no mask, body rewritten
 # to tile ops (TileBinop/TileLoad/TileStore at one lane). Uniform remainder
 # emission when opted in via ``scalar_remainder_emit="tile"`` on the orchestrator.
@@ -227,19 +228,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         return False
 
     def _provably_divisible(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> bool:
-        """Whether dim ``[lb:ub]`` is provably a whole number of tiles.
-
-        Only a provably-divisible dim needs no split (all no-mask interior,
-        ``has_mask=False``). Every other dim -> (optionally empty) interior +
-        w-mask remainder tile. SHORT dim (``trip < W``) -> EMPTY interior + one
-        masked tile over the whole dim (mask ``l < trip``); ``trip == 0`` =
-        all-false-mask no-op.
-
-        :param lb: Inclusive lower bound.
-        :param ub: Inclusive upper bound.
-        :param W: Tile width.
-        :returns: ``True`` iff trip is provably a multiple of ``W``.
-        """
+        # Whether dim ``[lb:ub]`` is provably a whole number of tiles.
         trip = symbolic.simplify(ub - lb + 1)
         try:
             return bool(symbolic.simplify(trip % W) == 0)
@@ -247,16 +236,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             return False
 
     def _trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> str:
-        """Classify a tiled dim's extent against width ``W``.
-
-        ``'divisible'``   -- provably a whole number of tiles (constant OR symbolic like ``4*M``).
-        ``'below'``       -- provably ``< W``: too small to tile, keep the map scalar.
-        ``'nondivisible'``-- provably not a whole multiple of ``W`` (a constant ``>= W``, or a
-                             symbolic extent whose remainder reduces to a nonzero constant, e.g.
-                             ``4*M + 1``): a provable ``assume_even`` violation (rerun with
-                             ``assume_even=False``).
-        ``'symbolic'``    -- non-decidable extent: guard the assumption at runtime.
-        """
+        # Classify a tiled dim's extent against width ``W``.
         if self._provably_divisible(lb, ub, W):  # constant or symbolic (``4*M % 4 == 0``)
             return 'divisible'
         trip = symbolic.simplify(ub - lb + 1)
@@ -274,19 +254,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         return 'below' if t < W else 'nondivisible'
 
     def _split(self, state: dace.SDFGState, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
-        """Peel ``map_entry``'s K innermost dims into interior + K slabs.
-
-        See module docstring for the K-slab decomposition. Interior =
-        ``map_entry`` itself tightened on every dim, marked ``__tile_main``.
-        Each slab = fresh ``replicate_scope`` copy of the interior-so-far with
-        dim ``d`` set to its tail (dims ``> d`` still full — not yet tightened).
-
-        :param state: State holding the map.
-        :param map_entry: Innermost map entry to peel (becomes the interior).
-        :param widths: The map's own tile widths (:func:`map_tile_widths`), one per tiled innermost dim.
-        :returns: ``True`` if interior marked (always, when map has >= K dims);
-            ``False`` if map too small.
-        """
+        # Peel ``map_entry``'s K innermost dims into interior + K slabs.
         ranges = list(map_entry.map.range.ranges)
         K = len(widths)
         if K == 0 or len(ranges) < K:
@@ -393,29 +361,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         return applied or None
 
     def _record_stride_facts(self, state: dace.SDFGState, map_entry: MapEntry) -> None:
-        """Record the row-STRIDE parity this map's fp16 tile loads/stores need proven.
-
-        Extent parity is not stride parity. A tiled dim's extent being a whole number of tiles says
-        nothing about how far apart two rows sit, and it is the row stride that decides whether the
-        linear element offset of ``A[i, j, k]`` has a known residue -- i.e. whether the load may be
-        widened to a half2 at all. On an ``N``-column array the stride IS ``N``, symbolic, so the
-        residue is undecidable and every access falls back to per-element loads.
-
-        So: for each fp16 device array this map touches, every stride that is a bare symbol gets a
-        runtime ``stride % chunk == 0 && stride >= chunk`` guard, and that guard is the fact the
-        alignment proof consumes. ``chunk`` is the 32-bit word the widened fp16 path moves through
-        (2 half elements), the smallest promise that buys anything -- a wider one would abort more
-        programs for no extra widening.
-
-        Deliberately narrow, because every fact is bought with an abort the program did not have
-        before: fp16 only (nothing else has a widened path), device storage only (nothing else has
-        a base-address guarantee to build on), bare symbols only (a constant stride is already
-        decidable without a promise, and a compound one like ``N**2`` pins no single symbol -- it
-        follows from the ``N`` fact anyway). Everything else records nothing and stays per-element.
-
-        :param state: State holding the map.
-        :param map_entry: The map entry just marked ``__tile_main``.
-        """
+        # Record the row-STRIDE parity this map's fp16 tile loads/stores need proven.
         sdfg = state.sdfg
         edges = list(state.in_edges(map_entry)) + list(state.scope_subgraph(map_entry).edges())
         # Ordered dedup: the guard list must not depend on iteration nondeterminism.
@@ -434,25 +380,7 @@ class SplitMapForTileRemainder(ppl.Pass):
                     self._stride_checks.append((sdfg, str(simplified), chunk))
 
     def _emit_range_checks(self) -> None:
-        """Emit the host-side divisibility guards recorded while splitting.
-
-        One guard state is prepended (as the new start block) to each SDFG that owns a checked map,
-        so the checks run before that SDFG's kernels. Each distinct fact becomes a side-effect CPP
-        tasklet that writes to stderr and ``abort``\\ s on violation, turning what would otherwise be
-        a silent out-of-bounds tile access or a misaligned wide load into a loud, deterministic
-        failure that names the fix. Host-side, so it guards CPU and GPU alike. ``side_effects=True``
-        keeps a guard from being fused into a neighbour or eliminated as dead code.
-
-        Two fact kinds, same shape (``x % m == 0 && x >= m``):
-
-        * EXTENT (``assume_even`` only) -- a tiled extent that is not a whole multiple of its width,
-          or shorter than one tile, breaks the caller's no-remainder promise. Fix: ``assume_even=False``.
-        * STRIDE -- a bare-symbol row stride of an fp16 device array a tiled map touches. Its tasklet
-          label carries the ``(symbol, modulus)`` pair verbatim, which is how
-          :func:`guarded_stride_divisors` reads the fact back for the alignment proof. The ``>= m``
-          half is not decoration: it is what makes the widened window provably fit inside the
-          allocation. Fix: pad the array to an even row stride, or drop tile vectorization.
-        """
+        # Emit the host-side divisibility guards recorded while splitting.
         extents, strides = {}, {}
         for owner, extent, width in self._range_checks:
             extents.setdefault(owner, set()).add((symbolic.symstr(extent, cpp_mode=True), width))
@@ -474,14 +402,7 @@ class SplitMapForTileRemainder(ppl.Pass):
 
     @staticmethod
     def _add_guard(guard: dace.SDFGState, label: str, expr_c: str, modulus: int, message: str) -> None:
-        """Add one ``expr % modulus == 0 && expr >= modulus`` abort-on-violation tasklet.
-
-        :param guard: The guard state to add to.
-        :param label: Tasklet label -- for a stride fact this IS the record the proof reads back.
-        :param expr_c: The checked expression, already rendered as C++.
-        :param modulus: The divisor the expression must be a nonzero multiple of.
-        :param message: ``fprintf`` format body; takes the expression's value as its one ``%lld``.
-        """
+        # Add one ``expr % modulus == 0 && expr >= modulus`` abort-on-violation tasklet.
         # Both spellings, chosen by the compiler that reads them: the guard belongs to the SDFG
         # that owns the checked map, and that SDFG can be a nested one the offloading put on the
         # device, where ``fprintf`` and ``abort`` are host-only and nvcc refuses the translation

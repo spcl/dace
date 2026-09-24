@@ -57,10 +57,7 @@ _REDTYPE_OP = {
 
 
 def _identity_literal(op: str, dtype: dtypes.typeclass) -> str:
-    """The op's identity as a Python literal for an ITE tasklet body, dtype-aware.
-
-    Integer accumulators use exact ``iinfo`` bounds for ``min`` / ``max`` (a float
-    ``inf`` would be wrong once truncated to an integer)."""
+    # The op's identity as a Python literal for an ITE tasklet body, dtype-aware.
     is_int = numpy.issubdtype(dtype.type, numpy.integer)
     if op == '+':
         return '0' if is_int else '0.0'
@@ -74,11 +71,7 @@ def _identity_literal(op: str, dtype: dtypes.typeclass) -> str:
 
 
 def _body_has_data_dependent_read(sd: SDFG, state: SDFGState) -> bool:
-    """True if any read memlet subset in ``state`` is a data-dependent (gather)
-    index -- ``a[idx[j]]`` and friends. Such a load would fault on the mask-false
-    lanes once the branch is dissolved to unconditional, so predication must
-    refuse. Structured affine subsets (functions of iteration/scope symbols only)
-    are in-bounds by construction and return False."""
+    # True if any read memlet subset in ``state`` is a data-dependent (gather) index -- ``a[idx[j]]`` and friends.
     dd_memo: dict[str, bool] = {}  # one read-only query; nothing mutates ``sd`` under it
     for edge in state.edges():
         m = edge.data
@@ -123,13 +116,8 @@ class PredicateMaskedReduction(ppl.Pass):
     def _match(
         self, sd: SDFG, cb: ConditionalBlock
     ) -> tuple[str, SDFGState, list[tuple[MultiConnectorEdge[Memlet], str]], CondMaterialize | None] | None:
-        """Return ``(cond_text, body_state, [(edge, op)], cond_materialize)`` if ``cb``
-        is a predicable masked reduction, else None (leaving the graph untouched).
-
-        ``cond_materialize`` is ``None`` when the condition is already a materialized
-        scalar mask (recipe 1); otherwise it is the ``(cleaned, connectors, subsets)``
-        staging info for a compound predicate ``(a[i] > K)`` that :meth:`_apply_one`
-        first lowers into a bool mask scalar (recipe 2)."""
+        # Return ``(cond_text, body_state, [(edge, op)], cond_materialize)`` if ``cb`` is a predicable masked reduction,
+        # else None (leaving the graph untouched).
         # Shape: one if-true branch, optionally an EMPTY else.
         true_branches = [(c, b) for c, b in cb.branches if c is not None]
         else_branches = [(c, b) for c, b in cb.branches if c is None]
@@ -214,16 +202,8 @@ class PredicateMaskedReduction(ppl.Pass):
         return cond_text, state, reductions, cond_materialize
 
     def _materializable_predicate(self, sd: SDFG, cond_text: str) -> CondMaterialize | None:
-        """Return ``(cleaned, connectors, subsets)`` to stage a compound predicate
-        ``(a[i] > K)`` into a bool mask scalar, or ``None`` if it is not a per-element
-        array predicate we can eagerly evaluate on every lane.
-
-        ``cleaned`` is the predicate with each ``arr[...]`` read replaced by a bare
-        connector; ``connectors`` maps array name -> in-connector; ``subsets`` maps
-        array name -> the ``[i]`` subset string. A predicate reading a GATHER index
-        (``w[idx[i]]``) is refused -- eager evaluation on the would-be-masked lanes
-        could fault, and its nested subscript is not a plain memlet (that indirect
-        masked reduction is a separate feature)."""
+        # Return ``(cleaned, connectors, subsets)`` to stage a compound predicate ``(a[i] > K)`` into a bool mask
+        # scalar, or ``None`` if it is not a per-element array predicate we can eagerly evaluate on every lane.
         arrays = set(sd.arrays.keys())
         try:
             names = set(symbolic.arrays(cond_text)) | set(symbolic.free_symbols_and_functions(cond_text))
@@ -249,7 +229,7 @@ class PredicateMaskedReduction(ppl.Pass):
                    state: SDFGState,
                    reductions: list[tuple[MultiConnectorEdge[Memlet], str]],
                    cond_materialize: CondMaterialize | None = None) -> None:
-        """Mutate the branch body in place (predicate each addend), then dissolve ``cb``."""
+        # Mutate the branch body in place (predicate each addend), then dissolve ``cb``.
         if cond_materialize is not None:
             # Recipe 2: lower the compound predicate into a bool mask scalar the ITE reads.
             # The mask runs unconditionally on every lane (affine reads are in-bounds), then

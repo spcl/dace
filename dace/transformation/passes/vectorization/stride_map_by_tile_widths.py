@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``StrideMapByTileWidths`` — set inner map step to the per-dim tile width on
+"""``StrideMapByTileWidths`` -- set inner map step to the per-dim tile width on
 every K-dim eligible inner map.
 
 Rewrites ``map.range`` in place so the K innermost dims step by ``widths[k]``
@@ -14,7 +14,8 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
+                                                                           map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
                                                                             no_strided_map_param_in_surviving_condition,
                                                                             tile_main_map_step_is_widths)
@@ -56,7 +57,7 @@ class StrideMapByTileWidths(ppl.Pass):
         return ppl.Modifies.Scopes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        """Idempotent — runs once.
+        """Idempotent -- runs once.
 
         :param modified: Modifications produced by earlier passes (unused).
         :returns: ``False``.
@@ -64,13 +65,7 @@ class StrideMapByTileWidths(ppl.Pass):
         return False
 
     def _stride_one(self, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
-        """Stride the K innermost dims of ``map_entry`` by ``widths``.
-
-        :param map_entry: Inner map to rewrite.
-        :param widths: The map's own tile widths, one per tiled innermost dim.
-        :returns: ``True`` if ``map.range`` was rewritten; ``False`` if
-            the map already steps by ``widths`` (idempotent no-op).
-        """
+        # Stride the K innermost dims of ``map_entry`` by ``widths``.
         K = len(widths)
         ranges = list(map_entry.map.range.ranges)
         if len(ranges) < K:

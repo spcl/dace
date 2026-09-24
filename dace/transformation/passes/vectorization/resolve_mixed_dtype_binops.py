@@ -53,11 +53,7 @@ _COMPARISON_AST = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
 
 
 def _cast_name(dtype: dtypes.typeclass) -> str:
-    """Registered dtype-cast call name (``float64`` / ``int64`` / ...) for ``dtype``.
-
-    Never hardcoded -- taken from the dtype registry, the same source
-    ``convert_tasklets_to_tile_ops._CAST_OP_NAMES`` validates against.
-    """
+    # Registered dtype-cast call name (``float64`` / ``int64`` / ...) for ``dtype``.
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
 
 
@@ -90,21 +86,15 @@ def ite_operands(tasklet: nodes.Tasklet) -> tuple[str, list[str], str | None] | 
 
 
 def _is_logical(tasklet: nodes.Tasklet) -> bool:
-    """True when ``tasklet``'s body is ``_o = _a and _b`` / ``_o = _a or _b``.
-
-    Its operands and result are bool by contract, so it takes no part in numeric promotion.
-    """
+    # True when ``tasklet``'s body is ``_o = _a and _b`` / ``_o = _a or _b``.
     assign = single_assignment(tasklet.code.as_string)
     return assign is not None and isinstance(assign.value, ast.BoolOp)
 
 
 def _ite_arm_slots(rhs: ast.expr) -> list[tuple[ast.expr, Callable[[ast.expr], None]]] | None:
-    """The two ``(node, setter)`` pairs addressing an ITE ``rhs``'s then/else arm slots --
-    ``IfExp.body`` / ``IfExp.orelse``, or ``Call.args[1]`` / ``Call.args[2]`` for the
-    ``ITE(cond, t, e)`` form -- so a caller can read the current arm node and, for a
-    literal/Symbol one, replace it in place with a cast. ``None`` when ``rhs`` is not a
-    recognised ITE form.
-    """
+    # The two ``(node, setter)`` pairs addressing an ITE ``rhs``'s then/else arm slots -- ``IfExp.body`` /
+    # ``IfExp.orelse``, or ``Call.args[1]`` / ``Call.args[2]`` for the ``ITE(cond, t, e)`` form -- so a caller can read
+    # the current arm node and, for a literal/Symbol one, replace it in place with a cast.
     if isinstance(rhs, ast.IfExp):
 
         def _set_body(n: ast.expr) -> None:
@@ -150,18 +140,8 @@ def masked_write_operand(tasklet: nodes.Tasklet) -> tuple[str, str] | None:
 
 
 def _binop_operands(tasklet: nodes.Tasklet) -> tuple[str, str, str, bool] | None:
-    """If ``tasklet`` is a single ``_o = _a <op> _b`` (arithmetic, comparison or logical) whose two
-    operands are input connectors, return ``(out_conn, a_conn, b_conn, is_comparison)``;
-    else ``None``.
-
-    ``and`` / ``or`` are ``ast.BoolOp``, neither ``BinOp`` nor ``Compare``, so they were skipped
-    here and reached the tile converter unresolved -- where they are ordinary binops subject to the
-    single-dtype rule. CloudSC combines a Fortran ``LOGICAL`` (an int array) with a comparison's
-    ``bool`` in ``__t1 = _in_ldcum_0 and __t0``, and the unresolved pair raised the converter's
-    mixed-dtype ``NotImplementedError``, aborting the whole vectorization. Treated as an arithmetic
-    binop: the operands promote to a common dtype and the result is cast back to the destination's,
-    which is what the converter's own gate asks the caller to arrange.
-    """
+    # If ``tasklet`` is a single ``_o = _a <op> _b`` (arithmetic, comparison or logical) whose two operands are input
+    # connectors, return ``(out_conn, a_conn, b_conn, is_comparison)``; else ``None``.
     if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 2:
         return None
     assign = single_assignment(tasklet.code.as_string)
@@ -377,11 +357,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         return True
 
     def _resolve_assign(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
-        """A bare copy ``_o = _i`` whose destination dtype differs from the source is an
-        implicit assignment cast (e.g. SplitTasklets' ``A = A_plus_B`` storing a promoted
-        ``double`` result into an ``int64`` array). Rewrite it to an explicit cast
-        ``_o = dace.<dst>(_i)`` so the tile converter lowers it as a cast ``TileUnop``
-        instead of a dtype-mismatched store."""
+        # A bare copy ``_o = _i`` whose destination dtype differs from the source is an implicit assignment cast (e.g.
         if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 1:
             return False
         assign = single_assignment(tasklet.code.as_string)
@@ -415,8 +391,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
 
     def _insert_operand_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet],
                              conn: str, promoted: dtypes.typeclass) -> None:
-        """Route operand ``edge`` through ``_co = dace.<promoted>(_ci)`` so ``tasklet``'s
-        ``conn`` reads a promoted-dtype transient instead of the narrower source."""
+        # Route operand ``edge`` through ``_co = dace.<promoted>(_ci)`` so ``tasklet``'s ``conn`` reads a promoted-dtype
+        # transient instead of the narrower source.
         sdfg = state.sdfg
         tmp = self._new_scalar(sdfg, promoted)
         cast = state.add_tasklet(f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"},
@@ -429,9 +405,9 @@ class ResolveMixedDtypeBinops(ppl.Pass):
 
     def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet], conn: str,
                             promoted: dtypes.typeclass, out_dt: dtypes.typeclass) -> None:
-        """Compute at ``promoted`` into a fresh transient, then ``_co = dace.<out_dt>(_ci)``
-        stores the result into the original destination, casting to its dtype (a downcast
-        when it is narrower than ``promoted``, a widening store when it is wider)."""
+        # Compute at ``promoted`` into a fresh transient, then ``_co = dace.<out_dt>(_ci)`` stores the result into the
+        # original destination, casting to its dtype (a downcast when it is narrower than ``promoted``, a widening store
+        # when it is wider).
         sdfg = state.sdfg
         tmp = self._new_scalar(sdfg, promoted)
         cast = state.add_tasklet(f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"},
