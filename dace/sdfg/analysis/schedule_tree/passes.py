@@ -365,268 +365,6 @@ def _clone_body(scope: tn.ScheduleTreeScope, body: list, used_outside: Callable[
     return clones
 
 
-def reduce_loop_ranges(stree: tn.ScheduleTreeScope, max_ranges: int = 32, max_enumeration: int = 1 << 20) -> int:
-    """
-    Split and shrink loops and maps according to the conditionals in their bodies, and hoist invariant guards.
-
-    The body of a loop (or map) is read as a sequence of plain statements and guard groups: an ``if``, an
-    ``if/else``, or the sibling pair ``if c`` / ``if not c``. For every group whose condition restricts the iteration
-    variable, symbolically (``1 <= i < M``) or through compile-time constant data (``sdfg.constants``, e.g.
-    ``cst[i] > 0``), the iteration range is partitioned into runs on which every such condition is decided, and the
-    scope is replaced by one copy per run holding the branches that apply:
-
-    * ``for i in range(N): if 1 <= i < M: A`` becomes ``for i in range(1, min(N, M)): A``;
-    * ``for k in range(8): S; if cst[k] > 0: A`` with ``cst = [0,0,0,1,1,0,0,2]`` becomes ``for k in range(3): S``,
-      ``for k in range(3, 5): S; A``, ``for k in range(5, 7): S``, ``for k in range(7, 8): S; A``.
-
-    A guard that makes up the whole body and does not depend on the iteration (nor on anything the body writes) is
-    hoisted above the scope instead (``for i: if cst[k] == 0: A else: B`` becomes ``if cst[k] == 0: for i: A else:
-    for i: B``), exposing it to the enclosing scopes. Guards computed by preceding symbol assignments, single-element
-    copies or single-assignment tasklets (``t = cst[i]; mask = (t > 0); if mask``) are analyzed through the values
-    they compute, and such assignments are dropped once nothing reads them. Atoms that cannot be analyzed remain as
-    residual conditions. See :class:`~dace.transformation.passes.loop_range_reduction.LoopRangeReduction` for the
-    range analysis itself.
-
-    :param stree: The schedule tree (or subtree) to transform in place.
-    :param max_ranges: Do not split a scope into more than this many copies.
-    :param max_enumeration: Upper bound on the iterates evaluated for a guard over compile-time constant data.
-    :return: The number of scopes rewritten.
-    """
-    # Avoid import loops
-    from dace.frontend.python import astutils
-    from dace.transformation.passes import loop_range_reduction as lrr
-
-    root = stree.get_root()
-    constants = {k: v for k, (_, v) in root.constants.items()}
-    repository = SimpleNamespace(constants=constants, arrays=root.containers, symbols=root.symbols)
-
-    def expr(code: CodeBlock) -> ast.expr:
-        node = code.code[0]
-        return astutils.copy_tree(getattr(node, 'value', node))
-
-    def conj(atoms: List[ast.expr]) -> ast.expr:
-        return atoms[0] if len(atoms) == 1 else ast.BoolOp(op=ast.And(), values=list(atoms))
-
-    def code_block(node: ast.expr) -> CodeBlock:
-        return CodeBlock([ast.fix_missing_locations(ast.Expr(value=astutils.copy_tree(node)))])
-
-    def negated(node: ast.expr) -> ast.expr:
-        return astutils.negate_expr(node).value
-
-    def assignment(node: tn.ScheduleTreeNode) -> Optional[Tuple[str, ast.expr]]:
-        return _assignment(node, root.containers)
-
-    def temporary(node: tn.ScheduleTreeNode) -> Optional[str]:
-        """The target of ``node`` if it assigns a symbol or a transient scalar (a value that may be dropped when
-        nothing reads it), else ``None``."""
-        assigned = assignment(node)
-        if assigned is None:
-            return None
-        desc = root.containers.get(assigned[0], None)
-        if isinstance(node, tn.AssignNode) or (isinstance(desc, data.Scalar) and desc.transient):
-            return assigned[0]
-        return None
-
-    class Group:
-        """A guard group: exclusive branches ``(condition, body)`` (one, or two for if/else) and the original nodes."""
-
-        def __init__(self, nodes: List[tn.ScheduleTreeNode], branches: list):
-            self.nodes, self.branches = nodes, branches
-
-    def parse(scope: tn.ScheduleTreeScope) -> Optional[list]:
-        """The scope body as a list of plain nodes and ``Group`` objects, or ``None`` if there is no group or an
-        unsupported elif chain. Conditions are expressed in the values at the start of the iteration by substituting
-        the assignments that precede them (unless something in between rewrites what they depend on)."""
-        items, children, k = [], list(scope.children), 0
-        while k < len(children):
-            node = children[k]
-            following = children[k + 1] if k + 1 < len(children) else None
-            if isinstance(node, (tn.ElifScope, tn.ElseScope)):
-                return None
-            if not isinstance(node, tn.IfScope):
-                items.append(node)
-            else:
-                condition = expr(node.condition)
-                if isinstance(following, tn.ElseScope):
-                    items.append(
-                        Group([node, following], [(condition, node.children),
-                                                  (negated(condition), following.children)]))
-                    k += 1
-                elif _complementary(node, following, root.containers):
-                    items.append(
-                        Group([node, following], [(condition, node.children),
-                                                  (expr(following.condition), following.children)]))
-                    k += 1
-                else:
-                    items.append(Group([node], [(condition, node.children)]))
-            k += 1
-        if not any(isinstance(item, Group) for item in items):
-            return None
-        for p in reversed(range(len(items))):  # Last assignment first, so chains of assignments compose
-            item = items[p]
-            assigned = None if isinstance(item, Group) else assignment(item)
-            if assigned is None:
-                continue
-            name, value = assigned
-            depends = {name} | set(symbolic.symbols_in_ast(value))
-            for later in items[p + 1:]:
-                if isinstance(later, Group):
-                    later.branches = [(astutils.ASTFindReplace({
-                        name: value
-                    }).visit(c), body) for c, body in later.branches]
-                    written = _in_subtrees(later.nodes, _names_written)
-                else:
-                    written = _in_subtrees([later], _names_written)
-                if written & depends:
-                    break
-        return items
-
-    def spaces(scope: tn.ScheduleTreeScope) -> Iterable:
-        if isinstance(scope, tn.MapScope):
-            for dim in range(len(scope.node.map.params)):
-                yield dim, lrr.map_iteration_space(scope.node.map, dim, repository)
-        else:
-            defined = _in_subtrees(scope.children, _names_written)
-            yield None, lrr.loop_iteration_space(scope.loop, repository, defined)
-
-    def cells(space, items) -> Optional[List[Tuple[lrr.Interval, Dict[int, tuple]]]]:
-        """Partition of the iteration range into ``(interval, {group index: (holds, residual atoms)})`` such that
-        every group whose condition restricts the iteration variable is decided on each interval, or ``None``."""
-        result = [(space.iteration_range, {})]
-        for g, item in enumerate(items):
-            if not isinstance(item, Group):
-                continue
-            ranges = lrr.reduced_ranges(item.branches[0][0], space, None, max_ranges, max_enumeration)
-            if ranges is None:
-                continue
-            ascending = [r.interval for r in (ranges if space.ascending else ranges[::-1])]
-            parts = [(iv, (True, r.residual)) for iv, r in zip(ascending, ranges if space.ascending else ranges[::-1])]
-            # Between (and around) the ranges the analyzable part of the condition is false.
-            edges = [None] + ascending + [None]
-            for before, after in zip(edges, edges[1:]):
-                lo = None if before is None else before.hi
-                hi = None if after is None else after.lo
-                if (before is None or lo is not None) and (after is None or hi is not None):
-                    parts.append((lrr.Interval(None if lo is None else lo + 1,
-                                               None if hi is None else hi - 1), (False, None)))
-            result = [(iv, {
-                **choice, g: verdict
-            }) for cell, choice in result for part, verdict in parts for iv in [lrr.intersect(cell, part)]
-                      if not lrr.provably_empty(iv)]
-            if len(result) > max_ranges:
-                return None
-        return result if any(choice for _, choice in result) else None
-
-    def assemble(items, choice: Dict[int, tuple]) -> list:
-        """The body of one cell: plain items as they are, decided groups reduced to the branch that holds."""
-        body = []
-        for g, item in enumerate(items):
-            if not isinstance(item, Group):
-                body.append(item)
-            elif g not in choice:
-                body += item.nodes
-            else:
-                holds, residual = choice[g]
-                if holds and residual:
-                    body.append(tn.IfScope(condition=code_block(conj(residual)), children=list(item.branches[0][1])))
-                    if len(item.branches) > 1:
-                        body.append(tn.ElseScope(children=list(item.branches[1][1])))
-                elif holds:
-                    body += item.branches[0][1]
-                elif len(item.branches) > 1:
-                    body += item.branches[1][1]
-        return body
-
-    def prune(scope, body: list, needed: Set[str]) -> Optional[list]:
-        """``body`` without the temporaries nothing later reads (nor anything outside the scope)."""
-        kept = []
-        for node in reversed(body):
-            target = temporary(node)
-            if target is not None and target not in needed and not index.read_outside(scope, target):
-                continue
-            needed = needed | _in_subtrees([node], _names_read)
-            kept.insert(0, node)
-        return kept
-
-    class Reduce(tn.ScheduleNodeTransformer):
-        rewritten = 0
-
-        def visit_scope(self, scope: tn.ScheduleTreeScope):
-            self.generic_visit(scope)  # Innermost scopes first
-            if not isinstance(scope, (tn.ForScope, tn.MapScope)):
-                return scope
-            items = parse(scope)
-            if items is None:
-                return scope
-            groups = [g for g, item in enumerate(items) if isinstance(item, Group)]
-            for dim, space in spaces(scope):
-                if space is None or (isinstance(scope, tn.ForScope) and index.read_outside(scope, space.itervar)):
-                    continue  # Dropping iterations (or the loop) would leave a different final value.
-                result = self.split(scope, dim, space, items)
-                if result is None and len(groups) == 1:
-                    result = self.hoist(scope, dim, space, items, groups[0])
-                if result is not None:
-                    self.rewritten += 1
-                    for node in result:  # New scopes and copies (counting originals again errs on the safe side)
-                        index.add(node, scope.parent)
-                    return result or None  # Nothing left to run
-            return scope
-
-        def split(self, scope, dim, space, items) -> Optional[list]:
-            partition = cells(space, items)
-            if partition is None:
-                return None
-            bodies = [prune(scope, assemble(items, choice), set()) for _, choice in partition]
-            live = [k for k, body in enumerate(bodies) if body]  # A copy without any effect is dropped
-            order = _ordered([partition[k][0] for k in live])
-            if order is None:
-                return None
-            if len(order) > 1 and any(isinstance(n, tn.BreakNode) for n in scope.preorder_traversal()):
-                return None  # A break would also have to skip the remaining copies
-            copies = [None] * len(order)
-            for position in reversed(range(len(order))):  # Last to first: the first copy keeps the original nodes
-                k = live[order[position]]
-                body = bodies[k] if position == 0 else _clone_body(scope, bodies[k], index.used_outside)
-                copies[position] = _make_scope(scope, dim, space, partition[k][0], body, position)
-            return copies
-
-        def hoist(self, scope, dim, space, items, g) -> Optional[list]:
-            """Move the atoms of the (only) guard that do not depend on the iteration out of the scope."""
-            varying = _names_written(scope) | {space.itervar} | _in_subtrees(scope.children, _names_written)
-            if any(isinstance(n, (tn.ViewNode, tn.RefSetNode)) for n in scope.preorder_traversal()):
-                varying |= set(root.containers)  # Aliasing: no data read is known to be invariant
-            group = items[g]
-            atoms = lrr.guard_atoms(group.branches[0][0])
-            invariant = [a for a in atoms if not set(symbolic.symbols_in_ast(a)) & varying]
-            variant = [a for a in atoms if a not in invariant]
-            if not invariant or (len(group.branches) > 1 and variant):
-                return None
-            others = [item for item in items if not isinstance(item, Group)]
-            needed = _in_subtrees([n for _, body in group.branches for n in body], _names_read)
-            others = prune(scope, others, needed | set().union(*(set(symbolic.symbols_in_ast(a)) for a in variant)))
-            if any(temporary(n) is None or index.read_outside(scope, temporary(n)) for n in others):
-                return None  # Anything else in the body would have to be split off the guard
-            first = others + ([tn.IfScope(condition=code_block(conj(variant)), children=list(group.branches[0][1]))]
-                              if variant else list(group.branches[0][1]))
-            result = [
-                tn.IfScope(condition=code_block(conj(invariant)),
-                           children=[_make_scope(scope, dim, space, None, first, 0)])
-            ]
-            if len(group.branches) > 1:
-                second = _clone_body(scope, others, index.used_outside) + list(group.branches[1][1])
-                result.append(tn.ElseScope(children=[_make_scope(scope, dim, space, None, second, 1)]))
-            return result
-
-    total = 0
-    while True:  # Repeat so scopes newly exposed (by hoisting, or a map's other parameters) are handled too
-        index = _AccessIndex(root)
-        visitor = Reduce()
-        visitor.visit(stree)
-        total += visitor.rewritten
-        if visitor.rewritten == 0:
-            return total
-
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Range facts, guard folding and index-set splitting
 # ----------------------------------------------------------------------------------------------------------------------
@@ -693,10 +431,13 @@ class _RangeFacts:
         self.repository = repository
         self.max_enumeration = max_enumeration
         self.known: Dict[str, tuple] = {}
+        self.truths: Dict[str, bool] = {}  # Outcomes of condition atoms (by ``ast.dump``) of enclosing branches
 
-    def _with(self, known: Dict[str, tuple]) -> '_RangeFacts':
+    def _with(self, known: Dict[str, tuple], truths: Optional[Dict[str, bool]] = None) -> '_RangeFacts':
         result = copy.copy(self)
         result.known = known
+        if truths is not None:
+            result.truths = truths
         return result
 
     def within(self, child: tn.ScheduleTreeScope, previous: Optional[tn.ScheduleTreeNode]) -> '_RangeFacts':
@@ -718,7 +459,14 @@ class _RangeFacts:
             clauses = None if condition is None else lrr.disjunctive_normal_form(condition)
         if not clauses or len(clauses) != 1:
             return self
-        return self.assuming(clauses[0])
+        result = self.assuming(clauses[0])
+        # The atoms hold throughout the branch unless it writes what they read
+        written = _in_subtrees([child], _names_written)
+        truths = dict(self.truths)
+        for atom in clauses[0]:
+            if not set(symbolic.symbols_in_ast(atom)) & written:
+                truths[ast.dump(atom)] = True
+        return result._with(result.known, truths)
 
     def assuming(self, atoms: List[ast.expr]) -> '_RangeFacts':
         """The facts where all of ``atoms`` hold (narrowing the known intervals where an atom is a single one)."""
@@ -735,6 +483,12 @@ class _RangeFacts:
     def verdict(self, atom: ast.expr) -> Optional[bool]:
         """Whether ``atom`` always (``True``) or never (``False``) holds here, or ``None`` if undecided."""
         lrr = _lrr()
+        if ast.dump(atom) in self.truths:
+            return self.truths[ast.dump(atom)]
+        negation = lrr.disjunctive_normal_form(atom, negate=True)
+        if negation is not None and len(negation) == 1 and len(negation[0]) == 1:
+            if ast.dump(negation[0][0]) in self.truths:
+                return not self.truths[ast.dump(negation[0][0])]
         candidates = [self.known[var] for var in set(symbolic.symbols_in_ast(atom)) & self.known.keys()]
         if not candidates:  # Possibly an atom over compile-time constants alone
             candidates = [(lrr.IterationSpace(self.repository, '', 0, 0, 1, ast.Lt, set()), lrr.UNBOUNDED)]
@@ -1103,8 +857,8 @@ def _pure(value: ast.expr) -> bool:
 
 def _substitutable(target: str, value: ast.expr, node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> bool:
     """Whether a condition may read ``value`` instead of ``target`` (as assigned by ``node``) with the same result:
-    symbols hold values as they are computed, boolean containers hold truth values, and literals are exact in the
-    type of their container."""
+    symbols hold values as they are computed, boolean containers hold truth values, an element of a container of the
+    same type is copied exactly, and literals are exact in the type of their container."""
     if not _pure(value):
         return False
     if isinstance(node, tn.AssignNode):
@@ -1114,6 +868,9 @@ def _substitutable(target: str, value: ast.expr, node: tn.ScheduleTreeNode, cont
         return False
     if desc.dtype == dtypes.bool_:
         return True
+    source = value.value if isinstance(value, ast.Subscript) else value
+    if isinstance(source, ast.Name) and source.id in containers and containers[source.id].dtype == desc.dtype:
+        return True  # A copy of an element of the same type
     literal = value.operand if isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub) else value
     if isinstance(literal, ast.Constant) and isinstance(literal.value, (bool, int, float)):
         try:
@@ -1874,6 +1631,29 @@ def _runs_at_least_once(scope: tn.ScheduleTreeScope, repository) -> bool:
         for _, _, space in spaces)
 
 
+def _chain(conditions: List[Optional[CodeBlock]], bodies: List[list]) -> List[tn.ScheduleTreeNode]:
+    """An if/elif/else chain from its conditions (``None`` for ``else``) and bodies, without empty trailing branches;
+    ``if c: <nothing> else: B`` becomes ``if not c: B``."""
+    from dace.frontend.python import astutils  # Avoid import loops
+    while bodies and not bodies[-1] and len(bodies) > 1:
+        conditions, bodies = conditions[:-1], bodies[:-1]
+    if len(bodies) == 2 and not bodies[0] and conditions[1] is None:
+        condition = conditions[0].code[0]
+        negated = astutils.negate_expr(astutils.copy_tree(getattr(condition, 'value', condition))).value
+        conditions, bodies = [CodeBlock([ast.fix_missing_locations(ast.Expr(value=negated))])], [bodies[1]]
+    if len(bodies) == 1 and not bodies[0]:
+        return []
+    result = []
+    for k, (condition, body) in enumerate(zip(conditions, bodies)):
+        if condition is None:
+            result.append(tn.ElseScope(children=body))
+        elif k == 0:
+            result.append(tn.IfScope(condition=condition, children=body))
+        else:
+            result.append(tn.ElifScope(condition=condition, children=body))
+    return result
+
+
 def unswitch_invariant_guards(stree: tn.ScheduleTreeScope, max_copies: int = 8) -> int:
     """
     Move conditions that do not change within a loop (or map) out of it, duplicating the loop per branch (loop
@@ -1927,31 +1707,29 @@ def unswitch_invariant_guards(stree: tn.ScheduleTreeScope, max_copies: int = 8) 
                 continue
             before, after = children[:start], children[end:]
             bodies = [branch.children for branch in chain] + ([[]] if branches > len(chain) else [])
-            copies = []
+            # A copy that would run nothing is left out, unless the loop's final variable value is used afterwards
+            droppable = isinstance(loop, tn.MapScope) or not index.used_outside(loop, loop.loop.loop_variable)
+            copies, made = [], 0
             for k, body in enumerate(bodies):
                 content = before + list(body) + after
-                if k > 0:
+                if not content and droppable:
+                    copies.append(None)
+                    continue
+                if made > 0:
                     content = _clone_body(loop, content, index.used_outside)
                 copy_ = _make_scope(loop, 0 if isinstance(loop, tn.MapScope) else None, None, None, [], k)
                 copy_.add_children(content)
                 copy_.parent = loop.parent
-                if k > 0:
+                if made > 0:
                     index.add(copy_)
+                made += 1
                 copies.append(copy_)
             index.changed()
             unswitched += 1
-            result = []
-            for k, (branch, copy_) in enumerate(zip(chain + [None] * (branches - len(chain)), copies)):
-                nodes_ = process(copy_, budget // branches)
-                if branch is None:
-                    result.append(tn.ElseScope(children=nodes_))
-                elif isinstance(branch, tn.ElseScope):
-                    result.append(tn.ElseScope(children=nodes_))
-                elif isinstance(branch, tn.ElifScope):
-                    result.append(tn.ElifScope(condition=branch.condition, children=nodes_))
-                else:
-                    result.append(tn.IfScope(condition=branch.condition, children=nodes_))
-            return result
+            branch_nodes = [[] if copy_ is None else process(copy_, budget // branches) for copy_ in copies]
+            conditions = [None if isinstance(b, tn.ElseScope) else b.condition for b in chain]
+            conditions += [None] * (branches - len(chain))
+            return _chain(conditions, branch_nodes)
         return [loop]
 
     def visit(scope: tn.ScheduleTreeScope):
@@ -2329,3 +2107,48 @@ def remove_dead_stores(stree: tn.ScheduleTreeScope) -> int:
             scope.children = []
             scope.add_children(kept)
     return len(dead)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Loop range reduction
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def reduce_loop_ranges(stree: tn.ScheduleTreeScope,
+                       max_ranges: int = 32,
+                       max_enumeration: int = 1 << 20,
+                       min_trip_count: int = 1) -> int:
+    """
+    Split and shrink loops and maps according to the conditions in their bodies, and move conditions that do not
+    change within a loop out of it.
+
+    ``for i in range(N): if 1 <= i < M: A`` becomes ``for i in range(1, min(N, M)): A``; with ``cst = [0, 0, 0, 1, 1,
+    0, 0, 2]`` a compile-time constant, ``for k in range(8): S; if cst[k] > 0: A`` becomes ``for k in range(3): S``,
+    ``for k in range(3, 5): S; A``, ``for k in range(5, 7): S``, ``for k in range(7, 8): S; A``; and ``for i: if
+    cst[k] == 0: A else: B`` becomes ``if cst[k] == 0: for i: A else: for i: B``.
+
+    This runs, in order, the passes that each do one part of it and can be checked on their own:
+    :func:`pair_complementary_guards`, :func:`forward_substitute_conditions` and :func:`remove_dead_assignments`
+    (canonicalization), :func:`fold_guards`, :func:`unswitch_invariant_guards` (before splitting, so an invariant
+    condition leaves a loop once rather than once per part), :func:`split_iteration_spaces`,
+    :func:`remove_dead_stores` and :func:`merge_contiguous_loops`, and removes the scopes these leave empty. Converting the remaining data-dependent branches to
+    selects (:func:`convert_diamonds_to_selects`) and rolling unrolled code (:func:`reroll_statements`,
+    :func:`fuse_rolled_loops`) are separate steps.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :param max_ranges: Do not split a scope into more than this many copies.
+    :param max_enumeration: Upper bound on the iterates evaluated for a guard over compile-time constant data.
+    :param min_trip_count: Do not split within loops of fewer iterations than this (see
+                           :func:`split_iteration_spaces`).
+    :return: The number of conditions folded, conditions moved out of loops, and loops and maps split.
+    """
+    pair_complementary_guards(stree)
+    forward_substitute_conditions(stree)
+    remove_dead_assignments(stree)
+    changed = fold_guards(stree, max_enumeration)
+    changed += unswitch_invariant_guards(stree)
+    changed += split_iteration_spaces(stree, max_ranges, max_enumeration, min_trip_count)
+    remove_dead_stores(stree)
+    merge_contiguous_loops(stree)
+    _prune_empty(stree, _AccessIndex(stree.get_root()))
+    return changed

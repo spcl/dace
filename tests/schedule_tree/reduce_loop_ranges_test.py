@@ -460,8 +460,10 @@ def test_stree_two_guards_in_one_body():
     assert np.allclose(c, expected)
 
 
-def test_stree_no_fission_for_guard_after_statement_with_invariant_condition():
-    """``for i: S; if M > 3: A`` must not be turned into ``for i: S; if M > 3: for i: A`` (that would reorder)."""
+def test_stree_invariant_guard_after_statement_unswitched_in_order():
+    """``for i: S; if M > 3: A`` must not become ``for i: S; if M > 3: for i: A`` (that would reorder ``S`` and
+    ``A`` across iterations); unswitching keeps the whole body in each copy: ``if M > 3: for i: S; A else: for i:
+    S``."""
 
     @dace.program
     def prog(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
@@ -470,8 +472,19 @@ def test_stree_no_fission_for_guard_after_statement_with_invariant_condition():
             if M > 3:
                 C[i] = B[i] + 1.0
 
-    stree = _tree(prog.to_sdfg())
-    assert _reduce(stree) == 0
+    sdfg = prog.to_sdfg()
+    if 'M' not in sdfg.symbols:
+        sdfg.add_symbol('M', dace.int64)
+    stree = _tree(sdfg)
+    assert _reduce(stree) == 1
+    guard = next(n for n in stree.children if isinstance(n, tn.IfScope))
+    assert isinstance(guard.children[0], tn.ForScope)
+    for m in (2, 5):
+        a = np.random.rand(20)
+        b, c = np.zeros(20), np.zeros(20)
+        _run(stree, A=a, B=b, C=c, M=m)
+        assert np.allclose(b, a * 3.0)
+        assert np.allclose(c, a * 3.0 + 1.0 if m > 3 else 0.0)
 
 
 def test_stree_sibling_guards_not_paired_when_first_branch_changes_condition():
