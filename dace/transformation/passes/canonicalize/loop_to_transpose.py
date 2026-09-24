@@ -137,6 +137,15 @@ def _node_side_subset(state, edge, node):
     return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
+def single_source_and_sink(state: SDFGState, access: List[nodes.AccessNode]):
+    """The unique ``(source, sink)`` pair among ``access`` (in-degree 0 / out-degree 0), else ``None``."""
+    sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
+    sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
+    if len(sources) != 1 or len(sinks) != 1:
+        return None
+    return sources[0], sinks[0]
+
+
 def match_copy_chain(state: SDFGState):
     """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
     only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
@@ -149,11 +158,10 @@ def match_copy_chain(state: SDFGState):
     # Every non-access node must be a pure copy tasklet (rejects arithmetic bodies).
     if any(not _is_copy_tasklet(n) for n in others):
         return None
-    sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
-    sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
-    if len(sources) != 1 or len(sinks) != 1:
+    ends = single_source_and_sink(state, access)
+    if ends is None:
         return None
-    src, sink = sources[0], sinks[0]
+    src, sink = ends
     for n in access:
         if n is src or n is sink:
             continue
