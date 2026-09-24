@@ -212,6 +212,14 @@ def provably_moves_less(traffic: symbolic.SymbolicType | int, size: symbolic.Sym
             and not symbolic.provably_nonnegative(traffic - size, assume_symbols_nonnegative=True))
 
 
+def is_fallback_loop(loop: LoopRegion) -> bool:
+    """Whether ``loop`` is a guarded specialization's sequential fallback: pinned sequential at the top
+    level of a conditional's branch. A carried-dependence or wavefront pin elsewhere is no fallback."""
+    branch = loop.parent_graph
+    return (loop.pinned_sequential and isinstance(branch, ControlFlowRegion)
+            and isinstance(branch.parent_graph, ConditionalBlock))
+
+
 def in_fallback_loop(loop: LoopRegion) -> bool:
     """Whether ``loop`` is, or lies inside, a loop pinned sequential as a specialization's fallback."""
     region = loop
@@ -238,7 +246,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
     for loop in sdfg.all_control_flow_regions():
         if not isinstance(loop, LoopRegion):
             continue
-        if loop.pinned_sequential:
+        if is_fallback_loop(loop):
             for state in loop.all_states():
                 top = state.scope_children()[None]
                 if not any(isinstance(n, nodes.LibraryNode) for n in top):

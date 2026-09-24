@@ -804,7 +804,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # unique ``_loop_it_<N>`` name, so the epilogue would be a dead-state
     # assignment that keeps the original symbol declaration live across
     # NestedSDFG boundaries and re-introduces the alias hazard the pass
-    # exists to remove.
+    # exists to remove. The rename is scoped to the loop, so a read of the
+    # original name AFTER the loop (``C[0] = i``) still gets the epilogue.
     unique_loop_iterators = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     unique_loop_iterators_ssa = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     unique_loop_iterators_fission = UniqueLoopIterators(assign_loop_iterator_post_value=False)

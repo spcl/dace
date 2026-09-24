@@ -206,23 +206,24 @@ class BranchNormalization(ppl.Pass):
 
         :param sdfg: SDFG used for name resolution.
         :param cb: the conditional block to attempt.
-        :returns: ``True`` if a rewrite was applied.
+        :returns: ``True`` if the SDFG changed (a rewrite, or a hoist ahead of a refused rewrite).
         """
         if self.is_multi_arm(cb) and self.flatten_multi_arm_block(cb):
             return True
         # Hoist branch-invariant symbol bindings (frontend ``__sym_z1 = z1`` alias
         # state) out of arms first -> "empty-assign -> compute" arm reduces to its
         # one substantive state for the single-state ITE path. Branch-variant
-        # assignments stay + are refused downstream.
-        self._hoist_branch_invariant_assignments(cb)
+        # assignments stay + are refused downstream. The hoist stands on its own when
+        # the rewrite is then refused, so it is reported; a repeat hoist is a no-op.
+        hoisted = self._hoist_branch_invariant_assignments(cb)
 
         branches = cb.branches
         if len(branches) == 1:
             cond, body = branches[0]
             if cond is None:
                 # Bare ``else`` with no condition is nonsensical for this pass.
-                return False
-            return self._normalize_single_arm(sdfg, cb, cond, body)
+                return hoisted
+            return self._normalize_single_arm(sdfg, cb, cond, body) or hoisted
 
         if len(branches) == 2:
             (cond0, body0), (cond1, body1) = branches
@@ -231,12 +232,12 @@ class BranchNormalization(ppl.Pass):
                 # substantive states) can't use the symmetric single-state path.
                 # Serialize via ``serialize_two_arm``; later cycles normalize each.
                 if self._arms_are_asymmetric(body0, body1):
-                    return self.serialize_two_arm(cb, cond0, body0, body1)
+                    return self.serialize_two_arm(cb, cond0, body0, body1) or hoisted
                 # Disjoint two-arm: split into two single-arm conditionals; next
                 # cycle handles each.
-                return self._split_two_arm_disjoint(sdfg, cb, cond0, body0, body1)
+                return self._split_two_arm_disjoint(sdfg, cb, cond0, body0, body1) or hoisted
 
-        return False
+        return hoisted
 
     def _hoist_branch_invariant_assignments(self, cb: ConditionalBlock) -> bool:
         """Hoist branch-invariant interstate symbol bindings out of each arm.
@@ -460,6 +461,22 @@ class BranchNormalization(ppl.Pass):
                     written |= blk.read_and_write_sets()[1]
         return written
 
+    @staticmethod
+    def arm_assigned_symbols(cb: ConditionalBlock) -> OrderedSet[str]:
+        """Symbols rebound anywhere inside an arm of ``cb``: interstate assignments and loop variables.
+
+        :param cb: conditional block whose arms are scanned.
+        :returns: the rebound symbol names.
+        """
+        assigned: OrderedSet[str] = OrderedSet()
+        for _cond, body in cb.branches:
+            for region in body.all_control_flow_regions():
+                if isinstance(region, LoopRegion) and region.loop_variable:
+                    assigned.add(region.loop_variable)
+            for edge in body.all_interstate_edges():
+                assigned.update(edge.data.assignments.keys())
+        return assigned
+
     def representative_write_subset(self, cb: ConditionalBlock) -> str | None:
         """First element-write subset found in ``cb``'s arms, or ``None`` if there is none.
 
@@ -512,12 +529,16 @@ class BranchNormalization(ppl.Pass):
         :param cond_text: one of its guards, as written.
         :param lifter: the instance whose lifts would snapshot the guard.
         :returns: ``False`` when no arm writes data the guard reads, ``True`` when one does and the
-            guard can be snapshotted, ``None`` when one does and it cannot.
+            guard can be snapshotted, ``None`` when one does and it cannot, or when an arm rebinds a
+            symbol the guard reads (a snapshot would itself read the rebound symbol).
         """
         local_sdfg: dace.SDFG = cb.sdfg
         # The guard usually names interstate symbols staging element reads (``a_index = a[i]``);
         # expand them so the array dependence is visible. Read-only — nothing is pruned here.
         expanded = lifter._inline_interstate_scalar_symbols(local_sdfg, cond_text, exclude=set())[0]
+        guard_names = symbolic.symbols_in_code(cond_text) | symbolic.symbols_in_code(expanded)
+        if not self.arm_assigned_symbols(cb).isdisjoint(guard_names):
+            return None
         try:
             names = set(symbolic.arrays(expanded)) | set(symbolic.free_symbols_and_functions(expanded))
         except Exception:  # noqa: BLE001 -- unparsable guard: no provable dependence, leave as-is

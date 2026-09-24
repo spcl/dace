@@ -10,7 +10,9 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.host_maps import host_maps
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.properties import CodeBlock
+from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
 
 NB = dace.symbol("NB")
@@ -281,6 +283,50 @@ def test_a_sequential_scan_in_a_loop_region_is_not_offloaded():
 
     maps = [n.map.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert not maps, f'a sequential scan must not gain a map, got {maps}'
+
+
+def pinned_loop_over_a_map(parent: ControlFlowRegion) -> nodes.MapEntry:
+    """``for i: B[:] = A[:] + i`` with the loop pinned sequential, added to ``parent``; returns the map."""
+    loop = LoopRegion('carried', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    loop.pinned_sequential = True
+    parent.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    _, entry, _ = body.add_mapped_tasklet('add_i', {'j': '0:N'}, {'a': dace.Memlet('A[j]')},
+                                          'b = a + i', {'b': dace.Memlet('B[j]')},
+                                          external_edges=True)
+    return entry
+
+
+def sdfg_with_two_arrays(name: str) -> dace.SDFG:
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', ['N'], dace.float64)
+    sdfg.add_array('B', ['N'], dace.float64)
+    return sdfg
+
+
+def test_a_loop_pinned_for_a_carried_dependence_keeps_its_map_a_kernel():
+    """``pinned_sequential`` on a top-level loop is a dependence fact, not a specialization's
+    fallback arm; its map is the loop's only device work (tsvc s118, polybench lu)."""
+    sdfg = sdfg_with_two_arrays('carried_pin')
+    pinned_loop_over_a_map(sdfg)
+
+    pinned = maps_pinned_by_host_loops(sdfg)
+
+    assert list(pinned) == []
+
+
+def test_the_sequential_fallback_arm_of_a_guard_keeps_its_map_on_the_host():
+    sdfg = sdfg_with_two_arrays('fallback_pin')
+    guard = ConditionalBlock('guard')
+    sdfg.add_node(guard, is_start_block=True)
+    arm = ControlFlowRegion('seq_arm', sdfg=sdfg)
+    guard.add_branch(CodeBlock('N > 1'), arm)
+    entry = pinned_loop_over_a_map(arm)
+
+    pinned = maps_pinned_by_host_loops(sdfg)
+
+    assert list(pinned) == [entry]
 
 
 if __name__ == '__main__':

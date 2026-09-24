@@ -12,7 +12,8 @@ import pytest
 import dace
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.scatter_to_guarded_maps import (ScatterToGuardedMaps, detect_scatter_idx_arrays)
 
 N = dace.symbol('N')
@@ -513,6 +514,33 @@ def test_else_branch_dispatcher_emits_both_branches():
                                              f'got loops={len(par_loops)}, maps={par_maps}')
 
 
+def test_parallel_branch_keeps_loop_scratch_transients_private_to_each_iteration():
+    """The sequential clone must not share the loop's scratch scalars (``a_slice = b[i] + c[i]*d[i]``)
+    with the parallel branch: a shared one stays outside the lifted map, so every iteration writes the
+    same scalar (a vectorized body then stores lane 0's value to every lane's slot)."""
+    from dace.sdfg.state import ConditionalBlock
+    sdfg = tsvc_s491.to_sdfg(simplify=True)
+    n = 32
+    rng = np.random.default_rng(3)
+    b, c, d = rng.random(n), rng.random(n), rng.random(n)
+    ip = _make_permutation(n, seed=7).astype(np.int32)
+    expected = np.zeros(n)
+    expected[ip] = b + c * d
+    a = np.zeros(n)
+
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+
+    sdfg.validate()
+    cb = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock))
+    par_body = cb.branches[1][1]
+    par_names = {dn.data for st in par_body.all_states() for dn in st.data_nodes()}
+    assert par_names == {'a', 'b', 'c', 'd', 'ip'}
+    seq_names = {dn.data for st in cb.branches[0][1].all_states() for dn in st.data_nodes()}
+    assert 'a_slice' not in seq_names and 'a_slice_seq' in seq_names
+    sdfg(a=a, b=b, c=c, d=d, ip=ip, N=n)
+    assert np.allclose(a, expected)
+
+
 # assume_no_conflicts=True: skip the guard entirely
 
 
@@ -566,6 +594,84 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
     assert maps >= 1, 'the scatter must parallelize into a Map'
     assert has_check and has_trap, ('the no-conflict guard (ScatterConflictCheck + trap) must survive full '
                                     f'canonicalize; got check={has_check} trap={has_trap}')
+
+
+NB = dace.symbol('NB')
+NLEV = dace.symbol('NLEV')
+NP = dace.symbol('NP')
+
+
+@dace.program
+def scatter_under_level_map(idx: dace.int32[NB, NP], src: dace.float64[NB, NLEV, NP], dst: dace.float64[NLEV, NP]):
+    for jb in range(NB):
+        for jk in range(NLEV):
+            for jc in range(NP):
+                dst[jk, idx[jb, jc]] = src[jb, jk, jc]
+
+
+@dace.program
+def strided_level_scatter(idx: dace.int32[NB, NP], src: dace.float64[NB, NLEV, NP], dst: dace.float64[NLEV, NP]):
+    for jb in range(NB):
+        for jk in range(0, NLEV, 2):
+            for jc in range(NP):
+                dst[jk, idx[jb, jc]] = src[jb, jk, jc]
+
+
+def level_scatter_inputs(repeat_first_index: bool, nb: int, nlev: int, n: int) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(7)
+    idx = np.array([rng.permutation(n) for _ in range(nb)], dtype=np.int32)
+    idx[:, 1] = np.where(repeat_first_index, idx[:, 0], idx[:, 1])
+    return idx, rng.random((nb, nlev, n))
+
+
+def level_scatter_reference(idx: np.ndarray, src: np.ndarray, level_step: int) -> np.ndarray:
+    nb, nlev, n = src.shape
+    dst = np.zeros((nlev, n))
+    for jb in range(nb):
+        for jk in range(0, nlev, level_step):
+            for jc in range(n):
+                dst[jk, idx[jb, jc]] = src[jb, jk, jc]
+    return dst
+
+
+@pytest.mark.parametrize('repeat_first_index', [False, True])
+def test_a_scatter_inside_a_map_is_dispatched_outside_the_map(repeat_first_index: bool):
+    """The guard for a scatter loop LoopToMap already wrapped in a map is hoisted out of that
+    wrapper, and the parallel-vs-sequential dispatch has to go with it: its count symbol is bound
+    beside the hoisted guard, and a dispatch left inside the wrapper keeps the map nest apart."""
+    sdfg = scatter_under_level_map.to_sdfg()
+    idx, src = level_scatter_inputs(repeat_first_index, nb=3, nlev=4, n=5)
+    dst = np.zeros((4, 5))
+
+    canonicalize(sdfg, validate=True)
+
+    dispatchers = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
+    assert len(dispatchers) == 1
+    assert dispatchers[0].sdfg is sdfg, 'the dispatcher must sit next to the hoisted guard, not in the wrapper'
+    parallel_maps = [n for n, _ in dispatchers[0].branches[1][1].all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert [len(m.map.params) for m in parallel_maps] == [2]
+    sdfg(idx=idx, src=src, dst=dst, NB=3, NLEV=4, NP=5)
+    assert np.allclose(dst, level_scatter_reference(idx, src, level_step=1))
+
+
+@pytest.mark.parametrize('repeat_first_index', [False, True])
+def test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(repeat_first_index: bool):
+    """A strided map cannot be crossed by the joint key, so the per-index sliced guard is hoisted
+    instead; the dispatcher stays in the wrapper and must receive the count through the wrapper's
+    symbol mapping."""
+    sdfg = strided_level_scatter.to_sdfg()
+    idx, src = level_scatter_inputs(repeat_first_index, nb=3, nlev=4, n=5)
+    dst = np.zeros((4, 5))
+
+    canonicalize(sdfg, validate=True)
+
+    conditions = [
+        cond.as_string for block in sdfg.all_control_flow_blocks() if isinstance(block, ConditionalBlock)
+        for cond, _ in block.branches if cond is not None
+    ]
+    assert conditions == ['(__scatter_guard_check__scatter_guard_count_idx > 0)']
+    sdfg(idx=idx, src=src, dst=dst, NB=3, NLEV=4, NP=5)
+    assert np.allclose(dst, level_scatter_reference(idx, src, level_step=2))
 
 
 if __name__ == '__main__':

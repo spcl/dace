@@ -59,7 +59,7 @@ Scope
 * Update tasklet body is exactly ``__out = (__lhs OP __rhs)`` for a single
   associative binary op (``+``, ``-``, ``*``). ``min`` / ``max`` are left for
   :class:`ArgMaxLift`.
-* No other writes (to non-transient arrays) inside the true-branch.
+* Every other write inside the true-branch goes to a transient nothing else reads.
 
 Refusals leave the loop unmodified so downstream stages still see it.
 """
@@ -237,10 +237,17 @@ class LoopToConditionalReduce(ppl.Pass):
         sink_ans = [n for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0]
         if len(sink_ans) != 1 or sink_ans[0].data != acc_name:
             return None
-        # And no non-transient writes other than the accumulator.
-        for n in sink_ans:
-            desc = sdfg.arrays.get(n.data)
-            if desc is not None and not desc.transient and n.data != acc_name:
+        # The hoist makes every write unconditional: all but the accumulator must be scratch nothing else sees.
+        seen_elsewhere = [dn.data for st in sdfg.all_states() if st is not true_state for dn in st.data_nodes()]
+        seen_elsewhere += [s for e in sdfg.all_interstate_edges(recursive=True) for s in e.data.free_symbols]
+        seen_elsewhere += [
+            s for r in sdfg.all_control_flow_regions(recursive=True) for c in r.get_meta_codeblocks()
+            for s in c.get_free_symbols()
+        ]
+        seen_elsewhere += [dn.data for dn in true_state.data_nodes() if true_state.in_degree(dn) == 0]
+        for n in true_state.data_nodes():
+            if n is not sink_ans[0] and true_state.in_degree(n) > 0 and (not sdfg.arrays[n.data].transient
+                                                                         or n.data in seen_elsewhere):
                 return None
 
         # Walk back from the sink to find the update tasklet.
@@ -698,14 +705,14 @@ class LoopToConditionalReduce(ppl.Pass):
                 oe = out_es[0]
                 if oe.data.assignments:
                     continue
-                is_start = (blk is loop.start_block)
+                # The entry is spliced out only when its successor becomes the new source.
+                if blk is loop.start_block and (in_es or loop.in_degree(oe.dst) != 1):
+                    continue
                 for ie in in_es:
                     loop.add_edge(ie.src, oe.dst, ie.data)
                     loop.remove_edge(ie)
                 loop.remove_edge(oe)
                 loop.remove_node(blk)
-                if is_start:
-                    loop.start_block = loop.node_id(oe.dst)
                 changed = True
                 break
 

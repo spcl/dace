@@ -367,7 +367,10 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
                     rename = {}
                     for ie in scan_state.in_edges(producer):
                         if ie.dst_conn and ie.data is not None and ie.data.data is not None:
-                            rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(ie.data.data)
+                            source = ie.data.data
+                            if ie.data.subset.free_symbols:  # keep ``idx[i]``: a bare ``idx`` looks lane-invariant
+                                source += f"[{', '.join(map(str, ie.data.subset.min_element()))}]"
+                            rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(source)
                     if rename:
                         # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
                         # another plain symbol, which is exact structural replacement. ``subs`` sorts
@@ -797,8 +800,8 @@ def _affine_offset_for(expr: sympy.Expr, var_name: str) -> sympy.Expr | None:
 
 
 def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
-    """Detect ``int_floor(affine_in_var, k)`` / ``int_ceil(...)`` at the top of ``expr``; return
-    integer divisor ``k`` when the inner arg is affine in ``var_name``.
+    """Detect ``int_floor(var + c0, k)`` with ``c0 % k == 0`` at the top of ``expr``; return the
+    divisor ``k``.
 
     ``None`` when: not an ``int_floor`` / ``int_ceil`` call, divisor not a concrete positive integer,
     or dividend not affine in ``var_name``.
@@ -838,8 +841,10 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
         k = divisor  # symbolic -- runtime check (W % k == 0) at codegen per 2c7b88e26
     # Dividend must be affine in ``var_name`` (regular replication -- ``int_floor(idx[i], 2)`` is
     # data-dependent → GATHER, not REPLICATE).
+    # The contracted-box load is exact only for ``int_floor(var + c0, k)`` with ``c0 % k == 0``.
     coeff = _affine_coeff_for(dividend, var_name)
-    if coeff is None:
+    offset = _affine_offset_for(dividend, var_name)
+    if fname not in ("int_floor", "__int_floor") or coeff != 1 or offset is None or sympy.Mod(offset, k) != 0:
         return None
     return k
 

@@ -786,3 +786,54 @@ def test_promote_gather_indices_refuses_out_of_scope_index_symbol():
 
     assert out == rhs and p._has_nested_subscript(sdfg, out)
     assert "_gidx_0" not in (edge.data.assignments or {}), "must not plant an out-of-scope assignment"
+
+
+def symbol_guarded_if_else(name: str, guard: str, before: dict[str, str], after: dict[str, str]) -> dace.SDFG:
+    """``<before>; if <guard>: A[0] = 1.0 else: A[0] = 2.0; <after>``, with ``k`` an int64 argument."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    for cond, value in ((CodeBlock(guard), "1.0"), (None, "2.0")):
+        arm = ControlFlowRegion(f"arm_{value[0]}", sdfg=sdfg)
+        state = arm.add_state(f"set_{value[0]}", is_start_block=True)
+        tasklet = state.add_tasklet("set", {}, {"_a"}, f"_a = {value}")
+        state.add_edge(tasklet, "_a", state.add_write("A"), None, dace.Memlet("A[0]"))
+        cb.add_branch(cond, arm)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge(assignments=before))
+    sdfg.add_edge(cb, sdfg.add_state("exit"), dace.InterstateEdge(assignments=after))
+    return sdfg
+
+
+def run_for_each_k(sdfg: dace.SDFG) -> list[float]:
+    csdfg = sdfg.compile()
+    results = []
+    for k in (0, 1, 2, 3):
+        A = np.zeros((1, ), dtype=np.float64)
+        csdfg(A=A, k=k)
+        results.append(float(A[0]))
+    return results
+
+
+def test_guard_symbol_rebound_after_the_branch_is_tested_at_its_incoming_value():
+    """``k = k - 1`` after the branch is not the value the guard ``k > 0`` sees; lifting it would test ``k - 1``."""
+    sdfg = symbol_guarded_if_else("guard_symbol_decremented_after", "k > 0", {}, {"k": "k - 1"})
+
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+    assert not any(name.startswith("_cond_k") for name in sdfg.arrays)
+    assert run_for_each_k(sdfg) == [2.0, 1.0, 1.0, 1.0]
+
+
+def test_lifted_guard_symbol_bound_to_a_value_keeps_the_symbol_type():
+    """``m = k - 1`` feeding ``m > 1`` is an integer; a ``bool`` lift would read every nonzero ``m`` as 1."""
+    sdfg = symbol_guarded_if_else("guard_symbol_bound_to_value", "m > 1", {"m": "k - 1"}, {})
+
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+    assert sdfg.arrays["_cond_m"].dtype == dace.int64
+    assert run_for_each_k(sdfg) == [2.0, 2.0, 2.0, 1.0]

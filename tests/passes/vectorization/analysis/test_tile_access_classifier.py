@@ -269,21 +269,19 @@ def test_replicate_int_floor_explicit_form():
 
 
 def test_replicate_int_ceil():
-    """``int_ceil(i, 2)`` -> REPLICATE with factor=2 (the dividend is
-    the iter-var, divisor is the replicate factor)."""
+    """``int_ceil(i, 2)`` -> GATHER: the replicated box reads ``floor`` lanes."""
     r = _R(("int_ceil(i, 2)", "int_ceil(i, 2)"))
     ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.REPLICATE, )
-    assert ta.replicate_factor_per_dim == (2, )
+    assert ta.per_dim_kind == (PerDimKind.GATHER, )
 
 
-def test_replicate_int_floor_affine_inner():
-    """``arr[(i + 1) // 2]`` -> REPLICATE with factor=2; the affine
-    offset on the iter-var doesn't change the replicate factor."""
-    r = _R(("(i + 1) // 2", "(i + 1) // 2"))
+@pytest.mark.parametrize("index", ["(i + 1) // 2", "(3 * i) // 2"])
+def test_replicate_int_floor_affine_inner(index: str) -> None:
+    """``arr[(i + 1) // 2]`` / ``arr[(3 * i) // 2]`` -> GATHER: the replicated box is ``i // 2`` shifted
+    by whole groups only."""
+    r = _R((index, index))
     ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.REPLICATE, )
-    assert ta.replicate_factor_per_dim == (2, )
+    assert ta.per_dim_kind == (PerDimKind.GATHER, )
 
 
 def test_replicate_factor_recorded_on_structured_dims_too():
