@@ -136,6 +136,13 @@ def test_renaming_two_symbols_of_one_name_matches_subs() -> None:
     assert sympy.srepr(symbolic.rename_symbols(raw, repl)) == sympy.srepr(raw.subs(repl))
 
 
+def test_a_container_named_like_a_sympy_function_parses_as_a_subscript() -> None:
+    # ``rf`` is sympy's RisingFactorial; a subscript on a container of that name must stay a subscript.
+    parsed = symbolic.pystr_to_symbolic('rf[0, jl]')
+    assert isinstance(parsed, symbolic.Subscript)
+    assert isinstance(parsed.args[0], sympy.Symbol) and parsed.args[0].name == 'rf'
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()

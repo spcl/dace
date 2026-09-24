@@ -3542,6 +3542,7 @@ _PYSTR2SYM_locals = {
     'diag': sympy.Symbol('diag'),
     'jn': sympy.Symbol('jn'),
     'yn': sympy.Symbol('yn'),  # spherical Bessel Y_n; shadows a common size-symbol name (mirror of 'jn')
+    'rf': sympy.Symbol('rf'),  # RisingFactorial; shadows a container name (``rf[0, jl]``)
 }
 # _clash1 enables all one-letter variables like N as symbols
 # _clash also allows pi, beta, zeta and other common greek letters
