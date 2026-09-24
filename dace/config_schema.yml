@@ -340,6 +340,16 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    simd_maps:
+                        type: bool
+                        default: true
+                        title: Vectorize innermost CPU maps with OpenMP simd
+                        description: >
+                            Runs ``MarkSIMDMaps`` before code generation, which sets
+                            ``Map.omp_simd`` on the innermost Sequential and CPU_Multicore maps
+                            whose body holds no further loop or map. Set false to emit no
+                            ``simd`` clause; maps already carrying ``omp_simd`` still render it.
+
                     openmp_sections:
                         type: bool
                         default: false

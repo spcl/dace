@@ -17,6 +17,7 @@ from dace.sdfg import infer_types
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
@@ -216,6 +217,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
+
+    # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.
+    if config.Config.get_bool('compiler', 'cpu', 'simd_maps'):
+        MarkSIMDMaps().apply_pass(sdfg, {})
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)

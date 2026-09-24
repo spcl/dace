@@ -114,6 +114,9 @@ class MapExpansion(pm.SingleStateTransformation):
         # Reuse the map that is already existing for the first one.
         current_map.params = new_maps[0].params
         current_map.range = new_maps[0].range
+        # ``collapse`` counts the loops the schedule fuses, and the reused map has fewer of them
+        # now; leaving it stale emits ``collapse(2)`` on a one-dimensional loop.
+        current_map.collapse = min(current_map.collapse, len(current_map.params))
         new_maps.pop(0)
 
         # Create new map entries and exits
