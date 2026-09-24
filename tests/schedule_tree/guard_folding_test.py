@@ -5,11 +5,12 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards,
+from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards, flatten_contiguous_nests,
                                                      forward_substitute_conditions, fuse_rolled_loops,
-                                                     merge_contiguous_loops, pair_complementary_guards,
-                                                     remove_dead_assignments, remove_dead_stores, reroll_statements,
-                                                     split_iteration_spaces, unswitch_invariant_guards)
+                                                     hoist_select_arms, merge_contiguous_loops,
+                                                     pair_complementary_guards, remove_dead_assignments,
+                                                     remove_dead_stores, reroll_statements, split_iteration_spaces,
+                                                     unswitch_invariant_guards)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -929,6 +930,102 @@ def test_convert_not_applied(case):
     assert _nodes(stree, tn.IfScope)
 
 
+def _select_tree(code: str) -> tn.ScheduleTreeRoot:
+    """``for i in range(8): B[i] = <code>`` with inputs ``a = A[i]`` and ``c = C[i]``."""
+    stree = _diamond_tree([], None)
+    loop = stree.children[0]
+    loop.children = []
+    loop.add_children([_tasklet(code, {'a': 'A[i]', 'c': 'C[i]'}, {'b': 'B[i]'})])
+    return stree
+
+
+@pytest.mark.parametrize('code, hoisted', [
+    ('b = (a / c) if c > 0 else (a * c)', 2),
+    ('b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1', 4),
+    ('b = a if c > 0 else 1.0', 0),
+])
+def test_hoist_select_arms(code, hoisted):
+    stree, reference = _select_tree(code), _select_tree(code)
+    assert hoist_select_arms(stree) == hoisted
+    if hoisted:
+        tasklet = _nodes(stree, tn.TaskletNode)[0].node
+        assert tasklet.code.as_string.count('__arm') == 2 * hoisted
+    a, c = np.random.rand(8), np.random.rand(8) - 0.5
+    results = []
+    for tree in (reference, stree):
+        b = np.zeros(8)
+        _run(tree, A=a, B=b, C=c, D=np.zeros(8), E=np.zeros((8, 2)))
+        results.append(b)
+    assert np.array_equal(results[0], results[1])
+
+
+@pytest.mark.parametrize('code', ['b = (a // 2) if c > 0 else a', 'b = int(a) if c > 0 else a'])
+def test_hoist_select_arms_not_unsafe(code):
+    stree = _select_tree(code)
+    assert hoist_select_arms(stree) == 0
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Flattening contiguous nests
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _nest_tree(inner_start: int = 0,
+               inner_end: int = 4,
+               code: str = 'b = 2 * a',
+               read: str = 'A[i, j - 1]',
+               padded: bool = False) -> tn.ScheduleTreeRoot:
+    """``for j in range(1, 5): for i in range(inner_start, inner_end): B[i, j] = <code>(a = <read>)`` over ``A``
+    and ``B`` of shape (4, 6), stored column by column (rows of ``i`` contiguous; padded to 5 elements if
+    ``padded``)."""
+    sdfg = dace.SDFG('nest')
+    for name in 'AB':
+        sdfg.add_array(name, [4, 6], dace.float64, strides=[1, 5 if padded else 4], total_size=30 if padded else 24)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    inner = dace.sdfg.state.LoopRegion('inner', f'i < {inner_end}', 'i', f'i = {inner_start}', 'i = i + 1')
+    outer = dace.sdfg.state.LoopRegion('outer', 'j < 5', 'j', 'j = 1', 'j = j + 1')
+    body = tn.ForScope(loop=inner, children=[_tasklet(code, {'a': read}, {'b': 'B[i, j]'})])
+    stree.children = []
+    stree.add_children([tn.ForScope(loop=outer, children=[body])])
+    return stree
+
+
+def _run_nest(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot):
+    a = np.asfortranarray(np.random.rand(4, 6))
+    results = []
+    for tree in (reference, stree):
+        b = np.asfortranarray(np.zeros((4, 6)))
+        _run(tree, A=a, B=b)
+        results.append(b)
+    assert np.array_equal(results[0], results[1])
+
+
+def test_flatten_contiguous_nest():
+    stree, reference = _nest_tree(), _nest_tree()
+    assert flatten_contiguous_nests(stree) == 1
+    loops = _nodes(stree, tn.ForScope)
+    assert len(loops) == 1 and _for_headers(stree) == ['__flat0 = 4 ; (__flat0 < 20)']
+    assert len(_nodes(stree, tn.ViewNode)) == 2
+    _run_nest(stree, reference)
+
+
+@pytest.mark.parametrize('case', ['partial row', 'padded rows', 'row-invariant access', 'variable in code'])
+def test_flatten_not_applied(case):
+    kwargs = {}
+    if case == 'partial row':  # A halo row the loop does not cover
+        kwargs['inner_end'] = 3
+    elif case == 'padded rows':
+        kwargs['padded'] = True
+    elif case == 'row-invariant access':
+        kwargs['read'] = 'A[0, j - 1]'
+    elif case == 'variable in code':
+        kwargs['code'] = 'b = a * i'
+    stree = _nest_tree(**kwargs)
+    assert flatten_contiguous_nests(stree) == 0
+    assert len(_nodes(stree, tn.ForScope)) == 2
+
+
 def _multi_output_tree(code: str, inputs: dict, outputs: dict, guarded: tn.ScheduleTreeNode) -> tn.ScheduleTreeRoot:
     """``for k in range(8): for i in range(4): <tasklet>; if m: <guarded>`` over ``A``/``B`` (8x4), ``C`` (8) and
     transient scalars ``m`` (bool) and ``t``."""
@@ -1127,6 +1224,10 @@ if __name__ == '__main__':
     test_convert_diamond_with_branch_local_temporary()
     test_convert_diamond_with_loop_carried_value()
     test_convert_not_applied('out of bounds')
+    test_hoist_select_arms('b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1', 4)
+    test_hoist_select_arms_not_unsafe('b = int(a) if c > 0 else a')
+    test_flatten_contiguous_nest()
+    test_flatten_not_applied('partial row')
     test_dead_store_overwritten()
     test_dead_store_overwritten_in_both_branches()
     test_dead_store_kept_when_one_branch_keeps_it()

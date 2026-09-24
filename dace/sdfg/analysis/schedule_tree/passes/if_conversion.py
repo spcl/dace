@@ -1,12 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Converting data-dependent branches in innermost loops to selects."""
+"""Converting data-dependent branches in innermost loops to selects, and computing the arms of selects first."""
 import ast
+import copy
 from typing import Dict, Optional
 
 import sympy
 
 from dace import data, dtypes
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, clone_subtree, condition_of, is_pure,
@@ -251,3 +253,101 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
 
     visit(stree, facts_at(stree, max_enumeration))
     return converted
+
+
+def _operations(expression: ast.expr) -> int:
+    return sum(
+        isinstance(n, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call, ast.BoolOp, ast.IfExp))
+        for n in ast.walk(expression))
+
+
+def _speculatable_expression(expression: ast.expr) -> bool:
+    """Whether evaluating ``expression`` unconditionally is safe: no integer division or modulo, no subscripts (which
+    may index out of bounds where the condition does not hold), no conversions of computed values to integers (which
+    are undefined for values out of range), and calls only to named functions."""
+    for n in ast.walk(expression):
+        if isinstance(n, ast.BinOp) and isinstance(n.op, _UNSAFE_OPERATORS):
+            return False
+        if isinstance(n, ast.Subscript):
+            return False
+        if isinstance(n, ast.Call):
+            if not isinstance(n.func, (ast.Name, ast.Attribute)):
+                return False
+            if (isinstance(n.func, ast.Name) and n.func.id in ('int', 'round')
+                    and not all(isinstance(a, ast.Constant) for a in n.args)):
+                return False
+    return True
+
+
+def hoist_select_arms(stree: tn.ScheduleTreeScope, min_operations: int = 1) -> int:
+    """
+    Compute the arms of conditional expressions in tasklets before selecting between them.
+
+    ``x = (a / b) if c else (a / d)`` becomes ``__arm0 = a / b; __arm1 = a / d; x = __arm0 if c else __arm1``. Both
+    arms are then computed unconditionally, and the conditional expression only selects between two values. This
+    keeps compilers from sinking the common operations of the arms below the selection, which some (e.g., LLVM) turn
+    into gathers of the selected operands in vectorized loops. Arms are hoisted in place, within the tasklet, and are
+    declared with the type of the expression (``auto``), so the results do not change.
+
+    This helps vectorized loops, where both arms are computed for all lanes anyway, and may cost time in scalar code
+    where one arm is expensive and rarely taken; it is therefore not part of the default pipelines. Only arms that are
+    safe to evaluate where their condition does not hold are hoisted (see :func:`_speculatable_expression`).
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :param min_operations: Only hoist arms with at least this many operations (names and constants are never hoisted).
+    :return: The number of arms hoisted.
+    """
+    hoisted = 0
+    for node in stree.preorder_traversal():
+        if not isinstance(node, tn.TaskletNode) or node.node.code.language != dtypes.Language.Python:
+            continue
+        if getattr(node.node, 'side_effects', False):
+            continue
+        body = list(node.node.code.code)
+        taken = {n.id for s in body for n in ast.walk(s) if isinstance(n, ast.Name)}
+        taken |= set(node.node.in_connectors) | set(node.node.out_connectors)
+        counter = [0]
+
+        def fresh() -> str:
+            while f'__arm{counter[0]}' in taken:
+                counter[0] += 1
+            name = f'__arm{counter[0]}'
+            taken.add(name)
+            return name
+
+        class Hoist(ast.NodeTransformer):
+            """Replaces nontrivial arms of conditional expressions with fresh names, collecting their definitions
+            (innermost first, so an arm may use the arms of the conditional expressions nested in it)."""
+
+            def __init__(self):
+                self.definitions = []
+
+            def visit_Lambda(self, node: ast.Lambda):
+                return node  # Arms may refer to the arguments
+
+            def visit_IfExp(self, node: ast.IfExp):
+                self.generic_visit(node)
+                for field in ('body', 'orelse'):
+                    arm = getattr(node, field)
+                    if _operations(arm) < max(min_operations, 1) or not _speculatable_expression(arm):
+                        continue
+                    name = fresh()
+                    self.definitions.append(
+                        ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=arm, lineno=0, col_offset=0))
+                    setattr(node, field, ast.copy_location(ast.Name(id=name, ctx=ast.Load()), arm))
+                return node
+
+        result, changed = [], False
+        for statement in body:
+            if not isinstance(statement, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr)):
+                result.append(statement)  # Control flow in tasklets: leave its conditional parts alone
+                continue
+            hoist = Hoist()
+            statement = hoist.visit(copy.deepcopy(statement))
+            result += hoist.definitions + [statement]
+            hoisted += len(hoist.definitions)
+            changed |= bool(hoist.definitions)
+        if changed:
+            module = ast.fix_missing_locations(ast.Module(body=result, type_ignores=[]))
+            node.node.code = CodeBlock(module.body, dtypes.Language.Python)
+    return hoisted
