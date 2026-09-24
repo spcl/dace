@@ -44,7 +44,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.passes.offset_loop_and_maps import (add_to_rhs, process_memlets_in_edges, repl_recursive,
-                                                             repl_tasklets_on_node_list)
+                                                             repl_tasklets_on_node_list, tasklets_assign)
 
 
 def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> bool:
@@ -207,7 +207,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         # scope holds one node with no out-edge (a write-only scratch scalar), and the rebase would then
         # shift the map range while substituting the shift into nothing -- every body read off by ``begin``.
         scope_nodes = map_scope.map_body_nodes(state, entry)
-        if rebinds_params(scope_nodes, repldict):
+        if rebinds_params(scope_nodes, repldict) or tasklets_assign(scope_nodes, repldict):
             return 0  # refuse before touching anything
 
         entry.map.range = subsets.Range(new_ranges)
@@ -245,7 +245,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
 
         repldict = {str(var): f"({var} + ({symstr(start)}))"}
         body_nodes = [n for state in loop.all_states() for n in state.nodes()]
-        if rebinds_params(body_nodes, dict.fromkeys([str(var)])):
+        if rebinds_params(body_nodes, dict.fromkeys([str(var)])) or tasklets_assign(body_nodes, [str(var)]):
             return 0  # refuse before touching anything
 
         loop.init_statement = CodeBlock(f"{var} = 0")
