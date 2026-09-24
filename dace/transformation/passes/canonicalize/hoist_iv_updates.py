@@ -1,43 +1,31 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fission induction-variable updates out of compound loop bodies.
 
-The existing :class:`~dace.transformation.passes.canonicalize.induction_variable_substitution.InductionVariableSubstitution`
-pass only matches *single-tasklet* loop bodies of the shape ``accum = accum OP const``.
-Many real kernels (TSVC ``s317`` variants, ICON config-scalar updates, cloudsc
-species loops) carry such an IV update *next to* unrelated per-iteration work --
-e.g. ::
+:class:`~dace.transformation.passes.canonicalize.induction_variable_substitution.InductionVariableSubstitution`
+only matches *single-tasklet* loop bodies (``accum = accum OP const``). Real
+kernels (TSVC ``s317``, ICON config-scalar updates, cloudsc species loops) mix
+such an IV update with unrelated per-iteration work, e.g. ::
 
     for i in range(N):
-        scale[0] = scale[0] * 0.99       # loop-invariant slot, IV-eligible
-        b[i]     = b[i]     + 1.0        # per-iteration work, NOT IV-eligible
+        scale[0] = scale[0] * 0.99       # IV-eligible
+        b[i]     = b[i]     + 1.0        # not IV-eligible
 
-The two statements are *independent* (they share no AccessNodes, no symbols), so
-the IV update can be lifted into its own sibling loop without changing semantics.
-That sibling loop is then single-tasklet -- exactly what
-``InductionVariableSubstitution`` recognises -- and collapses to its ``O(1)``
-closed form ``scale[0] = scale[0] * 0.99 ** N``.
-
-This pass runs **before** ``InductionVariableSubstitution`` in the canonicalize
-recipe; together they recover the O(N) → O(1) speedup on real-world kernels
-where the IV update was muddled with unrelated loop body work.
+The two statements share no AccessNodes or symbols, so the IV update can be
+lifted into its own sibling loop. That loop is then single-tasklet and
+collapses to closed form ``scale[0] = scale[0] * 0.99 ** N`` once
+``InductionVariableSubstitution`` runs, right after this pass in the recipe.
 
 Scope today:
 
-* Loop body is a single ``SDFGState`` with ≥ 2 tasklets.
-* One of those tasklets matches the IV predicate from
-  ``induction_variable_substitution._extract_iv`` (Python ``__out = __in OP const``,
-  loop-invariant read/write subset, single in/out edge).
-* That tasklet's *data-flow component* (the tasklet plus AccessNodes reached
-  through its in/out edges, walking only through transients) is *isolated* --
-  no edge connects it to any other tasklet in the state.
+* loop body is a single ``SDFGState`` with >= 2 tasklets;
+* one tasklet matches the IV predicate from ``induction_variable_substitution._extract_iv``
+  (``__out = __in OP const``, loop-invariant subsets, single in/out edge);
+* that tasklet's data-flow component (through transients) is isolated from
+  every other tasklet in the state.
 
-Out of scope (potential follow-ups):
-
-* multi-state loop bodies (no fission across state boundaries);
-* IV components that share an external AccessNode with another statement
-  (would require value-flow analysis of the sharing);
-* multiple independent IV updates in the same body (this pass fissions one per
-  invocation; re-running picks up the next).
+Out of scope: multi-state bodies; IV components sharing an external
+AccessNode with another statement; multiple independent IV updates per body
+(fissions one per call, re-run for the next).
 """
 import ast
 import copy

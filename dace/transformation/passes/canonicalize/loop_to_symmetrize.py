@@ -7,20 +7,16 @@ A hand-written symmetrization::
         for j in range(i + 1, M):
             X[j, i] = X[i, j]
 
-is a perfect two-level nest whose inner body copies one triangle of a square
-matrix onto the other across the diagonal. It is embarrassingly parallel, but
-in-place it reads and writes the SAME array at symmetric data-dependent indices
-(``X[i, j]`` vs ``X[j, i]``), so ``LoopToMap`` conservatively refuses and leaves
-it sequential. This pass recognises the nest -- an outer loop whose sole body is
-an inner triangular loop (lower bound ``outer + offset``) whose sole body copies
-``X[transpose] = X[src]`` on one 2-D array -- and replaces it with a
-:class:`~dace.libraries.standard.nodes.symmetrize.Symmetrize` node, whose
-expansion emits the parallel triangular copy directly.
+is embarrassingly parallel but reads/writes the SAME array at symmetric
+data-dependent indices, so ``LoopToMap`` refuses and leaves it sequential.
+This pass recognizes the nest -- outer loop, inner triangular loop (lower
+bound ``outer + offset``), body ``X[transpose] = X[src]`` on one 2-D array --
+and replaces it with a
+:class:`~dace.libraries.standard.nodes.symmetrize.Symmetrize` node.
 
-The match is conservative: both loops unit-stride, a perfect one-child nest
-(empty connective states tolerated), a constant nonnegative inner offset, a
-single 2-D array read and written at transposed single-point subscripts using
-exactly the two loop variables, and no other body effect.
+Match: both loops unit-stride, perfect one-child nest (empty connective
+states tolerated), constant nonnegative inner offset, single 2-D array at
+transposed single-point subscripts, no other body effect.
 """
 from typing import Optional
 
