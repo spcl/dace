@@ -88,17 +88,6 @@ def constant_offset_on_axis(subset, loop_var: str) -> Optional[Tuple[int, int]]:
     return found
 
 
-def accesses_of(state: SDFGState, name: str) -> Tuple[List[Any], List[Any]]:
-    """``(write_edges, read_edges)`` touching ``name`` in ``state``."""
-    writes, reads = [], []
-    for node in state.nodes():
-        if not isinstance(node, nodes.AccessNode) or node.data != name:
-            continue
-        writes.extend(state.in_edges(node))
-        reads.extend(state.out_edges(node))
-    return writes, reads
-
-
 def body_is_analyzable(loop: LoopRegion) -> Optional[List[SDFGState]]:
     """The body as a straight-line chain of states, or ``None`` for anything this pass will not read.
 
@@ -107,7 +96,7 @@ def body_is_analyzable(loop: LoopRegion) -> Optional[List[SDFGState]]:
     everything that makes "which store happens" or "what index does it name" a question:
 
     * a conditional or nested region: a store under a predicate is not a fact;
-    * a nested SDFG: its accesses are invisible to :func:`accesses_of`;
+    * a nested SDFG: its accesses are invisible to this pass;
     * a branch in the body's own control flow: two paths write different stores;
     * an interstate assignment: it can redefine the very symbol the subscripts are read against,
       so ``i + 1`` in a later state need not name what it named in the first.

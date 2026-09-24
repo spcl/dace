@@ -89,8 +89,6 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
-from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution,
                                                                                      LoopCarriedRotationSubstitution)

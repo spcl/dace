@@ -149,7 +149,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         # silently miss the definition.
         in_edges = parent.in_edges(state)
         if not in_edges:
-            pre = parent.add_state_before(state, label=f'{state.label}_range_bind')
+            parent.add_state_before(state, label=f'{state.label}_range_bind')
             in_edges = parent.in_edges(state)
         for edge in in_edges:
             for name, value in assignments:
