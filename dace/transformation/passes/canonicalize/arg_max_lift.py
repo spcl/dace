@@ -336,8 +336,6 @@ class GuardReadWiring(ast.NodeTransformer):
             self.refused = True
             return node
         idx = node.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             self.refused = True
             return node
@@ -873,8 +871,6 @@ class ArgMaxLift(ppl.Pass):
         if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
             return None
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if not isinstance(idx, ast.Tuple) or len(idx.elts) != 2:
             return None
         d0, d1 = idx.elts
@@ -1092,8 +1088,6 @@ class ArgMaxLift(ppl.Pass):
             return None
         array = left.value.id
         idx = left.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             return None
         try:
@@ -1166,8 +1160,6 @@ class ArgMaxLift(ppl.Pass):
             if arr not in sdfg.arrays:
                 continue
             idx = tree.slice
-            if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-                idx = idx.value
             # Only a single 1-D affine index is handled; a multi-dim subscript
             # ``a[i, j]`` (ast.Tuple / Slice) is refused (the 2-D argmax of TSVC
             # s3110 / s13110 is out of scope).
@@ -1380,8 +1372,6 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
             return False
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
             return False
         try:
@@ -1591,8 +1581,6 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
             return None
         idx = tree.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
         try:
             return ast.unparse(idx)
         except Exception:  # pragma: no cover -- defensive

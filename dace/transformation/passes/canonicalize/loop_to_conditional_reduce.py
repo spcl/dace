@@ -67,14 +67,6 @@ import ast
 import copy
 from typing import Dict, NamedTuple, Optional
 
-
-def _copy_ast(node: ast.AST) -> ast.AST:
-    """Return a deep copy of an AST subtree, so each substitution lands on a
-    fresh node (otherwise multiple references to the same binding share the
-    same node and ``fix_missing_locations`` mishandles them)."""
-    return copy.deepcopy(node)
-
-
 import numpy as np
 
 from dace import SDFG, data, dtypes, properties
@@ -593,7 +585,8 @@ class LoopToConditionalReduce(ppl.Pass):
                 # Recurse into the substituted AST so any Subscript inside it
                 # also gets connector-replaced in the same pass.
                 if node.id in binding_asts:
-                    sub = ast.copy_location(_copy_ast(binding_asts[node.id]), node)
+                    # A fresh copy per use: shared nodes break ``fix_missing_locations``.
+                    sub = ast.copy_location(copy.deepcopy(binding_asts[node.id]), node)
                     return self.visit(sub)
                 return node
 
@@ -604,8 +597,6 @@ class LoopToConditionalReduce(ppl.Pass):
                     return node
                 arr_name = node.value.id
                 idx = node.slice
-                if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-                    idx = idx.value
                 try:
                     idx_str = ast.unparse(idx)
                 except Exception:
