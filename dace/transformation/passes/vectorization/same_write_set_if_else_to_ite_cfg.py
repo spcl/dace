@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Rewrite same-write-set ``if/else`` -> compute-then/compute-else/apply-ITE CFGs.
 
-Arms -> sequential states producing ``_then_<arr>`` / ``_else_<arr>`` temps; final
-state folds them with symbolic ``ITE`` (see :mod:`dace.runtime.include.dace.ITE`),
-lowered to SIMD blend. Only two-branch ``if/else``, single-state arms, shared writes
-= matching element subsets, bodies = tasklets/access nodes; else raises
-:class:`NotImplementedError`.
+Arms -> sequential states producing ``_then_<arr>``/``_else_<arr>`` temps; final state
+folds them via symbolic ``ITE`` (:mod:`dace.runtime.include.dace.ITE`), lowered to SIMD
+blend. Requires two-branch ``if/else``, single-state arms, matching shared-write subsets,
+tasklet/access-node bodies; else raises :class:`NotImplementedError`.
 """
 import ast
 import copy
@@ -90,22 +89,15 @@ def wire_element_reads(sdfg: dace.SDFG, state: dace.SDFGState, tasklet: dace.nod
 
 
 def free_names_outside_subscript_indices(code: str) -> set[str] | None:
-    """Names in ``code`` occurring at least once OUTSIDE every array-subscript index.
+    """Names in ``code`` used at least once OUTSIDE an array-subscript index.
 
-    A name used ONLY as an index (``a[i] < 0.0``) does not constrain the iteration space -- it
-    merely selects which element the DATA predicate reads -- so it does not count. A name used
-    outside an index even once (the ``i`` in ``a[j] < 0.0 and i < N - 1``) does.
-
-    Parsed with ``ast`` rather than ``pystr_to_symbolic``: the latter raises on ordinary
-    conditions (``math.fabs(a[i]) > 1e-9`` -> ``TypeError: 'Attr' object is not callable``), and
-    its ``free_symbols``-minus-``index_symbols`` set subtraction drops a name that appears BOTH as
-    an index and as a genuine guard -- exactly the case that must be caught.
+    An index-only name (``a[i] < 0.0``) selects data, not iteration range, so it doesn't count.
+    Parsed via ``ast``, not ``pystr_to_symbolic`` (raises on plain conditions and conflates
+    index-only vs constraining occurrences of the same name).
 
     :param code: the condition (or assignment RHS) source.
-    :returns: the names used outside subscript indices, or ``None`` when ``code`` does not parse as
-        a Python expression (a ``Language.CPP`` guard, ``i < N && j > 0``). ``None`` is NOT an empty
-        set: callers gate correctness on this answer, so "no names" and "cannot tell" must not
-        collapse -- returning ``set()`` here reads as "constrains nothing" and admits the block.
+    :returns: names outside indices, or ``None`` if ``code`` doesn't parse as a Python expression
+        (e.g. a ``Language.CPP`` guard). ``None`` != ``set()``: callers fail closed on "cannot tell".
     """
     try:
         tree = ast.parse(code, mode="eval")
@@ -133,12 +125,11 @@ def free_names_outside_subscript_indices(code: str) -> set[str] | None:
 def enclosing_iteration_symbols(cb: ConditionalBlock) -> set[str]:
     """Iteration symbols of every map/loop scope enclosing ``cb``.
 
-    A region-scoped loop variable and a map param are NOT in ``sdfg.symbols``, so membership
-    there would silently never match; the defined-symbol scopes are walked instead (including
-    across nested-SDFG boundaries, where a map param enters as a symbol mapping).
+    Loop vars and map params aren't in ``sdfg.symbols``; walk defined-symbol scopes instead
+    (crosses nested-SDFG boundaries via symbol mappings).
 
-    :param cb: the conditional block whose enclosing scopes are collected.
-    :returns: the names of the enclosing loop variables and map params.
+    :param cb: the conditional block whose scopes are collected.
+    :returns: names of the enclosing loop variables and map params.
     """
     params = set()
     for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
@@ -147,15 +138,13 @@ def enclosing_iteration_symbols(cb: ConditionalBlock) -> set[str]:
 
 
 def scope_defined_symbols(scope: dace.nodes.MapEntry | LoopRegion) -> set[str]:
-    """The symbols ``scope`` defines for the code inside it.
+    """Symbols ``scope`` defines for the code inside it.
 
-    A ``LoopRegion`` defines its loop variable. A map defines its params AND the symbols bound by
-    its NON-PASS-THROUGH input connectors: a ``MapEntry`` connector named ``IN_x`` is one half of
-    the ``IN_x``/``OUT_x`` data pass-through pair, whereas any other in-connector is a dynamic
-    (symbolic) input, and its name is a symbol readable throughout the map body.
+    A ``LoopRegion`` defines its loop variable. A map defines its params plus any non-pass-through
+    in-connector name (a dynamic/symbolic input, not half of an ``IN_x``/``OUT_x`` data pair).
 
     :param scope: an enclosing ``MapEntry`` or ``LoopRegion``.
-    :returns: the names the scope binds.
+    :returns: names the scope binds.
     """
     if isinstance(scope, dace.nodes.MapEntry):
         return set(scope.map.params) | {c for c in scope.in_connectors if not c.startswith('IN_')}
@@ -168,9 +157,8 @@ def iteration_symbol_ranges(
     """``{iteration symbol: (min, max)}`` for every map/loop scope enclosing ``cb``.
 
     :param cb: the conditional block whose enclosing scopes are measured.
-    :returns: the per-symbol inclusive range, or ``None`` if any enclosing scope's range cannot be
-        read (a ``LoopRegion``, whose bounds live in init / condition / update code rather than as
-        a range) -- callers must then treat the extent as unknown.
+    :returns: per-symbol inclusive range, or ``None`` if a scope's range can't be read (e.g. a
+        ``LoopRegion``, whose bounds live in init/condition/update code, not a range).
     """
     ranges: dict[str, tuple] = {}
     for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
@@ -184,11 +172,9 @@ def iteration_symbol_ranges(
 def provably_nonnegative(expr: sympy.Basic) -> bool:
     """Whether ``expr`` is provably ``>= 0`` for every legal value of its free symbols.
 
-    Array extents and iteration counts are positive integers, but a bare sympy symbol carries no
-    such assumption, so ``LEN_1D - 1 >= 0`` (the top index of a ``LEN_1D``-long array) is
-    unprovable as written. Re-declare the remaining symbols as positive integers -- the standing
-    assumption for a DaCe shape / range symbol -- before asking. Still fails closed: an expression
-    that stays indeterminate (``LEN_1D - 2``) returns ``False``.
+    A bare sympy symbol carries no positivity assumption, so re-declare free symbols as positive
+    integers (the standing DaCe shape/range assumption) before asking. Fails closed on anything
+    still indeterminate.
 
     :param expr: The symbolic expression to test.
     :returns: ``True`` only if non-negativity is proven.
@@ -201,29 +187,19 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
 
 
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
-    """Whether every access in every arm stays IN BOUNDS with the guard removed.
+    """Whether every access in every arm stays in bounds with the guard removed.
 
-    If-conversion makes both arms' accesses unconditional, so it is sound only when those accesses
-    were never relying on the guard for their range. The two cases look identical to
-    :func:`condition_guards_iteration_symbol` but are not:
-
-    * ``if i < N - 1: s += a[i + 1] * a[i + 1]`` -- lane ``i = N-1`` would read ``a[N]``. The guard
-      IS the bounds check; if-conversion fabricates the out-of-bounds read. Must be masked.
-    * ``if i + 1 < N/2: a[i] = b[i] + c[i]*d[i] else: a[i] = b[i] + e[i]*d[i]`` (TSVC s276) -- every
-      access is ``[i]``, in range for every ``i`` the map runs. The guard only selects WHICH value
-      is stored, so evaluating both arms and blending is safe and exact.
-
-    Proof method: substitute the enclosing iteration symbols at the CORNERS of their ranges and
-    require each subset to sit inside its descriptor there. Corners bound the extremes only for an
-    expression that is affine in those symbols, so a higher-degree index is refused rather than
-    sampled. FAILS CLOSED throughout -- an unreadable range, a non-affine index, or a bound that
-    cannot be proven all return ``False``, which just keeps today's refusal.
+    If-conversion makes both arms unconditional, so it's sound only when arm accesses never
+    relied on the guard for their range (vs. the guard itself being the bounds check that
+    if-conversion would then bypass). Proof: substitute enclosing iteration symbols at range
+    CORNERS (valid only for affine indices) and check each subset stays in bounds there. Fails
+    closed on an unreadable range, non-affine index, or unprovable bound.
 
     :param cb: the candidate conditional block.
     :returns: ``True`` only if every arm access is provably in range without the guard.
     """
     ranges = iteration_symbol_ranges(cb)
-    if not ranges:  # no enclosing map (nothing to prove) still returns {} -> nothing is guarded
+    if not ranges:  # no enclosing map: nothing guarded
         return False
     syms = [symbolic.pystr_to_symbolic(name) for name in ranges]
     corners = [dict(zip(ranges, combo)) for combo in itertools.product(*(ranges[n] for n in ranges))]
@@ -256,11 +232,9 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
 def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
     """Whether some arm condition of ``cb`` constrains an enclosing iteration symbol.
 
-    True for a DIRECT mention (``i < N - 1``) and for a TRANSITIVE one -- a condition naming a
-    symbol whose interstate-edge assignment chain resolves to the iteration symbol
-    (``ip1 = i + 1`` on the edge into ``cb``, guard ``ip1 < N``). Such a guard is what keeps the
-    arm's own accesses in range, so if-converting it (which makes the arm's reads unconditional)
-    would fabricate out-of-bounds reads on the lanes the guard excludes; it needs masking instead.
+    True for a direct mention (``i < N - 1``) and a transitive one via an interstate-assignment
+    chain (``ip1 = i + 1``, guard ``ip1 < N``). Such a guard keeps arm accesses in range, so
+    if-converting it would fabricate out-of-bounds reads on excluded lanes; needs masking instead.
 
     :param cb: the candidate conditional block.
     :returns: ``True`` if the block must be refused.
@@ -271,9 +245,8 @@ def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
 def condition_guards_symbols(cb: ConditionalBlock, symbols: set[str]) -> bool:
     """Whether some arm condition of ``cb`` constrains any name in ``symbols``.
 
-    FAILS CLOSED. Callers gate correctness on this (a guard over a tiled map param must not survive
-    into a tiled body), so a condition this cannot parse counts as constraining: "cannot prove
-    independent" is not "independent".
+    Fails closed: an unparseable condition counts as constraining ("cannot prove independent"
+    is not "independent").
 
     :param cb: the candidate conditional block.
     :param symbols: the names whose constraint matters to the caller.
@@ -291,11 +264,9 @@ def condition_guards_symbols(cb: ConditionalBlock, symbols: set[str]) -> bool:
             return True
         free_syms |= names
 
-    # Widen through the interstate assignment chains reaching ``cb``: a symbol bound to an
-    # expression over ``i`` carries the iteration symbol into the condition just as directly.
-    # Collect back-reachable edges at EVERY level, not just ``cb.parent_graph``: ``ip1 = i + 1`` is
-    # just as binding on the edge entering the enclosing LoopRegion as on one inside it, so after
-    # exhausting a graph, ascend and keep walking back from the region itself.
+    # Widen through interstate assignment chains reaching ``cb`` (a symbol bound to an expr over
+    # ``i`` carries it in just as directly). Collect back-reachable edges at every nesting level,
+    # ascending past each exhausted graph, since a binding edge may sit outside it.
     edges = []
     node = cb
     graph = cb.parent_graph
@@ -313,8 +284,7 @@ def condition_guards_symbols(cb: ConditionalBlock, symbols: set[str]) -> bool:
         node = graph
         graph = graph.parent_graph
 
-    # Fixed point -- a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep, and the edges may
-    # be visited in any order.
+    # Fixed point: a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep.
     widened = True
     while widened:
         widened = False
@@ -380,9 +350,8 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG,
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for e in cfg.edges():
             for lhs, rhs in (e.data.assignments or {}).items():
-                # Skip the symbol's OWN definitions (a definition is not a consumption, and every
-                # def is being deleted). Covers ALL defining edges, not just one -- a symbol
-                # assigned on several edges would otherwise flag its own siblings as consumers.
+                # Skip the symbol's own definitions (not a consumption); checked over ALL
+                # defining edges so a multi-edge symbol doesn't flag its own siblings.
                 if lhs == sym_name:
                     continue
                 if symbolic.symbols_in_code(str(rhs), potential_symbols=only):

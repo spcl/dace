@@ -2,10 +2,10 @@
 """Convert in-body tasklets to ``TileBinop`` / ``TileUnop`` / ``TileITE`` / ``TileReduce``.
 
 After :class:`InsertTileLoadStore` stages non-transient reads through tile transients,
-the body still holds raw per-lane scalar tasklets. Walk the same tile-tagged body NSDFGs,
-replace each with the matching tile lib node -> post-expansion pure-loop body operates on
-tile-shape register transients (design 5.1 + 6.7). Handles binary / unary / ITE /
-masked-write / reduction shapes over Tile / Scalar / Symbol operands.
+the body still holds raw per-lane scalar tasklets. Walk the tile-tagged body NSDFGs and
+replace each with the matching tile lib node, so the expanded loop body operates on
+tile-shape register transients. Handles binary/unary/ITE/masked-write/reduction shapes
+over Tile/Scalar/Symbol operands.
 """
 import copy
 import re
@@ -31,26 +31,20 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
 
-#: Binary ops -> :class:`TileBinop`. Comparisons (``< <= > >= == !=``) produce bool tile
-#: outputs -> :class:`TileITE` cond input (design 7.5). Powers arrive as the function-form
-#: ``pow`` / ``ipow`` (``PowerOperatorExpansion`` rewrites a LITERAL integer exponent > 1 to an
-#: unrolled product; ``RelaxIntegerPowers`` relaxes an integer-exponent ``pow`` -> ``ipow``).
-#: ``**`` is retained: every exponent the expansion does not take stays a bare operator.
+#: Binary ops -> :class:`TileBinop`. Comparisons produce bool tile outputs -> :class:`TileITE`
+#: cond input. ``pow``/``ipow`` are the function-form power spellings; ``**`` stays for any
+#: exponent ``PowerOperatorExpansion``/``RelaxIntegerPowers`` did not rewrite.
 _SUPPORTED_BINOPS = {
     "+", "-", "*", "/", "%", "py_mod", "**", "pow", "ipow", "min", "max", "atan2", "hypot", "fmod", "<", "<=", ">",
     ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
 
-#: Binops in function-call form ``op(a, b)``, not infix. ``pow`` / ``ipow`` are the canonical power spellings; ``**``
-#: keeps its own infix case below.
+#: Binops in function-call form ``op(a, b)``, not infix. ``**`` keeps its own infix case below.
 _FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod", "pow", "ipow")
 
-#: Call spellings a function-form binop can carry in a tasklet body. ``Min`` / ``Max`` are
-#: CAPITALIZED by the symbolic printer -- sympy derives them from ``Application`` rather than
-#: ``Function``, and the printer emits the DaCe runtime's variadic ``Min`` / ``Max`` -- so a body
-#: reaching the converter spells them that way while the op label stays lowercase. CloudSC's
-#: ``Min(1.0, __t0)`` matched none of the lowercase forms and stayed a scalar tasklet, which the
-#: orchestrator can only answer by refusing the whole SDFG.
+#: Call spellings a function-form binop can carry. The sympy symbolic printer emits the
+#: runtime's variadic ``Min``/``Max`` (capitalized); missing this alias left CloudSC's
+#: ``Min(1.0, __t0)`` unmatched and forced the orchestrator to refuse the whole SDFG.
 _CALL_ALIASES = {"min": ("min", "Min"), "max": ("max", "Max")}
 
 

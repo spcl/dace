@@ -1,27 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unified ``WidenAccesses`` pass: widen lane-dep symbols, non-transient boundary subsets, and
-transient descriptors in ONE pass. Replaces the two-pass ``InferBodyTransientShapes`` +
-``WidenScalarsToTiles`` split.
+transient descriptors in one pass.
 
-Symmetry contract (locked): gather (indirect READ ``A[idx[i]]``) and scatter (indirect WRITE
-``A[idx[i]] = ...``) obey identical rules; tests enforce both directions.
+Symmetry: gather (``A[idx[i]]`` read) and scatter (``A[idx[i]] = ...`` write) obey identical
+rules; tests enforce both directions.
 
-Algorithm (5 steps, per tile-tagged body NSDFG):
+Algorithm, per tile-tagged body NSDFG:
 
-1. Classify non-transient ANs via ``classify_tile_access`` on the AN-side subset. Any
-   non-CONSTANT -> data name lane-dep. Read + write edges treated uniformly.
+1. Classify non-transient ANs via ``classify_tile_access``. Any non-CONSTANT dim -> lane-dep.
 2. Widen non-transient boundary memlets of lane-dep ANs: ``A[ii]`` -> ``A[ii:ii+W]`` on
-   iter-var-dominated dims. AN-side subset decides, not edge direction.
-3. Propagate lane-dep through Tasklets (fixed point): lane-dep input OR iter-var in code body ->
-   output lane-dep; else loop-invariant.
+   iter-var-dominated dims.
+3. Propagate lane-dep through Tasklets to a fixed point.
 4. Widen lane-dep transient descriptors Scalar / ``(1,)`` Array -> ``Array(widths)``; rewrite
    touching memlets to ``[0:W_0,...,0:W_{K-1}]``.
-5. Subset-widening strategy hook: gather-dim-only vs whole-dim, encoded by how step 2 widens;
-   symmetric. Reserved for a future ``widen_strategy`` knob; current impl widens all iter-var
-   dims (gather-dim-only conservative default).
+5. Seed per-lane symbols for Bypass-form gathers.
 
-Downstream chain ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``GatherLift`` ->
-``ConvertTaskletsToTileOps`` then emits gather/scatter.
+Downstream chain: ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``GatherLift`` ->
+``ConvertTaskletsToTileOps``.
 """
 import copy
 import re
@@ -54,7 +49,7 @@ from dace.ordered import OrderedSet
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
                 scan_cache: dict[int, Any]) -> dict[str, Any]:
-    # ``build_symbol_definition_map(inner_sdfg, state)`` memoised per state.
+    # Memoised ``build_symbol_definition_map(inner_sdfg, state)`` per state.
     defs = cache.get(id(state))
     if defs is None:
         defs = cache[id(state)] = build_symbol_definition_map(inner_sdfg, state, scan_cache)
@@ -62,7 +57,7 @@ def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, A
 
 
 def _is_single_element(size: symbolic.SymbolicType | int) -> bool:
-    # ``size`` (a descriptor ``total_size`` / memlet element count) is PROVABLY one element.
+    # True iff ``size`` is provably one element.
     try:
         return int(size) == 1
     except (TypeError, ValueError):
@@ -70,7 +65,7 @@ def _is_single_element(size: symbolic.SymbolicType | int) -> bool:
 
 
 def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str) -> tuple[Edge[InterstateEdge] | None, str | None]:
-    # ``(iedge, rhs_str)`` for the iedge defining ``sym_name``, else ``(None, None)``.
+    # Iedge defining ``sym_name`` and its RHS, else ``(None, None)``.
     for iedge in inner_sdfg.all_interstate_edges():
         if sym_name in iedge.data.assignments:
             return iedge, iedge.data.assignments[sym_name]
@@ -86,23 +81,21 @@ def emit_per_lane_symbol_fanout(
         resolver: scopes.ScopedSymbolResolver | None = None) -> dict[tuple[int, ...], str] | None:
     """Emit per-lane SDFG symbols + iedge assignments for a Bypass-form gather.
 
-    Idempotent: returns existing map if symbols already seeded. WidenAccesses owns this (sibling
-    of subset/other_subset widening) so downstream :class:`InsertTileLoadStore` gather-index path
-    sees a consistent name scheme.
+    Idempotent: returns the existing map if symbols were already seeded.
 
-    Remainder safety: with ``iter_var_ubs``, per-lane shift ``iv -> iv + lane`` is clamped
+    Remainder safety: with ``iter_var_ubs``, the per-lane shift ``iv -> iv + lane`` is clamped to
     ``Min(iv + lane, ub)`` so ``idx[i + lane]`` never reads past the array bound on the masked
-    tail. Caller passes each iter-var's inclusive ub (``map_entry.map.range[d][1]``).
+    tail.
 
     :param sdfg: Inner SDFG hosting the bare symbol.
     :param sym_name: Bare interstate symbol (e.g. ``__sym``).
     :param iter_vars: Tile iter-var names (length K, innermost-last).
     :param widths: Per-dim tile widths (length K).
     :param iter_var_ubs: Optional ``{iter_var: ub_expr}``; clamps shift to ``Min(iv + lane, ub)``.
-    :param resolver: The pass run's shared symbol resolver; one is built here when absent.
+    :param resolver: Shared symbol resolver; one is built here when absent.
     :returns: ``{dep_idx_tuple: plane_sym_name}`` over the dep-dim Cartesian product, or ``None``
-        if the symbol has no iedge definition / no iter-var dependency / no walkable RHS.
-    :raises UndeterminedSymbolDType: when nothing declares ``sym_name``, not even the edge binding it.
+        if the symbol has no iedge definition, no iter-var dependency, or no walkable RHS.
+    :raises UndeterminedSymbolDType: when nothing declares ``sym_name``.
     """
     import itertools
     from dace import symbolic
@@ -124,10 +117,8 @@ def emit_per_lane_symbol_fanout(
     except Exception:  # noqa: BLE001
         return None
     import sympy
-    # Loop-invariant, and it must NOT fall back to int64: an interstate assignment DEFINES its
-    # symbol, so a name absent from ``sdfg.symbols`` is still typed -- by the edge that binds it.
-    # Every per-lane plane inherits this dtype, so one guess here forks the whole fanout onto a
-    # second symbol of the same name, and Min(iv + lane, ub) stops folding against the map param.
+    # Must resolve via the binding edge, not fall back to int64: every per-lane plane inherits
+    # this dtype, and a mismatched guess forks the fanout onto a second symbol of the same name.
     origin_dtype = (resolver or scopes.ScopedSymbolResolver()).resolve_dtype(sym_name, sdfg, interstate_edge=iedge.data)
     for dep_idx in itertools.product(*(range(w) for w in dep_widths_iter)):
         chunks = tuple(zip(dep_iter_var_indices, dep_idx))
@@ -140,8 +131,7 @@ def emit_per_lane_symbol_fanout(
             for iv, lane in zip(dep_iter_var_names, dep_idx):
                 shifted = symbolic.symbol(iv) + lane
                 if iter_var_ubs is not None and iv in iter_var_ubs:
-                    # Clamp in-bounds: lane-fanout never reads past source on the masked tail.
-                    # Mask still gates the SCATTER write; safe-read only.
+                    # Clamp: lane-fanout must not read past source on masked tail (mask still gates the write).
                     shifted = sympy.Min(shifted, iter_var_ubs[iv])
                 repl[symbolic.symbol(iv)] = shifted
             iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
@@ -193,11 +183,9 @@ class WidenAccesses(ppl.Pass):
                 desc = inner_sdfg.arrays.get(an.data)
                 if desc is None:
                     continue
-                # A View is an ALIAS, and a LANE-INDEXED transient carries the lane axis in its own
-                # shape (CloudSC's ``zsolqa[jm, jn, jl]``): both are widened in place here rather
-                # than descriptor-swapped, so both are seeded like a non-transient. Skipping them
-                # left their memlets one element wide while their consumers became tiles -- the
-                # ``kind_a='Tile', kind_b='Scalar'`` refusal in ``_AssertTileOpsLowered``.
+                # View (alias) and lane-indexed transient (lane axis in own shape) are widened in
+                # place, not descriptor-swapped; skipping them left memlets scalar while their
+                # consumers became tiles.
                 if desc.transient and not isinstance(desc, dd.View):
                     if not data_is_lane_indexed(inner_sdfg, an.data, iter_vars):
                         continue
@@ -241,8 +229,7 @@ class WidenAccesses(ppl.Pass):
             ranges = list(sub.ranges)
         except Exception:  # noqa: BLE001
             return None
-        # Per-dim classification (needs inner SDFG context); skip GATHER dims
-        # (begin is an iter-var array subscript).
+        # Per-dim classification; skip GATHER dims (begin is an array subscript).
         per_dim_kinds = None
         if inner_sdfg is not None:
             try:
