@@ -7,7 +7,8 @@ import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions, fuse_rolled_loops,
                                                      merge_contiguous_loops, pair_complementary_guards,
-                                                     remove_dead_assignments, reroll_statements, split_iteration_spaces)
+                                                     remove_dead_assignments, reroll_statements, split_iteration_spaces,
+                                                     unswitch_invariant_guards)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -699,6 +700,117 @@ def test_fuse_rolled_loops_not_across_dependence():
     assert len(stree.children) == 2
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Unswitching
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _unswitch_tree(condition: str,
+                   body_before: list,
+                   then: list,
+                   otherwise: list = None,
+                   outer: bool = False,
+                   trips: str = '8') -> tn.ScheduleTreeRoot:
+    """``[for j in range(2):] for k in range(<trips>): <before>; if <condition>: <then> [else: <otherwise>]``."""
+    sdfg = dace.SDFG('unswitch')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_array('C', [1], dace.float64)
+    sdfg.add_symbol('M', dace.int64)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    chain = [tn.IfScope(condition=dace.properties.CodeBlock(condition), children=then)]
+    if otherwise is not None:
+        chain.append(tn.ElseScope(children=otherwise))
+    loop = tn.ForScope(loop=dace.sdfg.state.LoopRegion('inner', f'k < {trips}', 'k', 'k = 0', 'k = k + 1'),
+                       children=body_before + chain)
+    if outer:
+        loop = tn.ForScope(loop=dace.sdfg.state.LoopRegion('outer', 'j < 2', 'j', 'j = 0', 'j = j + 1'),
+                           children=[loop])
+    stree.children = []
+    stree.add_child(loop)
+    return stree
+
+
+def _add_tasklet(value: float) -> tn.TaskletNode:
+    """``B[k] = B[k] + value * A[k]``."""
+    tasklet = dace.nodes.Tasklet('add', {'a', 'b'}, {'c'}, f'c = b + {value} * a')
+    return tn.TaskletNode(node=tasklet,
+                          in_memlets={
+                              'a': dace.Memlet('A[k]'),
+                              'b': dace.Memlet('B[k]')
+                          },
+                          out_memlets={'c': dace.Memlet('B[k]')})
+
+
+def _run_unswitch(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot, **symbols):
+    for c in (-1.0, 1.0):
+        a = np.random.rand(8)
+        results = []
+        for tree in (reference, stree):
+            b = np.ones(8)
+            _run(tree, A=a, B=b, C=np.full(1, c), **symbols)
+            results.append(b)
+        assert np.allclose(results[0], results[1])
+
+
+@pytest.mark.parametrize('condition', ['M > 3', 'C[0] > 0'])
+def test_unswitch_invariant_guard_with_other_statements(condition):
+    make = lambda: _unswitch_tree(condition, [_add_tasklet(1.0)], [_add_tasklet(2.0)], [_add_tasklet(3.0)])
+    stree, reference = make(), make()
+    assert unswitch_invariant_guards(stree) == 1
+    (guard, otherwise) = stree.children
+    assert isinstance(guard, tn.IfScope) and isinstance(otherwise, tn.ElseScope)
+    assert all(isinstance(branch.children[0], tn.ForScope) for branch in (guard, otherwise))
+    assert len(guard.children[0].children) == 2 and len(otherwise.children[0].children) == 2
+    for m in (2, 5):
+        _run_unswitch(stree, reference, M=m)
+
+
+def test_unswitch_without_else_keeps_rest_of_body():
+    make = lambda: _unswitch_tree('C[0] > 0', [_add_tasklet(1.0)], [_add_tasklet(2.0)])
+    stree, reference = make(), make()
+    assert unswitch_invariant_guards(stree) == 1
+    (guard, otherwise) = stree.children
+    assert len(guard.children[0].children) == 2 and len(otherwise.children[0].children) == 1
+    _run_unswitch(stree, reference, M=1)
+
+
+def test_unswitch_through_nested_loops():
+    make = lambda: _unswitch_tree('C[0] > 0', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], outer=True)
+    stree, reference = make(), make()
+    assert unswitch_invariant_guards(stree) == 2  # Out of the inner loop, then out of the outer loop
+    (guard, otherwise) = stree.children
+    for branch in (guard, otherwise):  # Each branch: the outer loop around the inner loop, without guards
+        (outer, ) = branch.children
+        (inner, ) = outer.children
+        assert inner.loop.loop_variable == 'k' and not _nodes(inner, tn.IfScope)
+    _run_unswitch(stree, reference, M=1)
+
+
+@pytest.mark.parametrize('condition', ['k > 3', 'B[0] > 1'])
+def test_unswitch_not_applied_to_varying_condition(condition):
+    """The loop variable, or data the loop writes."""
+    stree = _unswitch_tree(condition, [], [_add_tasklet(2.0)], [_add_tasklet(3.0)])
+    assert unswitch_invariant_guards(stree) == 0
+
+
+def test_unswitch_data_condition_only_out_of_nonempty_loops():
+    """With ``M`` iterations the loop may not run at all, and then reading ``C[0]`` early is not allowed; a condition
+    on symbols alone may still move."""
+    stree = _unswitch_tree('C[0] > 0', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips='M')
+    assert unswitch_invariant_guards(stree) == 0
+    stree = _unswitch_tree('M > 3', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips='M')
+    assert unswitch_invariant_guards(stree) == 1
+
+
+def test_unswitch_respects_copy_budget():
+    guards = [tn.IfScope(condition=dace.properties.CodeBlock(f'M > {v}'), children=[_add_tasklet(v)]) for v in range(4)]
+    stree = _unswitch_tree('M > 10', guards, [_add_tasklet(9.0)])
+    unswitch_invariant_guards(stree, max_copies=4)
+    assert len(_nodes(stree, tn.ForScope)) <= 4
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -733,3 +845,9 @@ if __name__ == '__main__':
     test_reroll_stacks_equal_runs()
     test_fuse_rolled_loops_of_independent_fields()
     test_fuse_rolled_loops_not_across_dependence()
+    test_unswitch_invariant_guard_with_other_statements('C[0] > 0')
+    test_unswitch_without_else_keeps_rest_of_body()
+    test_unswitch_through_nested_loops()
+    test_unswitch_not_applied_to_varying_condition('B[0] > 1')
+    test_unswitch_data_condition_only_out_of_nonempty_loops()
+    test_unswitch_respects_copy_budget()

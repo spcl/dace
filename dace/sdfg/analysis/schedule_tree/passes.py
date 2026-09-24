@@ -1775,3 +1775,128 @@ def fuse_rolled_loops(stree: tn.ScheduleTreeScope, max_iterations: int = 1 << 12
         scope.children = []
         scope.add_children(result)
     return merged
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Loop unswitching
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _chain_at(children: List[tn.ScheduleTreeNode], start: int) -> int:
+    """The end (exclusive) of the if/elif/else chain starting at ``children[start]``."""
+    end = start + 1
+    while end < len(children) and isinstance(children[end], (tn.ElifScope, tn.ElseScope)):
+        end += 1
+        if isinstance(children[end - 1], tn.ElseScope):
+            break
+    return end
+
+
+def _runs_at_least_once(scope: tn.ScheduleTreeScope, repository) -> bool:
+    lrr = _lrr()
+    spaces = _iteration_spaces(scope, repository)
+    if not spaces or any(space is None for _, _, space in spaces):
+        return False
+    return all(
+        lrr.provably_ge(space.end, space.start) if space.ascending else lrr.provably_ge(space.start, space.end)
+        for _, _, space in spaces)
+
+
+def unswitch_invariant_guards(stree: tn.ScheduleTreeScope, max_copies: int = 8) -> int:
+    """
+    Move conditions that do not change within a loop (or map) out of it, duplicating the loop per branch (loop
+    unswitching).
+
+    An if/elif/else chain directly in the body of a loop is unswitched if every condition in it is pure and invariant
+    in the loop: it reads neither the iteration variables nor anything the loop writes, and the loop creates no aliases
+    (views, references). ``for i: S1; if c: A else: B; S2`` becomes ``if c: for i: S1; A; S2 else: for i: S1; B; S2``;
+    a chain without ``else`` gets one that runs the rest of the body. Inner loops are unswitched first, so a condition
+    invariant in several enclosing loops ends up above all of them. The conditions are then evaluated once before the
+    loop, also when the loop would not run at all, so conditions that read data (rather than only symbols) are only
+    moved out of loops that provably run at least once.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :param max_copies: Create at most this many copies of any one loop.
+    :return: The number of chains moved out of loops.
+    """
+    root = stree.get_root()
+    repository = _repository(root)
+    index = _AccessIndex(root)
+    unswitched = 0
+
+    def invariant(loop: tn.ScheduleTreeScope, chain: list) -> bool:
+        written = _in_subtrees([loop], _names_written) | _bound_names(loop)
+        if any(isinstance(n, (tn.ViewNode, tn.RefSetNode)) for n in loop.preorder_traversal()):
+            return False
+        reads_data = False
+        for branch in chain:
+            if isinstance(branch, tn.ElseScope):
+                continue
+            condition = _condition(branch)
+            if condition is None or not _pure(condition):
+                return False
+            names = set(symbolic.symbols_in_ast(condition))
+            if names & written:
+                return False
+            reads_data |= bool(names & root.containers.keys())
+        return not reads_data or _runs_at_least_once(loop, repository)
+
+    def process(loop: tn.ScheduleTreeScope, budget: int) -> List[tn.ScheduleTreeNode]:
+        """``loop`` with the invariant chains of its body moved out, as the nodes that replace it."""
+        nonlocal unswitched
+        children = loop.children
+        for start, child in enumerate(children):
+            if not isinstance(child, tn.IfScope) or isinstance(child, tn.StateIfScope):
+                continue
+            end = _chain_at(children, start)
+            chain = children[start:end]
+            branches = len(chain) + (0 if isinstance(chain[-1], tn.ElseScope) else 1)
+            if branches > budget or not invariant(loop, chain):
+                continue
+            before, after = children[:start], children[end:]
+            bodies = [branch.children for branch in chain] + ([[]] if branches > len(chain) else [])
+            copies = []
+            for k, body in enumerate(bodies):
+                content = before + list(body) + after
+                if k > 0:
+                    content = _clone_body(loop, content, index.used_outside)
+                copy_ = _make_scope(loop, 0 if isinstance(loop, tn.MapScope) else None, None, None, [], k)
+                copy_.add_children(content)
+                copy_.parent = loop.parent
+                if k > 0:
+                    index.add(copy_)
+                copies.append(copy_)
+            index.changed()
+            unswitched += 1
+            result = []
+            for k, (branch, copy_) in enumerate(zip(chain + [None] * (branches - len(chain)), copies)):
+                nodes_ = process(copy_, budget // branches)
+                if branch is None:
+                    result.append(tn.ElseScope(children=nodes_))
+                elif isinstance(branch, tn.ElseScope):
+                    result.append(tn.ElseScope(children=nodes_))
+                elif isinstance(branch, tn.ElifScope):
+                    result.append(tn.ElifScope(condition=branch.condition, children=nodes_))
+                else:
+                    result.append(tn.IfScope(condition=branch.condition, children=nodes_))
+            return result
+        return [loop]
+
+    def visit(scope: tn.ScheduleTreeScope):
+        for child in scope.children:
+            if isinstance(child, tn.ScheduleTreeScope):
+                visit(child)  # Innermost first
+        result, changed = [], False
+        for child in scope.children:
+            if isinstance(child, (tn.ForScope, tn.MapScope)):
+                replacement = process(child, max_copies)
+                changed |= not (len(replacement) == 1 and replacement[0] is child)
+                result += replacement
+            else:
+                result.append(child)
+        if changed:
+            scope.children = []
+            scope.add_children(result)
+
+    visit(stree)
+    return unswitched
