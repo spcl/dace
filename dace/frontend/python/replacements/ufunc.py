@@ -1918,50 +1918,54 @@ def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDF
     return outputs
 
 
+def method_reduce_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """``ndarray.sum(...)``-style keywords for :func:`implement_ufunc_reduce`: the method reduces every
+    axis by default, where ``ufunc.reduce`` reduces axis 0."""
+    return {'axis': None, **kwargs}
+
+
 @oprepo.replaces_method('Array', 'sum')
 @oprepo.replaces_method('Scalar', 'sum')
 @oprepo.replaces_method('View', 'sum')
-def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'add', [arr], kwargs)[0]
+def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'add', [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method('Array', 'mean')
 @oprepo.replaces_method('Scalar', 'mean')
 @oprepo.replaces_method('View', 'mean')
-def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
     from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
     nest = NestedCall(pv, sdfg, state)
-    kwargs = kwargs or dict(axis=None)
+    kwargs = method_reduce_kwargs(kwargs)
     sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr], kwargs)[0]
-    desc = sdfg.arrays[arr]
-    sz = functools.reduce(lambda x, y: x * y, desc.shape)
+    shape = sdfg.arrays[arr].shape
+    axis = kwargs['axis']
+    axes = range(len(shape)) if axis is None else (axis, ) if isinstance(axis, int) else axis
+    sz = functools.reduce(lambda x, y: x * y, (shape[a] for a in axes), 1)
     return nest, elementwise(pv, sdfg, nest.add_state(), "lambda x: x / {}".format(sz), sumarr)
 
 
 @oprepo.replaces_method('Array', 'prod')
 @oprepo.replaces_method('Scalar', 'prod')
 @oprepo.replaces_method('View', 'prod')
-def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'multiply', [arr], kwargs)[0]
+def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'multiply', [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method('Array', 'all')
 @oprepo.replaces_method('Scalar', 'all')
 @oprepo.replaces_method('View', 'all')
-def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_and', [arr], kwargs)[0]
+def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_and', [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method('Array', 'any')
 @oprepo.replaces_method('Scalar', 'any')
 @oprepo.replaces_method('View', 'any')
-def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr], kwargs)[0]
+def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces('numpy.clip')
