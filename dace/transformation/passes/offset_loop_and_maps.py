@@ -4,7 +4,6 @@ import re
 import dace
 from typing import Dict, Iterable, List, Optional
 import sympy
-from sympy.printing.pycode import pycode
 from dace import SDFG
 from dace import properties
 from dace import Union
@@ -14,6 +13,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import symstr
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import CodeBlock
+from dace.sdfg.replace import replace_in_codeblock
 import ast
 
 
@@ -84,39 +84,31 @@ def repl_interstate_edges_recursive(cfg: ControlFlowRegion, repldict: Dict[str, 
                 repl_interstate_edges_recursive(node.sdfg, repldict)
 
 
-def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
-    """Replace whole tokens of ``code`` that exactly match a key of ``repldict``."""
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', code)
+def replace_in_code(block: CodeBlock, repldict: Dict[str, str]) -> CodeBlock:
+    """Copy of ``block`` with every name in ``repldict`` replaced: on the AST for Python, per identifier otherwise."""
+    if block.language == dace.dtypes.Language.Python:
+        block = copy.deepcopy(block)
+        replace_in_codeblock(block, repldict)
+        return block
+    code = re.sub(r'(?<![.>:])\b\w+\b', lambda m: f'({repldict[m[0]]})' if m[0] in repldict else m[0], block.as_string)
+    return CodeBlock(code, block.language)
 
-    # Replace tokens that exactly match src
-    tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
 
-    # Recombine everything
-    return ''.join(tokens).strip()
+def tasklets_assign(node_list: Iterable[dace.nodes.Node], names: Iterable[str]) -> bool:
+    """Whether a Python tasklet in ``node_list`` assigns one of ``names``, which a substitution would break."""
+    return any(
+        isinstance(a, ast.Name) and isinstance(a.ctx, ast.Store) and a.id in names for n in node_list
+        if isinstance(n, dace.nodes.Tasklet) and n.code.language == dace.dtypes.Language.Python for stmt in n.code.code
+        for a in ast.walk(stmt))
 
 
 def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: Dict[str, str]) -> None:
-    """Substitute ``repldict`` into the body of every tasklet in ``node_list``."""
-    # Pre-sympify once (see ``create_new_memlet`` for why): vanilla ``.subs`` on a plain
-    # ``{str: str}`` dict mis-resolves a symbol name colliding with a sympy builtin.
-    sym_repldict = {dace.symbolic.pystr_to_symbolic(k): dace.symbolic.pystr_to_symbolic(v) for k, v in repldict.items()}
+    """Substitute ``repldict`` into the body of every tasklet in ``node_list`` that reads a key."""
     for node in node_list:
         if isinstance(node, dace.nodes.Tasklet):
-            code = node.code
-            code_str = copy.deepcopy(node.code.as_string)
-            if code.language == dace.dtypes.Language.Python:
-                # Can raise exceptions if you have stuff like AND in the expression
-                try:
-                    symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
-                    symexpr = symexpr.subs(sym_repldict)
-                    code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr, allow_unknown_functions=True)
-                except Exception as e:
-                    code_str = copy.deepcopy(node.code.as_string)
-                    code_str = token_replace_dict(code_str, repldict)
-            else:
-                code_str = token_replace_dict(code_str, repldict)
-            node.code = CodeBlock(code_str, code.language)
+            active = {k: v for k, v in repldict.items() if k not in node.in_connectors and k not in node.out_connectors}
+            if node.code.language != dace.dtypes.Language.Python or active.keys() & node.free_symbols:
+                node.code = replace_in_code(node.code, active)
 
 
 def repl_tasklets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
@@ -134,17 +126,13 @@ def repl_for_regions_recursive(root: ControlFlowRegion, cfg: ControlFlowRegion, 
         if node == root:
             continue
         if isinstance(node, LoopRegion):
-            # TODO: do it better (try sympy subs)
             # A while-shaped region carries no init / update statement -- rewrite what it does carry.
             if node.loop_condition is not None:
-                node.loop_condition = CodeBlock(token_replace_dict(node.loop_condition.as_string, repldict),
-                                                node.loop_condition.language)
+                node.loop_condition = replace_in_code(node.loop_condition, repldict)
             if node.init_statement is not None:
-                node.init_statement = CodeBlock(token_replace_dict(node.init_statement.as_string, repldict),
-                                                node.init_statement.language)
+                node.init_statement = replace_in_code(node.init_statement, repldict)
             if node.update_statement is not None:
-                node.update_statement = CodeBlock(token_replace_dict(node.update_statement.as_string, repldict),
-                                                  node.update_statement.language)
+                node.update_statement = replace_in_code(node.update_statement, repldict)
 
     for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
         for node in state.nodes():
@@ -157,12 +145,8 @@ def repl_if_blocks_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -
     for node in [] if isinstance(cfg, dace.SDFGState) else cfg.all_control_flow_regions():
         if isinstance(node, ConditionalBlock):
             for i, (cond, body) in enumerate(node.branches):
-                ncond = None
                 if cond is not None:
-                    # TODO: do it better (try sympy subs)
-                    code_str = token_replace_dict(cond.as_string, repldict)
-                    ncond = CodeBlock(code_str, cond.language)
-                    node.branches[i] = (ncond, body)
+                    node.branches[i] = (replace_in_code(cond, repldict), body)
 
     for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
         for node in state.nodes():
@@ -281,9 +265,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
         repl_tasklets_recursive(cfg, repldict)
-
-    def _token_replace_dict(self, code: str, repldict: Dict[str, str]) -> str:
-        return token_replace_dict(code, repldict)
 
     def _repl_tasklets_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node],
                                     repldict: Dict[str, str]) -> None:

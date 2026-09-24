@@ -15,6 +15,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
+from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 
 N = dace.symbol('N')
 
@@ -351,6 +352,58 @@ def test_nested_sdfg_map_range_reading_the_rebased_param_follows_the_shift():
 
     assert str(inner.map.range) == "0:8 - i", inner.map.range
     assert np.array_equal(written_cells(sdfg), oracle)
+
+
+@pytest.mark.parametrize("language, code, rewritten, expected", [
+    (dace.Language.Python, "t = i * 2\nb = t + i", "t = ((i + 1) * 2)\nb = (t + (i + 1))", [0, 3, 6, 9]),
+    (dace.Language.CPP, "b = i;", "b = ((i + (1)));", [0, 1, 2, 3]),
+])
+def test_rebased_map_shifts_the_parameter_in_every_statement_of_a_tasklet(language, code, rewritten, expected):
+    sdfg = dace.SDFG("tasklet_reads_param")
+    sdfg.add_array("B", [4], dace.float64)
+    tasklet, _, _ = sdfg.add_state().add_mapped_tasklet("m", {"i": "1:4"}, {},
+                                                        code, {"b": dace.Memlet("B[i]")},
+                                                        language=language,
+                                                        external_edges=True)
+    B = np.zeros(4)
+
+    NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
+
+    assert tasklet.code.as_string == rewritten
+    sdfg(B=B)
+    assert np.array_equal(B, expected)
+
+
+@dace.program
+def calls_in_conditions(A: dace.float64[6]):
+    for i in range(1, 6):
+        for j in range(min(i, 3)):
+            A[i] += 1
+        if min(i, 3) == 3:
+            A[i] += 10
+
+
+def test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditions():
+    sdfg = calls_in_conditions.to_sdfg()
+    A = np.zeros(6)
+
+    NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
+
+    assert "(j < min((i + 1), 3))" in [r.loop_condition.as_string for r in _loops(sdfg)]
+    sdfg(A=A)
+    assert np.array_equal(A, [0, 1, 2, 13, 13, 13])
+
+
+def test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged():
+    sdfg = dace.SDFG("tasklet_assigns_param")
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_state().add_mapped_tasklet("m", {"i": "1:4"}, {},
+                                        "i = i + 1\nb = i", {"b": dace.Memlet("B[i]")},
+                                        external_edges=True)
+    before = sdfg.to_json()
+
+    assert NormalizeLoopsAndMaps().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
+from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps, tasklets_assign
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -104,7 +104,8 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             repldict[str(p)] = f"({b} + ({s}) * {p})"
             new_ranges[i] = (0, dace.symbolic.int_floor(e - b, s), 1)
             changed = True
-        if not changed:
+        scope = state.scope_subgraph(me, include_entry=True, include_exit=True)
+        if not changed or tasklets_assign(scope.nodes(), repldict):
             return False
 
         me.map.range = dace.subsets.Range(new_ranges)
@@ -116,7 +117,6 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             return dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in sub.ndrange()])
 
         # Param-local: substitute only within this map's scope.
-        scope = state.scope_subgraph(me, include_entry=True, include_exit=True)
         for edge in scope.edges():
             md = edge.data
             if md is None or md.data is None or md.subset is None:
@@ -173,6 +173,8 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
         n = dace.symbolic.int_floor(end - start, step) + 1
         repldict = {str(var): f"(({start}) + ({step}) * {var})"}
+        if tasklets_assign((node for st in loop.all_states() for node in st.nodes()), repldict):
+            return False
         # Rewrite the body (memlets/tasklets/interstate/nested); the loop's own
         # header is not a node within itself, so reset it explicitly after.
         self._repl_recursive(loop, repldict)
@@ -234,6 +236,8 @@ class NormalizeLoopBounds(NormalizeLoopsAndMaps):
         if start == 0:
             return False  # already 0-based (any stride) -> idempotent no-op
         repldict = {str(var): f"(({start}) + {var})"}
+        if tasklets_assign((node for st in loop.all_states() for node in st.nodes()), repldict):
+            return False
         self._repl_recursive(loop, repldict)
         new_end = dace.symbolic.simplify(end - start)
         loop.init_statement = CodeBlock(f"{var} = 0")
