@@ -44,6 +44,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+from ordered_set import OrderedSet
 
 #: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
 CodeSlotRewriter = Callable[[str], str]
@@ -325,7 +326,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def _blocked_sources(self, sdfg: SDFG) -> Set[str]:
         """Descriptor names that must stay ``Array`` regardless of shape: a ``View`` cannot carry the
         ``views`` alias edge, and a length-1 array that BACKS a view must stay an aliasable source."""
-        blocked: Set[str] = set()
+        blocked: OrderedSet[str] = OrderedSet()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -347,7 +348,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
         (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
         output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
-        blocked: Set[str] = set()
+        blocked: OrderedSet[str] = OrderedSet()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):

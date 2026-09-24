@@ -149,10 +149,13 @@ def test_unused_array_does_not_leak_shape_symbol():
     without = _with_optional_unused_array(False)
     with_unused = _with_optional_unused_array(True)
 
+    assert 'x_shape' not in without.used_symbols(all_symbols=False)
     assert 'x_shape' not in with_unused.used_symbols(all_symbols=False)
     assert 'x_shape' not in with_unused.arglist()
     assert list(without.arglist().keys()) == list(with_unused.arglist().keys())
+    assert without.signature_arglist() == with_unused.signature_arglist()
     assert without.init_signature() == with_unused.init_signature()
+    assert 'x_shape' not in with_unused.init_signature()
 
 
 def test_used_array_keeps_symbolic_extent():

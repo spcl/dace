@@ -112,18 +112,23 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
-@lru_cache()
 def get_gpu_backend() -> str:
-    """
-    Returns the currently-selected GPU backend. If automatic,
-    will perform a series of checks to see if an NVIDIA device exists,
-    then if an AMD device exists, or fail.
-    Otherwise, chooses the configured backend in ``compiler.cuda.backend``.
+    """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.
+
+    If automatic, will perform a series of checks to see if an NVIDIA device exists,
+    then if an AMD device exists, or fail. Note that the automatically detected case
+    will never be revisited.
     """
     backend: str = config.Config.get('compiler', 'cuda', 'backend')
     if backend and backend != 'auto':
         return backend
 
+    return _probing_for_gpu_backend()
+
+
+@lru_cache(maxsize=None, typed=True)
+def _probing_for_gpu_backend() -> str:
+    # Probed once; the result never changes within a process.
     def _try_execute(cmd: str) -> bool:
         process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
         errcode = process.wait()
@@ -159,12 +164,16 @@ def get_gpu_backend() -> str:
                        'to either "cuda" or "hip".')
 
 
-@lru_cache()
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
     """
     backend = get_gpu_backend()
+    return _look_for_runtime_file(backend)
+
+
+@lru_cache(maxsize=None, typed=True)
+def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
         if os.name == 'nt' and not libpath:  # Windows-based search

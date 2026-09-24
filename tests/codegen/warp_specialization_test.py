@@ -6,6 +6,10 @@ import numpy as np
 
 
 @pytest.mark.gpu
+# This test forces every Map (outer + two inner) to GPU_Device, producing a
+# nested GPU_Device structure (dynamic parallelism) which the new codegen
+# rejects by design. Only the legacy codegen supports this pattern.
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.parametrize('block_size', [None, '64,8,1'])
 def test_thread_specialization_noncontiguous_blocks(block_size):
 
