@@ -2855,7 +2855,9 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         # subscripts via visit_Attribute / visit_Subscript). A bare container name is spelled as a
         # Symbol, so no parser-namespace entry (``input``, ``rf``) can stand in for it.
         if isinstance(node.value, ast.Name):
-            value = ast.Call(func=ast.Name(id='Symbol', ctx=ast.Load()), args=[ast.Constant(node.value.id)], keywords=[])
+            value = ast.Call(func=ast.Name(id='Symbol', ctx=ast.Load()),
+                             args=[ast.Constant(node.value.id)],
+                             keywords=[])
         else:
             value = self.visit(node.value)
 
