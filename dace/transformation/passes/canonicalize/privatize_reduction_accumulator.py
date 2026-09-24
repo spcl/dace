@@ -117,9 +117,6 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
 
     parent_graph: ControlFlowRegion = state.parent_graph
 
-    # Allocate a transient scalar to hold the accumulator.
-    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
-
     # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
     # tasklet, fused with the map)? If so the seed source is that write's
     # AccessNode -- NOT a fresh read of the caller-passed buffer (which could
@@ -142,6 +139,15 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         in_state_init_an = n
         break
 
+    # The cross-state writeback would run after any access to ``arr`` that follows the map in this state.
+    if in_state_init_an is None and any(
+            isinstance(n, nodes.AccessNode) and n.data == arr_node.data and (n is not arr_node or state.out_degree(n))
+            for n in state.bfs_nodes(map_exit)):
+        return False
+
+    # Allocate a transient scalar to hold the accumulator.
+    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
+
     # Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
     wcr = wcr_edge.data.wcr
@@ -156,6 +162,8 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         seed_an = state.add_access(scalar_name)
         state.add_edge(in_state_init_an, None, seed_an, None,
                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+        # The map's WCR accumulates onto the seed, so the seed must be written before the map starts.
+        state.add_nedge(seed_an, map_entry, mm.Memlet())
         # The map's WCR output now goes to a fresh _priv_dot AN ...
         new_scalar_an = state.add_write(scalar_name)
         state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,
