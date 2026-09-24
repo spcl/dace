@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import List
-
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, LoopRegion, ControlFlowBlock
+
+#: Array names longer than this are left out of the IR dump.
+PRINT_NAMES = 500
 
 
 class OffloadingIRNode:
@@ -17,16 +18,17 @@ class OffloadingIRNode:
     OPEN_COND = 3
     EDGE = 4  # interstate edge
 
-    def __init__(self, type: int, block: ControlFlowBlock, cpu_set: OrderedSet, gpu_set: OrderedSet, next: list, close):
+    def __init__(self, type: int, block: ControlFlowBlock | None, cpu_set: OrderedSet[str], gpu_set: OrderedSet[str],
+                 next: list['OffloadingIRNode'], close: 'OffloadingIRNode | None'):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
         self.type = type
-        self.block: ControlFlowBlock = block
+        self.block: ControlFlowBlock | None = block
         self.cpu_set: OrderedSet[str] = cpu_set
         self.gpu_set: OrderedSet[str] = gpu_set
         self.next: list[OffloadingIRNode] = next
+        self.close = close
 
-        self.close = close  # corresponding open and close nodes refer to each other
-        self.open = None
+        self.open: OffloadingIRNode | None = None
         self.debug_name = "debug"
 
         # there should be a reference to the corresponding close node IFF the current node is an open node
@@ -40,10 +42,12 @@ class OffloadingIRNode:
     def __str__(self) -> str:
         return self.__repr__()
 
-    def _get_str(self, visited_set, len_before):
+    def _get_str(self, visited_set: OrderedSet['OffloadingIRNode'], len_before: int) -> str:
         s = f"{self.debug_name}:"
         spaces = 40 - (len_before + len(s))
-        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set])}, gpu = {sorted([name for name in self.gpu_set])}\n"
+        cpu = sorted(name for name in self.cpu_set if len(name) <= PRINT_NAMES)
+        gpu = sorted(name for name in self.gpu_set if len(name) <= PRINT_NAMES)
+        s += spaces * " " + f"cpu = {cpu}, gpu = {gpu}\n"
 
         if self in visited_set:
             return s
@@ -67,7 +71,7 @@ class OffloadingIRNode:
     def append_node(self, node: 'OffloadingIRNode') -> None:
         self.next.append(node)
 
-    def get_all_tails(self) -> List['OffloadingIRNode']:
+    def get_all_tails(self) -> list['OffloadingIRNode']:
         assert self.is_open_node()
 
         # ITERATIVE, and it has to be: the IR is one node per state and per interstate edge, so the
@@ -82,7 +86,7 @@ class OffloadingIRNode:
         # again at its close node, so walking the section once per ROUTE doubles the work per
         # conditional in a row: ls3df_scf's SCF loop holds 48 of them, 2^48 routes, and the canon
         # GPU offload never finished. How many routes there are is :meth:`has_one_route`'s question.
-        result: List['OffloadingIRNode'] = []
+        result: list[OffloadingIRNode] = []
         seen: set = set()
         stack = [self]
         while stack:
@@ -126,6 +130,7 @@ class OffloadingIRNode:
         return routes[self] == 1
 
     # static makers
+    @staticmethod
     def new_open_node(block: ControlFlowBlock) -> 'OffloadingIRNode':
         close = OffloadingIRNode(OffloadingIRNode.CLOSE, None, OrderedSet(), OrderedSet(), [], None)
         close.debug_name = f"_close_{block.label}"
@@ -144,16 +149,20 @@ class OffloadingIRNode:
 
         return open
 
-    def new_state_node(block: ControlFlowBlock, cpu_set: OrderedSet, gpu_set: OrderedSet) -> 'OffloadingIRNode':
+    @staticmethod
+    def new_state_node(block: ControlFlowBlock, cpu_set: OrderedSet[str],
+                       gpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
         state = OffloadingIRNode(OffloadingIRNode.STATE, block, cpu_set, gpu_set, [], None)
         state.debug_name = f"_state_{block.label}"
         return state
 
-    def new_edge_node(edge: InterstateEdge, cpu_set: OrderedSet) -> 'OffloadingIRNode':
+    @staticmethod
+    def new_edge_node(edge: InterstateEdge, cpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
         edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, edge, cpu_set, OrderedSet(), [], None)
         edge_node.debug_name = f"_edge_{edge.label}"
         return edge_node
 
+    @staticmethod
     def get_type_as_str(type: int) -> str:
         match type:
             case OffloadingIRNode.STATE:

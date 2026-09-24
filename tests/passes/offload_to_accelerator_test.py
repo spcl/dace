@@ -32,7 +32,6 @@ from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.offload_to_accelerator import OffloadingIRNode as MonolithIRNode
 from dace.transformation.passes.offloading.offloading_helpers import traverse_IR
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.ordered import OrderedSet
@@ -1274,15 +1273,17 @@ def test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy():
 LONG_CHAIN = 5000
 
 
-def ir_chain(node_class, length: int):
+def ir_chain(length: int):
     """``(open, [states])`` for one section holding ``length`` states in a row.
 
     The shape the IR pass builds for straight-line code: ``open -> s0 -> ... -> sN-1 -> close``.
     """
     sdfg = dace.SDFG('ir_chain')
     region = sdfg.add_state('section')
-    open_node = node_class.new_open_node(region)
-    states = [node_class.new_state_node(sdfg.add_state(f's{i}'), OrderedSet(), OrderedSet()) for i in range(length)]
+    open_node = OffloadingIRNode.new_open_node(region)
+    states = [
+        OffloadingIRNode.new_state_node(sdfg.add_state(f's{i}'), OrderedSet(), OrderedSet()) for i in range(length)
+    ]
     previous = open_node
     for state in states:
         previous.append_node(state)
@@ -1291,8 +1292,7 @@ def ir_chain(node_class, length: int):
     return open_node, states
 
 
-@pytest.mark.parametrize('node_class', (OffloadingIRNode, MonolithIRNode))
-def test_the_ir_walk_does_not_recurse_once_per_block(node_class):
+def test_the_ir_walk_does_not_recurse_once_per_block():
     """The IR holds one node per state and per interstate edge, so its chain is as long as the
     program has blocks. Walking it by RECURSION spends one Python frame per block and overran the
     interpreter stack on the first application-sized kernel: CloudSC canonicalized for the GPU died
@@ -1301,7 +1301,7 @@ def test_the_ir_walk_does_not_recurse_once_per_block(node_class):
 
     A chain is also the case where the answer is obvious, so this asserts the RESULT as well as the
     absence of the crash: the one tail of a straight line is its last state."""
-    open_node, states = ir_chain(node_class, LONG_CHAIN)
+    open_node, states = ir_chain(LONG_CHAIN)
     assert open_node.get_all_tails() == [states[-1]]
 
 
@@ -1309,7 +1309,7 @@ def test_traverse_ir_does_not_recurse_once_per_block():
     """:func:`~dace.transformation.passes.offloading.offloading_helpers.traverse_IR` walks the same
     chain and had the same stack cost. It visits every node exactly once, in the order the
     recursion did -- which is what the collected labels check."""
-    open_node, states = ir_chain(OffloadingIRNode, LONG_CHAIN)
+    open_node, states = ir_chain(LONG_CHAIN)
     seen = []
     traverse_IR(open_node, seen.append)
     assert seen == [open_node] + states + [open_node.close]

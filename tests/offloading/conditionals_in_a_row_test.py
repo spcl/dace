@@ -15,7 +15,6 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.offload_to_accelerator import OffloadingIRNode as MonolithIRNode
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.ordered import OrderedSet
 
@@ -46,43 +45,41 @@ def reference(A: np.ndarray, c: int) -> None:
         A += taken - (IN_A_ROW - taken)
 
 
-def ir_diamonds(node_class, count: int):
+def ir_diamonds(count: int):
     """``(open, tail)`` for one section of ``count`` two-armed conditionals in a row and a last state.
 
     The shape the IR pass builds for them: each conditional is ``open_if -> arm -> close_if`` twice,
     and the next conditional hangs off the close node.
     """
     sdfg = dace.SDFG('ir_diamonds')
-    section = node_class.new_open_node(sdfg.add_state('section'))
+    section = OffloadingIRNode.new_open_node(sdfg.add_state('section'))
     previous = section
     for k in range(count):
-        cond = node_class.new_open_node(sdfg.add_state(f'if_{k}'))
+        cond = OffloadingIRNode.new_open_node(sdfg.add_state(f'if_{k}'))
         previous.append_node(cond)
         for arm in ('then', 'else'):
-            state = node_class.new_state_node(sdfg.add_state(f'{arm}_{k}'), OrderedSet(), OrderedSet())
+            state = OffloadingIRNode.new_state_node(sdfg.add_state(f'{arm}_{k}'), OrderedSet(), OrderedSet())
             cond.append_node(state)
             state.append_node(cond.close)
         previous = cond.close
-    tail = node_class.new_state_node(sdfg.add_state('tail'), OrderedSet(), OrderedSet())
+    tail = OffloadingIRNode.new_state_node(sdfg.add_state('tail'), OrderedSet(), OrderedSet())
     previous.append_node(tail)
     tail.append_node(section.close)
     return section, tail
 
 
-@pytest.mark.parametrize('node_class', (OffloadingIRNode, MonolithIRNode))
-def test_a_tail_behind_conditionals_in_a_row_is_found_once(node_class):
+def test_a_tail_behind_conditionals_in_a_row_is_found_once():
     """Twenty conditionals are a million routes to the one tail, and the walk listed it once per route."""
-    section, tail = ir_diamonds(node_class, 20)
+    section, tail = ir_diamonds(20)
     assert section.get_all_tails() == [tail]
 
 
-@pytest.mark.parametrize('node_class', (OffloadingIRNode, MonolithIRNode))
 @pytest.mark.parametrize('count, one_route', [(0, True), (1, False), (IN_A_ROW, False)])
-def test_a_conditional_makes_a_section_more_than_one_route(node_class, count, one_route):
+def test_a_conditional_makes_a_section_more_than_one_route(count, one_route):
     """Whether the close node's locations can be read off the section as a straight line: a section
     with a conditional in it is not one, however its arms meet again, and that is answered without
     walking every route."""
-    section = ir_diamonds(node_class, count)[0]
+    section = ir_diamonds(count)[0]
     assert section.has_one_route() is one_route
 
 
