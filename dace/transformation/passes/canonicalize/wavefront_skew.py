@@ -1288,13 +1288,13 @@ class WavefrontSkew(ppl.Pass):
             return None
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions()):
-                if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
+            for region in list(sd.all_control_flow_regions()):
+                if not (isinstance(region, LoopRegion) and region.loop_variable):
                     continue
-                parent = cfg.parent_graph
-                if parent is None or cfg not in parent.nodes():
+                parent = region.parent_graph
+                if parent is None or region not in parent.nodes():
                     continue  # stale snapshot: a prior skew removed this node
-                if self._try_skew(cfg, sd):
+                if self._try_skew(region, sd):
                     skewed += 1
         return skewed or None
 
