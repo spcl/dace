@@ -19,11 +19,15 @@ update flipped the comparison executed BOTH arms: the else-arm's store to ``b`` 
 lanes. The fix snapshots the guard once, into a bool transient in a state that dominates both
 halves, and hands both halves a read of that snapshot.
 """
+import json
+
 import numpy as np
 import pytest
 
 import dace
+from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -110,6 +114,52 @@ def test_value_preserving():
     assert np.allclose(got_a, want_a, rtol=1e-12, atol=1e-12)
     assert np.allclose(got_b, want_b, rtol=1e-12, atol=1e-12)
     assert np.allclose(got_c, want_c, rtol=1e-12, atol=1e-12)
+
+
+def write_one(state: dace.SDFGState, name: str) -> None:
+    tasklet = state.add_tasklet(f'set_{name}', {}, {'o'}, 'o = 1.0')
+    state.add_edge(tasklet, 'o', state.add_write(name), None, dace.Memlet(f'{name}[0]'))
+
+
+def arm_decrements_guard_symbol(name: str) -> dace.SDFG:
+    """``if k > 0: {x = 1; k = k - 1; y = 1} else: {z = 1}`` with ``k`` an argument."""
+    sdfg = dace.SDFG(name)
+    for array in ('x', 'y', 'z'):
+        sdfg.add_array(array, [1], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    init = sdfg.add_state('init', is_start_block=True)
+    cb = ConditionalBlock('cb', sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb)
+    then_arm = ControlFlowRegion('then_arm', sdfg=sdfg)
+    first = then_arm.add_state('first', is_start_block=True)
+    write_one(first, 'x')
+    second = then_arm.add_state('second')
+    write_one(second, 'y')
+    then_arm.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'k - 1'}))
+    else_arm = ControlFlowRegion('else_arm', sdfg=sdfg)
+    write_one(else_arm.add_state('only', is_start_block=True), 'z')
+    cb.add_branch(CodeBlock('k > 0'), then_arm)
+    cb.add_branch(None, else_arm)
+    sdfg.add_edge(init, cb, dace.InterstateEdge())
+    return sdfg
+
+
+def test_if_else_whose_arm_rebinds_a_guard_symbol_is_left_whole():
+    """Serializing would re-test ``k > 0`` after the if-arm decremented ``k``, running the else-arm for ``k == 1``."""
+    sdfg = arm_decrements_guard_symbol('arm_rebinds_guard_symbol')
+    before = json.dumps(sdfg.to_json(), sort_keys=True)
+
+    result = BranchNormalization().apply_pass(sdfg, {})
+
+    assert result is None
+    assert json.dumps(sdfg.to_json(), sort_keys=True) == before
+    csdfg = sdfg.compile()
+    rows = []
+    for k in (0, 1, 2):
+        x, y, z = np.zeros(1), np.zeros(1), np.zeros(1)
+        csdfg(x=x, y=y, z=z, k=k)
+        rows.append((x[0], y[0], z[0]))
+    assert rows == [(0.0, 0.0, 1.0), (1.0, 1.0, 0.0), (1.0, 1.0, 0.0)]
 
 
 if __name__ == '__main__':

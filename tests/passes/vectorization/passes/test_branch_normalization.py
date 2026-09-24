@@ -385,3 +385,36 @@ def test_escape_writes_returns_empty_set_for_each_arm_when_nothing_escapes():
     cb.add_branch(CodeBlock("c"), empty)
     plan = compute_arm_escape_writes(sdfg, cb)
     assert plan[0] == set(), plan
+
+
+def arm_with_alias_entry_and_map() -> dace.SDFG:
+    """``if c > 0: {__sym_z1 = z1; b[:] = a[:] + __sym_z1}``: the alias hoists, the Map arm is not lowered."""
+    sdfg = dace.SDFG("alias_entry_map_arm")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_symbol("z1", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    cb = ConditionalBlock("cb", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb)
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    entry = arm.add_state("entry", is_start_block=True)
+    body = arm.add_state("body")
+    arm.add_edge(entry, body, dace.InterstateEdge(assignments={"__sym_z1": "z1"}))
+    body.add_mapped_tasklet("m", {"j": "0:8"}, {"_in": dace.Memlet("a[j]")},
+                            "_out = _in + __sym_z1", {"_out": dace.Memlet("b[j]")},
+                            external_edges=True)
+    cb.add_branch(CodeBlock("c > 0"), arm)
+    sdfg.add_edge(init, cb, dace.InterstateEdge())
+    return sdfg
+
+
+def test_hoist_ahead_of_a_refused_lowering_is_reported_as_a_change():
+    sdfg = arm_with_alias_entry_and_map()
+
+    result = BranchNormalization().apply_pass(sdfg, {})
+
+    assert result == 1
+    assert [s.label for s in sdfg.all_states()] == ["init", "body"]
+    assert [e.data.assignments for e in sdfg.out_edges(sdfg.start_block)] == [{"__sym_z1": "z1"}]
+    assert sum(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks()) == 1
