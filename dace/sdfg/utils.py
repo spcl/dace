@@ -13,7 +13,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState,
-                             StateSubgraphView, LoopRegion, ControlFlowRegion)
+                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
@@ -2755,3 +2755,36 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def unstructured_control_flow(sdfg: SDFG, recursive: bool = False) -> Generator[ControlFlowBlock, None, None]:
+    """Yield what makes the control flow of ``sdfg`` unstructured.
+
+    Structured control flow branches only through ``ConditionalBlock`` and loops only through ``LoopRegion``, so every
+    region is a line of blocks joined by unconditional edges. This yields each ``UnstructuredControlFlow`` region and
+    each block that leaves through more than one interstate edge or through a conditional one.
+
+    :param sdfg: The SDFG to inspect.
+    :param recursive: Whether to inspect nested SDFGs as well.
+    """
+    for region in sdfg.all_control_flow_regions(recursive=recursive):
+        if isinstance(region, UnstructuredControlFlow):
+            yield region
+        elif isinstance(region, ControlFlowRegion):
+            for block in region.nodes():
+                out_edges = region.out_edges(block)
+                if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
+                    yield block
+
+
+def require_structured_control_flow(sdfg: SDFG, consumer: str) -> None:
+    """Raise if ``sdfg`` or an SDFG nested in it still has unstructured control flow, which ``consumer`` does not support.
+
+    :param sdfg: The SDFG to inspect.
+    :param consumer: The pass or pipeline that relies on structured control flow, named in the error.
+    :raises NotImplementedError: If any block makes the control flow unstructured; the message names every one.
+    """
+    offending = [block.label for block in unstructured_control_flow(sdfg, recursive=True)]
+    if offending:
+        raise NotImplementedError(f'{consumer} requires structured control flow, which ControlFlowRaising could not '
+                                  f'produce: these blocks branch through interstate edges: {offending}')

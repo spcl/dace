@@ -9,8 +9,6 @@ import numpy as np
 import dace
 import pytest
 
-from dace.transformation.interstate import GPUTransformSDFG
-
 
 def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
     sdfg = dace.SDFG(name)
@@ -23,7 +21,7 @@ def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
                              'out = inp + 1.0',
                              dict(out=dace.Memlet('A[i]')),
                              external_edges=True)
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations()
     return sdfg
 
 
