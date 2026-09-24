@@ -259,7 +259,7 @@ class LoopToTranspose(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions(recursive=True)):
+            for cfg in list(sd.all_control_flow_regions()):
                 for outer in list(cfg.nodes()):
                     if isinstance(outer, LoopRegion) and self._try_lift(cfg, outer, sd):
                         count += 1
