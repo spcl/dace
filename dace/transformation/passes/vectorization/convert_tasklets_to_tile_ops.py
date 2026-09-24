@@ -23,7 +23,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.tasklets import stripped_tasklet_body
+from dace.transformation.passes.vectorization.utils.tasklets import lane_loop_code, stripped_tasklet_body
 from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, map_tile_widths,
                                                                            tile_body_nsdfgs)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
@@ -1416,34 +1416,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                      transient=True,
                                      storage=dtypes.StorageType.Register,
                                      find_new_name=True)
-        K = len(widths)
-        parts = []
-        for i in range(K):
-            inner = 1
-            for q in range(i + 1, K):
-                inner *= widths[q]
-            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-        flat = " + ".join(parts) if parts else "0"
-        # Reference the source by its connector ABI -- NO C-style cast.
-        # ABI follows the memlet's element COUNT, not the descriptor kind: a single-element
-        # read (``Scalar`` or length-1 ``Array[0]``) is a by-value ``T _in``, referenced
-        # bare; a multi-element source is a pointer ``T* _in``, element 0 via ``_in[0]``.
-        # The destination tile's element type drives the implicit conversion.
+        # No C-style cast: a single-element source is a by-value ``T _in``, a multi-element one a
+        # pointer ``T* _in``; the destination tile's element type drives the conversion.
         src_ref = "_in" if src_edge.data.subset.num_elements() == 1 else "_in[0]"
-        code_lines = []
-        for d in range(K):
-            # constexpr width + DACE_UNROLL -> lane loop lowers to SIMD.
-            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-            code_lines.append(f"{'    ' * d}DACE_UNROLL")
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        code_lines.append(f"{'    ' * K}_out[{flat}] = {src_ref};")
-        for d in reversed(range(K)):
-            code_lines.append(f"{'    ' * d}}}")
         tasklet = inner_state.add_tasklet(
             name=f"bcast_to_tile_{arr_name}",
             inputs={"_in"},
             outputs={"_out"},
-            code="\n".join(code_lines),
+            code=lane_loop_code(widths, src_ref),
             language=dtypes.Language.CPP,
         )
         # Wire from the source AN (reuse, not a fresh access) and to a fresh broadcast AN.
@@ -1480,30 +1460,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                      transient=True,
                                      storage=dtypes.StorageType.Register,
                                      find_new_name=True)
-        K = len(widths)
-        parts = []
-        for i in range(K):
-            inner = 1
-            for q in range(i + 1, K):
-                inner *= widths[q]
-            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-        flat = " + ".join(parts) if parts else "0"
-        code_lines = []
-        for d in range(K):
-            # constexpr width + DACE_UNROLL -> lane loop lowers to SIMD.
-            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-            code_lines.append(f"{'    ' * d}DACE_UNROLL")
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        # No C-style cast: the destination tile's element type drives
-        # the implicit conversion of the broadcast literal / symbolic expression.
-        code_lines.append(f"{'    ' * K}_out[{flat}] = ({expr});")
-        for d in reversed(range(K)):
-            code_lines.append(f"{'    ' * d}}}")
+        # No C-style cast: the destination tile's element type drives the conversion.
         tasklet = inner_state.add_tasklet(
             name=f"sym_broadcast_{arr_name}",
             inputs=set(),
             outputs={"_out"},
-            code="\n".join(code_lines),
+            code=lane_loop_code(widths, f"({expr})"),
             language=dtypes.Language.CPP,
         )
         out_an = inner_state.add_access(arr_name)

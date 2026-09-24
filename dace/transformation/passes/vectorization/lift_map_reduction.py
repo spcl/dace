@@ -37,6 +37,7 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 from dace.transformation.passes.vectorization.utils.reductions import (
     IDENTITY,
     MapReductionInfo,
@@ -97,13 +98,10 @@ def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEn
 
 def _const_assign_value(code: str) -> float | None:
     # Numeric value of a ``_out = <number>`` tasklet, or ``None``.
-    try:
-        tree = ast.parse((code or "").strip())
-    except SyntaxError:
+    assign = single_assignment(code)
+    if assign is None:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    v = tree.body[0].value
+    v = assign.value
     if isinstance(v, ast.UnaryOp) and isinstance(v.op, (ast.UAdd, ast.USub)) and isinstance(v.operand, ast.Constant):
         inner = v.operand.value
         if isinstance(inner, (int, float)) and not isinstance(inner, bool):
