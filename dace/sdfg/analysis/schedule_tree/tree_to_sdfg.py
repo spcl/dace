@@ -84,23 +84,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
         """Current SDFGState in the SDFG that we are building."""
 
-        self._current_nestedSDFG: int | None = None
-        """Id of the current nested SDFG if we are inside one."""
-
         self._known_data_outside_nestedSDFG: set[str] | None = None
         """In case we are inside a nested SDFG, this list previously accessed data (arrays and scalars) outside the nestedSDFG."""
 
         self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
-
-        self._nviews_free: list[tn.NView] = []
-        """Keep track of NView (nested SDFG view) nodes that are "free" to be used."""
-
-        self._nviews_bound_per_scope: dict[int, list[tn.NView]] = {}
-        """Mapping of id(SDFG) -> list of active NView nodes in that SDFG."""
-
-        self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
-        """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
         self._views: dict[str, tn.ViewNode] = {}
         """Mapping of view container name -> ViewNode that defines the view."""
@@ -117,29 +105,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
         self._max_nested_sdfg = max_nested_sdfg
-
-    def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
-        """
-        Apply an NView override if applicable. Returns true if the NView was applied.
-
-        See `visit_NView()` for how we keep track of nested SDFG view nodes.
-        """
-        length = len(self._nviews_free)
-        for index, nview in enumerate(reversed(self._nviews_free), start=1):
-            if nview.target == array_name and nview not in self._nviews_deferred_removal[id(sdfg)]:
-                # Add the "override" data descriptor
-                sdfg.add_datadesc(nview.target, nview.view_desc.clone())
-                if nview.src_desc.transient:
-                    sdfg.arrays[nview.target].transient = False
-
-                # Keep track of used NViews per scope (to "free" them again once the scope ends)
-                self._nviews_bound_per_scope[id(sdfg)].append(nview)
-
-                # This NView is in use now, remove it from the free NViews.
-                del self._nviews_free[length - index]
-                return True
-
-        return False
 
     def _parent_sdfg_with_array(self, name: str, sdfg: SDFG) -> SDFG:
         """Find the closest parent SDFG containing an array with the given name."""
@@ -212,15 +177,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
 
-                        # Support for NView nodes
-                        use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                        if not use_nview:
-                            sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                            if parent_sdfg.arrays[memlet.data].transient:
-                                sdfg.arrays[memlet.data].transient = False
+                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[memlet.data].transient:
+                            sdfg.arrays[memlet.data].transient = False
 
-                        # Dev note: nview.target and memlet.data are identical
                         assert memlet.data not in to_connect["inputs"]
                         to_connect["inputs"].add(memlet.data)
 
@@ -300,15 +261,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 if memlet.data not in sdfg.arrays:
                     parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
 
-                    # Support for  NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
+                    sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                    if parent_sdfg.arrays[memlet.data].transient:
+                        sdfg.arrays[memlet.data].transient = False
 
-                    # Dev note: memlet.data and nview.target are identical
                     assert memlet.data not in to_connect["inputs"]
                     to_connect["inputs"].add(memlet.data)
 
@@ -442,7 +399,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def _insert_nestedSDFG_in_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
-        outer_nestedSDFG = self._current_nestedSDFG
         outer_known_data = self._known_data_outside_nestedSDFG
 
         self._known_data_outside_nestedSDFG = set()
@@ -458,9 +414,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         old_state_label = self._current_state.label
         self._state_stack.append(self._current_state)
         self._dataflow_stack.append((inner_sdfg, {"inputs": set(), "outputs": set()}))
-        self._nviews_bound_per_scope[id(inner_sdfg)] = []
-        self._nviews_deferred_removal[id(inner_sdfg)] = []
-        self._current_nestedSDFG = id(inner_sdfg)
         self._current_state = start_state
 
         # visit children
@@ -493,18 +446,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assert new_in_connector == True
             assert new_in_connector == new_out_connector
 
-            # Add Memlet for NView node (if applicable)
-            edge_added = False
-            for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-                if name == nview.target:
-                    self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
-                                                 Memlet.from_memlet(nview.memlet))
-                    edge_added = True
-                    break
-
-            if not edge_added:
-                self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
-                                             Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
+            self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
+                                         Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
         # Add empty memlet if we didn't add any in the loop above
         if self._current_state.out_degree(map_entry) < 1:
@@ -512,31 +455,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect nsdfg output memlets (to be propagated)
         for name in nsdfg.out_connectors:
-            # Add memlets for NView node (if applicable)
-            edge_added = False
-            for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-                if name == nview.target:
-                    to_connect[name] = (nsdfg, Memlet.from_memlet(nview.memlet))
-                    edge_added = True
-                    break
-
-            if not edge_added:
-                to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
-
-        # Move NViews back to "free" NViews for usage in a sibling scope.
-        for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-            # If this NView ended in the current nested SDFG, don't add it back to the
-            # "free NView" nodes. We need to keep it alive until here to make sure that
-            # we can add the memlets above.
-            if nview in self._nviews_deferred_removal[id(inner_sdfg)]:
-                continue
-            self._nviews_free.append(nview)
-
-        del self._nviews_bound_per_scope[id(inner_sdfg)]
-        del self._nviews_deferred_removal[id(inner_sdfg)]
+            to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
         # Restore current nested SDFG
-        self._current_nestedSDFG = outer_nestedSDFG
         self._known_data_outside_nestedSDFG = outer_known_data
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
@@ -626,15 +547,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     if memlet_data not in sdfg.arrays:
                         parent_sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
 
-                        # Add support for NView nodes
-                        use_nview = self._apply_nview_array_override(memlet_data, sdfg)
-                        if not use_nview:
-                            sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                            if parent_sdfg.arrays[memlet_data].transient:
-                                sdfg.arrays[memlet_data].transient = False
+                        sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[memlet_data].transient:
+                            sdfg.arrays[memlet_data].transient = False
 
-                        # Dev note: nview.target and memlet_data are identical
                         outer_to_connect["inputs"].add(memlet_data)
 
                     # Add in_connector in case of read after write of "outside data"
@@ -702,17 +619,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 if name not in sdfg.arrays:
                     parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
 
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(name, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[name].transient:
-                            sdfg.arrays[name].transient = False
+                    sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                    if parent_sdfg.arrays[name].transient:
+                        sdfg.arrays[name].transient = False
 
                 # Add out connector in any case because we don't know who (if anyone)
                 # is gonna read from it down the line.
-                # Dev not: name and nview.target are identical
                 outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
@@ -791,16 +704,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if name not in sdfg.arrays:
                 parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
 
-                # Support for  NView nodes
-                use_nview = self._apply_nview_array_override(name, sdfg)
-                if not use_nview:
-                    sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+                sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
 
-                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                    if parent_sdfg.arrays[name].transient:
-                        sdfg.arrays[name].transient = False
+                # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                if parent_sdfg.arrays[name].transient:
+                    sdfg.arrays[name].transient = False
 
-                # Dev note: name and nview.target are identical
                 to_connect["inputs"].add(name)
 
             # Add in_connector in case of read after (partial) write of "outside data"
@@ -860,18 +769,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if name not in sdfg.arrays:
                 parent_sdfg: SDFG = self._parent_sdfg_with_array(name, sdfg)
 
-                # Support for NView nodes
-                use_nview = self._apply_nview_array_override(name, sdfg)
-                if not use_nview:
-                    sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+                sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
 
-                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                    if parent_sdfg.arrays[name].transient:
-                        sdfg.arrays[name].transient = False
+                # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                if parent_sdfg.arrays[name].transient:
+                    sdfg.arrays[name].transient = False
 
             # Add out connector in any case because we don't know who (if anyone)
             # is gonna read from it down the line.
-            # Dev note: name and nview.target are identical
             to_connect["outputs"].add(name)
         else:
             assert scope_node is None
@@ -950,35 +855,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # Views are connected lazily: every read or write of ``node.target`` creates a view access node that is
         # connected to ``node.source`` in the state and scope of that access (see ``_add_view_access``).
         self._views[node.target] = node
-
-    def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
-        # Basic working principle:
-        #
-        # - NView and (artificial) NViewEnd nodes are added in parallel to mark the region where the view applies.
-        # - Keep a stack of NView nodes (per name) that is pushed/popped when NView and NViewEnd nodes are visited.
-        # - In between, when going "down into" a NestedSDFG, use the current NView (if it applies)
-        # - In between, when "coming back up" from a NestedSDFG, pop the NView from the stack.
-        # - AccessNodes will automatically pick up the right name (from the NestedSDFG's array list)
-        self._nviews_free.append(node)
-
-    def visit_NViewEnd(self, node: tn.NViewEnd, sdfg: SDFG) -> None:
-        # If bound to the current nested SDFG, defer cleanup
-        if self._current_nestedSDFG is not None:
-            currently_bound = self._nviews_bound_per_scope[self._current_nestedSDFG]
-            for index, nview in enumerate(reversed(currently_bound)):
-                if node.target == nview.target:
-                    # Bound to current nested SDFG. Slate for deferred removal once we exit that nested SDFG.
-                    self._nviews_deferred_removal[self._current_nestedSDFG].append(nview)
-                    return
-
-        length = len(self._nviews_free)
-        for index, nview in enumerate(reversed(self._nviews_free), start=1):
-            if node.target == nview.target:
-                # Stack semantics: remove from the back of the list
-                del self._nviews_free[length - index]
-                return
-
-        raise RuntimeError(f"No matching NView found for target {node.target} in {self._nviews_free}.")
 
     def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
         if isinstance(node.src_desc, nodes.CodeNode):

@@ -311,6 +311,10 @@ class Scalar(Data):
         return False
 
     def is_equivalent(self, other):
+        # Special case: array of size 1
+        if isinstance(other, Array) and other.shape == (1, ) and other.dtype == self.dtype:
+            return True
+
         if not isinstance(other, Scalar):
             return False
         if self.dtype != other.dtype:
@@ -585,6 +589,10 @@ class Array(Data):
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
+        # Special case: Scalar
+        if isinstance(other, Scalar) and self.shape == (1, ) and self.dtype == other.dtype:
+            return True
+
         if not isinstance(other, Array):
             return False
 
@@ -601,6 +609,12 @@ class Array(Data):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test strides
+        for stride, otherstride in zip(self.strides, other.strides):
+            if otherstride != stride:
+                return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -867,6 +881,11 @@ class Stream(Data):
         for dim, otherdim in zip(self.shape, other.shape):
             if dim != otherdim:
                 return False
+
+        # Test buffer size
+        if self.buffer_size != other.buffer_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -1081,6 +1100,24 @@ class Structure(Data):
     @property
     def optional(self) -> bool:
         return False
+
+    def is_equivalent(self, other):
+        """
+        Checks whether two structures describe the same data.
+
+        Two structures are equivalent when they have the same member names and each pair of
+        members is itself equivalent. The structure type name is deliberately not compared: it
+        names the generated C type, not the data, and the same layout reached through different
+        declarations still describes the same memory.
+
+        :param other: The other data descriptor to compare against.
+        :return: True if the two descriptors are equivalent.
+        """
+        if not isinstance(other, Structure):
+            return False
+        if self.members.keys() != other.members.keys():
+            return False
+        return all(v.is_equivalent(other.members[k]) for k, v in self.members.items())
 
     def keys(self):
         result = self.members.keys()
