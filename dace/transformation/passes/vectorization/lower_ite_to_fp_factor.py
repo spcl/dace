@@ -20,14 +20,9 @@ from dace.transformation import pass_pipeline as ppl
 
 
 class _ITEToFpFactor(ast.NodeTransformer):
-    """Replaces every ``ITE(c, t, e)`` call with ``cf*t + (1 - cf)*e`` where
-    ``cf = <cast_dtype>(c)`` promotes the (typically ``bool``) condition to the
-    arm dtype, so the ``cf * t`` tile binop is uniform-dtype (the K-dim tile path
-    refuses a mixed ``bool * double`` binop). ``SplitTasklets`` later splits ``cf``
-    into a standalone cast tasklet that ``ConvertTaskletsToTileOps`` lowers to a
-    ``TileUnop`` cast. When ``cast_dtype`` is ``None`` (or a ``bool`` output, where
-    no promotion is needed) the condition is used as-is.
-    """
+    # Replaces every ``ITE(c, t, e)`` call with ``cf*t + (1 - cf)*e`` where ``cf = <cast_dtype>(c)`` promotes the
+    # (typically ``bool``) condition to the arm dtype, so the ``cf * t`` tile binop is uniform-dtype (the K-dim tile
+    # path refuses a mixed ``bool * double`` binop).
 
     def __init__(self, cast_dtype: str | None = None) -> None:
         self.changed = False
@@ -76,10 +71,7 @@ class LowerITEToFpFactor(ppl.Pass):
         return False
 
     def _ite_output_dtype(self, sdfg: dace.SDFG, state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> str | None:
-        """The ``dace`` dtype name (e.g. ``"float64"``) to promote the condition to
-        -- the tasklet's single output-array dtype (== the ITE arms' dtype). Returns
-        ``None`` when it cannot be resolved or the output is already ``bool`` (no
-        promotion needed), so the condition is left unchanged."""
+        # The ``dace`` dtype name (e.g.
         out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and e.data.data is not None]
         if not out_edges:
             return None

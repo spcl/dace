@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Typed knobs for the multi-dim tile-op vectorizer.
 
-Each optimization variant is a string-valued :class:`enum.Enum`, so a member both
-reads nicely (``ISA.AVX512``) and compares/serialises as its string value
-(``ISA.AVX512 == "AVX512"`` is ``True``). That lets a caller pass either the enum
-member or the raw string; :func:`coerce` normalises a string to the member.
+Each variant is a string-valued :class:`enum.Enum`: a member reads nicely
+(``ISA.AVX512``) and compares/serializes as its string (``ISA.AVX512 == "AVX512"``),
+so callers may pass either. :func:`coerce_enum` normalizes a string to the member.
 """
 import enum
 from typing import TypeVar
@@ -29,13 +28,8 @@ class RemainderStrategy(str, enum.Enum):
     FULL_MASK = "full_mask"  #: single W-strided map, mask every tile
     MASKED_TAIL = "masked_tail"  #: mask-free interior + masked boundary
     SCALAR_POSTAMBLE = "scalar_postamble"  #: divisible interior + step-1 scalar tail (K=1 only)
-    BRANCHED_TAIL = "branched_tail"  #: GPU-only: ONE kernel with a control-flow branch,
-    #: if(full-tile)=vectorized tile body / else=scalar tail, over the fused tile range. K=1 only.
-    #: See :class:`~dace.transformation.passes.vectorization.fuse_branched_tail_remainder.FuseBranchedTailRemainder`.
-    BRANCHED_MASKED_TAIL = "branched_masked_tail"  #: GPU K=1 DEFAULT. Same one-kernel branch as
-    #: ``branched_tail``, but the ``else`` arm is a MASKED tile body, not a scalar lane loop: the
-    #: aligned iteration takes the mask-free (widened) arm and NO scalar remainder loop is emitted
-    #: for it. K=1 only, GPU only.
+    BRANCHED_TAIL = "branched_tail"  #: GPU K=1 only: one kernel, if(full-tile)=vector / else=scalar
+    BRANCHED_MASKED_TAIL = "branched_masked_tail"  #: GPU K=1 DEFAULT: else arm masked, not scalar
 
 
 class BranchMode(str, enum.Enum):

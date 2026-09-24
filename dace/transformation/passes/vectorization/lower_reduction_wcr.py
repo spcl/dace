@@ -1,18 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lower a map-body reduction WCR into the tile-foldable aug-assign form.
 
-``NestInnermostMapBodyIntoNSDFG`` wraps an innermost map body in a NestedSDFG; a scalar
-reduction WCR that wrote the map exit (``acc (op)= ...``) is duplicated by
-``nest_state_subgraph`` onto the inner body edge ``src -[wcr]-> acc`` (``acc`` a
-non-transient output connector). That inner WCR is a loose reduction the tile emitter
-cannot fold. Replace it with the explicit ``acc = acc <op> src`` form (read the
-accumulator back): a tile input + scalar output that ``ConvertTaskletsToTileOps`` folds to
-a ``TileReduce``. The cross-tile reduction stays on the boundary ``NSDFG -> AccessNode
--[wcr]-> MapExit`` chain (OpenMP ``reduction(op:acc)`` clause).
+Nesting an innermost map body duplicates its reduction WCR onto an inner
+``src -[wcr]-> acc`` edge, a loose reduction the tile emitter cannot fold.
+Rewrite it to ``acc = acc <op> src`` (tile-in + scalar-out), which
+``ConvertTaskletsToTileOps`` folds to a ``TileReduce``. The cross-tile reduction
+stays on the boundary ``NSDFG -> AccessNode -[wcr]-> MapExit`` chain.
 
-``WCRToAugAssign`` refuses this rewrite -- its nested-SDFG guard correctly rejects a
-generic cross-iteration-reduction revert (dropping the WCR would clobber). It is sound
-here only because the tile emitter folds the result to a ``TileReduce``.
+``WCRToAugAssign`` refuses this rewrite generically; it is sound here only
+because the tile emitter folds the result to a ``TileReduce``.
 """
 import copy
 
@@ -24,18 +20,12 @@ from dace.ordered import OrderedSet
 
 
 def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
-    """Resolve every ``src -[wcr]-> acc`` reduction edge (``acc`` a non-transient pure-sink
-    :class:`~dace.sdfg.nodes.AccessNode`) inside ``inner_sdfg``, leaving no loose in-body WCR.
-
-    Scoped to one body NestedSDFG (the caller passes each freshly-nested body). ``src`` is an
-    AccessNode -- ``NormalizeWCRSource`` has already made every WCR AccessNode-sourced.
+    """Resolve every ``src -[wcr]-> acc`` reduction edge in ``inner_sdfg``, leaving no loose WCR.
 
     :param inner_sdfg: The body NestedSDFG to rewrite in place.
-    :param tiled: ``True`` (a tiled body) rewrites the edge to ``acc = acc <op> src`` -- a
-        tile-in + scalar-out reduction the walker folds to a ``TileReduce``. ``False`` (a step-1
-        postamble tail, never tiled) just drops the WCR: the body writes one element per
-        iteration and the boundary ``NSDFG -> AccessNode -[wcr]-> MapExit`` chain already sums
-        across iterations, so no in-body fold is needed.
+    :param tiled: ``True`` rewrites to ``acc = acc <op> src`` (folds to ``TileReduce``).
+        ``False`` (step-1 postamble, never tiled) just drops the WCR: the boundary chain
+        already sums across iterations.
     :returns: Number of reduction WCR edges resolved.
     """
     rewritten = 0
@@ -60,12 +50,8 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                                         f"__out = {_wcr_augassign_body(memlet.wcr)}")
             state.add_edge(state.add_access(acc), None, tasklet, '__in1',
                            Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
-            # ``__in2`` reads the reduction addend from ``edge.src`` -- the ``_wcr_priv_*`` buffer
-            # ``NormalizeWCRSource`` interposed, a SCALAR (rank 1) regardless of the accumulator's
-            # rank. Its subset must match ``edge.src``'s descriptor, NOT ``acc_subset``: a 2-D
-            # single-element accumulator connector (``C[i, j]`` -> ``(1, 1)``) gives a rank-2
-            # ``acc_subset`` that on the rank-1 scalar source trips "subset does not match node
-            # dimension".
+            # __in2 subset must match edge.src's rank-1 scalar descriptor, not acc_subset:
+            # a rank-2 acc_subset (e.g. C[i,j] -> (1,1)) trips a dimension-mismatch check.
             if src_subset is not None:
                 in2_subset = copy.deepcopy(src_subset)
             else:

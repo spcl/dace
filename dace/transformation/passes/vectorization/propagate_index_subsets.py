@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``PropagateIndexSubsets`` — inline promoted index symbols back into memlet subsets.
+"""``PropagateIndexSubsets`` -- inline promoted index symbols back into memlet subsets.
 
 Frontend promotes computed index ``i + offset`` -> scalar (``i_plus_offset``, tasklet-written)
 -> symbol (``__sym = i_plus_offset`` on iedge) used in subset ``A[__sym]``. Opaque symbol hides

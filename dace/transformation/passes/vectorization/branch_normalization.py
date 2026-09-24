@@ -202,19 +202,11 @@ class BranchNormalization(ppl.Pass):
         return rewritten or None
 
     def _try_rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock) -> bool:
-        """Dispatch ``cb`` to the single-arm or disjoint two-arm rewrite.
-
-        :param sdfg: SDFG used for name resolution.
-        :param cb: the conditional block to attempt.
-        :returns: ``True`` if the SDFG changed (a rewrite, or a hoist ahead of a refused rewrite).
-        """
+        # Dispatch ``cb`` to the single-arm or disjoint two-arm rewrite.
         if self.is_multi_arm(cb) and self.flatten_multi_arm_block(cb):
             return True
-        # Hoist branch-invariant symbol bindings (frontend ``__sym_z1 = z1`` alias
-        # state) out of arms first -> "empty-assign -> compute" arm reduces to its
-        # one substantive state for the single-state ITE path. Branch-variant
-        # assignments stay + are refused downstream. The hoist stands on its own when
-        # the rewrite is then refused, so it is reported; a repeat hoist is a no-op.
+        # Hoist branch-invariant bindings (frontend ``__sym_z1 = z1`` alias state) out of arms so an arm
+        # reduces to its one substantive state. The hoist stands even if the rewrite is then refused.
         hoisted = self._hoist_branch_invariant_assignments(cb)
 
         branches = cb.branches
@@ -240,20 +232,7 @@ class BranchNormalization(ppl.Pass):
         return hoisted
 
     def _hoist_branch_invariant_assignments(self, cb: ConditionalBlock) -> bool:
-        """Hoist branch-invariant interstate symbol bindings out of each arm.
-
-        Frontend often starts an arm with an empty ``SDFGState`` whose only effect
-        is an interstate ``assignments`` binding (e.g. ``__sym_z1 = z1``).
-        Branch-invariant when its RHS is computable before ``cb`` (free symbols
-        not produced by any arm) and the bound symbol is neither a branch
-        predicate nor already bound differently on an edge entering ``cb``. Then it
-        has the same value in every arm, so moving it onto cb's in-edges is
-        value-preserving + reduces the arm to its substantive compute.
-        Branch-variant assignments stay + are refused by :meth:`_normalize_single_arm`.
-
-        :param cb: conditional block whose arms are simplified.
-        :returns: ``True`` if any assignment was hoisted.
-        """
+        # Hoist branch-invariant interstate symbol bindings out of each arm.
         parent = cb.parent_graph
         in_edges = list(parent.in_edges(cb))
         if not in_edges:
@@ -288,13 +267,8 @@ class BranchNormalization(ppl.Pass):
                     hoistable = False  # would change which branch is taken
                     break
                 if self._symbol_read_outside_arm(sym, br):
-                    # ``sym`` is live after ``cb``: this arm assigns it only on the taken path, so
-                    # hoisting to cb's unconditional in-edges also sets it on the bypass (implicit
-                    # else / other-arm) path -- NOT value-preserving. A single-arm ``if a[i] < 0: j
-                    # = i`` whose ``j`` a later ``b[0] = j`` reads is the miscompile this guards;
-                    # arm-local frontend aliases (``__sym_z1`` consumed only inside the arm) read
-                    # nothing outside and stay hoistable. Refusing just leaves the conditional for
-                    # ``_normalize_single_arm`` -- always correctness-safe.
+                    # ``sym`` is live after ``cb``: hoisting also sets it on the bypass path (``if a[i] < 0: j = i``
+                    # read later by ``b[0] = j``). Refusing leaves it to ``_normalize_single_arm``.
                     hoistable = False
                     break
                 for ie in in_edges:
@@ -307,11 +281,8 @@ class BranchNormalization(ppl.Pass):
                 continue
             for ie in in_edges:
                 ie.data.assignments.update(assigns)
-            # Drop the empty pass-through entry state, promote its successor as arm
-            # start_block so M3.1b's single-state guard accepts the arm. Else
-            # SameWriteSetIfElseToITECFG._matches misses two-arm same-write kernels
-            # whose arms begin with a symbol-binding empty state (cloudsc-snippet-one
-            # ``__sym_z1 = z1``).
+            # Drop the empty pass-through entry state so the single-state guard accepts the arm
+            # (cloudsc-snippet-one ``__sym_z1 = z1``).
             successor = e.dst
             br.remove_edge(e)
             br.remove_node(sb)
@@ -339,17 +310,7 @@ class BranchNormalization(ppl.Pass):
 
     @staticmethod
     def _sdfg_constant_binding(sdfg: dace.SDFG, sym: str, expr: str) -> bool:
-        """Whether ``sym = expr`` gives ``sym`` one value for the whole run of ``sdfg``.
-
-        Every binding of ``sym`` in ``sdfg`` is this expression, and it reads no symbol ``sdfg`` binds
-        and only constant in-bounds elements of containers ``sdfg`` never writes. Evaluating it
-        earlier, or on a path that skipped it, then changes no read and cannot fault.
-
-        :param sdfg: the SDFG whose bindings are inspected (not its nests: they have their own scope).
-        :param sym: the bound symbol.
-        :param expr: the bound expression, as a string.
-        :returns: ``True`` if the binding is constant over ``sdfg``.
-        """
+        # Whether ``sym = expr`` gives ``sym`` one value for the whole run of ``sdfg``.
         if sdfg.parent_nsdfg_node is not None and sym in sdfg.parent_nsdfg_node.symbol_mapping:
             return False
         bound = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
@@ -380,19 +341,7 @@ class BranchNormalization(ppl.Pass):
 
     @staticmethod
     def _symbol_read_outside_arm(sym: str, arm_body: ControlFlowRegion) -> bool:
-        """Whether ``sym`` is read anywhere outside ``arm_body``.
-
-        Walks the owning SDFG's interstate assignment RHSs / conditions, ``ConditionalBlock``
-        branch conditions, ``LoopRegion`` init/cond/update, and ``Tasklet`` code, skipping blocks
-        inside ``arm_body``. Used by :meth:`_hoist_branch_invariant_assignments` to keep a hoist
-        value-preserving: a binding whose symbol escapes the conditional must not move to the
-        unconditional in-edges. Mirrors the consumer scan in
-        ``same_write_set_if_else_to_ite_cfg._symbol_has_external_consumer``.
-
-        :param sym: the bound symbol under consideration.
-        :param arm_body: the arm whose binding would be hoisted.
-        :returns: ``True`` if any read of ``sym`` exists outside ``arm_body``.
-        """
+        # Whether ``sym`` is read anywhere outside ``arm_body``.
         sdfg = arm_body.sdfg
         only = {sym}
         inside_regions = set(arm_body.all_control_flow_regions(recursive=True))
@@ -429,16 +378,11 @@ class BranchNormalization(ppl.Pass):
 
     @staticmethod
     def _substantive_states(body: ControlFlowRegion) -> list[dace.SDFGState]:
-        """SDFGStates in ``body`` that hold compute (non-empty)."""
+        # SDFGStates in ``body`` that hold compute (non-empty).
         return [n for n in body.nodes() if isinstance(n, dace.SDFGState) and not n.is_empty()]
 
     def _arms_are_asymmetric(self, body0: ControlFlowRegion, body1: ControlFlowRegion) -> bool:
-        """Whether the two arms cannot use the symmetric single-state path.
-
-        True when arms differ in state count, or either arm is not a single
-        substantive ``SDFGState`` (e.g. an empty symbol-assignment entry state
-        preceding the body, as the python frontend emits).
-        """
+        # Whether the two arms cannot use the symmetric single-state path.
         if not (isinstance(body0, ControlFlowRegion) and isinstance(body1, ControlFlowRegion)):
             return False
         if len(body0.nodes()) != len(body1.nodes()):
@@ -505,7 +449,7 @@ class BranchNormalization(ppl.Pass):
         writes data ``c`` reads. TSVC s2710's ``if a[i] > b[i]: a[i] = a[i] + b[i]*d[i]``
         violates it: the second half re-reads the just-updated ``a``, so every lane whose
         update flipped the comparison takes BOTH arms and the else-arm stores land on
-        if-arm lanes. Snapshot the guard instead — evaluate it once into a per-lane bool
+        if-arm lanes. Snapshot the guard instead -- evaluate it once into a per-lane bool
         transient in a state inserted before ``cb`` (dominating both halves, and written
         nowhere else), and hand both halves a read of that transient.
 
@@ -534,7 +478,7 @@ class BranchNormalization(ppl.Pass):
         """
         local_sdfg: dace.SDFG = cb.sdfg
         # The guard usually names interstate symbols staging element reads (``a_index = a[i]``);
-        # expand them so the array dependence is visible. Read-only — nothing is pruned here.
+        # expand them so the array dependence is visible. Read-only -- nothing is pruned here.
         expanded = lifter._inline_interstate_scalar_symbols(local_sdfg, cond_text, exclude=set())[0]
         guard_names = symbolic.symbols_in_code(cond_text) | symbolic.symbols_in_code(expanded)
         if not self.arm_assigned_symbols(cb).isdisjoint(guard_names):
@@ -667,7 +611,7 @@ class BranchNormalization(ppl.Pass):
         Mostly a CFG rewrite: ``cb`` keeps the if-arm; a new negated single-arm
         block holds the else-arm, stitched sequentially after ``cb``. Later
         cycles normalize each single-arm form. Exactly one arm's writes take
-        effect — identical to the original if/else — PROVIDED the guard still
+        effect -- identical to the original if/else -- PROVIDED the guard still
         reads what it read before ``cb``, which
         :meth:`freeze_guard_for_serialization` guarantees.
 
@@ -701,31 +645,12 @@ class BranchNormalization(ppl.Pass):
 
     def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,
                               body: ControlFlowRegion) -> bool:
-        """Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes.
-
-        :param sdfg: SDFG for name resolution.
-        :param cb: single-arm conditional block (removed in place).
-        :param cond: arm condition.
-        :param body: arm body (one tasklet/access-node state).
-        :returns: ``True`` if normalized, ``False`` if the shape is unsupported.
-        :raises NotImplementedError: arm region carries an interstate assignment.
-            Wholesale lift makes that binding unconditional — value-preserving only
-            if every assigned symbol is consumed solely within the arm, which we
-            don't prove. Refuse loudly (conservative, like MapFission /
-            StateFusionExtended).
-        """
-        # An index guard (``if i < N - 1: ...`` over an enclosing loop/map symbol) is exactly
-        # what keeps this arm's own accesses in range; lifting the compute unconditional would
-        # fabricate the out-of-range read (lane ``i = N-1`` reading ``a[N]``). Masking, not
-        # if-conversion, is the correct lowering, so leave the block for the masking path -- the
-        # same refusal SameWriteSetIfElseToITECFG applies before us (shared detector).
+        # Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes. An index guard (``if i < N - 1``)
+        # keeps the arm's own accesses in range, so leave it for the masking path (shared detector).
         if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
             return False
-        # Arm may be a linear chain: empty entry states + one substantive compute
-        # state. Wholesale lift keeps structure, gates only escaping writes via ITE
-        # (side-effect-free compute runs unconditionally, ITE selects). But an
-        # interstate assignment is a conditional symbol binding: unconditional lift
-        # corrupts out-of-arm consumers. Arm-locality unproven -> refuse.
+        # The arm may be a linear chain of empty states + one compute state; lift it whole and gate only
+        # escaping writes. An interstate assignment is a conditional binding: unproven arm-locality refuses.
         states = [n for n in body.nodes() if isinstance(n, dace.SDFGState)]
         if len(states) != len(body.nodes()):
             return False
@@ -737,23 +662,15 @@ class BranchNormalization(ppl.Pass):
             # else the lift breaks downstream consumers.
             non_local = []
             for sym, rhs in e.data.assignments.items():
-                # AGENT FIX: a SELF-REFERENTIAL binding (``k = k + 1``) is a recurrence
-                # across arm EXECUTIONS. Every read may sit textually inside the arm
-                # (TSVC s343's compaction counter reads ``k`` only in ``k + 1`` and
-                # ``flat_2d_array[k]``, both in-arm) yet the value still crosses the
-                # enclosing loop's back edge, so an unconditional lift turns the
-                # compaction counter into a dense iteration counter.
+                # A self-referential binding (``k = k + 1``) crosses the loop back edge even when every read is
+                # in-arm (TSVC s343 compaction counter); lifting it would make it a dense counter.
                 if sym in symbolic.symbols_in_code(str(rhs)):
                     non_local.append(sym)
                 elif not self._symbol_is_arm_local(local_sdfg_for_arm, body, sym):
                     non_local.append(sym)
             if non_local:
-                # Arm conditionally binds a symbol read OUTSIDE it (loop-carried
-                # recurrence / argmax capture: TSVC s123 counter ``j``, s331
-                # find-last ``j``, s318 argmax ``index``/``maxv``). Unconditional
-                # lift would corrupt the recurrence. Such a loop is provably
-                # sequential (LoopToMap refuses it) -> never tiled, so refuse to
-                # normalize (leave scalar control flow) rather than raise.
+                # The arm binds a symbol read outside it (TSVC s123 counter, s331 find-last, s318 argmax). Such a
+                # loop is sequential and never tiled, so leave the control flow scalar instead of raising.
                 return False
         substantive = [s for s in states if not s.is_empty()]
         if not substantive:
@@ -763,13 +680,8 @@ class BranchNormalization(ppl.Pass):
                 if not isinstance(n, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
                     return False
 
-        # Arm may be a linear chain of substantive states (frontend serialises
-        # a multi-statement RMW body — cloudsc "tidy up" ``ptend_q += a; ...;
-        # ptend_q += b`` — into sequential states; StateFusionExtended refuses
-        # to fuse them due to WAR/RAW). Per-state ITE on every substantive
-        # state is value-preserving: cond false -> each ITE picks its running
-        # input (original propagates); cond true -> each increment applies.
-        # Straight-line only (no branching inside the arm).
+        # A chain of substantive states (cloudsc ``ptend_q += a; ...; ptend_q += b`` that state fusion
+        # refuses) takes a per-state ITE, which is value-preserving. Straight-line arms only.
         ordered = self._linear_state_order(body)
         if ordered is None:
             return False
@@ -817,17 +729,7 @@ class BranchNormalization(ppl.Pass):
 
     @staticmethod
     def _symbol_is_arm_local(sdfg: dace.SDFG, body: ControlFlowRegion, sym: str) -> bool:
-        """Whether ``sym``'s reads are confined to ``body`` (the arm region).
-
-        An arm-local binding lifts out safely: it becomes unconditional but no
-        consumer outside the arm reads it. A symbol referenced anywhere else
-        (sibling state, interstate edge, other arm) is NOT arm-local.
-
-        :param sdfg: SDFG that owns ``body`` and ``sym``.
-        :param body: arm region whose locality is checked.
-        :param sym: symbol name.
-        :returns: ``True`` iff every read of ``sym`` lives inside ``body``.
-        """
+        # Whether ``sym``'s reads are confined to ``body`` (the arm region).
         arm_blocks = set(body.all_control_flow_blocks(
             recursive=True)) if isinstance(body, ControlFlowRegion) else set(body.nodes())
         # Any reference to sym outside the arm disqualifies the lift.
@@ -877,13 +779,7 @@ class BranchNormalization(ppl.Pass):
 
     @staticmethod
     def _linear_state_order(body: ControlFlowRegion) -> list[ControlFlowBlock] | None:
-        """Execution-order block list iff ``body`` is a straight-line chain.
-
-        :param body: The arm region.
-        :returns: Blocks in execution order, or ``None`` if ``body``
-            branches, cycles, or has unreachable blocks (only a linear
-            chain is liftable by the per-state ITE composition).
-        """
+        # Execution-order block list iff ``body`` is a straight-line chain.
         start = body.start_block
         if start is None:
             return None
@@ -906,18 +802,7 @@ class BranchNormalization(ppl.Pass):
 
     def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
                                 body1: ControlFlowRegion) -> bool:
-        """Split a disjoint-write ``if/else`` into two sequential single-arm ``if`` s.
-
-        :param sdfg: SDFG for name resolution.
-        :param cb: two-arm conditional block.
-        :param cond0: ``if`` condition.
-        :param body0: ``if`` arm body.
-        :param body1: ``else`` arm body.
-        :returns: ``True`` if split (next sweep normalizes each half),
-            ``False`` if the shape is unsupported.
-        :raises NotImplementedError: arms have overlapping but non-identical
-            write subsets.
-        """
+        # Split a disjoint-write ``if/else`` into two sequential single-arm ``if`` s.
         # Refuse to even split an index-guarded ``if/else`` (see _normalize_single_arm): the
         # negated-else halves this produces would be flattened just the same, fabricating the
         # out-of-range read. Leave it whole for the masking path.
@@ -963,23 +848,7 @@ class BranchNormalization(ppl.Pass):
                           cond_text: str,
                           any_subset_str: str,
                           skip_cb: ConditionalBlock | None = None) -> tuple[str | None, dace.nodes.AccessNode | None]:
-        """Resolve the arm condition to ``(cond_array_name, cond_producer)``.
-
-        Materialises the boolean arm condition into an array (via
-        ``SameWriteSetIfElseToITECFG``), returns array name + producing access
-        node, or ``(None, None)`` if cond stays inline. Extracted so a multi-state
-        arm resolves ONCE — the resolver has a one-shot symbol-lift side effect;
-        re-resolving per state would bake stale cond text into later ITE tasklets.
-
-        :param sdfg: SDFG for name resolution.
-        :param state: State whose scope the cond is resolved against (multi-state
-            chain: first substantive state, so the producer precedes every
-            consumer).
-        :param cond_text: arm condition expression.
-        :param any_subset_str: representative write subset string.
-        :param skip_cb: conditional block whose conditions to exclude.
-        :returns: ``(cond_array_name, cond_producer)``.
-        """
+        # Resolve the arm condition to ``(cond_array_name, cond_producer)``.
         from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
             SameWriteSetIfElseToITECFG, )  # local import: avoids an import cycle at module load
         resolved = SameWriteSetIfElseToITECFG()._resolve_cond_to_array(sdfg,
@@ -997,23 +866,9 @@ class BranchNormalization(ppl.Pass):
                                *,
                                skip_cb: ConditionalBlock | None = None,
                                preresolved: tuple[str | None, dace.nodes.AccessNode | None] | None = None) -> None:
-        """Redirect each write in ``state`` through ``arr = ITE(cond, expr, arr)``.
-
-        :param sdfg: SDFG for name resolution.
-        :param state: lifted arm-body state.
-        :param write_subsets: ``{arr_name: subset}`` of escaping writes to gate.
-        :param cond_text: arm condition expression.
-        :param skip_cb: conditional block whose conditions to exclude when
-            resolving the cond symbol (forwarded to the cond resolver).
-        """
-        # Resolve cond once: the symbol-lift side effect (deleting the cond
-        # symbol's upstream assignment) must fire at most once across writes
-        # sharing the cond, else later iterations find it gone and bake cond
-        # text into later ITE tasklets. ``preresolved`` lets a multi-state
-        # caller resolve once (first substantive state) and feed the same
-        # ``(cond_array, producer)`` to every state; ``producer=None`` for
-        # non-producer states forces a fresh in-state read of the (earlier-
-        # computed) cond array — the only valid cross-state form.
+        # Redirect each write in ``state`` through ``arr = ITE(cond, expr, arr)``. Resolve cond once: the
+        # symbol lift deletes the upstream assignment. ``preresolved`` lets a multi-state caller share it;
+        # ``producer=None`` forces a fresh in-state read of the cond array.
         if preresolved is not None:
             cond_array_name, cond_producer = preresolved
         else:
@@ -1035,11 +890,7 @@ class BranchNormalization(ppl.Pass):
                 in_edges = [e for e in state.in_edges(write_an) if not e.data.is_empty()]
                 if not in_edges:
                     continue
-                # One AN can carry several writes, each its own subset -- cloudsc's ``zsolqa`` is
-                # written at two element subsets in one arm body, and state fusion brings both onto
-                # the same node. Each in-edge is an independent write of one element and gets its
-                # own gate; the loop is the only thing the multi-write case needs, since everything
-                # below already reads the subset off the edge in hand.
+                # One AN can carry several element writes (cloudsc ``zsolqa``); each in-edge gets its own gate.
                 for in_edge in in_edges:
                     self._gate_one_write(sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name,
                                          cond_producer)
@@ -1047,17 +898,7 @@ class BranchNormalization(ppl.Pass):
     def _gate_one_write(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, write_an: dace.nodes.AccessNode,
                         in_edge: MultiConnectorEdge[Memlet], cond_text: str, cond_array_name: str | None,
                         cond_producer: dace.nodes.AccessNode | None) -> None:
-        """Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
-
-        :param sdfg: SDFG the state belongs to, for name resolution.
-        :param state: the lifted arm-body state.
-        :param arr_name: the array written.
-        :param write_an: the access node the write lands on.
-        :param in_edge: the write edge to gate; its memlet carries the subset.
-        :param cond_text: arm condition expression, used when it has no array form.
-        :param cond_array_name: array holding the condition, or None.
-        :param cond_producer: the access node producing it, or None for a fresh read.
-        """
+        # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
         write_subset = in_edge.data.subset
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
@@ -1069,11 +910,8 @@ class BranchNormalization(ppl.Pass):
                                      find_new_name=True)
         tmp_an = state.add_access(tmp_name)
 
-        # ITE "old value" = ``arr_name`` BEFORE the writing tasklet ran.
-        # For chained RMW (``arr[s] = expr + arr[s]``) that's the AN the
-        # tasklet read via its own in-edge at the same subset; for non-RMW
-        # a fresh AN falls back to pre-state. Locate the chained source
-        # BEFORE redirecting the out-edge (need the tasklet's read pattern).
+        # ITE old value = ``arr_name`` before the writing tasklet ran: for chained RMW the AN the tasklet
+        # read at the same subset, else a fresh pre-state AN. Locate it before redirecting the out-edge.
         writer_tasklet = in_edge.src
         old_an = None
         if isinstance(writer_tasklet, dace.nodes.Tasklet):

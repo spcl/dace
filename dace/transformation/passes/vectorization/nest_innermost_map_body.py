@@ -35,7 +35,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     see one level down. Maps whose innermost trip is provably a multiple of ``vector_width``
     skipped by default (no remainder needed; wrapping perturbs downstream
     strided/gather detection). ``nest_provably_divisible=True`` nests them anyway
-    — masked-tail tile path needs a body NSDFG for the tile iteration mask.
+    -- masked-tail tile path needs a body NSDFG for the tile iteration mask.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -70,11 +70,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         return False
 
     def _trip_is_provably_divisible(self, map_entry: dace.nodes.MapEntry) -> bool:
-        """Innermost-dim trip provably a multiple of ``vector_width``?
-
-        :param map_entry: map entry whose innermost range is checked.
-        :returns: ``True`` iff trip provably divisible by ``vector_width``.
-        """
+        # Innermost-dim trip provably a multiple of ``vector_width``?
         if not map_entry.map.range.ranges:
             return False
         lb, ub, step = map_entry.map.range[-1]
@@ -89,17 +85,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         return False
 
     def _body_is_nested_reduction(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
-        """True if the body is already a nested reduction: one NestedSDFG plus only boundary
-        reduction AccessNodes (each with a WCR edge to the MapExit -- the partial
-        ``NormalizeWCRSource`` interposed on ``NSDFG -> AccessNode -[wcr]-> MapExit``).
-
-        Re-nesting such a body pulls the boundary WCR back inside, so the caller skips it -- the
-        pass stays idempotent on its own output.
-
-        :param state: the state holding the map.
-        :param map_entry: the map to inspect.
-        :returns: ``True`` iff the body is one NestedSDFG plus only boundary-reduction AccessNodes.
-        """
+        # True if the body is already a nested reduction: one NestedSDFG plus only boundary reduction AccessNodes (each
+        # with a WCR edge to the MapExit -- the partial ``NormalizeWCRSource`` interposed on ``NSDFG -> AccessNode
+        # -[wcr]-> MapExit``).
         map_exit = state.exit_node(map_entry)
         body = [
             k for k in map_body_nodes(state, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
@@ -115,29 +103,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             for k in others)
 
     def _strip_boundary_other_subsets(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
-        """Drop stale ``other_subset`` on the body-NSDFG's boundary edges.
-
-        ``nest_state_subgraph`` deep-copies the original boundary memlet for the
-        reconnected outer edge. If the body staged a global through a scalar element
-        (frontend ``c_slice``-style ``Scalar``), that memlet was a copy *into the
-        scalar* (``a[jk, jc] -> c_slice[0]``) carrying ``other_subset=[0]`` (rank-1
-        scalar side). The reconnected edge now feeds connector ``a`` (rank-2 ``(1,1)``
-        descriptor), and ``validate()`` resolves ``other_subset`` against the
-        memlet-path source AccessNode ``a`` (rank 2) -> rank-1 ``[0]`` fails
-        "other_subset does not match node dimension".
-
-        Boundary edge is a plain pass-through: inner descriptor already defines the
-        connector-side shape, so ``other_subset`` is redundant (same convention as
-        NSDFG/lib-node connector edges; downstream
-        :class:`~dace.transformation.interstate.expand_nested_sdfg_inputs.ExpandNestedSDFGInputs`
-        clears it when widening these memlets). Clearing here keeps the SDFG valid
-        immediately rather than transiently malformed.
-
-        ``data is None`` = structural dependency edge, not data movement -> skip.
-
-        :param state: state holding the freshly nested body NSDFG.
-        :param nsdfg_node: the body :class:`~dace.sdfg.nodes.NestedSDFG` node.
-        """
+        # Drop stale ``other_subset`` on the body-NSDFG's boundary edges.
         for edge in (*state.in_edges(nsdfg_node), *state.out_edges(nsdfg_node)):
             mem = edge.data
             if mem is None or mem.data is None:
@@ -163,11 +129,8 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         :param _: Unused pipeline results.
         :returns: Maps nested plus body-interior NestedSDFGs inlined, or ``None`` if neither.
         """
-        # Phase 1 -- SELECT (read-only). Classify every innermost map against the UNMUTATED SDFG. A
-        # shared ``scan_cache`` memoizes ``build_symbol_definition_map``'s whole-SDFG symbol scan by
-        # SDFG identity, so classifying N innermost maps is O(N), not O(N^2) (each call would else
-        # re-scan the entire SDFG -- the quadratic that made this pass slow on wide SDFGs). The cache
-        # is sound ONLY because nothing is nested in this phase: the SDFG is constant throughout.
+        # Phase 1, select (read-only): classify every innermost map on the unmutated SDFG. ``scan_cache``
+        # memoizes the whole-SDFG symbol scan, sound only because nothing is nested in this phase.
         scan_cache: dict = {}
         # Annotated: an untyped list infers its elements as ``Any``, which silently disables the type
         # checker over every loop below that consumes them.
@@ -197,16 +160,8 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             # plus only boundary reduction AccessNodes (each ``-[wcr]-> MapExit``).
             if self._body_is_nested_reduction(g, n):
                 continue
-            # DELIBERATELY ``all_nodes_between`` and not ``map_body_nodes``: on a body ending in
-            # a write-only scratch scalar the walk comes back empty and the map is left un-nested,
-            # which is what keeps the tile emitters away from it. Measured on a one-map SDFG whose
-            # body writes such a scalar: with the scope-based body the map is nested, the widener
-            # tiles it, and ``TileBinop`` validation then refuses the graph ("output-kind rule
-            # violated -- ``_c`` descriptor is not tile-shape") from the orchestrator's FINAL
-            # validate, outside its ``VectorizeUnsupported`` handler, so the whole vectorize leg
-            # dies instead of declining one kernel. Skipping is the safe answer until the widener
-            # can lower a dead-end scalar; ``RestoreUntiledMapStride`` gives the skipped map its
-            # unit step back, so the numbers stay right.
+            # Deliberately ``all_nodes_between``: a body ending in a write-only scratch scalar comes back empty
+            # and stays un-nested, since the widener cannot lower it yet; RestoreUntiledMapStride fixes the step.
             body_nodes = OrderedSet(node for node in g.all_nodes_between(n, g.exit_node(n))
                                     if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)))
             if not body_nodes:
@@ -229,40 +184,18 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             nested_bodies.append((nsdfg_node, is_tail))
         nested = len(nested_bodies)
         if nested:
-            # WCR sink that flowed from a tasklet now flows from the new NSDFG.
-            # CPU codegen only emits WCR for AccessNode sources -> interpose a
-            # private scalar via :class:`NormalizeWCRSource` to keep it visible. After this the
-            # reduction lives on the boundary ``NSDFG -> AccessNode -[wcr]-> MapExit`` chain (the
-            # AccessNode is in the PARENT state, so ``no_wcr_inside_nested_sdfgs`` allows it) and
-            # lowers to the OpenMP ``reduction(op:acc)`` clause.
+            # The WCR sink now flows from the NSDFG; interpose a private scalar (NormalizeWCRSource) so CPU
+            # codegen emits the boundary WCR as an OpenMP reduction.
             from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
             NormalizeWCRSource().apply_pass(sdfg, {})
-            # ``nest_state_subgraph`` also duplicates that reduction WCR onto the INNER body edge
-            # (``src -[wcr]-> acc``). A loose WCR inside the body NSDFG is not tile-foldable, so
-            # rewrite it -- ONLY inside each freshly-nested body -- to ``acc = acc <op> src`` (a
-            # tile-in + scalar-out reduction the walker folds via ``TileReduce``), leaving the
-            # boundary WCR untouched. A postamble tail keeps the per-iteration boundary WCR.
+            # Rewrite the WCR ``nest_state_subgraph`` duplicated onto the inner body edge to ``acc = acc <op> src``
+            # (foldable via TileReduce); the boundary WCR stays. Postamble tails keep it.
             for nsdfg_node, is_tail in nested_bodies:
                 lower_reduction_wcr_in_body(nsdfg_node.sdfg, tiled=not is_tail)
 
-        # Phase 3 -- FLATTEN the body interior. The walker never descends into a NestedSDFG *inside*
-        # a body, and neither lane-dep rule in ``WidenAccesses`` matches a NestedSDFG producer. A
-        # body holding one is therefore tiled around compute nothing sees: the map strides by W, the
-        # nested compute still runs once at the tile base, and a reduction addend stays a scalar so
-        # no ``TileReduce`` forms -- TSVC s4115/s4116 read ``0.0``. One flat unit is the
-        # postcondition the tile passes rely on, so establish it here. Reachable only now: while the
-        # body sat in the map scope ``InlineMultistateSDFG`` refused (``entry_node`` guard), and a
-        # gather index on an interstate edge (``ip_index = ip[i]``) keeps the body multi-state, out
-        # of ``InlineSDFG``'s reach. Safe by the phase-1 gate: ``is_vectorizable_map`` admits only
-        # innermost, loop-free bodies, so no sibling body NSDFG can be un-nested here.
-        #
-        # ``ExpandNestedSDFGInputs`` FIRST: ``InlineMultistateSDFG.can_be_applied`` refuses any NSDFG
-        # whose boundary subsets are not the full ``Range.from_array`` (its ``apply`` cannot offset
-        # inner memlets), so a per-iteration connector (``a[i]``) would make the inline a silent
-        # no-op and leave the body nested. Expanding widens those subsets and rebases the inner
-        # memlets, which is exactly the precondition the inline checks. The body's own boundary goes
-        # first: ``nest_state_subgraph`` sizes the body descriptors by their subsets, so an interior
-        # prefix read (``a[0:i + 1]`` of ``a[N]``) spans the whole descriptor and never expands.
+        # Phase 3, flatten the body interior: the walker never descends into an NSDFG inside a body, so it
+        # would tile around compute that runs once per tile (TSVC s4115/s4116). ExpandNestedSDFGInputs first,
+        # since InlineMultistateSDFG refuses non-full boundary subsets.
         flattened = 0
         for g, n in candidates:
             for node in map_body_nodes(g, n):
