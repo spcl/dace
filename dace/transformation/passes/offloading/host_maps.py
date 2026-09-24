@@ -15,6 +15,7 @@ from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_only_launches
 
 #: What a caller may pass as ``host_maps``:
 #:
@@ -24,31 +25,6 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 #: * ``True`` -- derive them with the built-in heuristics.
 #: * a list -- exactly these maps, each given as a map label or as the ``MapEntry`` itself.
 HostMapSpec = Optional[Union[bool, List[Union[str, nodes.MapEntry]]]]
-
-
-def is_computation(node: nodes.Node) -> bool:
-    """Only these compute: access nodes stage, map scopes and nested SDFGs launch, and interstate
-    edges and control-flow blocks prepare symbols, which is why neither is ever looked at."""
-    return isinstance(node, (nodes.Tasklet, nodes.LibraryNode))
-
-
-def sdfg_only_launches(sdfg: SDFG) -> bool:
-    """Every state computes only inside maps, and there is at least one.
-
-    ``states()`` recurses through regions and never yields an interstate edge.
-    """
-    found_map = False
-    for state in sdfg.states():
-        for node in state.scope_children()[None]:
-            if is_computation(node):
-                return False
-            if isinstance(node, nodes.MapEntry):
-                found_map = True
-            elif isinstance(node, nodes.NestedSDFG):
-                if not sdfg_only_launches(node.sdfg):
-                    return False
-                found_map = True
-    return found_map
 
 
 def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) -> bool:
