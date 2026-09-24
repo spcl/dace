@@ -52,6 +52,7 @@ from dace import SDFG, nodes, properties
 from dace.sdfg import SDFGState
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
@@ -69,18 +70,6 @@ def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
     rhs = stmt.value
     if isinstance(rhs, ast.BinOp) and type(rhs.op) in FOLDABLE_OPS:
         return type(rhs.op)
-    return None
-
-
-def _is_copy(tasklet: nodes.Tasklet) -> Optional[str]:
-    """Input connector if ``tasklet`` is a pure copy ``__out = __in``; else ``None``."""
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
-        return None
-    stmt = tasklet.code.code[0]
-    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
-        return None
-    if isinstance(stmt.value, ast.Name) and stmt.value.id in tasklet.in_connectors:
-        return stmt.value.id
     return None
 
 
@@ -118,7 +107,7 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
             continue
         if not isinstance(nxt.dst, nodes.Tasklet):
             return node, intermediates, copies
-        copy_conn = _is_copy(nxt.dst)
+        copy_conn = _copy_input_connector(nxt.dst)
         if copy_conn is None or nxt.dst_conn != copy_conn:
             return node, intermediates, copies
         copy_tasklet = nxt.dst
