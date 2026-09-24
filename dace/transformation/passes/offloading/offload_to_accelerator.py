@@ -338,7 +338,8 @@ class OffloadToAccelerator(ppl.Pass):
                                                                                     state,
                                                                                     node,
                                                                                     include_scalars=True,
-                                                                                    ordering=False)
+                                                                                    ordering=False,
+                                                                                    through_copies=False)
                 if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
                     continue
                 kernel = self.enclosing_kernel(scopes, node)
@@ -964,15 +965,18 @@ class OffloadToAccelerator(ppl.Pass):
                                                state: SDFGState,
                                                node: nodes.Node,
                                                include_scalars: bool = False,
-                                               ordering: bool = True) -> OrderedSet[str]:
+                                               ordering: bool = True,
+                                               through_copies: bool = True) -> OrderedSet[str]:
         """Data of the access nodes downstream of ``node``; ``ordering`` follows empty memlets too.
 
         Placement follows them, and relies on it (tsvc_2_5 ``reduce_inner_carry`` keeps its taskloop's
         output on the device that way). A write analysis must not: an empty memlet only orders, so the
-        scalars CloudSC orders after ``zpsupsatsrce`` are not written by the kernel before them.
+        scalars CloudSC orders after ``zpsupsatsrce`` are not written by the kernel before them. Nor
+        does it follow ``through_copies``: past the first non-view access node an edge is a copy the
+        host issues, so polybench durbin's staged ``alpha_host`` is not written by the kernel before it.
         """
 
-        def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
+        def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet[str]:
             # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node
             # refering back to A
             if node in visited_set:
@@ -995,6 +999,9 @@ class OffloadToAccelerator(ppl.Pass):
 
                 elif include_scalars and self._is_scalar(data_name, sdfg):
                     arrays.add(data_name)
+
+                if not through_copies and not self._is_view(data_name, sdfg):
+                    return arrays
 
             # check if more access nodes DOWNstream
             for edge in state.out_edges(node):
