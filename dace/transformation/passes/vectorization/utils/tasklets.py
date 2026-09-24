@@ -5,6 +5,7 @@
 path; the ``EmitCtx`` / ``_generate_code`` helpers pick per-template C++ from an
 operator classification, falling back to a scalar lane loop.
 """
+import ast
 from dataclasses import dataclass
 
 import dace
@@ -25,6 +26,22 @@ def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
     reaches the vectorizer.
     """
     return node.language == dace.dtypes.Language.Python
+
+
+def stripped_tasklet_body(node: 'dace.nodes.Tasklet') -> str:
+    """``node``'s code with surrounding whitespace and trailing ``;`` removed."""
+    return node.code.as_string.strip().rstrip(";").strip()
+
+
+def single_assignment(code: str) -> ast.Assign | None:
+    """Parse ``code`` and return its body iff it is one bare ``Assign``."""
+    try:
+        tree = ast.parse((code or "").strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return None
+    return tree.body[0]
 
 
 def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:

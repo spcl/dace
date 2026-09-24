@@ -14,7 +14,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
                                                                             no_strided_map_param_in_surviving_condition,
                                                                             tile_main_map_step_is_widths)
@@ -45,8 +45,7 @@ class StrideMapByTileWidths(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"StrideMapByTileWidths: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("StrideMapByTileWidths", widths)
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:

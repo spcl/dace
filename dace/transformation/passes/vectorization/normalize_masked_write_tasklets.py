@@ -34,6 +34,7 @@ import dace
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.sdfg.nodes import CodeBlock
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 # The name is owned by the unparser that gives it meaning, so the producer here and the C++
 # lowering can never drift apart.
 from dace.codegen.cppunparse import CONDITIONAL_WRITE_FUNC
@@ -155,13 +156,9 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         :param tasklet: The candidate tasklet.
         :returns: ``(out_conn, else_conn, cond_src, value_src)``, or ``None`` if it does not match.
         """
-        try:
-            tree = ast.parse((tasklet.code.as_string or "").strip())
-        except SyntaxError:
+        assign = single_assignment(tasklet.code.as_string)
+        if assign is None:
             return None
-        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-            return None
-        assign = tree.body[0]
         if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
             return None
         out_conn = assign.targets[0].id

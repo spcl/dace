@@ -303,9 +303,6 @@ _BRANCHED_REMAINDER = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
-#: Convergence cap for the per-NSDFG ``RefineNestedAccess`` re-check loop.
-_MAX_REFINE_ITERS = 8
-
 
 def expand_nested_sdfg_inputs_to_fixpoint(sdfg: dace.SDFG) -> int:
     """Apply :class:`ExpandNestedSDFGInputs` until no NestedSDFG matches, exactly as

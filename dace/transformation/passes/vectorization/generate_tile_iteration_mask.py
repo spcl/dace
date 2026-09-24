@@ -17,8 +17,8 @@ from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_nodes,
-                                                                           map_tile_widths)
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
+                                                                           map_body_nodes, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
                                                                           thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
@@ -55,8 +55,7 @@ class GenerateTileIterationMask(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"GenerateTileIterationMask: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("GenerateTileIterationMask", widths)
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:

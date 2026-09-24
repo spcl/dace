@@ -40,7 +40,7 @@ from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
 # Label suffix marking the fully-in-bounds interior a tile-remainder split
@@ -198,8 +198,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             ``tail_mode`` invalid.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"SplitMapForTileRemainder: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("SplitMapForTileRemainder", widths)
         if tail_mode not in ("masked", "masked_branch", "scalar", "tile_k1"):
             raise ValueError(f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in "
                              f"{{'masked', 'masked_branch', 'scalar', 'tile_k1'}}")

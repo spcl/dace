@@ -14,8 +14,8 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (is_gpu_resident_map, is_vectorizable_map,
-                                                                           map_tile_widths)
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_gpu_resident_map,
+                                                                           is_vectorizable_map, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -84,8 +84,7 @@ class MarkTileDims(ppl.Pass):
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"MarkTileDims: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("MarkTileDims", widths)
         self.widths = list(widths)
         self.skip_ineligible = skip_ineligible
         self.require_gpu_resident = require_gpu_resident

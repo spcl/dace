@@ -18,12 +18,13 @@ from dace import properties
 from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore,
                                     TileUnop)
 from dace.sdfg import SDFG
-from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import CodeBlock, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.tasklets import stripped_tasklet_body
+from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, map_tile_widths, tile_body_nsdfgs
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
                                                                             mask_connectors_are_bool,
                                                                             no_duplicate_connector_edges,
@@ -314,8 +315,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"ConvertTaskletsToTileOps: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("ConvertTaskletsToTileOps", widths)
         self.widths = tuple(widths)
         self.body_widths = self.widths
 
@@ -490,38 +490,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", combined, None, dace.Memlet(f"{name}[{subset}]"))
         return combined
 
-    def _body_nsdfgs(self, sdfg: SDFG):
-        """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
-
-        Mirror of the walker shape used by :class:`InsertTileLoadStore`.
-        Skips ``__scalar_tail`` (postamble step-1 loop) and ``__tile_k1_tail``
-        (pinned-K=1 postamble) since neither runs the K-D tile-op chain.
-        """
-        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                           TILE_K1_TAIL_MARKER)
-        for node, parent in sdfg.all_nodes_recursive():
-            if not isinstance(node, MapEntry):
-                continue
-            if not isinstance(parent, SDFGState):
-                continue
-            try:
-                if not is_vectorizable_map(parent, node, len(self.widths)):
-                    continue
-            except (StopIteration, ValueError):
-                continue
-            if len(node.map.params) < len(self.widths):
-                continue
-            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
-                continue
-            try:
-                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-            except (StopIteration, ValueError):
-                continue
-            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
-            if len(nsdfgs) != 1:
-                continue
-            yield parent, nsdfgs[0], node
-
     def _detect_binop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
         """If ``tasklet`` is a simple binary ``_out = _a <op> _b`` body, return
         ``(out_conn, a_conn, b_conn, op)``. Otherwise ``None``.
@@ -533,8 +501,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if len(tasklet.in_connectors) == 1:
             # Same-connector-twice shape: ``_out = _a <op> _a``.
-            body = tasklet.code.as_string
-            body = body.strip().rstrip(";").strip()
+            body = stripped_tasklet_body(tasklet)
             out_conn = next(iter(tasklet.out_connectors))
             a_conn = next(iter(tasklet.in_connectors))
             body = _normalize_python_tasklet_body(body)
@@ -549,8 +516,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if len(tasklet.in_connectors) != 2:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         body = _normalize_python_tasklet_body(body)
@@ -584,7 +550,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if tasklet.language is not dace.dtypes.Language.Python:
             return None
-        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        body = _normalize_python_tasklet_body(stripped_tasklet_body(tasklet))
         if body is None:
             return None
         out_conn = next(iter(tasklet.out_connectors))
@@ -607,8 +573,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
         body = _normalize_python_tasklet_body(body)
@@ -665,7 +630,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
-        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        body = _normalize_python_tasklet_body(stripped_tasklet_body(tasklet))
         if body is None or not body.startswith(f"{out_conn} = "):
             return None
         rhs = body[len(f"{out_conn} = "):].strip()
@@ -696,8 +661,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         if not body.startswith(f"{out_conn} = "):
             return None
@@ -844,8 +808,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -886,8 +849,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -946,8 +908,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
         # Explicit dtype cast ``_o = dace.float64(_a)`` → TileUnop whose op IS the dtype
@@ -1026,8 +987,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if len(other_conns) != 1:
             return None
         other_conn = other_conns[0]
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
                 forms = tuple(f"{out_conn} = {name}({x}, {y})" for name in _call_spellings(op)
@@ -1067,7 +1027,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if out_conn in tasklet.in_connectors:
             return None  # same-connector RMW -> _detect_reduction owns it
         a, b = list(tasklet.in_connectors)
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         matched_op = None
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
@@ -1129,8 +1089,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # (2, 3): one or zero Symbol arms.
         if n_in not in (1, 2, 3) or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         # Python ternary form -- 3 in-conn only.
@@ -1195,8 +1154,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
         if body in (f"{out_conn} = {a_conn}", f"{out_conn} = ({a_conn})"):
@@ -1276,7 +1234,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         for arr, idx in (in_conns, list(reversed(in_conns))):
@@ -1586,7 +1544,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         if not body.startswith(f"{out_conn} = "):
             return None
@@ -2278,7 +2236,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         :returns: Number of tasklets converted, or ``None`` if zero.
         """
         total = 0
-        for state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
+        for state, nsdfg_node, map_entry in tile_body_nsdfgs(sdfg, self.widths):
             self.body_widths = map_tile_widths(state, map_entry, self.widths)
             params = map_entry.map.params
             iter_vars = tuple(params[len(params) - len(self.body_widths):])

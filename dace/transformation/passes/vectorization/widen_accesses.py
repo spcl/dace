@@ -25,7 +25,6 @@ Downstream chain ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``G
 """
 import copy
 import re
-from collections.abc import Iterator
 from typing import Any
 
 import dace
@@ -35,13 +34,13 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import AccessNode, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, lane_widths, map_tile_widths, tile_body_nsdfgs
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             lane_dep_transients_widened,
@@ -173,8 +172,7 @@ class WidenAccesses(ppl.Pass):
 
     def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"WidenAccesses: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("WidenAccesses", widths)
         self.widths = tuple(widths)
 
     def modifies(self) -> ppl.Modifies:
@@ -185,41 +183,6 @@ class WidenAccesses(ppl.Pass):
 
     def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
-
-    def _body_nsdfgs(self, sdfg: SDFG) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
-        """Yield ``(state, nsdfg_node, map_entry, map_widths)`` per tile-tagged body NSDFG.
-
-        Same predicate as :class:`InsertTileLoadStore`. Skips ``__scalar_tail``
-        (sequential body) and ``__tile_k1_tail`` (pinned K=1) postambles.
-        """
-        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                           TILE_K1_TAIL_MARKER)
-        for node, parent in sdfg.all_nodes_recursive():
-            if not isinstance(node, MapEntry):
-                continue
-            if not isinstance(parent, SDFGState):
-                continue
-            try:
-                if not is_vectorizable_map(parent, node, len(self.widths)):
-                    continue
-            except (StopIteration, ValueError):
-                continue
-            if len(node.map.params) < len(self.widths):
-                continue
-            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
-                continue
-            try:
-                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-            except (StopIteration, ValueError):
-                continue
-            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
-            if len(nsdfgs) != 1:
-                continue
-            yield parent, nsdfgs[0], node, map_tile_widths(parent, node, self.widths)
-
-    def lane_widths(self, iter_vars: tuple[str, ...]) -> tuple[int, ...]:
-        """The innermost widths matching a map's tiled ``iter_vars``."""
-        return tuple(self.widths[len(self.widths) - len(iter_vars):])
 
     # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:
@@ -292,7 +255,7 @@ class WidenAccesses(ppl.Pass):
         through gather/scatter emission with a materialised idx tile of matching rank. Classifier
         returns ``PerDimKind.GATHER`` -> skip here.
         """
-        widths = self.lane_widths(iter_vars)
+        widths = lane_widths(self.widths, iter_vars)
         K = len(iter_vars)
         if sub is None:
             return None
@@ -736,7 +699,7 @@ class WidenAccesses(ppl.Pass):
 
         :returns: number of (AN, k) pairs seeded.
         """
-        widths = self.lane_widths(iter_vars)
+        widths = lane_widths(self.widths, iter_vars)
         seeded = 0
         # Fanout adds interstate assignments, so both caches are dropped after every success.
         scan_cache: dict[int, Any] = {}
@@ -973,7 +936,8 @@ class WidenAccesses(ppl.Pass):
             the SDFG, or ``None`` if zero.
         """
         total = 0
-        for _state, nsdfg_node, map_entry, map_widths in self._body_nsdfgs(sdfg):
+        for state, nsdfg_node, map_entry in tile_body_nsdfgs(sdfg, self.widths):
+            map_widths = map_tile_widths(state, map_entry, self.widths)
             K = len(map_widths)
             iter_vars = tuple(map_entry.map.params[len(map_entry.map.params) - K:])
             inner_sdfg = nsdfg_node.sdfg
@@ -993,7 +957,7 @@ class WidenAccesses(ppl.Pass):
             # A masked map reduction (``if c: acc op= x``) reaches here as ``NormalizeWCR``'s
             # seeded body-local accumulator + plain copyback, which -- left as a plain copy --
             # over-widens the scalar sink instead of folding. No-op on non-reduction bodies.
-            total += self._lower_reduction_copybacks(_state, nsdfg_node, inner_sdfg)
+            total += self._lower_reduction_copybacks(state, nsdfg_node, inner_sdfg)
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
             # A per-lane gather index that only reaches its subset through a staged scalar has

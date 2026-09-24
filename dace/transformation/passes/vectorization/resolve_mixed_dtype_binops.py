@@ -45,6 +45,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 #: Comparison ops produce ``bool`` regardless of operand dtype -- unify the operands but
 #: never cast the output (mirrors ``convert_tasklets_to_tile_ops._COMPARISON_BINOPS``).
@@ -69,13 +70,9 @@ def ite_operands(tasklet: nodes.Tasklet) -> tuple[str, list[str], str | None] | 
     """
     if len(tasklet.out_connectors) != 1:
         return None
-    try:
-        tree = ast.parse(tasklet.code.as_string.strip())
-    except SyntaxError:
+    assign = single_assignment(tasklet.code.as_string)
+    if assign is None:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    assign = tree.body[0]
     if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
         return None
     out_conn = assign.targets[0].id
@@ -97,13 +94,8 @@ def _is_logical(tasklet: nodes.Tasklet) -> bool:
 
     Its operands and result are bool by contract, so it takes no part in numeric promotion.
     """
-    try:
-        tree = ast.parse(tasklet.code.as_string.strip())
-    except SyntaxError:
-        return False
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return False
-    return isinstance(tree.body[0].value, ast.BoolOp)
+    assign = single_assignment(tasklet.code.as_string)
+    return assign is not None and isinstance(assign.value, ast.BoolOp)
 
 
 def _ite_arm_slots(rhs: ast.expr) -> list[tuple[ast.expr, Callable[[ast.expr], None]]] | None:
@@ -141,13 +133,9 @@ def masked_write_operand(tasklet: nodes.Tasklet) -> tuple[str, str] | None:
     """
     if len(tasklet.out_connectors) != 1:
         return None
-    try:
-        tree = ast.parse(tasklet.code.as_string.strip())
-    except SyntaxError:
+    assign = single_assignment(tasklet.code.as_string)
+    if assign is None:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    assign = tree.body[0]
     if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
         return None
     out_conn = assign.targets[0].id
@@ -176,13 +164,9 @@ def _binop_operands(tasklet: nodes.Tasklet) -> tuple[str, str, str, bool] | None
     """
     if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 2:
         return None
-    try:
-        tree = ast.parse(tasklet.code.as_string.strip())
-    except SyntaxError:
+    assign = single_assignment(tasklet.code.as_string)
+    if assign is None:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    assign = tree.body[0]
     if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
         return None
     out_conn = assign.targets[0].id
@@ -400,13 +384,9 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         instead of a dtype-mismatched store."""
         if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 1:
             return False
-        try:
-            tree = ast.parse(tasklet.code.as_string.strip())
-        except SyntaxError:
+        assign = single_assignment(tasklet.code.as_string)
+        if assign is None:
             return False
-        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-            return False
-        assign = tree.body[0]
         if (len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name)
                 or not isinstance(assign.value, ast.Name)):
             return False
@@ -516,13 +496,9 @@ class CastScalarIteLiteralArms(ppl.Pass):
         if len(out_edges) != 1:
             return False
         out_dt = sdfg.arrays[out_edges[0].data.data].dtype
-        try:
-            tree = ast.parse(tasklet.code.as_string.strip())
-        except SyntaxError:
+        assign = single_assignment(tasklet.code.as_string)
+        if assign is None:
             return False
-        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-            return False
-        assign = tree.body[0]
         slots = _ite_arm_slots(assign.value)
         if slots is None:
             return False
