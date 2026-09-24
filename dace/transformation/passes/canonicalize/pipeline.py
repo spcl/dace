@@ -154,67 +154,20 @@ def disable_openmp_sections(sdfg: SDFG) -> None:
 def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline.
 
-    Two phases, symbols first. The symbol phase is the established ``end``-stage quartet in its
-    established order: ``SymbolDedup`` merges interstate symbols that provably hold one value,
-    ``SymbolPropagation`` and ``ConstantPropagation`` re-fold the survivors (a merge exposes fresh
-    chains), and ``RemoveUnusedSymbols`` prunes what folding left unreferenced -- propagation
-    substitutes a value but leaves its defining name behind, so the prune belongs at the same
-    boundary that creates the garbage rather than only at ``end``. Running the quartet at every
-    boundary rather than one chosen point is the whole reason it is here: a consumer that compares
-    two subsets SYNTACTICALLY reads two names for one address as two locations and silently
-    declines, and ``AugAssignToWCR`` doing that to an indirect accumulate cost a kernel that
-    ABORTED at run time. One placement only protects the consumers that happen to sit after it.
+    Symbol phase: ``SymbolDedup``, ``SymbolPropagation``, ``ConstantPropagation``,
+    ``RemoveUnusedSymbols``, then ``SymbolDedup`` again LAST (propagation and the prune both mint
+    new mergeable pairs; 7 kernels kept one otherwise). It runs at every boundary because two
+    names for one address make syntactic subset tests (``AugAssignToWCR``) silently decline; that
+    once turned an indirect accumulate into a scatter that aborted at run time
+    (``scatter_accum_dup`` is the canary). Dedup costs 0.8% of canonicalize.
 
-    The structural phase then decides what the states are. ``StateFusionExtended`` applies ONCE
-    everywhere it matches rather than to a fixpoint: the design is cheap-per-boundary repeated
-    often, not a fixpoint at each of ~15 boundaries.
-    ``RedundantOrderingEdgeElimination`` runs last of all -- it is the only member that works
-    inside a state, and fusing two states is precisely what turns an ordering edge that was
-    load-bearing on its own into one the merged dataflow already implies; there is also no point
-    reducing the edges of a state ``DeadStateElimination`` is about to delete.
+    Structural phase: ``StateFusionExtended`` once everywhere (cheap per boundary, not a fixpoint),
+    ``RedundantOrderingEdgeElimination`` last, since fusion is what makes ordering edges redundant.
+    Fusion unions assignments, so duplicates it mints wait for the next boundary's symbol phase.
 
-    Fusion unions the interstate assignments of the states it merges, so it is itself a
-    duplicate-minting producer and a duplicate it mints at one boundary is not cleaned until the
-    symbol phase of the NEXT one. That is safe only while no syntactic-comparison consumer runs in
-    between; ``scatter_accum_dup`` is the canary for it, and pins the WCR that a stale duplicate
-    would cost.
-
-    ``SymbolDedup`` runs TWICE, and the second one is LAST in the phase -- after the prune, not
-    before it. Both facts are measured. Propagation and constant folding rewrite the assignments
-    the first dedup merged, which exposes fresh equal-RHS pairs it could not have seen; and
-    ``RemoveUnusedSymbols`` then DELETES assignments, which can make two previously-different
-    edge sets identical and so mint merge opportunities of its own (dedup merges only symbols
-    assigned on exactly the same set of edges). Closing the phase before the prune leaves those:
-    7 kernels still held a mergeable pair, ``scatter_accum_dup`` among them. Closing it after the
-    prune leaves none. ``SymbolDedup`` calls ``remove_symbol`` itself, so running it last costs no
-    dead descriptors.
-
-    A duplicate that survives the phase is not cosmetic: two names for one address is exactly what
-    makes ``AugAssignToWCR``'s syntactic same-slot test answer "different slots", which turned an
-    indirect accumulate into a guarded scatter that ``std::abort()``ed at run time. The failure is
-    severe and silent, and dedup is 0.8% of canonicalize.
-
-    Placement is deliberate and few, not every stage boundary. Cleanup is needed where a PHASE
-    ends and the next one reads the graph differently, and there are four such points, plus one
-    terminal:
-
-    * ``coalesce`` (x2) -- between the opening phases. The second is not a repeat: map fusion
-      rebuilds bodies as fresh single-state NestedSDFGs, and an un-inlined body hides its
-      per-element memlets behind a whole-array boundary memlet (polybench seidel_2d).
-    * ``lower`` -- the canonical representation is established here; every map is a LoopRegion.
-    * ``loop_to_scan`` -- closes the semantic-lifting band (``lift_inv`` / ``normalize_reduction``
-      / ``loop_to_symm`` / ``loop_to_scan``), before ``parallelize`` starts asking dependence
-      questions of what lifting left behind.
-    * ``reduction_to_wcr_map`` -- after the LoopToMap that turns the surviving loops into maps.
-    * ``fuse`` (x2) -- parallelization and map fusion. The first is load-bearing in its own
-      right: it is what puts the recombined branch's maps in one state for fusion to see.
-    * ``end`` -- the optimization tail (terminal LoopToMap, terminal fuse, redundant-array,
-      remat) is the one band whose output nothing else tidies.
-
-    ``SymbolSSA`` is deliberately NOT here. State fusion does union the interstate assignments of
-    the states it merges, so the phase can mint a chain assigning one symbol several times over --
-    but versioning those at every boundary buys nothing the runs after ``ShortLoopUnroll`` and at
-    ``ssa`` have not already bought, and this phase runs at nine of them.
+    Placed only where a phase ends: ``coalesce`` (x2; map fusion re-nests bodies, seidel_2d),
+    ``lower``, ``loop_to_scan``, ``reduction_to_wcr_map``, ``fuse`` (x2) and ``end``. ``SymbolSSA``
+    is not part of it: the runs after ``ShortLoopUnroll`` and at ``ssa`` already cover it.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
@@ -362,43 +315,20 @@ def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
 def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     """Graph preparation for maximal map fusion, run after the first ``LoopToMap``.
 
-    Two maps fuse only if they share a state, so everything that keeps states
-    apart has to go first. The recipe removes each blocker in turn, cheapest
-    and most-enabling first, because every removal exposes work for the next:
+    Maps fuse only within a state, so each blocker goes first, cheapest and most enabling first:
 
-    1. ``CascadeInterstateEdgeAssignmentsUp`` -- an assignment-bearing
-       interstate edge blocks ``StateFusionExtended``. Sifting the assignments
-       towards the graph entry frees the edges between the compute states.
-       This must re-run *here*: the earlier invocations are all pre-parallelize,
-       and ``InlineMultistateSDFG`` lifts fresh assignments into the top-level
-       region every time it flattens a lowered map body.
-    2. ``EmptyStateElimination`` -- splices out the empty states left between
-       them, merging the assignments the cascade could not lift onto the bypass
-       edge (rather than letting a single assignment pin two maps apart).
-    3. ``TrivialMapElimination`` -- a single-iteration map is not a parallel
-       scope, only a wrapper; dropping it lifts its body to the top level where
-       it can fuse with its neighbours.
-    4. ``EmptyLoopElimination`` -- the loops those rewrites empty out.
-    5. ``MoveIfIntoMap`` -- a guard *outside* a map keeps it in its own
-       ``ConditionalBlock``, unreachable for fusion; pushing the guard in
-       co-locates the map with its siblings. (``ConditionFusion``, later, only
-       merges guards that are already adjacent -- it cannot push one inward.)
-    6. structural cleanup -- fuse the states the steps above just freed and
-       inline the nestings, so the maps genuinely share a state.
-    7. ``ReverseMapTraversal`` then ``MinimizeStridePermutation`` then ``MapCollapse``
-       -- BEFORE fusing, in
-       that order, for two separate reasons. The permuter only walks chains of
-       single-parameter maps (``_collect_perfect_nest`` breaks on a multi-param
-       map and ``_reorder_nest`` needs two levels), so collapsing first would
-       hide every nest it exists to reorder. And collapsing before fusing is
-       what keeps differently-parallel statements apart: an N-dimensional map
-       no longer matches a sibling 1-D map for horizontal fusion, so a parallel
-       ``map[i, j]`` beside a carried ``map i: { loop j }`` survives instead of
-       being re-merged into one mixed-parallelism map.
-    8. ``DistributeTaskletIntoMap`` then ``MapFusionVertical`` / ``MapFusionHorizontal``
-       -- the payoff; the first clears a free tasklet that would block the pair.
-    9. ``MapCollapse`` again -- fusion can leave a freshly-perfect nest; folding
-       it to one N-dimensional map is the canonical fully-parallel form.
+    1. ``CascadeInterstateEdgeAssignmentsUp`` frees edges between compute states (re-run here:
+       ``InlineMultistateSDFG`` lifts fresh assignments on every flattened map body).
+    2. ``EmptyStateElimination`` splices out the empty states, merging leftover assignments.
+    3. ``TrivialMapElimination`` lifts single-iteration map bodies to the top level.
+    4. ``EmptyLoopElimination`` removes the loops those rewrites empty.
+    5. ``MoveIfIntoMap`` co-locates guarded maps with their siblings.
+    6. Structural cleanup so the maps share a state.
+    7. ``ReverseMapTraversal``, ``MinimizeStridePermutation``, ``MapCollapse`` before fusing: the
+       permuter needs single-parameter chains, and a collapsed N-D map no longer fuses with a 1-D
+       sibling, keeping differently parallel statements apart.
+    8. ``DistributeTaskletIntoMap``, then vertical / horizontal map fusion.
+    9. ``MapCollapse`` again for nests fusion made perfect.
 
     :returns: ``(stage_label, pass)`` pairs for the phase, in order.
     """
@@ -693,51 +623,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   semantic_lifting: bool = True) -> List[Tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
-    :param unroll_limit: Fully unroll constant-trip loops with at most this many
-                         iterations before the reduction/parallelize stages
-                         (``ShortLoopUnroll``; 0 disables).
-    :param peel_limit: Best-effort loop peeling before ``parallelize``
-                       (``BestEffortLoopPeeling``); 4 (default), 0 disables it. The
-                       per-loop-isolated, can-be-applied-pre-filtered search only
-                       fires on loops ``LoopToMap`` already refused, so it no-ops on
-                       the mappable majority; on by default to maximize parallelism.
-    :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
-                                  loops before ``parallelize`` (``BreakAntiDependence``);
-                                  on by default (it adds a transient + a copy, but
-                                  unlocks read-ahead WAR loops for ``LoopToMap``).
-    :param interchange_carry_with_map: ``LoopToScan`` knob (see
-                                       ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``
-                                       above): relocate the carry LoopRegion
-                                       INTO the per-column Map so the scan runs
-                                       sequential-per-thread. On for CPU, off
-                                       for GPU.
-    :param reconstruct_wavefront_nest: Rebuild an imperfect Map-plus-LoopRegion stencil
-                                       body into the single loop ``WavefrontSkew`` requires
-                                       (``ReconstructWavefrontNest``), right before it in the
-                                       ``loop_fuse`` stage; commits only on a proven skew.
-                                       Off by default on both targets (see ``CPU_DEFAULTS``).
-    :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
-                                          0-based begin, keeping the stride
-                                          (``NormalizeLoopAndMapOrigin``), right before the
-                                          ``loop_to_x`` stage -- BEFORE every ``LoopTo*`` lift so
-                                          they see the normalized shape. Off by default on both
-                                          targets (see ``CPU_DEFAULTS``).
+    Every map is lowered to a ``LoopRegion`` up front so canonicalization runs on one
+    representation; ``LoopToMap`` recovers parallelism near the end, then maps are fused.
+    ``SimplifyPass`` runs only in ``clean`` and around ``ShortLoopUnroll`` in ``reduce``; later
+    stages must stand on un-simplified input (between-stage cleanup is structural only).
 
-    Every map is lowered to a ``LoopRegion`` up front so all canonicalization
-    runs on a single representation (one fission/normalize/reduce path, no
-    map/loop duplication, no hybrids); ``LoopToMap`` recovers parallelism near
-    the end, then maps are fused. Returns ``(stage_label, pass)`` pairs with
-    fresh instances each call.
-
-    ``SimplifyPass`` runs at the very start, after the cleaning passes (unique
-    loop iterators, split tasklets, trivial-tasklet cleanup), and twice in the
-    ``reduce`` stage around ``ShortLoopUnroll`` to collapse the redundant
-    straight-line code an unroll produces -- never otherwise, and never after
-    ``reduce``. Between-stage structural cleanup is ``StateFusionExtended`` +
-    ``InlineSDFG`` instead; every stage past ``reduce`` therefore has to stand on
-    its own on un-simplified input.
-    ``LoopStridePermutation`` is an explicit no-op so the pipeline shape is
-    honest and slottable.
+    :param unroll_limit: Fully unroll constant-trip loops up to this many iterations (0 disables).
+    :param peel_limit: ``BestEffortLoopPeeling`` budget (0 disables); fires only on loops
+                       ``LoopToMap`` refused.
+    :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence loops.
+    :param interchange_carry_with_map: ``LoopToScan`` knob, see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``.
+    :param reconstruct_wavefront_nest: Run ``ReconstructWavefrontNest`` before ``WavefrontSkew``.
+    :param normalize_loop_and_map_origin: Rebase ranges to 0 before the ``LoopTo*`` lifts.
+    :returns: ``(stage_label, pass)`` pairs with fresh instances each call.
     """
     s: List[Tuple[str, ppl.Pass]] = []
 

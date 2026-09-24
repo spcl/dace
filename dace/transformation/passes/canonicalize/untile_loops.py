@@ -902,42 +902,15 @@ class UntileLoops(ppl.Pass):
         if needs_div_assumption:
             record_assumption(sdfg, sympy.Eq(sympy.Mod(K_expr, inner_stride), 0))
 
-        # Synthesise the new iterator with step = ``inner_stride`` and
-        # rewrite both loops in place. ``inner_stride == 1`` is the
-        # classic single-level untile (collapsed loop runs unit stride);
-        # ``inner_stride > 1`` is an intermediate cascade rung that the
-        # fixpoint pass collapses with its own inner on a subsequent
-        # iteration.
+        # New iterator with step ``inner_stride``; > 1 is a cascade rung collapsed on a later sweep.
         k_var = f"{UNTILE_PREFIX}{lowest_free_suffix(sdfg, (UNTILE_PREFIX, ))}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
-        # Exclusive upper bound for the collapsed iterator is the union of the
-        # tile spans the original nest actually visits. The outer walks tile
-        # origins ``ii = outer_start + m*K`` for every ``ii < stop`` (where
-        # ``stop = outer_end + 1`` is the outer's exclusive upper bound), and the
-        # inner covers ``[ii, ii + K)``. So the last visited element is
-        # ``last_origin + K`` where ``last_origin`` is the largest origin below
-        # ``stop`` -- i.e. the union end is ``stop`` rounded UP to the next tile
-        # boundary above ``outer_start``: ``outer_start + ceil((stop -
-        # outer_start) / K) * K``.
-        #
-        # When the tile evenly divides the span (the classic ``for i in
-        # range(0, N, K): for ii in range(0, K)`` shape with ``K | N``,
-        # ``outer_start == 0``) this reduces to exactly ``stop == N`` -- the old
-        # ``outer_end + 1`` formula. But a tiled stencil walks the interior with
-        # ``stop = LEN - 1 - K`` (NOT a tile multiple), so the last tile overshoots
-        # ``stop`` and ``outer_end + 1`` truncated the final tile (missed its tail
-        # rows/cols). The earlier ``outer_end + outer_stride`` over-shot the other
-        # way (a full extra tile). The round-up is the exact union.
-        #
-        # One shape rounds up to a WRONG bound: a rung that walks a fixed-width window carved out
-        # by an enclosing loop (``for iiii in range(iii, iii + T2, T3)`` inside the ``T2`` tile).
-        # There the window IS the union, and the source nest is only well formed when the rung
-        # divides it -- otherwise its own last tile overshoots the window, exactly as for the
-        # cascade-stride rung above. With a symbolic width the round-up cannot fold, so it leaves
-        # ``T3*int_ceil(T2, T3)`` where the enclosing rung expects ``T2``, and the next fixpoint
-        # sweep no longer recognises the pair (measured on ``jacobi2d_triple_tiled_sym``: the
-        # cascade stalled with two of three levels collapsed). Take the window as the union and
-        # record the divisibility, same contract as the stride rung.
+        # Exclusive bound = union of visited tiles: ``stop`` rounded up to a tile boundary above
+        # ``outer_start``. Equals ``N`` when ``K | N``; a tiled stencil's interior stop is not a tile
+        # multiple, so ``outer_end + 1`` would truncate the last tile.
+        # Exception: a rung walking a fixed window of an enclosing tile (``range(iii, iii + T2, T3)``)
+        # takes the window as the union and records divisibility, else the symbolic round-up stalls
+        # the cascade (jacobi2d_triple_tiled_sym).
         stop_excl = symbolic.simplify(outer_end + 1)
         span = symbolic.simplify(stop_excl - outer_start_sym)
         if clamped:

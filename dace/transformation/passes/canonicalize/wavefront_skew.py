@@ -95,49 +95,12 @@ SKEW_P_PREFIX = '_skew_p_'
 #: NOT better -- 256 leaves 3 tile columns at N=768, fewer than the thread count.
 DEFAULT_TILE_SIZE = 64
 
-#: Default extent of a skewed tile on each axis for the GPU lowering. A tile diagonal replaces one
-#: kernel launch per ELEMENT anti-diagonal with one per TILE anti-diagonal: at N = 16746 that is
-#: 523 launches instead of 33,491, and it restores unit stride to the innermost access, which the
-#: element diagonal walks N-1 elements (131 KB) apart -- a separate memory transaction per lane.
-#: 128 makes the intra-tile anti-diagonal at most 128 wide -- two CDNA wavefronts, the low end of
-#: the 2-4 warps a thread block wants. One wavefront per block leaves nothing for the scheduler to
-#: overlap against a memory stall; more than four buys nothing here, because the anti-diagonal
-#: ramps and the extra lanes are masked off for most of the tile.
-#:
-#: What the size actually trades, at N = 16746 (the campaign size):
-#:
-#:   B     launches   peak blocks   block width   CUs touched
-#:   64         523           262            64           262
-#:  128         261           131           128           131
-#:  256         131            66           256            66
-#:
-#: ``peak blocks * block width`` is ~N for every row, and so is the total barrier count: the
-#: dependence caps instantaneous parallelism at N however the nest is tiled, and tiling only
-#: changes the KIND of barrier. A bigger tile converts kernel launches into ``__syncthreads``,
-#: which are far cheaper; it also concentrates the work on fewer CUs, and this is a memory-bound
-#: stencil, so aggregate bandwidth pulls the other way.
-#:
-#: The end-to-end A/B through the benchmark could not separate 64 from 128 -- with the arms swapped
-#: to control for order it moved with the ARM ORDER, not the tile. A standalone kernel reproducing
-#: this exact schedule at n=22820, fp64, does separate them, and says SMALLER:
-#:
-#:   B      launches   tiles/diagonal   time
-#:   32         1427              714   43.27 ms
-#:   64          713              357   44.48 ms
-#:  128          357              179   47.18 ms
-#:  256          179               90   51.22 ms
-#:
-#: Monotonic in TILES PER DIAGONAL, which is what sets how many blocks are resident at once. The
-#: dependence caps instantaneous parallelism at about N, so 357 tiles x 64 lanes is ~23k threads on
-#: a device that wants ~300k: this kernel is parallelism-starved, and every step that shrinks the
-#: tile buys back occupancy. 64 rather than 32 because a 32-wide block is half a gfx942 wavefront
-#: and wastes half of every one; the 2.8% that costs is not worth the misalignment.
-#:
-#: NOT a bandwidth question, which is why staging the tile in shared memory does not help: the same
-#: kernel with all memory traffic removed still takes 11% of the runtime, and the real thing moves
-#: its ~8.3 GB at ~211 GB/s against ~3300 GB/s achievable here, so the neighbour reads are already
-#: cache-resident. Staging measured 0.79x at B=64 -- an extra load phase, store phase and two
-#: barriers on a 127-step critical path cost more than the traffic they save at this occupancy.
+#: Default skewed-tile extent per axis for the GPU lowering. One launch per TILE anti-diagonal
+#: instead of per element (N = 16746: 523 launches, not 33,491) and unit innermost stride.
+#: The dependence caps parallelism near N whatever the tiling; the kernel is parallelism-starved,
+#: so smaller tiles win on occupancy (standalone, n=22820 fp64: B=32/64/128/256 ->
+#: 43.3/44.5/47.2/51.2 ms). 64, not 32: a 32-wide block wastes half a gfx942 wavefront. Not
+#: bandwidth-bound (~211 of ~3300 GB/s); shared-memory staging measured 0.79x at B=64.
 DEFAULT_GPU_TILE_SIZE = 64
 
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the

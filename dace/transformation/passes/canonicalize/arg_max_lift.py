@@ -185,33 +185,10 @@ CMP_AST_TO_RTYPE = {
 
 
 class _Match(NamedTuple):
-    """A successfully matched argmax/argmin loop.
-
-    :param op: ``Max`` or ``Min``.
-    :param loop: The :class:`LoopRegion` to rewrite.
-    :param parent: ``loop.parent_graph`` (cached).
-    :param carrier_name: The carrier scalar's data name (``x`` in s314).
-    :param carrier_kind: ``'scalar'`` or ``'length_one_array'``.
-    :param carrier_subset: The carrier's single-point subset (``[0]``).
-    :param input_array: The reduced-over array's data name (``a`` in s314).
-    :param iter_start: Loop start expression.
-    :param iter_end: Loop inclusive end expression.
-    :param idx_carrier_name: The index carrier symbol (``index`` in s315), when
-        the true-branch ALSO tracks the argmax/argmin position; ``None`` for the
-        value-only shape. Only the symbol-carrier path supports it (the index is
-        bound via an iedge, like the value carrier).
-    :param gather_base: Constant term ``b`` of the affine gather index
-        ``a[b + c*i]`` (``0`` for the plain ``a[i]`` gather).
-    :param gather_coeff: Loop-variable coefficient ``c`` of the affine gather
-        index (``1`` for the plain ``a[i]`` gather; a non-unit / symbolic ``c``
-        is the strided gather of TSVC s318, where ``c = inc``).
-    :param last_wins: True iff an index is tracked AND the resolved tie rule is
-        last-occurrence -- under the default ``tie_break='infer'`` that is
-        exactly "the guard is NON-STRICT (``>=`` / ``<=``)", i.e. the sequential
-        loop keeps the LAST occurrence of the extreme. The rewrite then
-        arg-reduces over the REVERSED gather (see the module docstring's
-        tie-breaking note). ``False`` -> first-occurrence, the plain forward
-        arg-reduce. Resolved by :meth:`ArgMaxLift._resolve_last_wins`.
+    """A matched argmax/argmin loop. Fields are the carrier (``x`` in s314) and input array, the
+    loop bounds, the optional index carrier (``index`` in s315, symbol carriers only), the optional
+    unary gather transform, the affine gather ``a[gather_base + gather_coeff*i]`` (s318: ``c = inc``)
+    and ``last_wins`` (non-strict guard under ``tie_break='infer'``: reduce over the reversed gather).
     """
     op: dtypes.ReductionType
     loop: LoopRegion
@@ -230,33 +207,11 @@ class _Match(NamedTuple):
 
 
 class _Match2D(NamedTuple):
-    """A matched 2-D contiguous argmax/argmin over a nested ``for i: for j:`` loop.
+    """A matched 2-D contiguous argmax/argmin over ``for i: for j:`` (TSVC s3110 / s13110).
 
-    The TSVC ``s3110`` / ``s13110`` shape: a value carrier ``maxv`` plus two index
-    carriers ``xindex := i`` (outer) / ``yindex := j`` (inner), all symbols,
-    updated together inside ``if aa[i, j] OP maxv``. When the full ``aa[i, j]``
-    access is a contiguous subset, the nested reduction is a single flat
-    arg-reduce over ``aa`` viewed as 1-D; the flat index ``m`` decomposes back to
-    ``xindex = m // ncols`` / ``yindex = m % ncols`` (``ncols`` = the contiguous /
-    inner dimension size).
-
-    :param op: ``Max`` or ``Min``.
-    :param outer_loop: The outer (``i``) LoopRegion -- the rewrite removes it
-        (and the inner loop it contains).
-    :param inner_loop: The inner (``j``) LoopRegion.
-    :param parent: ``outer_loop.parent_graph`` (cached).
-    :param carrier_name: The value carrier symbol (``maxv``).
-    :param x_idx_name: The outer index carrier symbol (``xindex := i``).
-    :param y_idx_name: The inner index carrier symbol (``yindex := j``).
-    :param input_array: The reduced-over 2-D array (``aa``).
-    :param ncols: The contiguous (inner) dimension size used to decompose the
-        flat index -- ``aa.shape[1]`` for a C-contiguous array.
-    :param last_wins: True iff the resolved tie rule is last-occurrence -- under
-        the default ``tie_break='infer'`` that is exactly "the guard is
-        NON-STRICT (``>=`` / ``<=``)", i.e. the sequential nest keeps the LAST
-        (row-major) occurrence of the extreme; the rewrite then arg-reduces over
-        the reversed flat order. The 2-D nest always tracks both indices, so the
-        knob always applies here.
+    Value carrier plus ``xindex := i`` / ``yindex := j``; the nest becomes one flat arg-reduce over
+    ``aa`` whose index ``m`` decomposes to ``m // ncols`` / ``m % ncols``. ``last_wins`` as in
+    :class:`_Match`, always applicable here.
     """
     op: dtypes.ReductionType
     outer_loop: LoopRegion
