@@ -139,6 +139,86 @@ def test_state_boundaries_data_race() -> None:
             tn.TaskletNode] == [type(n) for n in stree.children]
 
 
+def _save_overwrite_restore_tree() -> tn.ScheduleTreeRoot:
+    """
+    A loop that saves an element to a temporary, overwrites the element, and restores it from the temporary, i.e.,
+    leaves ``A`` unchanged.
+    """
+    loop = LoopRegion(label='save_restore_loop',
+                      loop_var='i',
+                      initialize_expr=CodeBlock('i = 0'),
+                      condition_expr=CodeBlock('i < 20'),
+                      update_expr=CodeBlock('i = i + 1'))
+    return tn.ScheduleTreeRoot(
+        name='save_overwrite_restore',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
+            'tmp': data.Array(dace.float64, [1], transient=True),
+        },
+        children=[
+            tn.ForScope(
+                loop=loop,
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('save', {'inp'}, {'out'}, 'out = inp'), {'inp': dace.Memlet('A[i]')},
+                                   {'out': dace.Memlet('tmp[0]')}),
+                    tn.TaskletNode(nodes.Tasklet('overwrite', {'inp'}, {'out'}, 'out = 2 * inp'),
+                                   {'inp': dace.Memlet('B[i]')}, {'out': dace.Memlet('A[i]')}),
+                    tn.TaskletNode(nodes.Tasklet('restore', {'inp'}, {'out'}, 'out = inp'),
+                                   {'inp': dace.Memlet('tmp[0]')}, {'out': dace.Memlet('A[i]')}),
+                ],
+            )
+        ],
+    )
+
+
+def test_state_boundaries_save_overwrite_restore() -> None:
+    # The node after a state boundary starts the new state, so its write must be ordered with the restore
+    stree = t2s._insert_state_boundaries_to_tree(_save_overwrite_restore_tree())
+    loop = stree.children[-1]
+    assert isinstance(loop, tn.ForScope)
+    assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode, tn.StateBoundaryNode,
+            tn.TaskletNode] == [type(n) for n in loop.children]
+
+
+def test_state_boundaries_write_after_unrelated_read() -> None:
+    # The last write of A[1] depends neither on the first write nor on the read of A[1], so it may race with both
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
+            'C': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('write', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('read', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[0]')}),
+            tn.TaskletNode(nodes.Tasklet('write_again', {'inp'}, {'out'}, 'out = inp + 1'),
+                           {'inp': dace.Memlet('C[0]')}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert [tn.TaskletNode, tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
+
+
+@pytest.mark.parametrize('simplify', (False, True))
+def test_save_overwrite_restore_values(simplify: bool) -> None:
+    sdfg = _save_overwrite_restore_tree().as_sdfg(simplify=simplify, validate=True)
+    sdfg.name = f'save_overwrite_restore_{int(simplify)}'
+
+    # The overwrite and the restore must not write the same element in the same state
+    for state in sdfg.all_states():
+        labels = {n.label for n in state.nodes() if isinstance(n, nodes.Tasklet)}
+        assert not {'overwrite', 'restore'} <= labels
+
+    a = np.arange(20, dtype=np.float64)
+    b = np.full(20, 100.0)
+    sdfg(A=a, B=b)
+    assert np.array_equal(a, np.arange(20, dtype=np.float64))
+
+
 def test_state_boundaries_cfg() -> None:
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
@@ -1330,6 +1410,10 @@ if __name__ == '__main__':
     test_state_boundaries_war()
     test_state_boundaries_read_write_chain()
     test_state_boundaries_data_race()
+    test_state_boundaries_save_overwrite_restore()
+    test_state_boundaries_write_after_unrelated_read()
+    test_save_overwrite_restore_values(simplify=False)
+    test_save_overwrite_restore_values(simplify=True)
     test_state_boundaries_cfg()
     test_state_boundaries_state_transition()
     test_state_boundaries_propagation(boundary=False)
