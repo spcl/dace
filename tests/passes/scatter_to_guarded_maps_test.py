@@ -513,6 +513,33 @@ def test_else_branch_dispatcher_emits_both_branches():
                                              f'got loops={len(par_loops)}, maps={par_maps}')
 
 
+def test_parallel_branch_keeps_loop_scratch_transients_private_to_each_iteration():
+    """The sequential clone must not share the loop's scratch scalars (``a_slice = b[i] + c[i]*d[i]``)
+    with the parallel branch: a shared one stays outside the lifted map, so every iteration writes the
+    same scalar (a vectorized body then stores lane 0's value to every lane's slot)."""
+    from dace.sdfg.state import ConditionalBlock
+    sdfg = tsvc_s491.to_sdfg(simplify=True)
+    n = 32
+    rng = np.random.default_rng(3)
+    b, c, d = rng.random(n), rng.random(n), rng.random(n)
+    ip = _make_permutation(n, seed=7).astype(np.int32)
+    expected = np.zeros(n)
+    expected[ip] = b + c * d
+    a = np.zeros(n)
+
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+
+    sdfg.validate()
+    cb = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock))
+    par_body = cb.branches[1][1]
+    par_names = {dn.data for st in par_body.all_states() for dn in st.data_nodes()}
+    assert par_names == {'a', 'b', 'c', 'd', 'ip'}
+    seq_names = {dn.data for st in cb.branches[0][1].all_states() for dn in st.data_nodes()}
+    assert 'a_slice' not in seq_names and 'a_slice_seq' in seq_names
+    sdfg(a=a, b=b, c=c, d=d, ip=ip, N=n)
+    assert np.allclose(a, expected)
+
+
 # assume_no_conflicts=True: skip the guard entirely
 
 

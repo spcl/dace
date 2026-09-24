@@ -1157,6 +1157,33 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
     return idx_conns
 
 
+def privatize_clone_local_transients(owner_sdfg: SDFG, loop: LoopRegion, clone: LoopRegion) -> None:
+    """Give ``clone`` its own copy of every transient that only ``loop`` accesses.
+
+    A deep-copied loop still names the original's containers, so a scratch transient of the loop body
+    (``a_slice = b[i]; a[ip[i]] = a_slice``) gains an access node outside ``loop``. ``LoopToMap`` then no
+    longer sees it as loop-local, does not privatize it into the map body, and -- lifting under the
+    permissive scatter contract -- lets every iteration share one scalar. Renaming the clone's copy
+    keeps the transient loop-local for the lift; only one branch of the dispatcher ever runs.
+
+    :param owner_sdfg: The SDFG whose arrays ``loop`` accesses directly.
+    :param loop: The loop about to be lifted to a map.
+    :param clone: The deep copy of ``loop``, already placed in the dispatcher.
+    """
+    loop_states = set(loop.all_states())
+    clone_states = set(clone.all_states())
+    loop_names = {n.data for st in loop_states for n in st.data_nodes() if owner_sdfg.arrays[n.data].transient}
+    outside_names = {
+        n.data
+        for st in owner_sdfg.states() if st not in loop_states and st not in clone_states for n in st.data_nodes()
+    }
+    repl: Dict[str, str] = {}
+    for name in sorted(loop_names - outside_names):
+        repl[name] = owner_sdfg.add_datadesc(name + '_seq', copy.deepcopy(owner_sdfg.arrays[name]), find_new_name=True)
+    if repl:
+        clone.replace_dict(repl)
+
+
 def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str) -> None:
     """Replace ``loop`` in ``parent`` with a ``ConditionalBlock`` that picks
     between a sequential clone (taken when ``condition_expr`` is true -- the
@@ -1205,6 +1232,7 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str) -> N
 
     cb.add_branch(condition_expr, seq_branch)
     cb.add_branch(None, par_branch)
+    privatize_clone_local_transients(parent.sdfg, loop, sequential_clone)
 
     for e in in_edges:
         parent.add_edge(e.src, cb, e.data)
