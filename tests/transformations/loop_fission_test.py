@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
@@ -924,6 +924,47 @@ def test_dependence_aware_grouping_disjoint_same_data():
     symbolic.symbol('i')  # ensure the symbol exists for the SMT oracle
     groups = _independent_groups(state, loop, sdfg, sibling_check=False)
     assert len(groups) == 2, f"expected 2 independent groups, got {len(groups)}"
+
+
+@dace.program
+def two_splittable_loops(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+                         D: dace.float64[N]):
+    for i in range(N):
+        A[i] = a[i] + 1.0
+        B[i] = a[i] * 2.0
+    for i in range(N):
+        C[i] = a[i] - 1.0
+        D[i] = a[i] * 3.0
+
+
+def test_fission_splits_only_the_loop_it_is_given():
+    n = 8
+    args = dict(a=np.random.rand(n), A=np.zeros(n), B=np.zeros(n), C=np.zeros(n), D=np.zeros(n))
+    sdfg = two_splittable_loops.to_sdfg(simplify=True)
+    ref = {k: v.copy() for k, v in args.items()}
+    copy.deepcopy(sdfg)(**ref, N=n)
+    first, second = [b for b in sdutil.dfs_topological_sort(sdfg) if isinstance(b, LoopRegion)]
+
+    assert LoopFission.can_fission(first)
+    assert LoopFission.fission(first)
+
+    sdfg.validate()
+    assert _loop_count(sdfg) == 3
+    assert second in sdfg.nodes() and len(second.nodes()) == 1
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        assert np.allclose(out[k], ref[k]), k
+
+
+def test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged():
+    sdfg = loop_carried.to_sdfg(simplify=True)
+    (loop, ) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
+    before = sdfg.to_json()
+
+    assert not LoopFission.can_fission(loop)
+    assert not LoopFission.fission(loop)
+    assert sdfg.to_json() == before
 
 
 if __name__ == '__main__':

@@ -274,5 +274,36 @@ def test_imperfect_nest_keeps_the_cfg_list_of_a_fresh_reset():
         assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d), cval
 
 
+def test_push_moves_only_the_guard_it_is_given():
+    """Of two stacked guards, pushing the inner one leaves the outer one guarding the loop it now wraps."""
+    n = 9
+    a = np.random.rand(n)
+    base = nested_guards.to_sdfg(simplify=True)
+    sdfg = nested_guards.to_sdfg(simplify=True)
+    (outer, ) = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    (inner, ) = [c for c in _conds(sdfg) if c is not outer]
+
+    assert MoveIfIntoLoop.push(inner)
+
+    sdfg.validate()
+    (loop, ) = _loops(sdfg)
+    assert loop.parent_graph is outer.branches[0][1]
+    for cval, dval in ((1, 2.0), (1, 50.0), (0, 2.0)):
+        ref, out = np.full(n, 4.0), np.full(n, 4.0)
+        scalars = dict(c=np.array([cval], np.int32), d=np.array([dval], np.float64), N=n)
+        copy.deepcopy(base)(a=a.copy(), b=ref, **scalars)
+        sdfg(a=a.copy(), b=out, **scalars)
+        assert np.allclose(out, ref), (cval, dval)
+
+
+def test_push_refuses_a_guard_that_reads_the_loop_variable():
+    sdfg = loop_var_in_cond.to_sdfg(simplify=True)
+    (cond, ) = _conds(sdfg)
+    before = sdfg.to_json()
+
+    assert not MoveIfIntoLoop.push(cond)
+    assert sdfg.to_json() == before
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

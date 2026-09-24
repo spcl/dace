@@ -89,62 +89,71 @@ def _free(expr: str) -> set:
         return set()
 
 
-def _match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
-    """Find a ``ConditionalBlock`` guarding (loop-invariant prep then) a loop.
+def match_guard(cb: ConditionalBlock) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
+    """Match ``cb`` as a guard over (loop-invariant prep then) a loop.
 
-    :returns: ``(cond_block, condition, region)`` or ``None``.
+    :param cb: The conditional block to match.
+    :returns: ``(cb, condition, region)`` or ``None``.
     """
-    for cb in sdfg.all_control_flow_regions(recursive=True):
-        if not isinstance(cb, ConditionalBlock) or len(cb.branches) != 1:
-            continue
-        cond, region = cb.branches[0]
-        if cond is None or not isinstance(region, ControlFlowRegion):
-            continue  # single branch, real condition, no else
-        order = _linear_order(region)
-        if order is None or not isinstance(order[-1], LoopRegion):
-            continue
-        loop = order[-1]
-        prep = order[:-1]
-        if any(not isinstance(p, SDFGState) for p in prep):
-            continue
-        lvar = str(loop.loop_variable)
-        loop_w = _written(loop)
-        cfree = {str(s) for s in cond.get_free_symbols()}
-        if lvar in cfree or (cfree & loop_w):
-            continue  # condition loop-invariant
-        # Prep states + the chain's edge assignments must be loop-invariant:
-        # not depend on the loop var, not clobber loop-written data. They must
-        # also not *produce* anything the loop's own bounds consume: _move sinks
-        # the prep into the loop body, so a prep that computes a bound (e.g. a
-        # materialized ``LEN_1D_minus_k = LEN_1D - k`` feeding ``i < LEN_1D_minus_k``)
-        # would leave that bound uninitialized at the first condition check.
-        bound_syms = _loop_bound_symbols(loop)
-        bad = False
-        for p in prep:
-            acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
-            if lvar in acc or (_state_writes(p) & loop_w) or (_state_writes(p) & bound_syms):
-                bad = True
-            # ``_move`` re-runs the prep every iteration, so a prep that READS what the loop
-            # writes is not idempotent (subset_sum re-snapshots ``prev[:] = ways`` mid-update).
-            if _state_reads(p) & loop_w:
-                bad = True
-        # Also idempotent w.r.t. itself. Staged computation is fine; an UPWARD-EXPOSED read of a
-        # container the chain then updates applies the update N times (eigh's ``bw``).
-        exposed, defined = set(), set()
-        for p in prep:
-            exposed |= upward_exposed_reads(p) - defined
-            defined |= _state_writes(p)
-        if exposed & defined:
+    if len(cb.branches) != 1:
+        return None
+    cond, region = cb.branches[0]
+    if cond is None or not isinstance(region, ControlFlowRegion):
+        return None  # single branch, real condition, no else
+    order = _linear_order(region)
+    if order is None or not isinstance(order[-1], LoopRegion):
+        return None
+    loop = order[-1]
+    prep = order[:-1]
+    if any(not isinstance(p, SDFGState) for p in prep):
+        return None
+    lvar = str(loop.loop_variable)
+    loop_w = _written(loop)
+    cfree = {str(s) for s in cond.get_free_symbols()}
+    if lvar in cfree or (cfree & loop_w):
+        return None  # condition loop-invariant
+    # Prep states + the chain's edge assignments must be loop-invariant:
+    # not depend on the loop var, not clobber loop-written data. They must
+    # also not *produce* anything the loop's own bounds consume: _move sinks
+    # the prep into the loop body, so a prep that computes a bound (e.g. a
+    # materialized ``LEN_1D_minus_k = LEN_1D - k`` feeding ``i < LEN_1D_minus_k``)
+    # would leave that bound uninitialized at the first condition check.
+    bound_syms = _loop_bound_symbols(loop)
+    bad = False
+    for p in prep:
+        acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
+        if lvar in acc or (_state_writes(p) & loop_w) or (_state_writes(p) & bound_syms):
             bad = True
-        for e in region.edges():
-            for lhs, rhs in e.data.assignments.items():
-                if lhs in loop_w or lhs in bound_syms or lvar in _free(rhs) or (_free(rhs) & loop_w):
-                    bad = True
-                if lhs in _free(rhs):
-                    bad = True  # self-referential: accumulates over iterations
-        if bad:
-            continue
-        return cb, cond, region
+        # ``_move`` re-runs the prep every iteration, so a prep that READS what the loop
+        # writes is not idempotent (subset_sum re-snapshots ``prev[:] = ways`` mid-update).
+        if _state_reads(p) & loop_w:
+            bad = True
+    # Also idempotent w.r.t. itself. Staged computation is fine; an UPWARD-EXPOSED read of a
+    # container the chain then updates applies the update N times (eigh's ``bw``).
+    exposed, defined = set(), set()
+    for p in prep:
+        exposed |= upward_exposed_reads(p) - defined
+        defined |= _state_writes(p)
+    if exposed & defined:
+        bad = True
+    for e in region.edges():
+        for lhs, rhs in e.data.assignments.items():
+            if lhs in loop_w or lhs in bound_syms or lvar in _free(rhs) or (_free(rhs) & loop_w):
+                bad = True
+            if lhs in _free(rhs):
+                bad = True  # self-referential: accumulates over iterations
+    if bad:
+        return None
+    return cb, cond, region
+
+
+def find_match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
+    """Find a ``ConditionalBlock`` guarding (loop-invariant prep then) a loop."""
+    for cb in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(cb, ConditionalBlock):
+            m = match_guard(cb)
+            if m is not None:
+                return m
     return None
 
 
@@ -347,7 +356,7 @@ def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, 
     chain of ``LoopRegion`` and bare ``SDFGState`` blocks with at least one of
     each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
 
-    Distinct from :func:`_match`, which only takes ``[prep..., one loop]``;
+    Distinct from :func:`find_match`, which only takes ``[prep..., one loop]``;
     here the guard is duplicated into every sibling (bare states first wrapped
     in a trivial single-iteration loop, so the duplicated guard sits *inside*
     that loop -- never a top-level ``ConditionalBlock``; the wrapper is spliced
@@ -373,9 +382,9 @@ def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, 
         loops = [b for b in order if isinstance(b, LoopRegion)]
         states = [b for b in order if isinstance(b, SDFGState)]
         if not loops or not states:
-            continue  # heterogeneous only; the pure cases are _match's job
+            continue  # heterogeneous only; the pure cases are find_match's job
         # Leave the existing ``[prep states..., exactly one trailing loop]``
-        # fast path entirely to _match (it places prep *inside* that loop).
+        # fast path entirely to find_match (it places prep *inside* that loop).
         if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
             continue
         if any(e.data.assignments for e in region.edges()):
@@ -462,7 +471,7 @@ class MoveIfIntoLoop(ppl.Pass):
         """
         count = 0
         while True:
-            m = _match(sdfg)
+            m = find_match(sdfg)
             if m is not None:
                 self._move(*m)
                 count += 1
@@ -474,6 +483,18 @@ class MoveIfIntoLoop(ppl.Pass):
                 continue
             break
         return count or None
+
+    @staticmethod
+    def push(cb: ConditionalBlock) -> bool:
+        """Push the guard ``cb`` into the loop its branch ends in.
+
+        :param cb: The guard to push.
+        :returns: Whether it moved; if not, the graph is unchanged.
+        """
+        m = match_guard(cb)
+        if m is not None:
+            MoveIfIntoLoop._move(*m)
+        return m is not None
 
     @staticmethod
     def _move(cb: ConditionalBlock, cond: CodeBlock, region: ControlFlowRegion):

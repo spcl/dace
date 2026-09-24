@@ -615,26 +615,45 @@ class LoopFission(ppl.Pass):
         while changed:
             changed = False
             for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-                if not isinstance(loop, LoopRegion):
-                    continue
-                compute = _single_compute_state(loop)
-                if compute is not None:
-                    # Decide on a copy, then mutate: the bridge rewrite is only sound once the fission
-                    # separates producer and consumer into their own loops, so a loop that turns out not to
-                    # fission must come out exactly as it went in.
-                    if not _fissions_after_bridge_rewrite(loop, sdfg):
-                        continue
-                    _rewrite_per_iter_bridges(compute, loop.loop_variable, sdfg)
-                    self._fission(loop, compute, sdfg)
-                else:
-                    groups = _independent_block_groups(loop)
-                    if groups is None:
-                        continue
-                    self._fission_blocks(loop, groups)
-                count += 1
-                changed = True
-                break
+                if isinstance(loop, LoopRegion) and self.fission(loop):
+                    count += 1
+                    changed = True
+                    break
         return count or None
+
+    @staticmethod
+    def can_fission(loop: LoopRegion) -> bool:
+        """Whether :meth:`fission` would split ``loop``; the graph is not touched.
+
+        :param loop: The loop to judge.
+        """
+        if _single_compute_state(loop) is not None:
+            return _fissions_after_bridge_rewrite(loop, loop.sdfg)
+        return _independent_block_groups(loop) is not None
+
+    @staticmethod
+    def fission(loop: LoopRegion) -> bool:
+        """Split ``loop`` into one loop per independent group.
+
+        :param loop: The loop to distribute.
+        :returns: Whether it split; if not, the graph is unchanged.
+        """
+        sdfg = loop.sdfg
+        compute = _single_compute_state(loop)
+        if compute is not None:
+            # Decide on a copy, then mutate: the bridge rewrite is only sound once the fission
+            # separates producer and consumer into their own loops, so a loop that turns out not to
+            # fission must come out exactly as it went in.
+            if not _fissions_after_bridge_rewrite(loop, sdfg):
+                return False
+            _rewrite_per_iter_bridges(compute, loop.loop_variable, sdfg)
+            LoopFission._fission(loop, compute, sdfg)
+            return True
+        groups = _independent_block_groups(loop)
+        if groups is None:
+            return False
+        LoopFission._fission_blocks(loop, groups)
+        return True
 
     @staticmethod
     def _fission_blocks(loop: LoopRegion, groups: List[List]):

@@ -279,38 +279,49 @@ def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
     return cond, chain_assignments
 
 
-def _match(
+def match_loop(
     sdfg: SDFG,
+    loop: LoopRegion,
     require_full_hoist: bool = False
 ) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
-    """Find a ``LoopRegion`` whose body is ``[empty*; if c; empty*]`` with a
-    loop-invariant condition (plus a hoistable invariant assignment chain
-    and any per-iteration assignments that are dead outside the branch).
+    """Match ``loop`` as a body ``[empty*; if c; empty*]`` with a loop-invariant
+    condition (plus a hoistable invariant assignment chain and any
+    per-iteration assignments that are dead outside the branch).
 
+    :param sdfg: The root SDFG (bounds the ancestor walk).
+    :param loop: The loop to match.
     :param require_full_hoist: See :func:`_hoistable`.
     :returns: ``(loop, cond_block, cond, hoist_assignments)`` or ``None``.
     """
+    order = _linear_order(loop)
+    if order is None:
+        return None
+    cbs = [b for b in order if isinstance(b, ConditionalBlock)]
+    non_empty = [b for b in order if not _is_empty_state(b)]
+    if len(cbs) != 1 or non_empty != cbs:
+        # Safety: hoisting the conditional would also sweep any
+        # non-empty sibling body block into the new outer-guarded
+        # scope, dropping its execution under the not-taken path --
+        # value-changing. Such a body is handled by distributing the
+        # sibling out first (:func:`_split_guard_loop`). Per-iteration
+        # iedge assignments on the body chain ARE allowed (they live on
+        # EDGES, not blocks, and have no observable side effect when
+        # their lhs is dead outside the branch).
+        return None
+    h = _hoistable(sdfg, loop, cbs[0], require_full_hoist)
+    return None if h is None else (loop, cbs[0], h[0], h[1])
+
+
+def find_match(
+    sdfg: SDFG,
+    require_full_hoist: bool = False
+) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
+    """Find a loop that :func:`match_loop` matches."""
     for loop in sdfg.all_control_flow_regions(recursive=True):
-        if not isinstance(loop, LoopRegion):
-            continue
-        order = _linear_order(loop)
-        if order is None:
-            continue
-        cbs = [b for b in order if isinstance(b, ConditionalBlock)]
-        non_empty = [b for b in order if not _is_empty_state(b)]
-        if len(cbs) != 1 or non_empty != cbs:
-            # Safety: hoisting the conditional would also sweep any
-            # non-empty sibling body block into the new outer-guarded
-            # scope, dropping its execution under the not-taken path --
-            # value-changing. Such a body is handled by distributing the
-            # sibling out first (:func:`_split_guard_loop`). Per-iteration
-            # iedge assignments on the body chain ARE allowed (they live on
-            # EDGES, not blocks, and have no observable side effect when
-            # their lhs is dead outside the branch).
-            continue
-        h = _hoistable(sdfg, loop, cbs[0], require_full_hoist)
-        if h is not None:
-            return loop, cbs[0], h[0], h[1]
+        if isinstance(loop, LoopRegion):
+            m = match_loop(sdfg, loop, require_full_hoist)
+            if m is not None:
+                return m
     return None
 
 
@@ -322,7 +333,7 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
     independence criterion, reused rather than re-derived. Needed because the guard is
     otherwise unreachable: a fusion pass that welds a guard-only loop back onto a sibling
     (canonicalize's ``loop_fuse`` stage does, for locality) leaves the guard with a
-    non-empty sibling block, which :func:`_match` must refuse forever.
+    non-empty sibling block, which :func:`find_match` must refuse forever.
 
     Only fires when the guard would then actually hoist -- the split is pure churn
     otherwise.
@@ -398,7 +409,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         """
         count = 0
         while True:
-            m = _match(sdfg, self.require_full_hoist)
+            m = find_match(sdfg, self.require_full_hoist)
             if m is None:
                 # The guard may be sharing its body with independent siblings: split
                 # them apart and re-match. Terminates -- a split leaves the guard alone
@@ -409,6 +420,18 @@ class MoveLoopInvariantIfUp(ppl.Pass):
             self._move(*m)
             count += 1
         return count or None
+
+    @staticmethod
+    def hoist(loop: LoopRegion) -> bool:
+        """Hoist the loop-invariant guard that is ``loop``'s only statement out of it.
+
+        :param loop: The loop whose guard to hoist.
+        :returns: Whether it moved; if not, the graph is unchanged.
+        """
+        m = match_loop(loop.sdfg, loop)
+        if m is not None:
+            MoveLoopInvariantIfUp._move(*m)
+        return m is not None
 
     @staticmethod
     def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: List[Tuple[str, str]]):

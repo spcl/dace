@@ -428,6 +428,35 @@ def test_splitting_and_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch)
         assert np.allclose(c, a * 2.0) and np.allclose(b, a + 1.0 if kv > 0 else 7.0), f"mismatch K={kv}"
 
 
+def test_hoist_moves_the_guard_out_of_the_loop_it_is_given_only():
+    """Hoisting from the inner loop leaves the guard between the two loops, where the fixpoint pass would not stop."""
+    n, m = 6, 5
+    a = np.random.rand(n, m)
+    sdfg = nested_invariant_guard.to_sdfg(simplify=True)
+    (outer, ) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
+    (inner, ) = [lp for lp in _loops(sdfg) if lp is not outer]
+
+    assert MoveLoopInvariantIfUp.hoist(inner)
+
+    sdfg.validate()
+    (cond, ) = _conds(sdfg)
+    assert cond.parent_graph is outer
+    assert [type(b) for b in cond.branches[0][1].nodes()] == [LoopRegion]
+    for av in (1, 0):
+        out = np.full((n, m), 7.0)
+        sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n, M=m)
+        assert np.allclose(out, a + 1.0 if av > 0 else 7.0), av
+
+
+def test_hoist_refuses_a_guard_that_reads_the_loop_variable():
+    sdfg = loopvar_guard.to_sdfg(simplify=True)
+    (loop, ) = _loops(sdfg)
+    before = sdfg.to_json()
+
+    assert not MoveLoopInvariantIfUp.hoist(loop)
+    assert sdfg.to_json() == before
+
+
 if __name__ == '__main__':
     test_invariant_symbolic_guard_hoisted_and_e2e()
     test_invariant_data_guard_hoisted_and_e2e()
