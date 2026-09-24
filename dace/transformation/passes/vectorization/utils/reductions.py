@@ -332,8 +332,8 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
 
     The shape (the spmv ``for idx: tmp = tmp + data[idx]*x[indices[idx]]``
     row reduction): a single-param, unit-step innermost map whose scope is one
-    body node that *reads* a scalar ``acc[0]`` at the entry and *writes* the
-    same ``acc[0]`` at the exit — a loop-carried read-modify-write. The body is
+    body node that *reads* a fixed element ``acc[c]`` at the entry and *writes* the
+    same ``acc[c]`` at the exit — a loop-carried read-modify-write. The body is
     an opaque indirect-access NSDFG (the gather cannot be inlined), so the
     operator is recovered by peeking at the combining tasklet inside it.
 
@@ -364,11 +364,15 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
 
     reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
     writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
-    for acc in set(reads) & set(writes):
+    for acc in [a for a in writes if a in reads]:  # edge order, not hash order
         desc = state.sdfg.arrays.get(acc)
         if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
             continue
         read_edge, write_edge = reads[acc], writes[acc]
+        # ``y[j] = y[j] + e`` is element-wise, not a reduction: the slot must be one fixed element
+        if read_edge.data.subset != write_edge.data.subset or set(
+                map_entry.map.params) & write_edge.data.subset.free_symbols:
+            continue
         op = _op_through_body(state, body, read_edge, write_edge)
         if op is None or op not in IDENTITY:
             continue
