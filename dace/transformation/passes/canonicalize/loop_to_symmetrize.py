@@ -26,14 +26,13 @@ from typing import Optional
 
 import dace
 from dace import symbolic
-from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
-from dace.transformation.passes.canonicalize.loop_to_transpose import (_is_copy_tasklet, _node_side_subset,
-                                                                       _single_body_state, _single_child_loop)
+from dace.transformation.passes.canonicalize.loop_to_transpose import (_single_body_state, _single_child_loop,
+                                                                       match_copy_chain)
 
 
 def _const_nonneg_int(value) -> Optional[int]:
@@ -145,34 +144,10 @@ class LoopToSymmetrize(ppl.Pass):
         :returns: ``(array, read_order, write_order)`` where each order lists
                   which of ``{outer_var, inner_var}`` each axis is, or ``None``.
         """
-        sdfg = state.sdfg
-        access = [n for n in state.nodes() if isinstance(n, nodes.AccessNode)]
-        others = [n for n in state.nodes() if not isinstance(n, nodes.AccessNode)]
-        # Every non-access node must be a pure copy tasklet.
-        if any(not _is_copy_tasklet(n) for n in others):
+        m = match_copy_chain(state)
+        if m is None or m[0].data != m[1].data:
             return None
-        # Exactly one source (read) and one sink (write) access node, same array X.
-        sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
-        sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
-        if len(sources) != 1 or len(sinks) != 1:
-            return None
-        src, sink = sources[0], sinks[0]
-        if src.data != sink.data:
-            return None
-        array = src.data
-        # Any intermediate access node must be a transient scratch (not the target).
-        for n in access:
-            if n is src or n is sink:
-                continue
-            desc = sdfg.arrays.get(n.data)
-            if desc is None or not desc.transient:
-                return None
-        src_oes = [e for e in state.out_edges(src) if e.data is not None and not e.data.is_empty()]
-        sink_ies = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
-        if len(src_oes) != 1 or len(sink_ies) != 1:
-            return None
-        read_subset = _node_side_subset(state, src_oes[0], src)
-        write_subset = _node_side_subset(state, sink_ies[0], sink)
+        array, read_subset, write_subset = m[0].data, m[2], m[3]
         read_order = _point_indices(read_subset, outer_var, inner_var)
         write_order = _point_indices(write_subset, outer_var, inner_var)
         if read_order is None or write_order is None or read_order != list(reversed(write_order)):
