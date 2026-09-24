@@ -1,52 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``FuseBranchedTailRemainder`` -- GPU-only post-transform that fuses a
-vectorized main-tiled map and its remainder map into ONE map whose body is a
-``ConditionalBlock`` (``if`` full-tile -> mask-free vectorized tile ops /
-``else`` -> the remainder body).
+"""``FuseBranchedTailRemainder`` -- GPU-only post-transform that fuses a tiled main map and its
+remainder map into ONE map whose body is a ``ConditionalBlock`` (full tile -> mask-free tile ops,
+else -> the remainder body), so the pair is one kernel launch and only the partial tile diverges.
 
-Two remainder strategies share this pass, differing only in what the ``else``
-arm holds:
+The ``else`` arm is, per strategy:
 
-* ``branched_masked_tail`` (the GPU K=1 DEFAULT) -- the tail is the W-strided
-  MASKED tile map :class:`SplitMapForTileRemainder` peels in ``tail_mode='masked_branch'``
-  (marked ``__masked_tail``). Both arms are tile ops over the SAME tile start, so a
-  full-tile iteration runs the widened mask-free body and NO scalar loop is emitted
-  anywhere in the kernel; the partial tile takes the masked (per-element, never
-  over-reading) arm, which is also where the alignment fact does not hold.
-* ``branched_tail`` -- the tail is the step-1 ``__scalar_tail`` map
-  (``tail_mode='scalar'``), reused verbatim inside a ``Sequential`` lane loop.
+* ``branched_masked_tail`` (GPU K=1 default): the W-strided masked tile map
+  :class:`SplitMapForTileRemainder` peels with ``tail_mode='masked_branch'`` (``__masked_tail``),
+  so no scalar loop is emitted anywhere in the kernel.
+* ``branched_tail``: the step-1 ``__scalar_tail`` map, reused inside a ``Sequential`` lane loop.
 
-Either way the mechanism is a control-flow BRANCH inside ONE kernel rather than a
-mask on every tile. It runs LAST in the GPU pipeline, after the split peeled a
-provably-divisible interior + a tail, and after the tile prep/emit passes
-vectorized the interior (marked ``__tile_main``) mask-free.
-
-Motivation (the two-kernel problem): on GPU the interior and the tail are two
-``GPU_Device`` maps -> two kernel launches. This pass fuses them into a single
-``GPU_Device`` map over the whole tile range, so there is ONE kernel launch;
-branch divergence happens only on the single partial (tail) tile.
-
-Mechanism (the exact split-then-fuse the maintainer specified)::
+Mechanism::
 
     for each tile-start s over [lb : ub : W]:      # ONE GPU_Device map
         if (s + W - 1) <= ub:  <MASK-FREE tile body>        # __tile_main NSDFG, unchanged
         else:                  <MASKED tile body>           # __masked_tail NSDFG, unchanged
                           -or- for t in [s : ub]: <scalar body>   # __scalar_tail NSDFG
 
-The vectorized tile ops (``TileLoad`` / ``TileBinop`` / ``TileStore`` / ...) are
-reused UNCHANGED inside the ``if`` branch -- NOT flattened to an arithmetic
-select (no ``LowerITEToFpFactor``). The masked tail NSDFG is likewise reused
-unchanged: only ONE tile start ever reaches the ``else`` (the one partial tile),
-and it is exactly the start the peeled slab map would have run, so its mask
-``s + lane < ub + 1`` and its subsets are already right. The scalar tail NSDFG is
-instead wrapped in a ``Sequential`` loop over the tail lanes, so the single thread
-that takes the ``else`` processes every remaining lane.
-
-Scope: K=1 (one tiled/innermost dim). The map may carry outer (prefix) params;
-only the innermost dim is tiled + fused. A pair is fused only when both bodies
-are a single nested SDFG whose boundary the fused map can carry (the canonical
-post-pipeline shape); any other shape is left as two maps (correct, un-fused)
-rather than mis-fused.
+Both bodies are reused unchanged: only the one partial tile start reaches the ``else``, and it is
+exactly the start the peeled slab would have run. Runs last in the GPU pipeline. Scope: K=1 (outer
+prefix params allowed); a pair whose bodies are not single fusable nested SDFGs stays two maps.
 """
 import copy
 

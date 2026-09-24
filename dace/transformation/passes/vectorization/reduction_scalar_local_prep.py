@@ -1,40 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pre-vectorization pass: scalar-localize an array-slot reduction accumulator so the SIMD/tile
-widener can widen it.
+"""Scalar-localize an array-slot reduction accumulator so the tile widener can widen it.
 
-The K-lane tile widener folds a map-body reduction into K per-lane partial accumulators + one
-horizontal ``TileReduce`` ONLY when the accumulator is a scalar-local: a plain scalar VARIABLE the
-body reduces into, with the cross-tile reduction on the protected ``NestedSDFG -> AccessNode
--[wcr]-> MapExit -> acc`` boundary (the shape ``sum_1d`` / ``dot_1d`` already vectorize through).
-When the reduction target is instead an ARRAY SLOT -- a map-exit WCR writing a single element of a
-multi-element array ``arr[c]`` (a dot product into a fixed output slot, ``s[3] += a[i] * b[i]``) --
-there is no scalar VARIABLE to give K per-lane copies of, the ``no loose WCR in the map body``
-precondition fires, and the vectorizer BAILS.
+The widener folds a map-body reduction into per-lane partials plus one ``TileReduce`` only when
+the accumulator is a scalar variable. A map-exit WCR into one element of a multi-element array
+(``s[3] += a[i] * b[i]``) has none, so the vectorizer would refuse. This pass rewrites it to a
+private scalar accumulator seeded from the slot, with a writeback afterwards, via
+:func:`~dace.transformation.passes.canonicalize.privatize_reduction_accumulator.privatize_reduction_accumulator`;
+seed and writeback stay in the outer scope so the map body remains one dataflow state.
 
-This pass rewrites such an array-slot WCR reduction into a private transient SCALAR accumulator,
-seeded unconditionally from the original slot, with an unconditional writeback afterwards --
-delegating the actual rewrite to :func:`~dace.transformation.passes.canonicalize.
-privatize_reduction_accumulator.privatize_reduction_accumulator` (the same array-slot -> scalar
-machinery the CPU WCR codegen relies on). After the rewrite the reduction target is a scalar the
-widener folds to per-lane partial sums + one horizontal ``TileReduce``; the seed / writeback stay at
-the OUTER scope (a plain init state before + writeback state after the map state), so the map body
-itself remains a single-state dataflow chain the walker can widen.
-
-Only fires when it ENABLES widening (an "only if it helps" oracle -- no-ops are left alone):
-
-* a GENUINE multi-element array slot -- a plain scalar / length-1 accumulator already widens, so is
-  skipped (rewriting it would perturb a currently-working path);
-* an ASSOCIATIVE reduction op (``+`` / ``*`` / ``min`` / ``max``); a non-associative ``-`` / ``/``
-  WCR is not a foldable reduction and is left untouched;
-* a LOOP-INVARIANT single-element slot -- a slot indexed by the map param is an indexed scatter, not
-  a scalar fold, and is skipped;
-* on an INNERMOST, unit-step map -- the tile-widening candidate; a non-innermost or strided map is
-  not what the widener tiles.
-
-A genuine cross-iteration recurrence (the accumulator read back in the body to compute the
-increment) is NOT expressed as a map-exit WCR -- it is a read+write pair -- so it is never matched,
-and the rewrite is value-preserving (the scalar seed is the slot's pre-map value; the writeback is
-unconditional, hence correct for zero map iterations too).
+Fires only when it enables widening: a genuine multi-element array slot, an associative op
+(``+`` / ``*`` / ``min`` / ``max``), a loop-invariant slot, on an innermost unit-step map. A
+recurrence that reads the accumulator in the body is not a map-exit WCR and never matches; the
+rewrite is value-preserving, also for zero iterations.
 """
 from typing import Any
 

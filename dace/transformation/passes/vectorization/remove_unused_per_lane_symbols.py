@@ -1,38 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Post-clean pass that removes unused per-lane symbols.
+"""Remove unused per-lane symbols.
 
-Per user direction 2026-06-10: the indirect-access (gather / scatter) lowering
-emits MANY per-lane SDFG symbols as an intermediate stage (via the
-``LaneIdScheme.make_multi`` naming scheme: ``<base>_lane<d>id_<l>`` chained per
-dim). After the gather is materialised into a tile and downstream consumers
-read from the tile, the per-lane symbols themselves may have no further uses --
-they were only "named intermediates" for the fan-out.
-
-This pass walks every SDFG (recursive), identifies symbols matching
-:func:`LaneIdScheme.is_laneid` that have NO remaining references in any:
-
-* memlet subset / volume / wcr,
-* tasklet code body,
-* interstate-edge condition / assignment RHS,
-* loop-region condition / init / update statement,
-* conditional-block branch guard,
-* array descriptor shape / strides / offsets,
-* (recursively) symbol RHSes in interstate-edge assignments.
-
-For each such unused symbol, the pass:
-
-1. Removes the symbol from ``sdfg.symbols``.
-2. Removes any interstate-edge assignment whose LHS is the unused symbol (the
-   defining assignment becomes dead too).
-3. Removes any matching ``symbol_mapping`` entry on any NestedSDFG that references
-   the unused symbol.
-
-The pass is idempotent: a second invocation is a no-op once every detectable
-per-lane symbol has been swept.
-
-Design contract: this pass DOES NOT collapse contiguous per-lane symbol chains
-into direct slice loads (the peephole optimisation mentioned in the design doc).
-That's a separate follow-up slice; this pass is only the structural sweep.
+The gather / scatter lowering emits per-lane symbols (``LaneIdScheme.make_multi``:
+``<base>_lane<d>id_<l>``) that are dead once the gather is materialized into a tile. This pass
+walks every SDFG and, for each :func:`LaneIdScheme.is_laneid` symbol with no remaining reference
+(memlets, tasklet code, interstate edges, loop and branch conditions, descriptor shapes, or other
+symbol definitions), removes it from ``sdfg.symbols``, drops its defining interstate assignments
+and its ``symbol_mapping`` entries on NestedSDFGs. Idempotent.
 """
 from typing import Any
 
