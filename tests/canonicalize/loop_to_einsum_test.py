@@ -32,8 +32,11 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
+from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
+from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 
 N = dace.symbol('N')
+M = dace.symbol('M')
 
 
 @dace.program
@@ -460,6 +463,68 @@ def test_map_form_lift_refuses_a_boundary_ordering_memlet():
     A, B, C = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
     sdfg(A=A, B=B, C=C, N=n)
     assert np.allclose(C, A @ B, rtol=1e-9, atol=1e-12)
+
+
+@dace.program
+def symmetrize4(X: dace.float64[4, 4]):
+    for i in range(3):
+        for j in range(i + 1, 4):
+            X[j, i] = X[i, j]
+
+
+@dace.program
+def transpose4(A: dace.float64[4, 4], B: dace.float64[4, 4]):
+    for i in range(4):
+        for j in range(4):
+            B[i, j] = A[j, i]
+
+
+@pytest.mark.parametrize('prog, lift', [(symmetrize4, LoopToSymmetrize), (transpose4, LoopToTranspose),
+                                        (transpose4, LoopToEinsum)])
+def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog, lift):
+    inner = prog.to_sdfg(simplify=True)
+    inner.remove_symbol('i'), inner.remove_symbol('j')  # loop iterators, not free symbols
+    outer = dace.SDFG('outer')
+    state = outer.add_state()
+    names = [n for n, d in inner.arrays.items() if not d.transient]
+    call = state.add_nested_sdfg(inner, dict.fromkeys(names), dict.fromkeys(names), symbol_mapping={})
+    for n, d in inner.arrays.items():
+        outer.add_array(n, [5, 4] if not d.transient else d.shape, d.dtype, transient=d.transient)
+    for n in names:
+        state.add_edge(state.add_read(n), None, call, n, dace.Memlet(f'{n}[0:4, 0:4]'))
+        state.add_edge(call, n, state.add_write(n), None, dace.Memlet(f'{n}[0:4, 0:4]'))
+    arrays = {n: np.arange(20.0).reshape(5, 4) * (k + 1) for k, n in enumerate(names)}
+    expected = {n: a.copy() for n, a in arrays.items()}
+    prog.f(**{n: e[:4] for n, e in expected.items()})
+
+    lift().apply_pass(outer, {})
+
+    assert [
+        str(e.data.subset) for n, st in outer.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)
+        for e in st.all_edges(n)
+    ] == ['0:4, 0:4', '0:4, 0:4']
+    outer(**arrays)
+    assert all(np.array_equal(arrays[n], expected[n]) for n in names)
+
+
+@dace.program
+def leading_block_transpose(A: dace.float64[M, M], B: dace.float64[M, M]):
+    for i in range(N):
+        for j in range(N):
+            B[i, j] = A[j, i]
+
+
+def test_a_transpose_of_the_leading_block_is_not_lifted_to_a_whole_matrix_transpose():
+    sdfg = leading_block_transpose.to_sdfg(simplify=True)
+    A, B = np.arange(25.0).reshape(5, 5).copy(), -np.ones((5, 5))
+    expected = B.copy()
+    expected[:3, :3] = A[:3, :3].T
+
+    LoopToEinsum().apply_pass(sdfg, {})
+
+    assert _n_transpose(sdfg) == 0
+    sdfg(A=A, B=B, N=3, M=5)
+    assert np.array_equal(B, expected)
 
 
 if __name__ == '__main__':

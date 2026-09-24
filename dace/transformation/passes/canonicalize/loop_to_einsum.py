@@ -482,7 +482,16 @@ def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[Transp
         return None
     if dst not in written or sdesc.dtype != ddesc.dtype:
         return None
+    ends = {p: rng[1] for p, rng in zip(map_entry.map.params, map_entry.map.range)}
+    if not sweeps_whole_array(read_order, ends, sdesc) or not sweeps_whole_array(write_order, ends, ddesc):
+        return None  # the node transposes whole arrays; a partial map would overwrite the rest
     return TransposeSpec(src, dst, sdesc.dtype, src_subset, dst_subset)
+
+
+def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Data) -> bool:
+    """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
+    return all(
+        symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape))
 
 
 def _is_copy_tasklet(node: nodes.Tasklet) -> bool:
@@ -978,6 +987,9 @@ def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Tr
         return None
     if sdesc.dtype != ddesc.dtype:
         return None
+    ends = {a.param: a.end for a in nest.axes}
+    if not sweeps_whole_array(read.idx, ends, sdesc) or not sweeps_whole_array(value.idx, ends, ddesc):
+        return None  # the node transposes whole arrays; a partial nest would overwrite the rest
     full = lambda desc: subsets.Range([(0, s - 1, 1) for s in desc.shape])
     return TransposeSpec(src, dst, sdesc.dtype, full(sdesc), full(ddesc))
 
@@ -1045,7 +1057,7 @@ class LoopToEinsum(ppl.Pass):
         # no-ops on) the whole nest. Snapshot upfront -- a lift removes the nest.
         candidates: List[Tuple[LoopRegion, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
-            for region in sd.all_control_flow_regions(recursive=True):
+            for region in sd.all_control_flow_regions():
                 if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region):
                     candidates.append((region, sd))
 
