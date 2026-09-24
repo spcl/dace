@@ -8,8 +8,8 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards,
                                                      forward_substitute_conditions, fuse_rolled_loops,
                                                      merge_contiguous_loops, pair_complementary_guards,
-                                                     remove_dead_assignments, reroll_statements, split_iteration_spaces,
-                                                     unswitch_invariant_guards)
+                                                     remove_dead_assignments, remove_dead_stores, reroll_statements,
+                                                     split_iteration_spaces, unswitch_invariant_guards)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -991,6 +991,95 @@ def test_substitute_not_from_tasklet_overwriting_its_input():
     assert forward_substitute_conditions(stree) == 0
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Dead stores
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _scalar_tree(children: list) -> tn.ScheduleTreeRoot:
+    """A tree over arrays ``A``, ``B`` (8 elements) and a transient scalar ``t``."""
+    sdfg = dace.SDFG('dead_stores')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    stree.children = []
+    stree.add_children(children)
+    return stree
+
+
+def _loop(children: list) -> tn.ForScope:
+    return tn.ForScope(loop=dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1'), children=children)
+
+
+def _set_t(value: str, inputs: dict = None) -> tn.TaskletNode:
+    return _tasklet(f'o = {value}', inputs or {}, {'o': 't[0]'})
+
+
+def _use_t(target: str = 'B[0]') -> tn.TaskletNode:
+    return _tasklet('b = x', {'x': 't[0]'}, {'b': target})
+
+
+def _check_dead_stores(make, removed: int):
+    stree, reference = make(), make()
+    assert remove_dead_stores(stree) == removed
+    a = np.random.rand(8)
+    results = []
+    for tree in (reference, stree):
+        b = np.zeros(8)
+        _run(tree, A=a, B=b)
+        results.append(b)
+    assert np.allclose(results[0], results[1])
+
+
+def test_dead_store_overwritten():
+    _check_dead_stores(lambda: _scalar_tree([_set_t('a', {'a': 'A[0]'}), _set_t('2 * a', {'a': 'A[1]'}), _use_t()]), 1)
+
+
+def test_dead_store_overwritten_in_both_branches():
+    make = lambda: _scalar_tree([
+        _set_t('a', {'a': 'A[0]'}),
+        tn.IfScope(condition=dace.properties.CodeBlock('A[2] > 0.5'), children=[_set_t('1')]),
+        tn.ElseScope(children=[_set_t('2')]),
+        _use_t()
+    ])
+    _check_dead_stores(make, 1)
+
+
+def test_dead_store_kept_when_one_branch_keeps_it():
+    make = lambda: _scalar_tree([
+        _set_t('a', {'a': 'A[0]'}),
+        tn.IfScope(condition=dace.properties.CodeBlock('A[2] > 0.5'), children=[_set_t('1')]),
+        _use_t()
+    ])
+    _check_dead_stores(make, 0)
+
+
+def test_dead_store_kept_for_next_iteration():
+    """``t`` written at the end of an iteration is read at the start of the next one."""
+    make = lambda: _scalar_tree([_set_t('0'), _loop([_use_t('B[i]'), _set_t('a', {'a': 'A[i]'})])])
+    _check_dead_stores(make, 0)
+
+
+def test_dead_store_kept_when_read_after_loop():
+    make = lambda: _scalar_tree([_loop([_set_t('a', {'a': 'A[i]'})]), _use_t()])
+    _check_dead_stores(make, 0)
+
+
+def test_dead_store_in_loop_removed():
+    """Each iteration overwrites ``t`` before reading it, and nothing reads it after the loop."""
+    make = lambda: _scalar_tree([_loop([_set_t('a', {'a': 'A[i]'}), _set_t('2 * a', {'a': 'A[i]'}), _use_t('B[i]')])])
+    _check_dead_stores(make, 1)
+
+
+def test_dead_store_not_killed_by_dynamic_write():
+    dynamic = _set_t('3')
+    dynamic.out_memlets['o'].dynamic = True
+    stree = _scalar_tree([_set_t('a', {'a': 'A[0]'}), dynamic, _use_t()])
+    assert remove_dead_stores(stree) == 0
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -1038,3 +1127,10 @@ if __name__ == '__main__':
     test_convert_diamond_with_branch_local_temporary()
     test_convert_diamond_with_loop_carried_value()
     test_convert_not_applied('out of bounds')
+    test_dead_store_overwritten()
+    test_dead_store_overwritten_in_both_branches()
+    test_dead_store_kept_when_one_branch_keeps_it()
+    test_dead_store_kept_for_next_iteration()
+    test_dead_store_kept_when_read_after_loop()
+    test_dead_store_in_loop_removed()
+    test_dead_store_not_killed_by_dynamic_write()

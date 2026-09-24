@@ -2215,3 +2215,117 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
 
     visit(stree, _facts_at(stree, max_enumeration))
     return converted
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Dead stores
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def remove_dead_stores(stree: tn.ScheduleTreeScope) -> int:
+    """
+    Remove statements whose results are never read: tasklets, copies and symbol assignments that only write transient
+    scalars (or symbols) that are dead where they are written, i.e. overwritten or not read on every path to a read.
+
+    Liveness is computed backwards over the tree: a branch keeps what any of its alternatives reads, and a loop or map
+    keeps what its next iteration reads (a fixed point over the body) as well as what follows it, since it may not
+    run at all. This removes, e.g., a temporary that each part of a split loop computes but only some parts use, which
+    :func:`remove_dead_assignments` (which only removes values read nowhere) keeps. Only pure statements are removed;
+    around other kinds of scopes (unstructured control flow) every transient scalar is considered live.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :return: The number of statements removed.
+    """
+    root = stree.get_root()
+    containers = root.containers
+    tracked = {name for name, desc in containers.items() if desc.transient and isinstance(desc, data.Scalar)}
+    in_descriptors = set().union(*(map(str, desc.free_symbols) for desc in containers.values()))
+    tracked |= {name for name in root.symbols if name not in containers and name not in in_descriptors}
+    everything = frozenset(tracked)
+    dead: List[tn.ScheduleTreeNode] = []
+
+    def statement_sets(node: tn.ScheduleTreeNode) -> Tuple[Set[str], Set[str]]:
+        """Names a statement reads, and names it certainly overwrites (not through dynamic or accumulating writes)."""
+        reads, writes = _names_read(node) & tracked, _names_written(node) & tracked
+        for memlet in _memlets(node, 'out_memlets'):
+            if memlet.dynamic or memlet.wcr is not None:
+                writes.discard(memlet.data)
+                if memlet.wcr is not None and memlet.data in tracked:
+                    reads.add(memlet.data)
+        return reads, writes
+
+    def removable(node: tn.ScheduleTreeNode, live: Set[str]) -> bool:
+        if not isinstance(node, (tn.TaskletNode, tn.CopyNode, tn.AssignNode)):
+            return False
+        written = _names_written(node)
+        if not written or not written <= tracked or written & live:
+            return False
+        if isinstance(node, tn.TaskletNode):
+            if node.node.language != dtypes.Language.Python or getattr(node.node, 'side_effects', False):
+                return False
+            if any(m.dynamic or m.wcr is not None for m in _memlets(node, 'out_memlets')):
+                return False
+            return _pure(ast.Module(body=list(node.node.code.code), type_ignores=[]))
+        if isinstance(node, tn.AssignNode):
+            return _pure(getattr(node.value.code[0], 'value', node.value.code[0]))
+        return True
+
+    def body(children: List[tn.ScheduleTreeNode], live: Set[str], record: bool) -> Set[str]:
+        """Live names before ``children`` given those live after them; records dead statements if ``record``."""
+        live = set(live)
+        k = len(children) - 1
+        while k >= 0:
+            node = children[k]
+            if isinstance(node, (tn.ElifScope, tn.ElseScope)):
+                # Find the chain start and process the whole chain at once
+                start = k
+                while start > 0 and isinstance(children[start], (tn.ElifScope, tn.ElseScope)):
+                    start -= 1
+                chain = children[start:k + 1]
+                before = set()
+                for branch in chain:
+                    before |= body(branch.children, live, record)
+                    condition = _condition(branch)
+                    if condition is not None:
+                        before |= set(symbolic.symbols_in_ast(condition)) & tracked
+                if not isinstance(chain[-1], tn.ElseScope):
+                    before |= live
+                live = before
+                k = start - 1
+                continue
+            if isinstance(node, tn.IfScope) and not isinstance(node, tn.StateIfScope):
+                before = body(node.children, live, record) | live
+                condition = _condition(node)
+                live = before | (
+                    (set(symbolic.symbols_in_ast(condition)) & tracked) if condition is not None else set(everything))
+            elif isinstance(node, (tn.ForScope, tn.MapScope)):
+                header = _names_read(node) & tracked
+                carried = set(live)
+                while True:  # The next iteration reads what the body needs at its start
+                    start = body(node.children, carried | header, False)
+                    grown = carried | start
+                    if grown == carried:
+                        break
+                    carried = grown
+                if record:
+                    body(node.children, carried | header, True)
+                live = carried | header
+            elif isinstance(node, tn.ScheduleTreeScope):
+                live = set(everything)  # Unstructured or unknown: assume everything is read
+            else:
+                if record and removable(node, live):
+                    dead.append(node)
+                else:
+                    reads, writes = statement_sets(node)
+                    live = (live - writes) | reads
+            k -= 1
+        return live
+
+    body(stree.children, set(everything) if stree is not root else set(), True)
+    dead_ids = {id(n) for n in dead}
+    for scope in [n for n in stree.preorder_traversal() if isinstance(n, tn.ScheduleTreeScope)]:
+        kept = [c for c in scope.children if id(c) not in dead_ids]
+        if len(kept) < len(scope.children):
+            scope.children = []
+            scope.add_children(kept)
+    return len(dead)
