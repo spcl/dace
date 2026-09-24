@@ -52,11 +52,8 @@ _REDTYPE_OP = {
     dtypes.ReductionType.Product: "*",
 }
 
-#: Reduction-op token -> ``Reduce`` libnode WCR lambda. Restricted to ``+`` / ``*``:
-#: the only ops this lift is tested for, with finite identities (0 / 1) that
-#: ``add_reduce`` lowers cleanly. ``max`` / ``min`` (identities -inf / +inf) and
-#: bitwise ops are excluded -- their identities fail the finite-float gate below,
-#: so they are rejected here rather than mis-lifted with a non-finite identity.
+#: Reduction-op token -> ``Reduce`` WCR lambda. Only ``+`` / ``*``: their identities are finite;
+#: ``max`` / ``min`` / bitwise fail the finite-float gate below.
 _WCR_LAMBDA = {
     "+": "lambda a, b: a + b",
     "*": "lambda a, b: a * b",
@@ -241,29 +238,14 @@ class LiftMapReductionToReduce(ppl.Pass):
         #: early pipeline call before ``WCRToAugAssign`` rewrites the WCR away; the
         #: RMW shape is lifted later, after ``LoopToMap`` produces the map.
         self._pure_wcr_only = pure_wcr_only
-        #: Lift ONLY the loop-carried RMW; leave the pure-WCR ``acc = sum(A)`` as a
-        #: map-exit WCR for codegen to lower directly (CPU ``reduction(op:var)`` /
-        #: GPU thread-block reduce + one atomic per block). The multi-dim tile
-        #: vectorizer sets this so it never materialises a scalar reduction to a
-        #: product buffer (the buffer + ``Reduce`` form is reachable by constructing
-        #: this pass with ``pure_wcr_only=True``). Mutually exclusive with
-        #: ``pure_wcr_only``.
+        #: Lift only the loop-carried RMW; leave pure-WCR ``acc = sum(A)`` as a map-exit WCR for codegen
+        #: (OpenMP reduction / GPU block reduce). Mutually exclusive with ``pure_wcr_only``.
         self._rmw_only = rmw_only
-        #: Lift ONLY reductions whose map lives INSIDE a nested SDFG (``state.sdfg``
-        #: is a body NSDFG). A top-level ``acc = sum(A)`` keeps its map-exit WCR (the
-        #: allowed OpenMP-reduction boundary form); a reduction trapped inside a body
-        #: NSDFG (the outer loop was parallelised by ``LoopToMap`` so its map-exit
-        #: boundary is NOT at top level) cannot keep that boundary WCR -- the multi-dim
-        #: invariant forbids any WCR inside a nested SDFG -- so it MUST be materialised
-        #: to a buffer + ``Reduce``. The multi-dim vectorizer sets this together with
-        #: ``wcr_free_output`` to eliminate exactly those trapped reductions.
+        #: Lift only reductions whose map is inside a nested SDFG: those cannot keep a boundary WCR (no WCR
+        #: inside NSDFGs), so they become buffer + ``Reduce``. Used together with ``wcr_free_output``.
         self._nested_only = nested_only
-        #: Emit the fold's result WITHOUT a WCR: ``Reduce(buf) -> _partial`` then an
-        #: explicit ``acc = acc <op> _partial`` read-modify-write tasklet. Required
-        #: inside a nested SDFG, where a ``Reduce -[wcr]-> acc`` output edge would
-        #: itself be a loose in-NSDFG WCR the tile emitter drops. The read-back
-        #: reproduces the original ``acc (op)= ...`` semantics for any prior ``acc``
-        #: (identity-seeded or running), so it is value-preserving.
+        #: Emit the fold without a WCR: ``Reduce(buf) -> _partial`` then ``acc = acc <op> _partial``, since
+        #: an in-NSDFG WCR output edge would be dropped by the tile emitter. Value-preserving.
         self._wcr_free_output = wcr_free_output
 
     def modifies(self) -> ppl.Modifies:
@@ -288,11 +270,8 @@ class LiftMapReductionToReduce(ppl.Pass):
             # reduction trapped inside a body NSDFG needs materialising to a buffer + Reduce.
             if self._nested_only and state.sdfg.parent_nsdfg_node is None:
                 continue
-            # Pure-WCR boundary reductions (``acc(CR:op)`` at MapExit, no carry-in):
-            # canonical ``acc = sum(A)``. A map may fold SEVERAL independent scalar
-            # accumulators (azimint ``s += a[j]; cnt += 1``); lift each in place -- no
-            # fission needed (which would have to duplicate a shared body read and could
-            # hoist it out of map-param scope). Tried before the RMW recogniser.
+            # Pure-WCR boundary reductions (``acc(CR:op)`` at MapExit, no carry-in); several independent
+            # accumulators (azimint ``s += a[j]; cnt += 1``) lift in place. Tried before the RMW recognizer.
             pures = [] if self._rmw_only else _recognize_pure_wcr_reductions(state, me)
             if pures:
                 lifted = 0
@@ -498,14 +477,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
         state.add_edge(red, '_out', acc_out_node, None, dace.Memlet(data=acc, subset=slot))
 
-        # If the reduced trip depends on data-dependent symbols (spmv
-        # ``row_start``/``row_end`` = ``indptr[i]`` / ``indptr[i+1]``, bound by an
-        # interstate-edge assignment from a scalar), wrap product-map/buffer/Reduce
-        # in a single-iteration map whose dynamic-range connectors re-define them
-        # from their scalar sources -- keeping them in scope through re-nesting. An
-        # interstate binding does not survive ``ExpandNestedSDFGInputs``' re-nest
-        # (symbol demanded from a parent that no longer defines it); a
-        # dynamic-range connector rides a data edge and does.
+        # A data-dependent trip (spmv ``indptr[i]`` bounds) is wrapped in a single-iteration map whose
+        # dynamic-range connectors redefine the symbols; interstate bindings do not survive the re-nest.
         self._scope_dynamic_range_symbols(state, me, mx, buf_node, red)
 
         return True

@@ -415,19 +415,9 @@ class WidenAccesses(ppl.Pass):
                     dst_name = edge.dst.data
                     if src_name not in nt_lane_dep and src_name not in lane_dep_transients:
                         continue
-                    # A CONSTANT (loop-invariant) read from a lane-dep source -- ``a[0]`` (or
-                    # ``a[j]`` with ``j`` an outer loop var) copied into a bridge, where ``a`` is
-                    # lane-dep only because ``a[i]`` is written elsewhere -- yields a value that is
-                    # identical across lanes. It must stay a Scalar broadcast operand (design 6.5),
-                    # NOT a per-lane tile: widening it leaves lanes 1..W-1 filled from a 1-element
-                    # copy (uninitialised) instead of broadcasting. Propagate lane-dep only when
-                    # THIS edge's source-side subset is itself lane-dependent -- EXCEPT when the
-                    # source is a scalar-like (widenable) lane-dep transient: it holds ONE per-lane
-                    # value, so a FULL copy of it is per-lane, never a fixed-element broadcast. Its
-                    # sole-element subset ``[0,...]`` only LOOKS constant; once the source is widened
-                    # to a tile the copy must widen too, else the copy's ``other_subset`` keeps the
-                    # stale pre-widen rank and ``validate`` rejects it ("other_subset does not match
-                    # node dimension").
+                    # A constant read (``a[0]``) from a lane-dep source is identical across lanes and must stay a Scalar
+                    # broadcast; propagate lane-dep only when this edge's source subset is lane-dependent. Exception: a
+                    # full copy of a scalar-like lane-dep transient is per-lane and must widen with its source.
                     src_desc = inner_sdfg.arrays.get(src_name)
                     src_is_scalar_like = (src_desc is not None and src_desc.transient and self._is_widenable(src_desc))
                     if not src_is_scalar_like:
@@ -664,13 +654,8 @@ class WidenAccesses(ppl.Pass):
                     own = "subset"
                 elif (edge.data.other_subset is not None
                       and any(isinstance(ep, AccessNode) and ep.data == name for ep in (edge.src, edge.dst))):
-                    # WHICH side ``subset`` describes is the memlet's orientation, not the endpoint
-                    # being widened: an AN-to-AN copy names one endpoint in ``data``, and a copy
-                    # built from the OTHER end carries this name's region in ``other_subset``.
-                    # Matching on ``data`` alone skipped such an edge entirely, leaving the copy at
-                    # its pre-widen single-element rank against a descriptor that is now a W-element
-                    # tile -- the "Dimensionality mismatch between src/dst subsets" the symmetric
-                    # widening below exists to prevent.
+                    # Which side ``subset`` describes follows the memlet orientation, not the endpoint being widened;
+                    # matching on ``data`` alone skipped copies built from the other end.
                     own = "other_subset"
                 else:
                     continue
@@ -683,19 +668,9 @@ class WidenAccesses(ppl.Pass):
                 # ``subset.num_elements()``. Stale ``volume=1`` from the Scalar memlet would copy
                 # only 1 element of the W-element tile.
                 edge.data.volume = new_sub.num_elements()
-                # Widen the opposite side symmetrically (AN -> AN copy ``a[i] -> b[0]``); else
-                # validator trips ``Dimensionality mismatch between src/dst subsets``. But a WCR
-                # SCALAR / single-element reduction target (a scalar accumulator ``_nnr_out``, or a
-                # broadcast SOURCE scalar read into a tile) stays single-element -- the tile folds
-                # INTO it (TileReduce) or broadcasts FROM it, never a per-lane copy. Over-widening
-                # it to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep it un-widened
-                # when the OTHER endpoint stays single-element (not itself a tile being widened
-                # this sweep).
-                # Only when ``subset`` IS this name's side. On the flipped orientation the opposite
-                # side is the other array's own region in its own terms (a non-transient read
-                # ``A[i]``, widened to ``A[i:i+W]`` by ``_widen_non_transient_memlets``, or another
-                # transient widened by its own sweep) -- overwriting it with the tile range would
-                # rewrite ``A[i]`` to ``A[0:W]`` and read the wrong elements.
+                # Widen the opposite side symmetrically (``a[i] -> b[0]``) unless it is a single-element WCR target
+                # or broadcast source the tile folds into or reads from. Only when ``subset`` is this name's side:
+                # on the flipped orientation the other side is another array's own region (``A[i]``).
                 if own == "subset" and edge.data.other_subset is not None and self._other_endpoint_widens(
                         edge, name, inner_sdfg, to_widen):
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
@@ -815,13 +790,8 @@ class WidenAccesses(ppl.Pass):
                     iter_var_ubs[iter_vars[d]] = map_entry.map.range[full_d][1]
             except Exception:  # noqa: BLE001
                 iter_var_ubs = {}
-            # Step 0: lower a seeded reduction COPYBACK (``priv[0] -> oc[0]`` plain copy into a
-            # write-only output connector whose boundary edge carries a reduction WCR) into an
-            # explicit ``reduce_accum`` tasklet, BEFORE widening. Once ``priv`` widens to a tile,
-            # ``ConvertTaskletsToTileOps`` folds the tile-in scalar-out tasklet to a ``TileReduce``.
-            # A masked map reduction (``if c: acc op= x``) reaches here as ``NormalizeWCR``'s
-            # seeded body-local accumulator + plain copyback, which -- left as a plain copy --
-            # over-widens the scalar sink instead of folding. No-op on non-reduction bodies.
+            # Step 0: lower a seeded reduction copyback (``priv[0] -> oc[0]`` into a WCR output connector) to a
+            # ``reduce_accum`` tasklet before widening, so it folds into a TileReduce instead of over-widening.
             total += self._lower_reduction_copybacks(state, nsdfg_node, inner_sdfg)
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)

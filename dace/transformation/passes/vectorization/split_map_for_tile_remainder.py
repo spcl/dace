@@ -48,26 +48,15 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 # produces. GenerateTileIterationMask sees it -> skips mask -> has_mask=False.
 TILE_MAIN_MARKER = "__tile_main"
 
-# Label suffix: boundary region runs as a plain step-1 scalar loop
-# (scalar_postamble tail). Every tile prep pass (MarkTileDims /
-# GenerateTileIterationMask / StrideMapByTileWidths / InsertTileLoadStore /
-# ConvertTaskletsToTileOps) skips this suffix -> tail keeps its original scalar
-# body: not tiled, strided, or masked.
+# Label suffix: boundary region is a plain step-1 scalar loop (scalar_postamble); every tile prep
+# pass skips it.
 SCALAR_TAIL_MARKER = "__scalar_tail"
 
-# Label suffix: boundary region is a W-strided MASKED tile map -- the plain ``masked`` slab, but
-# TAGGED so ``FuseBranchedTailRemainder`` can find the interior it was split from and fold the two
-# into one branched kernel (the ``branched_masked_tail`` strategy). Every tile prep pass ignores
-# the suffix, so the slab is prepared exactly like an untagged masked slab. Only the
-# ``masked_branch`` tail mode applies it: tagging the plain ``masked`` slab would rename maps on
-# the CPU path, hence rename the emitted functions, for no gain there.
+# Label suffix: masked W-strided boundary slab tagged for ``FuseBranchedTailRemainder``
+# (``branched_masked_tail``). Only ``masked_branch`` applies it, so CPU map names stay unchanged.
 MASKED_TAIL_MARKER = "__masked_tail"
 
-# Label suffix: boundary region flows through the tile-op pipeline at K=1
-# widths=(1,) -- single-lane "scalar tile" remainder. Every tile prep pass treats
-# it as tile-main pinned K=1 w=1: stride 1 (no W-stride), no mask, body rewritten
-# to tile ops (TileBinop/TileLoad/TileStore at one lane). Uniform remainder
-# emission when opted in via ``scalar_remainder_emit="tile"`` on the orchestrator.
+# Label suffix: boundary region runs through the tile pipeline pinned at K=1, widths=(1,).
 TILE_K1_TAIL_MARKER = "__tile_k1_tail"
 
 #: Every suffix this pass appends to a region's map label.
@@ -267,12 +256,8 @@ class SplitMapForTileRemainder(ppl.Pass):
             for d, W in zip(tiled_dims, widths):
                 lb, ub, _ = map_entry.map.range[d]
                 classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
-            # A provably-too-small dim (extent < W) cannot be tiled with no remainder to cover it
-            # -> keep the WHOLE map scalar. ``MarkTileDims`` refuses the same dim under
-            # ``assume_even``, so the two passes agree (no strided-map/scalar-body desync). Takes
-            # precedence over a nondivisible sibling dim: an untiled map is never wrong. On the
-            # masked / scalar-tail paths below there IS a remainder, so a short dim is peeled into
-            # an empty interior plus one masked tile and stays tiled.
+            # A provably-too-small dim (extent < W) keeps the whole map scalar, matching MarkTileDims under
+            # ``assume_even``. With a remainder path the short dim is peeled into one masked tile instead.
             if any(c == 'below' for c, *_ in classes):
                 return False
             for c, d, W, lb, ub in classes:
@@ -402,11 +387,8 @@ class SplitMapForTileRemainder(ppl.Pass):
 
     @staticmethod
     def _add_guard(guard: dace.SDFGState, label: str, expr_c: str, modulus: int, message: str) -> None:
-        # Add one ``expr % modulus == 0 && expr >= modulus`` abort-on-violation tasklet.
-        # Both spellings, chosen by the compiler that reads them: the guard belongs to the SDFG
-        # that owns the checked map, and that SDFG can be a nested one the offloading put on the
-        # device, where ``fprintf`` and ``abort`` are host-only and nvcc refuses the translation
-        # unit outright. ``printf`` and ``__trap`` are the device equivalents.
+        # Add one ``expr % modulus == 0 && expr >= modulus`` abort-on-violation tasklet, with ``printf`` /
+        # ``__trap`` when the owning SDFG runs on the device (``fprintf`` / ``abort`` are host-only).
         code = (f'if ((long long)({expr_c}) % {modulus} != 0 || (long long)({expr_c}) < {modulus}) {{\n'
                 f'#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)\n'
                 f'    printf("DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
