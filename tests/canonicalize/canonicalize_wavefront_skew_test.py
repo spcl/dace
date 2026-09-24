@@ -28,6 +28,14 @@ def _loops(sdfg):
 
 
 @dace.program
+def wavefront_with_accumulator(a: dace.float64[12, 12], s: dace.float64[1]):
+    for i in range(1, 12):
+        for j in range(1, 12):
+            a[i, j] = 0.5 * a[i - 1, j] + 0.25 * a[i, j - 1] + 0.001 * s[0]
+            s[0] = 0.5 * s[0] + a[i, j]
+
+
+@dace.program
 def wavefront_2d(aa: dace.float64[N, N]):
     """s2111: classical 2-D wavefront."""
     for i in range(1, N):
@@ -780,6 +788,39 @@ def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
     sdfg(aa=agot, bb=bgot, N=n)
     assert np.array_equal(agot, aref) and np.array_equal(bgot, bref), \
         f"bb mismatch: got\n{bgot[..., 0]}\nref\n{bref[..., 0]}"
+
+
+def test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator():
+    sdfg = wavefront_with_accumulator.to_sdfg(simplify=True)
+    a0 = np.random.default_rng(0).random((12, 12))
+    ref_a, ref_s = a0.copy(), np.zeros(1)
+    wavefront_with_accumulator.f(ref_a, ref_s)
+
+    result = WavefrontSkew().apply_pass(sdfg, {})
+
+    assert result is None
+    got_a, got_s = a0.copy(), np.zeros(1)
+    sdfg(a=got_a, s=got_s)
+    assert np.allclose(got_s, ref_s) and np.allclose(got_a, ref_a)
+
+
+@pytest.mark.parametrize('assignments', [{'y': 'a[i - 1, j + 2]'}, {'y': 'x', 'x': 'a[i, j]'}])
+def test_wavefront_skew_refuses_nest_carrying_a_value_through_an_interstate_edge(assignments):
+    sdfg = dace.SDFG('interstate_carry')
+    sdfg.add_array('a', [12, 12], dace.float64)
+    outer = LoopRegion('o', 'i < 10', 'i', 'i = 1', 'i = i + 1')
+    inner = LoopRegion('n', 'j < 10', 'j', 'j = 1', 'j = j + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    outer.add_node(inner, is_start_block=True)
+    body = inner.add_state_after(inner.add_state('head', is_start_block=True), assignments=assignments)
+    t = body.add_tasklet('t', {'p': None, 'q': None}, {'o': None}, 'o = p + q + y')
+    body.add_edge(body.add_read('a'), None, t, 'p', dace.Memlet('a[i - 1, j]'))
+    body.add_edge(body.add_read('a'), None, t, 'q', dace.Memlet('a[i, j - 1]'))
+    body.add_edge(t, 'o', body.add_write('a'), None, dace.Memlet('a[i, j]'))
+
+    result = WavefrontSkew().apply_pass(sdfg, {})
+
+    assert result is None
 
 
 def _canon_structure(prog):
