@@ -2644,6 +2644,32 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return node.expand(self, implementation, **expansion_kwargs)
 
 
+class SymbolResolver:
+    """Resolves the symbols visible at a node, reusing the part that only depends on the state.
+
+    ``SDFGState.symbols_defined_at_state()`` is the same answer for every node of one state, and
+    callers such as memlet propagation ask for many nodes of the same state. Pass one resolver to
+    the entry points that belong together; each of them makes its own if it is not given one.
+
+    The reuse is per state on purpose: what a state sees depends on the control flow regions
+    around it, and may yet come to depend on the inter-state edges that lead to it. Its expensive
+    part, the walk over the data descriptors, is genuinely per SDFG and is reused as such.
+    """
+
+    def __init__(self) -> None:
+        self._per_sdfg: Dict['SDFG', Dict[str, dtypes.typeclass]] = {}
+        self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
+
+    def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
+        state_symbols = self._per_state.get(state)
+        if state_symbols is None:
+            sdfg_symbols = self._per_sdfg.get(state.sdfg)
+            if sdfg_symbols is None:
+                sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
+            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
+        return state.symbols_defined_at(node, state_symbols=state_symbols)
+
+
 @make_properties
 class ContinueBlock(ControlFlowBlock):
     """ Special control flow block to represent a continue inside of loops. """

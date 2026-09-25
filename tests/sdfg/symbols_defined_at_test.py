@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes, propagation
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 
 
 def _make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
@@ -150,7 +150,7 @@ def test_an_error_leaves_no_state_behind():
             propagation.propagate_memlets_sdfg(sdfg)
 
     # Nothing to clean up: the resolver is an ordinary object owned by the call.
-    assert propagation.SymbolResolver()._per_state == {}
+    assert SymbolResolver()._per_state == {}
 
 
 if __name__ == "__main__":
