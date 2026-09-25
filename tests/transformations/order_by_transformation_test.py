@@ -82,15 +82,18 @@ def test_order_by_transformation():
     assert enumerations_unordered == len(applied_unordered) + 1
 
 
-@pytest.mark.parametrize("order_by_transformation", [True, False])
-def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool):
+@pytest.mark.parametrize("order_by_transformation, last_applied", [(True, "TrivialMapElimination"),
+                                                                    (False, "MapFusionVertical")])
+def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool, last_applied: str):
+    # Both transformations apply, in the order `test_order_by_transformation` established for this SDFG and
+    #  mode; `last_applied` here is the second (last) one of that order, not just any applied transformation.
     sdfg = _make_sdfg()
     failure = InvalidSDFGError("invalid", sdfg, None)
 
     with mock.patch.object(dace.SDFG, "validate", side_effect=failure):
-        with pytest.raises(InvalidSDFGError, match="after applying TrivialMapElimination") as info:
+        with pytest.raises(InvalidSDFGError, match=f"after applying {last_applied}") as info:
             sdfg.apply_transformations_repeated(
-                [TrivialMapElimination()],
+                [MapFusionVertical(), TrivialMapElimination()],
                 validate=True,
                 order_by_transformation=order_by_transformation,
             )
@@ -99,5 +102,5 @@ def test_validation_failure_names_last_applied_transformation(order_by_transform
 
 if __name__ == "__main__":
     test_order_by_transformation()
-    test_validation_failure_names_last_applied_transformation(True)
-    test_validation_failure_names_last_applied_transformation(False)
+    test_validation_failure_names_last_applied_transformation(True, "TrivialMapElimination")
+    test_validation_failure_names_last_applied_transformation(False, "MapFusionVertical")
