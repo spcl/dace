@@ -274,8 +274,10 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
+                # `print_match()` needs the control flow region the match belongs to, not this pass, hence `cfg_list[cfg_id]`.
                 assert match is not None
-                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
+                tcfg = sdfg.cfg_list[match.cfg_id]
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.", sdfg,
                                        match.state_id) from err
 
         return applied_transformations
