@@ -489,6 +489,18 @@ def test_native_incremental_rebuild_and_invalidation(tmp_path):
         compiler.configure_and_compile(program_folder)
         products = build_products()
         assert products, 'native build produced no objects/library'
+        # The staleness check counts an input sharing its product's mtime as stale (coarse-mtime
+        # safety), and a filesystem with whole-second mtimes stamps a fast build's objects and
+        # library into the same second. Backdate so every product is strictly newer than its inputs
+        # and (a) tests the fast path rather than the filesystem's granularity.
+        backdated = min(os.path.getmtime(p) for p in products) - 20
+        for root, _, names in os.walk(program_folder):
+            for name in names:
+                path = os.path.join(root, name)
+                # sources < objects < libraries, each strictly.
+                age = backdated + (10 if root == build and name.endswith('.so') else
+                                   5 if root == build and name.endswith('.o') else 0)
+                os.utime(path, (age, age))
         stamps = {p: os.path.getmtime(p) for p in products}
 
         # (a) identical inputs -> the fast path fires: nothing is recompiled or relinked.
