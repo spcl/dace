@@ -162,6 +162,35 @@ def test_move_to_stack_not_read_before_written():
     assert stree.containers['P'].storage != dace.StorageType.Register
 
 
+def test_move_to_stack_zero_initialized():
+    """With ``zero_read_before_written``, ``P`` (read before written) is moved and zeroed once, before the loop: the
+    program then behaves as one that zeroes ``P`` explicitly first."""
+    nests = lambda: [_read('P', 'B'), _write('P', 'A'), _write('Q', 'C'), _read('Q', 'D')]
+    stree = _tree(nests())
+    assert move_small_transients_to_stack(stree, zero_read_before_written=True) == 2
+    assert stree.zero_initialized == {'P'}
+    sdfg = stree.as_sdfg(simplify=False)
+    code = sdfg.generate_code()[0].clean_code
+    declarations = [line for line in code.splitlines() if ' P[' in line and 'DACE_ALIGN' in line]
+    assert len(declarations) == 1 and '= {0}' in declarations[0]
+    assert code.index(declarations[0]) < code.index('for (k = 0')
+
+    reference = _tree(nests())
+    zero = _nest(_tasklet('o = 0', {}, {'o': 'P[i, j, 0]'}), 'zero')
+    children = list(reference.children)
+    reference.children = []
+    reference.add_children([zero] + children)
+    rng = np.random.default_rng(0)
+    inputs = {name: rng.random((NI, NJ, NK)) for name in 'ABCD'}
+    results = []
+    for program in (reference.as_sdfg(simplify=False), sdfg):
+        arrays = {name: value.copy() for name, value in inputs.items()}
+        program(**arrays)
+        results.append(arrays)
+    for name in 'ABCD':
+        assert np.array_equal(results[0][name], results[1][name]), name
+
+
 def test_move_to_stack_respects_limits():
     stree = _tree([_write('P', 'A'), _read('P', 'B')])
     assert move_small_transients_to_stack(stree, max_array_bytes=NI * NJ * 8 - 1) == 0
@@ -179,4 +208,5 @@ if __name__ == '__main__':
     test_reuse_smaller_plane_in_larger_slot()
     test_move_small_transients_to_stack()
     test_move_to_stack_not_read_before_written()
+    test_move_to_stack_zero_initialized()
     test_move_to_stack_respects_limits()

@@ -415,7 +415,8 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
 
 def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
                                    max_array_bytes: int = 4096,
-                                   max_total_bytes: int = 128 * 1024) -> int:
+                                   max_total_bytes: int = 128 * 1024,
+                                   zero_read_before_written: bool = False) -> int:
     """
     Allocate small transient arrays of constant size on the stack (``StorageType.Register``) rather than on the heap,
     as auto-optimization does for SDFGs: their accesses need no base pointers loaded from memory, and they cannot
@@ -424,12 +425,17 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     :func:`reuse_transients`, which reduces how much memory the transients need.
 
     Arrays that may be read before being written (live on entry, e.g., stencils reading halo points of a temporary
-    that were never computed) are not moved: on the heap such reads see the values of a previous call (or of freshly
-    allocated memory), and on the stack they would see whatever the stack held, which changes results.
+    that were never computed) are not moved by default: on the heap such reads see the values of a previous call (or
+    of freshly allocated memory), and on the stack they would see whatever the stack held, which changes results.
+    With ``zero_read_before_written``, they are moved too and zeroed once per call when allocated (at the start of the
+    program, so values still flow from one iteration of an enclosing loop to the next as before): those reads then see
+    zeros (or values of earlier iterations of the same call) instead of what a previous call left, which makes every
+    call independent of the previous ones but may change results where such values reach outputs.
 
     :param stree: The schedule tree to transform in place.
     :param max_array_bytes: Only move arrays of at most this many bytes.
     :param max_total_bytes: Move arrays of at most this many bytes in total.
+    :param zero_read_before_written: Also move arrays that may be read before being written, zero-initialized.
     :return: The number of arrays moved.
     """
     root = stree.get_root()
@@ -444,16 +450,21 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
         size = _integer(desc.total_size)
         if size is None or size * desc.dtype.bytes > max_array_bytes:
             continue
-        if liveness.segments(uses[name])[1]:
+        exposed = liveness.segments(uses[name])[1]
+        if exposed and not zero_read_before_written:
             continue  # Read before written
-        candidates.append((-len(uses.get(name, ())), name, size * desc.dtype.bytes))
+        candidates.append((-len(uses.get(name, ())), name, size * desc.dtype.bytes, exposed))
     moved, total = 0, 0
-    for _, name, size in sorted(candidates):
+    for _, name, size, exposed in sorted(candidates):
         if total + size > max_total_bytes:
             continue
         desc = containers[name]
         desc.storage = dtypes.StorageType.Register
-        desc.lifetime = dtypes.AllocationLifetime.Scope
+        if exposed:  # Allocated (and zeroed) once, at the start of the program
+            desc.lifetime = dtypes.AllocationLifetime.SDFG
+            root.zero_initialized.add(name)
+        else:
+            desc.lifetime = dtypes.AllocationLifetime.Scope
         total += size
         moved += 1
     return moved
