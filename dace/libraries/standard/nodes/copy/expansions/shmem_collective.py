@@ -19,9 +19,12 @@ if TYPE_CHECKING:
 class ExpandSharedMemoryCollective(ExpandTransformation):
     """Block-collective Shared <-> Shared/Global copy.
 
-    A static 1-D transfer uses ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``; other shapes
-    fall back to ``dace::CopyND<...>::Copy(...)`` with optional ``__syncthreads()`` barriers
-    (enabled by the node's ``sync`` property, default True).
+    A static 1-D transfer uses ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``; every other
+    shape up to rank 3 (after singleton dimensions collapse) uses ``dace::BlockCollective3D``, which
+    gives each wavefront a contiguous run of the fastest-varying axis. The node's ``sync`` property
+    (default True) decides whether that call ends in ``__syncthreads()``, so a staging pass can chain
+    several copies and pay for one barrier. Shapes outside that are refused, never lowered to
+    ``dace::CopyND``: a per-thread loop nest has every thread copy the whole region.
 
     Caller must place this outside any enclosing ``GPU_ThreadBlock`` map -- this expansion *is*
     the thread-block-level operation. Shared <-> Register goes through ``MappedTasklet`` instead
@@ -41,6 +44,9 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
                              "Shared <-> Register thread-level copies.")
         if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
             raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
+        if inp.dtype != out.dtype:
+            raise ValueError(f"SharedMemoryCollective moves bytes and cannot convert {inp.dtype} to {out.dtype}; "
+                             "use MappedTasklet, which emits the cast.")
 
         if is_in_scope(parent_sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]):
             raise ValueError("SharedMemoryCollective IS the thread-block-level operation "

@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`FillLibraryNode` and its pure / CPU / CUDA / tasklet expansions."""
 import contextlib
+import re
 from typing import Optional, Sequence
 
 import dace
 from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
 
-import pytest
 import numpy as np
+import pytest
 
 
 def make_fill_sdfg(implementation: Optional[str],
@@ -68,6 +69,20 @@ def test_fill_pure_1d_cpu():
     assert np.all(B[:50] == 1)
     assert np.all(B[100:] == 1)
     assert np.all(B[50:100] == 0)
+
+
+@pytest.mark.parametrize('subset', ['3', '2, 5'], ids=['index', 'point_2d'])
+def test_fill_pure_writes_a_single_element(subset):
+    """A one-element subset, which a Fill gets when a loop moves into its lanes, collapses to zero dimensions."""
+    shape = (8, ) if ',' not in subset else (4, 8)
+    sdfg = make_fill_sdfg('pure', shape, subset, gpu=False, name=f"fill_pure_one_{len(shape)}d", value=7.0)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    B = np.ones(shape, dtype=np.float64)
+    sdfg(B=B)
+    want = np.ones(shape)
+    want[tuple(int(i) for i in subset.split(','))] = 7.0
+    np.testing.assert_array_equal(B, want)
 
 
 def test_fill_pure_3d_cpu():
@@ -261,6 +276,41 @@ def test_fill_register_inside_kernel_routes_to_sequential():
 
     # It should fall back to an internal loop/unrolled tasklet chain inside the device state
     assert any(isinstance(n, dace.nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
+
+
+def pure_fill_in_kernel_sdfg(name: str) -> dace.SDFG:
+    """``map i (GPU_Device) { gpuB[i, 0:4] = 5 }`` with the Fill pinned to ``pure``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('gpuB', [8, 4], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('kernel', dict(i='0:8'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    fill_node = FillLibraryNode(name='fill_row', value=5.0)
+    fill_node.implementation = 'pure'
+    state.add_memlet_path(me, fill_node, memlet=dace.Memlet())
+    state.add_memlet_path(fill_node,
+                          mx,
+                          state.add_write('gpuB'),
+                          src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet('gpuB[i, 0:4]'))
+    return sdfg
+
+
+def test_fill_pure_inside_a_kernel_expands_to_a_sequential_map():
+    """A device map inside a kernel is a nested kernel; the storage alone must not pick the schedule."""
+    sdfg = pure_fill_in_kernel_sdfg('fill_pure_in_kernel_schedule')
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    schedules = [n.map.schedule for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert schedules.count(dace.dtypes.ScheduleType.GPU_Device) == 1, schedules
+
+
+@pytest.mark.gpu
+def test_fill_pure_inside_a_kernel_writes_every_row():
+    import cupy  # Only present on GPU runners.
+    sdfg = pure_fill_in_kernel_sdfg('fill_pure_in_kernel_run')
+    gpuB = cupy.zeros((8, 4), dtype=cupy.float64)
+    sdfg(gpuB=gpuB)
+    np.testing.assert_array_equal(cupy.asnumpy(gpuB), np.full((8, 4), 5.0))
 
 
 def test_fill_single_gpu_shared_inside_kernel_expands_clean():
@@ -465,6 +515,20 @@ def make_dynamic_fill_sdfg(shape: Sequence[int],
     return sdfg
 
 
+def assert_reads_the_dynamic_value(code: str, call: str) -> None:
+    """The emitted ``call`` must take its fill value FROM ``V``, not from a baked-in literal.
+
+    Asserted on the call's arguments rather than on ``_fill_val`` appearing somewhere in the file:
+    the readable CPU generator inlines tasklet connectors, so the same correct lowering spells the
+    operand ``V[V_idx(0)]`` while the legacy one spells it ``_fill_val``. Pinning the connector name
+    would pass only under the legacy generator and would not check the operand either way.
+    """
+    sites = [ln for ln in code.split('\n') if call in ln]
+    assert sites, f'expected a {call} call in the generated code'
+    assert any(FillLibraryNode.VALUE_CONNECTOR_NAME in ln or re.search(r'\bV\b', ln) for ln in sites), \
+        f'{call} must read the dynamic value; got {sites}'
+
+
 def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     """A dynamic <=32-bit value on a contiguous CPU subset lowers to ``std::fill_n``."""
     sdfg = make_dynamic_fill_sdfg((100, ),
@@ -478,8 +542,7 @@ def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     assert select_fill_implementation(node, sdfg.start_state) == 'CPU'
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'std::fill_n' in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    assert_reads_the_dynamic_value(code, 'std::fill_n')
 
 
 def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
@@ -561,5 +624,4 @@ def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     assert select_fill_implementation(node, sdfg.start_state) == 'CUDA'
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'MemsetAsync' in code
-    assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+    assert_reads_the_dynamic_value(code, 'MemsetAsync')

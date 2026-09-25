@@ -1,0 +1,9 @@
+# Everything a sweep WRITES. A results directory is one machine's measurement of one preset and one
+# GPU, so committing it makes the repo the place two machines' numbers get silently mixed. Copy the
+# directory off the cluster instead.
+results_*/
+*.csv
+*.log
+*.out
+
+__pycache__/

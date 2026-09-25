@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.dataflow import TrivialMapElimination
+import networkx
 import unittest
 
 
@@ -129,6 +130,38 @@ def trivial_map_pseudo_init_sdfg():
 
     sdfg.validate()
     return sdfg
+
+
+def ordered_trivial_map_sdfg():
+    """``A[0] = 1`` (access node A1), then a one-iteration map reading ``A[0]`` through a second access node A2 and
+    writing ``B[0]``, then ``A[0] = 2`` through A3; the two hazards on A are held only by empty ordering edges
+    ``A1 -> map entry`` and ``map exit -> writer of A3``."""
+    sdfg = dace.SDFG('trivial_map_ordering')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    state = sdfg.add_state()
+    first = state.add_tasklet('first', {}, {'o'}, 'o = 1.0')
+    a1 = state.add_write('A')
+    state.add_edge(first, 'o', a1, None, dace.Memlet('A[0]'))
+    entry, exit_ = state.add_map('map', dict(i='0:1'))
+    read = state.add_tasklet('read', {'x'}, {'y'}, 'y = x')
+    state.add_memlet_path(state.add_read('A'), entry, read, dst_conn='x', memlet=dace.Memlet('A[0]'))
+    state.add_memlet_path(read, exit_, state.add_write('B'), src_conn='y', memlet=dace.Memlet('B[0]'))
+    state.add_nedge(a1, entry, dace.Memlet())
+    last = state.add_tasklet('last', {}, {'o'}, 'o = 2.0')
+    state.add_edge(last, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+    state.add_nedge(exit_, last, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state, first, read, last
+
+
+def test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held():
+    sdfg, state, first, read, last = ordered_trivial_map_sdfg()
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    assert not any(isinstance(n, dace.nodes.MapEntry) for n in state.nodes())
+    sdfg.validate()
+    assert networkx.has_path(state._nx, first, read), 'the write of A[0] no longer precedes its read'
+    assert networkx.has_path(state._nx, read, last), 'the read of A[0] no longer precedes its overwrite'
 
 
 class TrivialMapEliminationTest(unittest.TestCase):

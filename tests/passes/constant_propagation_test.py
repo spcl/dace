@@ -632,6 +632,68 @@ def test_dependency_change_same_edge(extra_state):
     assert a[0] == ref
 
 
+def nest_with_a_string_symbol_mapping() -> dace.SDFG:
+    """``out[i] = inner[i]`` through a nest whose stride symbol is mapped to ``'rows * cols'``.
+
+    The value is a string, which is what any pass rewriting the mapping as text leaves behind. The
+    stride is the only place the symbol is used, so a reader that mistakes the text for a constant
+    substitutes the two outer names into the nest's own descriptor.
+    """
+    rows, cols = (dace.symbol(name, dtype=dace.int64) for name in ('rows', 'cols'))
+    stride = dace.symbol('stride', dtype=dace.int64)
+
+    inner = dace.SDFG('view_a_row')
+    inner.add_array('src', [4], dace.float64, strides=[stride])
+    inner.add_array('dst', [4], dace.float64)
+    body = inner.add_state('copy', is_start_block=True)
+    body.add_nedge(body.add_read('src'), body.add_write('dst'), dace.Memlet('src[0:4]'))
+
+    sdfg = dace.SDFG('string_symbol_mapping')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_array('out', [4], dace.float64)
+    state = sdfg.add_state('call', is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {'src': None}, {'dst': None}, symbol_mapping={'stride': rows * cols})
+    state.add_edge(state.add_read('a'), None, nest, 'src', dace.Memlet('a[0:4]'))
+    state.add_edge(nest, 'dst', state.add_write('out'), None, dace.Memlet('out[0:4]'))
+    # Item assignment is how a string gets in. The constructor coerces the value; a pass that rewrites
+    # the mapping in place bypasses it.
+    nest.symbol_mapping['stride'] = 'rows * cols'
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_symbolic_string_mapping_is_not_a_constant():
+    """The mapping must survive: its value names outer symbols, so it is not a constant.
+
+    ``issymbolic`` on the unparsed string ``'rows * cols'`` answers "not symbolic", so the pass used
+    to push it into the nest as an initial constant, rewrite the nest's stride to ``rows*cols`` and
+    then drop ``stride`` from the mapping. The nest was left naming two symbols that nothing binds
+    (``Missing symbols on nested SDFG: ['rows', 'cols']``). npbench ``vexx_k`` hit this on the GPU
+    canonicalize column.
+    """
+    sdfg = nest_with_a_string_symbol_mapping()
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert 'stride' in nest.symbol_mapping, f'the mapping was dropped: {nest.symbol_mapping}'
+    free = {str(sym) for sym in nest.sdfg.arrays['src'].strides[0].free_symbols}
+    assert free == {'stride'}, f"the nest's stride names symbols it cannot bind: {free}"
+    sdfg.validate()
+
+
+def test_a_literal_string_mapping_is_still_propagated():
+    """The counterpart: a mapping written as ``'8'`` has no free symbols and still folds away."""
+    sdfg = nest_with_a_string_symbol_mapping()
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    nest.symbol_mapping['stride'] = '8'
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    nest = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert 'stride' not in nest.symbol_mapping, 'a literal mapping was left in place'
+    assert int(nest.sdfg.arrays['src'].strides[0]) == 8, nest.sdfg.arrays['src'].strides
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -653,3 +715,5 @@ if __name__ == '__main__':
     test_dependency_change()
     test_dependency_change_same_edge(False)
     test_dependency_change_same_edge(True)
+    test_a_symbolic_string_mapping_is_not_a_constant()
+    test_a_literal_string_mapping_is_still_propagated()

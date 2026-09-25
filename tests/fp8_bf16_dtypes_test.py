@@ -169,6 +169,28 @@ def test_gpu_cpu_compute_equivalence_bf16():
     np.testing.assert_array_equal(gpu.view(np.uint16), cpu.view(np.uint16))
 
 
+def test_lowp_array_declaration_and_to_sdfg():
+    # Declaration syntax + descriptor dtype survive to_sdfg, with no compilation involved.
+    @dace.program
+    def fp8_id(a: dace.float8_e4m3fn[8], b: dace.float8_e4m3fn[8]):
+        b[:] = a
+
+    sdfg = fp8_id.to_sdfg()
+    assert sdfg.arrays["a"].dtype == dace.float8_e4m3fn
+    assert sdfg.arrays["a"].dtype.bytes == 1
+
+
+def test_bfloat16_cast_converter_to_sdfg():
+    # Pins the frontend cast converter: `dace.bfloat16(...)` must resolve through the
+    # ml_dtypes-registered numpy name, which no other test in this file exercises.
+    @dace.program
+    def cast_kernel(a: dace.float32[16], b: dace.bfloat16[16]):
+        b[:] = dace.bfloat16(a)
+
+    sdfg = cast_kernel.to_sdfg()
+    assert sdfg.arrays["b"].dtype == dace.bfloat16
+
+
 if __name__ == "__main__":
     for args in LOWP:
         test_typeclass_registered(*args)
@@ -176,4 +198,6 @@ if __name__ == "__main__":
         test_numpy_roundtrip_and_compute(*args)
     test_sdfg_serialization_roundtrip()
     test_openmp_reduction_bf16()
+    test_lowp_array_declaration_and_to_sdfg()
+    test_bfloat16_cast_converter_to_sdfg()
     print("fp8/bf16 dtype tests passed")

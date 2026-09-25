@@ -1,9 +1,14 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the symbol write scopes analysis pass. """
 
+import copy
+
+import numpy as np
+
 import dace
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA, SymbolSSA
 
 
 def test_loop_iter_symbol_reused_split():
@@ -335,3 +340,226 @@ if __name__ == '__main__':
     test_loop_iter_symbol_reused_fused()
     test_branch_subscope_nofission()
     test_branch_subscope_fission()
+
+
+def unrolled_index_chain_sdfg() -> dace.SDFG:
+    """The shape short-loop unrolling leaves behind: one index symbol reassigned per replay.
+
+    ``s0 -[idx=arr[0]]-> s1 -[idx=arr[1]]-> s2 -[idx=arr[2]]-> s3``, each state reading ``idx``.
+    """
+    sdfg = dace.SDFG('unrolled_index_chain')
+    sdfg.add_array('arr', [3], dace.int64)
+    sdfg.add_array('out', [3], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+
+    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    for i in range(3):
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'idx': f'arr[{i}]'}))
+    # Every state after the first reads the symbol, so each replay has a consumer.
+    for i in range(1, 4):
+        tasklet = states[i].add_tasklet(f't{i}', {}, {'o'}, 'o = 1.0')
+        access = states[i].add_access('out')
+        states[i].add_edge(tasklet, 'o', access, None, dace.Memlet(data='out', subset='idx'))
+    return sdfg
+
+
+def test_symbol_ssa_versions_an_unrolled_index_chain():
+    """Each replay's definition gets its own symbol, and each consumer reads its own version."""
+    sdfg = unrolled_index_chain_sdfg()
+    result = SymbolSSA().apply_pass(sdfg, {})
+
+    assert result is not None and 'idx' in result
+    # Three definitions; the last is live at the region exit and must keep the original name.
+    assert len(result['idx']) == 2, result
+    defined = [set(e.data.assignments.keys()) for e in sdfg.edges()]
+    assert all(len(names) == 1 for names in defined), defined
+    assert len({next(iter(names)) for names in defined}) == 3, defined
+
+    # Each state reads exactly the version the edge above it defines.
+    for edge in sdfg.edges():
+        version = next(iter(edge.data.assignments))
+        reads = {str(s) for s in edge.dst.free_symbols}
+        assert version in reads, (version, reads)
+    sdfg.validate()
+
+
+def test_symbol_ssa_leaves_an_ambiguous_definition_alone():
+    """A symbol whose versions merge at a join would need a phi, so nothing is renamed."""
+    sdfg = dace.SDFG('ambiguous_join')
+    sdfg.add_array('out', [4], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    left, right, join = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('join')
+    sdfg.add_edge(entry, left, dace.InterstateEdge(condition='idx < 1', assignments={'idx': '1'}))
+    sdfg.add_edge(entry, right, dace.InterstateEdge(condition='idx >= 1', assignments={'idx': '2'}))
+    # Both definitions reach the join, so neither may be renamed to it.
+    sdfg.add_edge(left, join, dace.InterstateEdge())
+    sdfg.add_edge(right, join, dace.InterstateEdge())
+    tasklet = join.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    join.add_edge(tasklet, 'o', join.add_access('out'), None, dace.Memlet(data='out', subset='idx'))
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert all(set(e.data.assignments) <= {'idx'} for e in sdfg.edges())
+
+
+def test_symbol_ssa_leaves_a_loop_carried_increment_alone():
+    """``k = k + 1`` around a back edge must keep its name: it is the induction variable.
+
+    The body is reached both by the initializing edge and by the back edge, so the read inside it
+    has two reaching definitions -- versioning either one would break the recurrence, and would
+    also destroy the self-referential shape ``InductionVariableSubstitution`` matches on.
+    """
+    sdfg = dace.SDFG('loop_carried_increment')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    init, body, done = sdfg.add_state('init', is_start_block=True), sdfg.add_state('body'), sdfg.add_state('done')
+    sdfg.add_edge(init, body, dace.InterstateEdge(assignments={'k': '0'}))
+    tasklet = body.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_access('out'), None, dace.Memlet(data='out', subset='k'))
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition='k < 15', assignments={'k': 'k + 1'}))
+    sdfg.add_edge(body, done, dace.InterstateEdge(condition='k >= 15'))
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert {k for e in sdfg.edges() for k in e.data.assignments} == {'k'}
+
+
+def test_symbol_ssa_versions_an_unrolled_accumulator_chain():
+    """The same increment, once unrolling has laid it out straight, does version.
+
+    Each definition then has exactly one reaching predecessor, so the chain becomes
+    ``k_1 = k + 1; k_2 = k_1 + 1; ...`` -- with the exit-live definition keeping the original name
+    so whatever reads ``k`` after the region still finds it.
+    """
+    sdfg = dace.SDFG('unrolled_accumulator')
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    for i in range(3):
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    for state in states[1:]:
+        tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+        state.add_edge(tasklet, 'o', state.add_access('out'), None, dace.Memlet(data='out', subset='k'))
+
+    result = SymbolSSA().apply_pass(sdfg, {})
+    assert result is not None and len(result['k']) == 2, result
+    # Every definition is distinct, and the last one still writes the escaping name.
+    defined = [next(iter(e.data.assignments)) for e in sdfg.edges()]
+    assert len(set(defined)) == 3, defined
+    assert 'k' in defined, defined
+    # Each increment reads exactly the version defined immediately above it, never a later one.
+    # Compare symbols, not substrings: 'k' occurs inside 'k_0'.
+    chain = [next(iter(e.data.assignments)) for e in sdfg.edges()]
+    for position, edge in enumerate(sdfg.edges()):
+        target = next(iter(edge.data.assignments))
+        rhs = edge.data.assignments[target]
+        read = {str(sym) for sym in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
+        expected = 'k' if position == 0 else chain[position - 1]
+        assert read == {expected}, (target, rhs, expected)
+    sdfg.validate()
+
+
+def gather_into(state: dace.SDFGState, sym: str, index: str):
+    tasklet = state.add_tasklet('gather', {'inp'}, {'o'}, 'o = inp + 1.0')
+    state.add_edge(state.add_read('b'), None, tasklet, 'inp', dace.Memlet(f'b[{sym}]'))
+    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet(f'out[{index}]'))
+
+
+def gather_arrays(sdfg: dace.SDFG):
+    for name in ('idx', 'b', 'out'):
+        sdfg.add_array(name, [8], dace.int64 if name == 'idx' else dace.float64)
+    sdfg.add_symbol('s', dace.int64)
+
+
+def run_gather(sdfg: dace.SDFG) -> np.ndarray:
+    out = np.zeros(8)
+    sdfg(idx=np.array([3, 1, 4, 1, 5, 0, 2, 6], dtype=np.int64), b=np.arange(8.0) * 10.0, out=out)
+    return out
+
+
+def peel_after_loop_sdfg() -> dace.SDFG:
+    """CloudSC's shape: a loop body and its peeled last iteration both assign ``s = idx[.]``."""
+    sdfg = dace.SDFG('peel_after_loop')
+    gather_arrays(sdfg)
+    loop = LoopRegion('body_loop', 'i < 7', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    head, comp = loop.add_state('head', is_start_block=True), loop.add_state('comp')
+    loop.add_edge(head, comp, dace.InterstateEdge(assignments={'s': 'idx[i]'}))
+    gather_into(comp, 's', 'i')
+    peel = sdfg.add_state('peel')
+    sdfg.add_edge(loop, peel, dace.InterstateEdge(assignments={'s': 'idx[7]'}))
+    guard = ConditionalBlock('guard')
+    sdfg.add_node(guard)
+    sdfg.add_edge(peel, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion('guard_body', sdfg=sdfg)
+    guard.add_branch(dace.properties.CodeBlock('s > 0'), branch)
+    gather_into(branch.add_state('guarded', is_start_block=True), 's', '7')
+    sdfg.validate()
+    return sdfg
+
+
+def test_symbol_ssa_renames_a_peel_apart_from_its_loop_body():
+    """The loop body and the peel get distinct names; each use reads its own, the peel's guard condition included."""
+    sdfg = peel_after_loop_sdfg()
+    expected = run_gather(copy.deepcopy(sdfg))
+    result = SymbolSSA().apply_pass(sdfg, {})
+
+    assert result is not None and len(result['s']) == 1, result
+    loop, peel_edge = sdfg.start_block, sdfg.out_edges(sdfg.start_block)[0]
+    (body_name, ), (peel_name, ) = loop.edges()[0].data.assignments, peel_edge.data.assignments
+    assert body_name != peel_name
+    comp = next(b for b in loop.nodes() if b.label == 'comp')
+    guard = next(b for b in sdfg.nodes() if isinstance(b, ConditionalBlock))
+    assert body_name in comp.free_symbols and peel_name not in comp.free_symbols
+    assert guard.branches[0][0].get_free_symbols() == {peel_name}
+    assert peel_name in guard.branches[0][1].start_block.free_symbols
+    sdfg.validate()
+    assert np.array_equal(run_gather(sdfg), expected)
+
+
+def test_symbol_ssa_keeps_a_branch_join_on_one_name():
+    """Two branch definitions meeting at a join stay one name; a later, separate definition gets its own."""
+    sdfg = dace.SDFG('branch_join_then_redefine')
+    gather_arrays(sdfg)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    branches = ConditionalBlock('pick')
+    sdfg.add_node(branches)
+    sdfg.add_edge(entry, branches, dace.InterstateEdge())
+    for cond, rhs in (('idx[0] > 2', 'idx[1]'), (None, 'idx[2]')):
+        region = ControlFlowRegion(f'arm_{rhs[4]}', sdfg=sdfg)
+        branches.add_branch(dace.properties.CodeBlock(cond) if cond else None, region)
+        first = region.add_state(f'arm_start_{rhs[4]}', is_start_block=True)
+        region.add_edge(first, region.add_state(f'arm_end_{rhs[4]}'), dace.InterstateEdge(assignments={'s': rhs}))
+    join = sdfg.add_state('join')
+    sdfg.add_edge(branches, join, dace.InterstateEdge())
+    gather_into(join, 's', '0')
+    later = sdfg.add_state('later')
+    sdfg.add_edge(join, later, dace.InterstateEdge(assignments={'s': 'idx[3]'}))
+    gather_into(later, 's', '1')
+    sdfg.validate()
+    expected = run_gather(copy.deepcopy(sdfg))
+
+    result = SymbolSSA().apply_pass(sdfg, {})
+    assert result is not None and len(result['s']) == 1, result
+    arm_names = {k for _, region in branches.branches for e in region.edges() for k in e.data.assignments}
+    (later_name, ) = sdfg.in_edges(later)[0].data.assignments
+    assert len(arm_names) == 1 and later_name not in arm_names, (arm_names, later_name)
+    assert arm_names <= join.free_symbols and later_name in later.free_symbols
+    sdfg.validate()
+    assert np.array_equal(run_gather(sdfg), expected)
+
+
+def test_symbol_ssa_leaves_a_value_carried_into_a_loop_region_alone():
+    """A body read before the body's own redefinition sees both the pre-loop value and the back edge: one web."""
+    sdfg = dace.SDFG('carried_into_loop_region')
+    gather_arrays(sdfg)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('carry_loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'s': 'idx[0]'}))
+    use = loop.add_state('use', is_start_block=True)
+    gather_into(use, 's', 'i')
+    loop.add_edge(use, loop.add_state('tail'), dace.InterstateEdge(assignments={'s': 'idx[i]'}))
+    sdfg.validate()
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert {k for e in sdfg.all_interstate_edges() for k in e.data.assignments} == {'s'}

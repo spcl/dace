@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import json
+import warnings
 import numpy as np
 
 import dace
@@ -82,7 +83,34 @@ def test_serialize_infinity():
     assert (json_string.find('Infinity') == -1)
 
 
+def test_keys_no_property_consumes_are_reported_unless_ignored_or_metadata():
+    loaded = MyObject(0.0)
+    json_obj = {'float_prop': 1.5, 'stray': 1, '_meta_note': 'editor', 'skipped': 2}
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        set_properties_from_json(loaded, json_obj, ignore_properties={'skipped'})
+
+    assert [str(w.message) for w in caught] == ['Unused properties: stray']
+    assert loaded.float_prop == 1.5
+
+
+def test_tasklets_missing_a_code_property_do_not_share_its_default():
+    json_obj = {'type': 'Tasklet', 'label': 't', 'attributes': {'label': 't', 'code': {'string_data': 'b = a'}}}
+    default = dace.sdfg.nodes.Tasklet.__properties__['code_global'].default
+
+    first = dace.serialize.from_json(json_obj)
+    second = dace.serialize.from_json(json_obj)
+
+    assert first.code_global is not second.code_global
+    assert first.code_global is not default and second.code_global is not default
+    assert first.code_global.as_string == default.as_string
+    assert first.code_global.language == dace.dtypes.Language.CPP
+
+
 if __name__ == '__main__':
     test_serialize_int_float()
     test_serialize_list_int64()
     test_serialize_infinity()
+    test_keys_no_property_consumes_are_reported_unless_ignored_or_metadata()
+    test_tasklets_missing_a_code_property_do_not_share_its_default()

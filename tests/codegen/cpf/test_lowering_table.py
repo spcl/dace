@@ -1,0 +1,1336 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""The CPF lowering table, checked against a compiler rather than against itself.
+
+A mapping table is easy to write and easy to get quietly wrong, so nothing here asserts that a
+lowering equals some expected string. Instead each entry is compiled into a real translation unit
+with a bare host compiler and RUN, and its result compared against the semantics the DaCe runtime
+header documents. A rename to the wrong ``std`` function, a rewrite that loses a type, or a
+definition that does not build all fail as a wrong number or a failed compile.
+
+Both dialects are held to the same standard, and mostly by the same tests: the C tables are a
+SECOND spelling of the same semantics, so a C entry that computes something else is exactly the
+failure a table written twice invites. The value cases below are therefore parametrized over the
+dialect rather than duplicated.
+
+The coverage tests at the bottom are the ones that stop the tables rotting: every unqualified
+runtime function the harness knows how to detect must be handled in some lane or explicitly refused,
+every C definition must be reachable from something a printer emits, and every C++ entry must have a
+C counterpart or an entry saying why it cannot.
+"""
+import ctypes
+import re
+import textwrap
+
+import numpy as np
+import pytest
+
+from dace import cpf_lowering, symbolic
+from dace.codegen.common import sym2cpp
+from dace.cpf_lowering import Dialect
+from tests.codegen.cpf.conftest import (UNQUALIFIED_RUNTIME_FUNCTIONS, assert_standalone, build_standalone,
+                                        compile_diagnostics, compile_standalone)
+
+#: The two standalone dialects, and what the harness calls each one's compiler.
+DIALECTS = (Dialect.STANDALONE, Dialect.STANDALONE_C)
+LANGUAGE = {Dialect.STANDALONE: 'c++', Dialect.STANDALONE_C: 'c'}
+DIALECT_IDS = [LANGUAGE[dialect] for dialect in DIALECTS]
+
+#: ``(name, printed arguments, C++ literal the call must equal)``. The expected values come from
+#: the runtime header's documented behaviour, not from re-running the lowering.
+CASES = [
+    ('Abs', ('-3.5', ), '3.5'),
+    # numpy's conjugate of a real is the real; C++'s std::conj of one is a std::complex.
+    ('conj', ('-2.5', ), '-2.5'),
+    # ``np.real`` of a real pivot (the pure Cholesky expansion) printed as ``(x).real()``, which a double has not.
+    ('re', ('-2.5', ), '-2.5'),
+    ('im', ('-2.5', ), '0.0'),
+    ('ceiling', ('2.25', ), '3.0'),
+    ('floor', ('2.75', ), '2.0'),
+    ('ROUND', ('2.5', ), '3.0'),
+    ('ROUND', ('-2.5', ), '-3.0'),
+    ('iround', ('2.5', ), '3'),
+    ('reciprocal', ('4.0', ), '0.25'),
+    ('sign', ('-2.5', ), '-1.0'),
+    ('sign', ('0.0', ), '0.0'),
+    ('sgn', ('7.5', ), '1.0'),
+    ('ITE', ('1 > 0', '11.0', '22.0'), '11.0'),
+    ('ITE', ('1 < 0', '11.0', '22.0'), '22.0'),
+    ('IfExpr', ('1 < 0', '11.0', '22.0'), '22.0'),
+    ('heaviside', ('-1.0', '0.5'), '0.0'),
+    ('heaviside', ('0.0', '0.5'), '0.5'),
+    ('heaviside', ('1.0', '0.5'), '1.0'),
+    ('int_ceil', ('7', '3'), '3'),
+    ('int_ceil', ('9', '3'), '3'),
+    ('int_floor', ('7', '3'), '2'),
+    ('ftn_modulo', ('-1', '5'), '4'),
+    ('ftn_modulo', ('7', '5'), '2'),
+    ('ipow', ('3', '4'), '81'),
+    ('left_shift', ('3', '2'), '12'),
+    ('right_shift', ('-8', '1'), '-4'),
+    ('logical_right_shift', ('static_cast<int32_t>(-8)', '1'), '2147483644'),
+    ('logical_left_shift', ('3', '2'), '12'),
+    ('bitwise_and', ('12', '10'), '8'),
+    ('bitwise_or', ('12', '10'), '14'),
+    ('bitwise_xor', ('12', '10'), '6'),
+    ('bitwise_invert', ('12', ), '-13'),
+    ('Max', ('1.0', '2.0'), '2.0'),
+    ('Max', ('1.0', '5.0', '3.0'), '5.0'),
+    ('Min', ('1.0', '5.0', '3.0'), '1.0'),
+    ('exp2', ('3.0', ), '8.0'),
+    ('sqrt', ('16.0', ), '4.0'),
+    ('pow', ('2.0', '10.0'), '1024.0'),
+    ('int_floor_ni', ('-7', '3'), '-3'),
+    ('int_floor_ni', ('7', '3'), '2'),
+    ('py_floor', ('-7', '3'), '-3'),
+    ('py_floor', ('-7.0', '3.0'), '-3.0'),
+    ('py_mod', ('-1', '5'), '4'),
+    ('py_mod', ('-1.0', '5.0'), '4.0'),
+    ('py_floor', ('1.0', '0.1'), '9.0'),
+    ('py_mod', ('1.0e300', '7.0'), '1.0'),
+    ('py_floor', ('7', '0'), '0'),
+    ('py_mod', ('-7', '0'), '0'),
+    ('ftn_modulo', ('-1', '5'), '4'),
+    ('c_mod', ('-1', '5'), '-1'),
+    ('c_mod', ('-1.0', '5.0'), '-1.0'),
+    # sympy's ``Mod`` is floored; ``c_mod`` above is the truncating remainder.
+    ('Mod', ('-1', '5'), '4'),
+    ('ftn_mod', ('-1.0', '5.0'), '-1.0'),
+    ('ftn_modulo', ('-17', '3'), '1'),
+    ('ftn_modulo', ('-17.0', '3.0'), '1.0'),
+    ('np_float_pow', ('2', '10'), '1024.0'),
+    ('sign_numpy_2', ('-2.5', ), '-1.0'),
+    ('heaviside', ('2.0', ), '1.0'),
+]
+
+#: ``(name, statement template, expected)`` for the out-parameter helpers. These return ``void``
+#: and write through references, so they cannot be probed as an expression.
+#: The C dialect names each call's typed helper by its argument types, which follow the statement.
+DIVMOD_TYPES = ('int64', 'int64', 'int64', 'int64')
+STATEMENT_CASES = [
+    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -2.0,
+     DIVMOD_TYPES),
+    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', -1.0,
+     DIVMOD_TYPES),
+    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -3.0, DIVMOD_TYPES),
+    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', 2.0, DIVMOD_TYPES),
+    ('py_divmod', 'long q = 1, r = 1; py_divmod(7L, 0L, q, r); out[0] = static_cast<double>(q * 10 + r);', 0.0,
+     DIVMOD_TYPES),
+    ('py_divmod', 'long q = 1, r = 1; py_divmod(INT64_MIN, -1L, q, r); out[0] = static_cast<double>(q) + r;',
+     -9.223372036854775808e18, DIVMOD_TYPES),
+    ('py_divmod', 'double q = 0, r = 0; py_divmod(5.0, HUGE_VAL, q, r); out[0] = q + r * 10;', 50.0,
+     ('float64', 'float64', 'float64', 'float64')),
+    ('py_divmod', 'double q = 0, r = 0; py_divmod(-1.0, -0.1, q, r); out[0] = q;', 9.0, ('float64', 'float64',
+                                                                                         'float64', 'float64')),
+    ('np_modf', 'double i = 0, f = 0; np_modf(2.5, i, f); out[0] = i + f * 10;', 7.0, ('float64', 'float64',
+                                                                                       'float64')),
+    ('np_frexp', 'double m = 0; int e = 0; np_frexp(8.0, m, e); out[0] = m * 100 + e;', 54.0, ('float64', 'float64',
+                                                                                               'int32')),
+]
+
+
+def spell(text, dialect):
+    """``text`` written for ``dialect``: the C++ casts in the case tables become C casts.
+
+    The cases are written once, in C++, because that is what the DaCe runtime headers document. Only
+    the CAST spelling differs between the dialects, and CPF already has the rewrite that fixes it --
+    the same one it applies to a library expansion's hand-written body.
+    """
+    return cpf_lowering.c_cast_native_code(text) if dialect is Dialect.STANDALONE_C else text
+
+
+def literal_types(arguments):
+    """The C type of each printed literal in a case: a decimal point makes a ``double``, else an ``int``."""
+    return tuple('float64' if '.' in argument else 'int32' for argument in arguments)
+
+
+def render(name, arguments, dialect):
+    """The CPF call expression for ``name`` under ``dialect``, plus any definition it needs."""
+    lowered = cpf_lowering.lowering_for(name, arguments, dialect, literal_types(arguments))
+    if lowered is None:
+        assert cpf_lowering.needs_definition(name, dialect), (
+            f'{name!r} has no CPF lowering and no inline definition in {dialect}, so it would be emitted as a '
+            'bare call to a DaCe runtime function that CPF does not declare')
+        lowered = '%s(%s)' % (name, ', '.join(arguments))
+    return lowered
+
+
+def preamble(used, dialect):
+    """The includes and definitions a unit calling ``used`` needs, exactly as ``cpf.preamble`` does."""
+    lines = ['#include %s' % header for header in cpf_lowering.headers_for(used, dialect)]
+    if dialect is Dialect.STANDALONE_C:
+        lines.append(cpf_lowering.C_UNDEF_LINE)
+    return '\n'.join(lines) + '\n\n' + '\n\n'.join(cpf_lowering.definitions_for(used, dialect))
+
+
+def entry(dialect, signature='double * __restrict__ out'):
+    """The probe's entry line. C++ needs the linkage specifier; C's ABI is already C's."""
+    if dialect is Dialect.STANDALONE_C:
+        return 'void probe(%s)' % signature
+    return 'extern "C" void probe(%s)' % signature
+
+
+def translation_unit(name, arguments, dialect):
+    """A standalone translation unit whose ``probe`` writes the lowered call's value into ``out``."""
+    body = render(name, [spell(argument, dialect) for argument in arguments], dialect)
+    # Exactly how ``cpf.preamble`` decides: from the FINISHED text, not from the SDFG. The call
+    # itself may expand to a macro (C) whose name is nowhere in ``arguments``.
+    used = {name} | cpf_lowering.helpers_used(body, dialect)
+    cast = '(double)' if dialect is Dialect.STANDALONE_C else 'static_cast<double>'
+    return textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            out[0] = {cast}({body});
+        }}
+        """).format(preamble=preamble(used, dialect), entry=entry(dialect), cast=cast, body=body)
+
+
+def run_probe(code, name, dialect):
+    """Build ``code``, call its ``probe``, and return the ``double`` it wrote."""
+    library = build_standalone(code, name=name, language=LANGUAGE[dialect])
+    out = np.zeros(1, dtype=np.float64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(out.ctypes.data))
+    return out[0]
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('name,arguments,expected',
+                         CASES,
+                         ids=['%s(%s)' % (name, ','.join(args)) for name, args, _ in CASES])
+def test_lowering_computes_the_runtime_value(name, arguments, expected, dialect):
+    """Each lowering builds bare and produces the value the DaCe runtime header would."""
+    code = translation_unit(name, arguments, dialect)
+    assert_standalone(code, label=name, language=LANGUAGE[dialect])
+    value = run_probe(code, 'cpf_%s_%s' % (name, dialect.value), dialect)
+    reference = float(eval(expected))  # noqa: S307 - a literal from CASES, not external input
+    assert value == pytest.approx(
+        reference, rel=1e-12,
+        abs=1e-12), (f'{name}({", ".join(arguments)}) lowered to {render(name, arguments, dialect)!r} under '
+                     f'{dialect} and gave {value!r}, but the runtime semantics are {reference!r}')
+
+
+#: Every definition EACH dialect carries, so a C definition that only the C tables have is exercised
+#: too. Parametrized over the dialect's own set rather than over the C++ one: the two differ (C
+#: needs one typed function per helper type, C++ gets those from templates and ``<cmath>`` overload
+#: resolution), and a shared list would have to skip the difference instead of covering it.
+DEFINITION_CASES = [(dialect, name) for dialect in DIALECTS
+                    for name in sorted(cpf_lowering.TABLES[dialect].inline_definitions)]
+
+
+@pytest.mark.parametrize('dialect,name',
+                         DEFINITION_CASES,
+                         ids=['%s-%s' % (LANGUAGE[dialect], name) for dialect, name in DEFINITION_CASES])
+def test_every_inline_definition_builds_clean(dialect, name):
+    """Warnings are errors, and a definition is emitted into every unit that calls its function."""
+    code = preamble({name}, dialect) + '\n'
+    assert_standalone(code, label=name, language=LANGUAGE[dialect])
+    diagnostics = compile_diagnostics(code, name='cpf_def_%s_%s' % (name, dialect.value), language=LANGUAGE[dialect])
+    assert diagnostics == '', f'{name}: inline definition produced compiler warnings\n{diagnostics}'
+
+
+#: One typed instantiation per C family a native call site picks -- a definition named by the call
+#: site rather than listed in a table, so :data:`DEFINITION_CASES` cannot reach it. Each scan family
+#: is taken at one type throughout and at the widening ``int8`` input, ``int64`` output and seed.
+C_INSTANCE_CASES = sorted([
+    'cpf_scan_%s_%s_%s' % (kind, operation, types) for kind in ('incl', 'excl')
+    for operation in ('sum', 'product', 'min', 'max') for types in ('float64_float64_float64', 'int8_int64_int64')
+] + ['cpf_detect_collision_int32_int64', 'cpf_detect_collision_sized_int64', 'cpf_sort_int64', 'cpf_sort_float32'])
+
+
+@pytest.mark.parametrize('name', C_INSTANCE_CASES)
+def test_every_c_typed_instantiation_builds_clean(name):
+    """Warnings are errors for the functions a call site instantiates too, and none of them is a macro."""
+    code = preamble({name}, Dialect.STANDALONE_C) + '\n'
+    assert '#define' not in code and 'typeof' not in code and '_Pragma' not in code, code
+    assert_standalone(code, label=name, language='c')
+    diagnostics = compile_diagnostics(code, name='cpf_instance_%s' % name, language='c')
+    assert diagnostics == '', f'{name}: typed instantiation produced compiler warnings\n{diagnostics}'
+
+
+def test_a_c_find_first_function_builds_clean():
+    """The search function a find-first site defines compiles without a warning, beside the chunk sizer it calls."""
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    functions = '\n'.join(site.functions)
+    code = (preamble(cpf_lowering.helpers_used(functions, Dialect.STANDALONE_C), Dialect.STANDALONE_C) + '\n' +
+            functions + '\n')
+    assert '#define' not in code and '_Pragma' not in code, code
+    assert_standalone(code, label='cpf_find_first_probe', language='c')
+    diagnostics = compile_diagnostics(code, name='cpf_instance_find_first', language='c')
+    assert diagnostics == '', f'the find-first function produced compiler warnings\n{diagnostics}'
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+def test_no_unqualified_runtime_function_is_unhandled(dialect):
+    """Every name the harness can detect is handled in some lane, or explicitly refused.
+
+    This is the anti-rot check. The harness rejects a bare call to any of these names, so one that
+    the table does not cover has no way to reach valid CPF output -- it would be caught only at the
+    point where a kernel using it failed to build.
+    """
+    unhandled = sorted(UNQUALIFIED_RUNTIME_FUNCTIONS - cpf_lowering.TABLES[dialect].known)
+    assert not unhandled, (f'{unhandled} are rejected by the CPF harness but have no lowering, no inline '
+                           f'definition, and no refusal in the {dialect.value} tables')
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('name,statement,expected,types',
+                         STATEMENT_CASES,
+                         ids=['%s-%d' % (name, index) for index, (name, _, _, _) in enumerate(STATEMENT_CASES)])
+def test_out_parameter_helpers_compute_the_runtime_value(name, statement, expected, types, dialect):
+    """The ``void`` helpers write through their out-parameters and match the runtime.
+
+    C has no references, so the C call is lowered from the same statement to the helper for its
+    argument types, which takes the address of each out-parameter lvalue the printers pass.
+    """
+    if dialect is Dialect.STANDALONE_C:
+        call = re.search(r'\b%s\((.*?)\);' % name, statement)
+        lowered = cpf_lowering.lowering_for(name, cpf_lowering.c_call_arguments(call.group(1)), dialect, types)
+        statement = statement.replace(call.group(0), lowered + ';')
+    used = {name} | cpf_lowering.helpers_used(statement, dialect)
+    code = '%s\n\n%s\n{\n    %s\n}\n' % (preamble(used, dialect), entry(dialect), spell(statement, dialect))
+    assert_standalone(code, label=name, language=LANGUAGE[dialect])
+    value = run_probe(code, 'cpf_stmt_%s_%s' % (name, dialect.value), dialect)
+    assert value == pytest.approx(expected, rel=1e-12,
+                                  abs=1e-12), (f'{name}: {statement!r} gave {value!r}, expected {expected!r}')
+
+
+@pytest.mark.parametrize('dtype', ['int32', 'int64'])
+def test_c_typed_helpers_are_emitted_callees_first(dtype):
+    """A C function must be declared before the function that calls it, or the unit does not compile."""
+    emitted = cpf_lowering.definitions_for({'cpf_py_mod_' + dtype}, Dialect.STANDALONE_C)
+    order = [re.match(r'static inline \S+ (\w+)\(', text).group(1) for text in emitted]
+    assert order == ['cpf_py_divmod_' + dtype, 'cpf_py_mod_' + dtype], order
+
+
+def test_a_float_py_floor_calls_the_libm_functions_of_its_own_width():
+    """``fmod`` or ``floor`` on a ``float`` would round it through ``double``; the helpers name the ``f`` ones."""
+    emitted = '\n'.join(cpf_lowering.definitions_for({'cpf_py_floor_float32'}, Dialect.STANDALONE_C))
+    called = set(re.findall(r'\b(fmod|floor|copysign)(f?)\(', emitted))
+    assert called == {('fmod', 'f'), ('floor', 'f'), ('copysign', 'f')}, called
+
+
+#: ``(helper, argument types)`` C has no typed helper for. Each would be a sign-sensitive body at a
+#: type without a sign, or integer division at a floating type.
+C_REFUSED_HELPER_CALLS = [
+    ('int_floor_ni', ('uint32', 'int32')),
+    ('int_floor_ni', ('float64', 'int64')),
+    ('int_ceil', ('uint64', 'uint64')),
+    ('c_mod', ('uint32', 'uint32')),
+    ('ftn_modulo', ('uint64', 'uint64')),
+    ('logical_left_shift', ('float64', 'int32')),
+]
+
+
+@pytest.mark.parametrize('name,types',
+                         C_REFUSED_HELPER_CALLS,
+                         ids=['%s-%s' % (n, '-'.join(t)) for n, t in C_REFUSED_HELPER_CALLS])
+def test_a_helper_call_at_a_type_the_helper_lacks_is_refused(name, types):
+    """No dispatch macro is left to reject such a call at compile time, so the printer must refuse it
+    rather than instantiate a helper at a type it was never written for."""
+    with pytest.raises(NotImplementedError):
+        cpf_lowering.lowering_for(name, ('a', 'b'), Dialect.STANDALONE_C, types)
+
+
+#: ``(argument types, the helper int_floor_ni is instantiated at)``: the conversion of its own two
+#: operands, never a wider or unsigned type.
+C_INT_FLOOR_NI_TYPES = [
+    (('int32', 'int32'), 'int32'),
+    (('int16', 'int8'), 'int32'),
+    (('int32', 'int64'), 'int64'),
+]
+
+
+@pytest.mark.parametrize('types,dtype', C_INT_FLOOR_NI_TYPES, ids=['-'.join(t) for t, _ in C_INT_FLOOR_NI_TYPES])
+def test_int_floor_ni_stays_on_the_callers_signed_type(types, dtype):
+    """The correction reads the remainder's sign, so the helper must run at the signed type the operands
+    already convert to; promoting further would change what an overflowing caller computes."""
+    assert cpf_lowering.lowering_for('int_floor_ni', ('a', 'b'), Dialect.STANDALONE_C, types) == \
+        'cpf_int_floor_ni_%s(a, b)' % dtype
+
+
+def test_definitions_are_emitted_callees_first():
+    """A helper is declared before the helper that calls it, or the unit does not compile."""
+    emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE)
+    order = [re.search(r'\binline\s+\w+\s+(\w+)\(', text).group(1) for text in emitted]
+    assert order == ['py_divmod', 'py_mod'], order
+
+
+def test_dependency_closure_pulls_transitive_callees():
+    """Asking for one helper brings everything it reaches."""
+    assert cpf_lowering.required_definitions({'ftn_modulo'},
+                                             Dialect.STANDALONE) == {'ftn_modulo', 'py_mod', 'py_divmod'}
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+def test_rewrite_arity_mismatch_is_an_error(dialect):
+    """A caller disagreeing with the table about a function's shape must not be papered over."""
+    with pytest.raises(ValueError, match='expects 3 arguments'):
+        cpf_lowering.lowering_for('ITE', ('a', 'b'), dialect)
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+def test_rewrites_use_each_argument_once(dialect):
+    """A rewrite repeating an argument would duplicate whatever expression the caller printed."""
+    for name, (arity, template) in cpf_lowering.TABLES[dialect].rewrites.items():
+        for index in range(arity):
+            occurrences = template.count('{%d}' % index)
+            assert occurrences == 1, (f'REWRITES[{name!r}] uses {{{index}}} {occurrences} times; a repeated argument '
+                                      'duplicates the printed expression, so it belongs in INLINE_DEFINITIONS')
+
+
+#: ``name -> a C++ statement that constant-evaluates a call to it``. ``constexpr`` on a definition
+#: is a claim, and an unchecked claim rots: a helper that silently stopped being usable in a
+#: constant expression would still compile everywhere it is called at runtime. ``static_assert``
+#: fails the BUILD if the call cannot be folded, so each probe proves the keyword earns its place.
+#:
+#: The out-parameter helpers are wrapped in a ``constexpr`` function, which is the only way to
+#: constant-evaluate something that writes through references.
+CONSTEXPR_PROBES = {
+    'cpf_max':
+    'static_assert(cpf_max(2.0, 1.0, 3.0) == 3.0);\nstatic_assert(cpf_max(0.0, -0.0) == 0.0);',
+    'cpf_min':
+    'static_assert(cpf_min(2.0, 1.0, 3.0) == 1.0);\nstatic_assert(cpf_min(2, 1.5) == 1.5);',
+    'ifloor':
+    'static_assert(ifloor(-3.5) == -4);\nstatic_assert(ifloor(static_cast<int64_t>(7)) == 7);',
+    'int_ceil':
+    'static_assert(int_ceil(7, 3) == 3);',
+    'int_floor_ni':
+    'static_assert(int_floor_ni(-7, 3) == -3);',
+    'ipow':
+    'static_assert(ipow(3, 4) == 81);',
+    'logical_left_shift':
+    'static_assert(logical_left_shift(3, 2) == 12);',
+    'logical_right_shift':
+    'static_assert(logical_right_shift(static_cast<int32_t>(-8), 1) == 2147483644);',
+    'sign':
+    'static_assert(sign(-2) == -1);',
+    'sgn':
+    'static_assert(sgn(7) == 1);',
+    'sign_numpy_2':
+    'static_assert(sign_numpy_2(-2) == -1);',
+    'heaviside':
+    'static_assert(heaviside(2) == 1);',
+    'py_floor':
+    'static_assert(py_floor(-7, 3) == -3);',
+    'py_mod':
+    'static_assert(py_mod(-1, 5) == 4);',
+    'c_mod':
+    'static_assert(c_mod(-1, 5) == -1);',
+    'ftn_mod':
+    'static_assert(ftn_mod(-1, 5) == -1);',
+    'ftn_modulo':
+    'static_assert(ftn_modulo(-17, 3) == 1);\nstatic_assert(ftn_modulo(-1, 5) == 4);',
+    'cpp_divmod':
+    'constexpr long cpp_divmod_probe() { long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); return q; }\n'
+    'static_assert(cpp_divmod_probe() == -2);',
+    'py_divmod':
+    'constexpr long py_divmod_probe() { long q = 0, r = 0; py_divmod(-7L, 3L, q, r); return q; }\n'
+    'static_assert(py_divmod_probe() == -3);',
+}
+
+#: Definitions that cannot be ``constexpr``, and why. ``std::modf`` and ``std::frexp`` write through
+#: a POINTER out-parameter and are not ``constexpr`` in C++20.
+#: A prefix scan cannot fold: it writes through an output iterator, and its OpenMP ``inscan``
+#: clause has no meaning in a constant expression. They are ``static inline`` for that reason, and
+#: this table is what states it rather than leaving the omission to look like an oversight.
+_SCAN_REASON = 'writes through an output iterator under an OpenMP inscan clause, which cannot be constant-evaluated'
+
+NOT_CONSTEXPR = {
+    'scan_incl_sum':
+    _SCAN_REASON,
+    'scan_incl_product':
+    _SCAN_REASON,
+    'scan_incl_min':
+    _SCAN_REASON,
+    'scan_incl_max':
+    _SCAN_REASON,
+    'scan_excl_sum':
+    _SCAN_REASON,
+    'scan_excl_product':
+    _SCAN_REASON,
+    'scan_excl_min':
+    _SCAN_REASON,
+    'scan_excl_max':
+    _SCAN_REASON,
+    'min_identity':
+    'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
+    'max_identity':
+    'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
+    'find_first_index':
+    'runs an OpenMP-parallel cancelling search over a predicate, which has no constant evaluation',
+    'detect_collision': ('writes a tag buffer from OpenMP-parallel loops and allocates one itself when the caller '
+                         'wired none'),
+    'find_first_chunk':
+    'reads the OpenMP thread count, which only exists at run time',
+    'np_modf':
+    'std::modf takes a pointer out-parameter and is not constexpr before C++23',
+    'np_frexp':
+    'std::frexp takes a pointer out-parameter and is not constexpr before C++23',
+}
+
+
+@pytest.mark.parametrize('name', sorted(CONSTEXPR_PROBES))
+def test_definition_is_usable_in_a_constant_expression(name):
+    """The ``constexpr`` on each definition is real: the call folds at compile time."""
+    code = '%s\n\n%s\n' % (preamble({name}, Dialect.STANDALONE), CONSTEXPR_PROBES[name])
+    diagnostics = compile_diagnostics(code, name='cpf_ce_%s' % name)
+    assert diagnostics == '', f'{name}: constexpr probe produced warnings\n{diagnostics}'
+
+
+def test_every_definition_is_constexpr_or_says_why_not():
+    """No definition escapes the choice: it is either probed as constexpr or listed as unable."""
+    classified = set(CONSTEXPR_PROBES) | set(NOT_CONSTEXPR)
+    unclassified = sorted(set(cpf_lowering.INLINE_DEFINITIONS) - classified)
+    assert not unclassified, (f'{unclassified} are neither proven constexpr by a probe nor listed in NOT_CONSTEXPR; '
+                              'an unchecked constexpr claim is how the keyword rots')
+
+
+@pytest.mark.parametrize('name', sorted(NOT_CONSTEXPR))
+def test_non_constexpr_definitions_are_not_marked_constexpr(name):
+    """A definition that cannot fold must not claim ``constexpr``: that is ill-formed, no diagnostic."""
+    assert 'static constexpr' not in cpf_lowering.INLINE_DEFINITIONS[name], (
+        f'{name} is declared constexpr but {NOT_CONSTEXPR[name]}, so no argument permits constant evaluation. '
+        'GCC folds std::floor as a builtin and accepts it; clang rejects the same code.')
+
+
+#: ``(call, the type its arithmetic has)``: a promoted narrow operand, a mixed floating operand, and
+#: ``std::fmod``'s double for a float beside an int. A spelled return type that differed would narrow.
+RETURN_TYPES = [
+    ('ifloor(-3.5)', 'int'),
+    ('ifloor(static_cast<int64_t>(7))', 'int64_t'),
+    ('int_ceil(static_cast<int16_t>(7), static_cast<int16_t>(3))', 'int'),
+    ('int_ceil(static_cast<int64_t>(7), 3)', 'int64_t'),
+    ('int_floor_ni(static_cast<uint8_t>(7), 3)', 'int'),
+    ('py_floor(7.0f, 2.0f)', 'float'),
+    ('py_floor(7, 2.0)', 'double'),
+    ('py_floor(static_cast<int64_t>(-7), 2)', 'int64_t'),
+    ('py_mod(-1.0f, 5.0f)', 'float'),
+    ('ftn_modulo(static_cast<int16_t>(-1), static_cast<int16_t>(5))', 'int'),
+    ('ftn_modulo(static_cast<int64_t>(-1), 5)', 'int64_t'),
+    ('c_mod(-1, 5)', 'int'),
+    ('c_mod(1, 2.0f)', 'double'),
+    ('c_mod(1.0f, 2.0f)', 'float'),
+    ('ftn_mod(1, 2.0f)', 'double'),
+]
+
+
+@pytest.mark.parametrize('call, expected', RETURN_TYPES)
+def test_a_helper_returns_the_type_its_arithmetic_has(call, expected):
+    name = call.split('(', 1)[0]
+    code = '%s\n\nstatic_assert(std::is_same_v<decltype(%s), %s>);\n' % (preamble({name},
+                                                                                  Dialect.STANDALONE), call, expected)
+    diagnostics = compile_diagnostics(code, name='cpf_rt_%s' % name)
+    assert diagnostics == '', f'{call}: return type is not {expected}\n{diagnostics}'
+
+
+# the C tables, held to the same anti-rot standard as the C++ ones
+
+#: Names the C tables deliberately do NOT cover, with the reason each one is refused rather than
+#: guessed. Kept as a test-side copy so a silent addition to ``C_UNSUPPORTED`` fails here: a
+#: refusal is a capability gap, and it has to be a decision rather than an omission.
+#: Nothing: every C++ helper is answered in C by a definition or by a rewrite.
+EXPECTED_C_REFUSALS = set()
+
+
+def test_c_refuses_exactly_the_names_it_says_it_does():
+    """The C dialect's refusal list is what it claims to be, and each entry says why."""
+    assert set(cpf_lowering.C_UNSUPPORTED) == EXPECTED_C_REFUSALS
+    # The scan identities were once refused and are now rewritten; a refusal that reappears for
+    # them means the rewrite was lost.
+    assert not (cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE & set(cpf_lowering.C_UNSUPPORTED))
+    for name, reason in cpf_lowering.C_UNSUPPORTED.items():
+        assert len(reason) > 20, f'{name} is refused without saying why'
+
+
+def test_every_cpp_definition_has_a_c_form_or_a_refusal():
+    """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable.
+
+    ``cpf_max`` / ``cpf_min`` are spelled in C as one typed function per helper type, which a printed
+    ``Max`` / ``Min`` names directly, so each counts only when every one of those functions exists.
+    """
+    typed_minmax = {
+        stem
+        for stem in cpf_lowering.C_VARIADIC_MINMAX.values()
+        if all('%s_%s' % (stem, dtype) in cpf_lowering.C_INLINE_DEFINITIONS for dtype in cpf_lowering.C_HELPER_TYPES)
+    }
+    unclassified = sorted(
+        set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) - typed_minmax -
+        set(cpf_lowering.C_TYPED_HELPER_SPECS) - set(cpf_lowering.C_HELPER_ARITIES) - set(cpf_lowering.C_UNSUPPORTED) -
+        cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
+    assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
+                              'in C_UNSUPPORTED, so a kernel calling one would render C that does not build')
+
+
+def test_every_cpp_std_rename_has_a_c_form():
+    """Every ``std::`` rename is answered in C by a rename or a definition of CPF's own.
+
+    ``std::gcd`` / ``std::lcm`` are the two with no C library counterpart at all, so they move lanes:
+    a rename in C++, an emitted definition in C. Asserted explicitly, because "moved lanes" and
+    "was forgotten" look identical from the C++ side.
+    """
+    answered = (set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS)
+                | set(cpf_lowering.C_TYPED_MATH) | set(cpf_lowering.C_TYPED_HELPER_SPECS))
+    missing = sorted(set(cpf_lowering.STD_RENAMES) - answered)
+    assert not missing, f'{missing} are renamed to std:: in C++ but have no C spelling'
+    for name in ('gcd', 'lcm'):
+        assert name not in cpf_lowering.C_STD_RENAMES, f'C has no library {name}'
+        assert name in cpf_lowering.C_TYPED_HELPER_SPECS, f'{name} must be emitted by CPF in C'
+
+
+def test_every_c_definition_is_reachable():
+    """No dead C definition: each one is named by a rename, a rewrite, a min/max, or another definition.
+
+    A table that grows an entry nothing reaches is a table that has stopped being checked -- the
+    unreachable entry never compiles, never runs, and never fails.
+    """
+    reachable = set(cpf_lowering.C_STD_RENAMES.values()) | set(cpf_lowering.C_VARIADIC_MINMAX.values())
+    # A printed helper call names the typed helper for the type its operands convert to.
+    for name, dtypes in cpf_lowering.C_TYPED_HELPER_TYPES.items():
+        for dtype in dtypes:
+            arguments = tuple('a%d' % index for index in range(len(cpf_lowering.C_TYPED_HELPER_SPECS[name][0])))
+            lowered = cpf_lowering.lowering_for(name, arguments, Dialect.STANDALONE_C, (dtype, ) * len(arguments))
+            reachable |= cpf_lowering.helpers_used(lowered, Dialect.STANDALONE_C)
+    for name in cpf_lowering.C_VARIADIC_MINMAX:
+        for dtype in cpf_lowering.C_HELPER_TYPES:
+            lowered = cpf_lowering.lowering_for(name, ('a', 'b'), Dialect.STANDALONE_C, (dtype, dtype))
+            reachable |= cpf_lowering.helpers_used(lowered, Dialect.STANDALONE_C)
+    # A helper the printers call UNCHANGED -- ``lowering_for`` returns None and ``needs_definition``
+    # says CPF emits the body. That is any C definition whose name is a runtime function, which
+    # includes gcd/lcm: a std:: rename in C++, an emitted definition here.
+    reachable |= {name for name in cpf_lowering.C_INLINE_DEFINITIONS if name in cpf_lowering.KNOWN}
+    for dependencies in cpf_lowering.C_DEFINITION_DEPENDENCIES.values():
+        reachable |= set(dependencies)
+    for _, template in cpf_lowering.C_REWRITES.values():
+        reachable |= cpf_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
+    # A find-first becomes a function of its site's own, and that function calls the chunk sizer.
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    reachable |= cpf_lowering.helpers_used('\n'.join(site.functions), Dialect.STANDALONE_C)
+    # The native lane: a name a hand-written body carries is renamed straight onto its C helper.
+    reachable |= set(cpf_lowering.C_NATIVE_RENAMES.values())
+    # The literal printers spell every complex constant through its builder.
+    reachable |= set(cpf_lowering.C_COMPLEX_BUILDERS.values())
+    # Every name must be reached from outside its own definition.
+    unreachable = sorted(set(cpf_lowering.C_INLINE_DEFINITIONS) - reachable)
+    assert not unreachable, f'{unreachable} are emitted by no lowering, so nothing ever exercises them'
+
+
+def test_every_c_definitions_dependencies_are_real():
+    """A recorded dependency must be a definition, or the topological order is over a phantom."""
+    for name, dependencies in cpf_lowering.C_DEFINITION_DEPENDENCIES.items():
+        assert name in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} has dependencies but no definition'
+        for dependency in dependencies:
+            assert dependency in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} depends on the undefined {dependency}'
+            assert dependency in cpf_lowering.C_INLINE_DEFINITIONS[name] or dependency.startswith('cpf_'), (
+                f'{name} does not mention {dependency}')
+
+
+@pytest.mark.parametrize('name', ['min_identity', 'max_identity'])
+@pytest.mark.parametrize('ctype', sorted(cpf_lowering.C_SCAN_IDENTITIES))
+def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
+    """The identity has no C function template, so C spells it as the constant for that type.
+
+    Both dialects are asserted: C++ keeps the templated call it already emits, so a rewrite that
+    leaked into C++ would show up here rather than as a numeric difference in a min/max scan.
+    """
+    call = '::dace::scan::detail::%s<%s>()' % (name, ctype)
+    expected = cpf_lowering.C_SCAN_IDENTITIES[ctype][0 if name.startswith('min') else 1]
+    assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE_C) == expected
+    assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
+
+
+#: The statement ``ExpandFindFirstPure`` / ``ExpandFindFirstOpenMP`` write, copied here rather than
+#: imported so that a change to the expansion's spelling breaks this file instead of silently
+#: turning the C rewrite into a no-op -- which would surface only as an unlowered ``dace::`` name in
+#: some kernel that happens to search.
+FIND_FIRST_STATEMENT = ('_out_idx = dace::find_first_index((0), (N), '
+                        '[&](long long __i) -> bool { return (_a[__i] > 0.5); }, false);')
+
+#: The typed names a find-first site offers: the array the predicate reads, and a symbol it does not.
+FIND_FIRST_NAMES = {'_a': ('float64', True), 'N': ('int32', False)}
+
+
+def test_c_rewrites_the_find_first_call_into_a_function_of_its_own():
+    """C keeps the predicate, the index name and the bounds, and passes exactly what the predicate reads.
+
+    The predicate cannot survive as an argument to anything callable in C, so it is pasted into a
+    function the site defines. The check is that it arrives verbatim, still reads the index under the
+    name the expansion wrote its subscripts against, and that only the names it reads become
+    parameters: a rewrite that renamed either would build and then search the wrong elements.
+    """
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    rewritten = cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    assert rewritten == '_out_idx = cpf_find_first_probe((0), (N), false, _a);'
+    assert len(site.functions) == 1, site.functions
+    function = site.functions[0]
+    assert function.startswith('static inline long long cpf_find_first_probe(long long cpf_ff_begin, '
+                               'long long cpf_ff_end, bool cpf_ff_parallel, const double *_a) {'), function
+    assert 'const long long cpf_ff_v = (_a[__i] > 0.5) ? __i : cpf_ff_end;' in function, function
+    assert '#define' not in function and '_Pragma' not in function, function
+    assert cpf_lowering.helpers_used(function, Dialect.STANDALONE_C) == {'find_first_chunk'}
+    # C++ has the lambda, so it keeps the call and only drops the namespace.
+    assert cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT,
+                                            Dialect.STANDALONE) == FIND_FIRST_STATEMENT.replace('dace::', '')
+
+
+def test_c_leaves_an_unrecognized_find_first_call_for_verify():
+    """A call shape the rewrite does not know stays ``dace::``-qualified rather than half-rewritten.
+
+    The rewrite is textual and matches one statement form. If the expansion ever writes another,
+    the honest outcome is CPF refusing to render -- a partial rewrite would produce C that does not
+    compile, with nothing naming the construct responsible.
+    """
+    unknown = '_out_idx = dace::find_first_index(0, N, some_functor, false);'
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+def test_c_refuses_a_find_first_at_a_site_that_types_no_names():
+    """Without the site's typed names the search function cannot declare its parameters, so the C
+    rewrite refuses rather than emitting a function over undeclared identifiers."""
+    with pytest.raises(NotImplementedError, match='find-first'):
+        cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
+
+
+def test_c_refuses_a_scan_identity_it_cannot_order():
+    """Complex has no ordered extreme, so a min/max scan over it must raise, not pick a wrong seed."""
+    with pytest.raises(NotImplementedError, match='no ordered extreme'):
+        cpf_lowering.rewrite_native_code('min_identity<double _Complex>()', Dialect.STANDALONE_C)
+
+
+#: ``(argument types, the nested C call)``. Each binary call is instantiated at the type C's usual
+#: arithmetic conversions give ITS two operands, so the outer call sees the inner call's result type.
+C_NESTED_MINMAX = [
+    (('float64', 'float64', 'float64'), 'cpf_max_float64(cpf_max_float64(a, b), c)'),
+    (('int32', 'int64', 'float32'), 'cpf_max_float32(cpf_max_int64(a, b), c)'),
+    (('int8', 'int16', 'uint16'), 'cpf_max_int32(cpf_max_int32(a, b), c)'),
+    (('uint32', 'int64', 'uint64'), 'cpf_max_uint64(cpf_max_int64(a, b), c)'),
+    (('int32', 'uint32', 'int32'), 'cpf_max_uint32(cpf_max_uint32(a, b), c)'),
+]
+
+
+@pytest.mark.parametrize('types,expected', C_NESTED_MINMAX, ids=['-'.join(types) for types, _ in C_NESTED_MINMAX])
+def test_a_c_variadic_max_nests_the_typed_binary_helper_left_to_right(types, expected):
+    """C has neither the variadic template nor overloading, so a three-way ``Max`` nests binary calls,
+    each named for the type its own two operands convert to."""
+    assert cpf_lowering.variadic_minmax('Max', ('a', 'b', 'c'), Dialect.STANDALONE_C, types) == expected
+
+
+def test_the_cpp_variadic_max_takes_every_argument_at_once():
+    """The C++ template is variadic and reads no types, so its spelling must not follow the C one."""
+    assert cpf_lowering.variadic_minmax('Max', ('a', 'b', 'c'), Dialect.STANDALONE) == 'cpf_max(a, b, c)'
+
+
+#: Each dace type the C helpers convert, spelled the way a probe declares an operand of it.
+C_ARITHMETIC_SPELLINGS = {
+    'bool': 'bool',
+    'int8': 'int8_t',
+    'int16': 'int16_t',
+    'int32': 'int32_t',
+    'int64': 'int64_t',
+    'uint8': 'uint8_t',
+    'uint16': 'uint16_t',
+    'uint32': 'uint32_t',
+    'uint64': 'uint64_t',
+    'float32': 'float',
+    'float64': 'double',
+    'complex64': 'float _Complex',
+    'complex128': 'double _Complex',
+}
+#: The types a sum can have, in the order the probe numbers them.
+C_SUM_TYPES = ('int32', 'int64', 'uint32', 'uint64', 'float32', 'float64', 'complex64', 'complex128')
+C_TYPE_PAIRS = [(first, second) for first in C_ARITHMETIC_SPELLINGS for second in C_ARITHMETIC_SPELLINGS]
+
+
+@pytest.fixture(scope='module')
+def c_sum_types():
+    """The type gcc's ``_Generic`` selects for ``(a) + (b)`` over every pair, from one compiled probe."""
+    declarations = '\n'.join('static %s v_%s;' % (spelling, name) for name, spelling in C_ARITHMETIC_SPELLINGS.items())
+    associations = ', '.join('%s: %d' % (C_ARITHMETIC_SPELLINGS[name], code) for code, name in enumerate(C_SUM_TYPES))
+    body = '\n'.join('    out[%d] = _Generic((v_%s) + (v_%s), %s, default: -1);' % (index, first, second, associations)
+                     for index, (first, second) in enumerate(C_TYPE_PAIRS))
+    code = '#include <stdint.h>\n#include <complex.h>\n%s\nvoid probe(int * out)\n{\n%s\n}\n' % (declarations, body)
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_c_sum_types', language='c'))
+    out = np.full(len(C_TYPE_PAIRS), -2, dtype=np.int32)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    return {pair: (C_SUM_TYPES[code] if code >= 0 else None) for pair, code in zip(C_TYPE_PAIRS, out)}
+
+
+@pytest.mark.parametrize('first,second', C_TYPE_PAIRS, ids=['%s+%s' % pair for pair in C_TYPE_PAIRS])
+def test_c_common_type_is_the_type_the_compiler_gives_the_sum(c_sum_types, first, second):
+    """The printer names the helper a ``_Generic`` on ``(a) + (b)`` used to select, so the two must agree
+    on every pair, or a call converts its operands to a different type than the compiler would."""
+    assert cpf_lowering.c_common_type((first, second)) == c_sum_types[(first, second)]
+
+
+def test_c_scan_helpers_keep_the_parallel_inscan_form():
+    """The scan is the reason the helpers exist; a serial loop would not be a parallel scan.
+
+    The PHASE ORDER is asserted with the clause because it is the half that fails quietly: the
+    ``scan`` directive splits the loop body into an input phase and a scan phase, and ``exclusive``
+    names them the other way round from ``inclusive``. Written the inclusive way round an exclusive
+    scan still compiles and stores the seed into every element.
+    """
+    for kind, clause in (('incl', 'inclusive'), ('excl', 'exclusive')):
+        for operation, reduction in (('sum', '+'), ('product', '*'), ('min', 'min'), ('max', 'max')):
+            definition, dependencies = cpf_lowering.c_instance('cpf_scan_%s_%s_float64_float64_float64' %
+                                                               (kind, operation))
+            assert dependencies == ()
+            assert '#define' not in definition and 'typeof' not in definition and '_Pragma' not in definition
+            assert '#pragma omp simd reduction(inscan, %s:acc)' % reduction in definition
+            directive = '#pragma omp scan %s(acc)' % clause
+            assert directive in definition
+            store = 'o[i] = acc;'
+            before, after = definition.split(directive)
+            assert (store in after) if clause == 'inclusive' else (store in before), (
+                f'scan_{kind}_{operation} runs its phases in the {clause} order the other kind needs')
+
+
+def scan_probe_body(statement, names):
+    """``(body, definitions)`` for a scan statement rewritten into C at a site typing ``names``."""
+    body = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C, cpf_lowering.NativeSite(names, 'probe'))
+    definitions = '\n'.join(
+        cpf_lowering.definitions_for(cpf_lowering.helpers_used(body, Dialect.STANDALONE_C), Dialect.STANDALONE_C))
+    return body, definitions
+
+
+#: A widening scan: an ``int8_t`` 0/1 mask scanned into ``int64_t`` ranks, which is the compaction
+#: shape prefix sums exist for. The count is past 127 on purpose -- folding at the INPUT's type
+#: instead of the seed's would wrap, and the last rank is the element that says so.
+_WIDENING_SCAN_PROBE = """
+#include <stdint.h>
+#include <math.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+{definitions}
+void probe(double * out) {{
+    int8_t mask[300];
+    int64_t rank[300];
+    for (long i = 0; i < 300; ++i) mask[i] = (int8_t)1;
+    {body}
+    out[0] = (double)rank[0];
+    out[1] = (double)rank[1];
+    out[2] = (double)rank[299];
+}}
+"""
+
+
+def test_c_scan_widens_from_the_input_type_to_the_seed():
+    """The three types a scan touches are independent, and the fold happens at the SEED's.
+
+    The call names one function per type combination, so an ``int8_t`` input, an ``int64_t`` output
+    and an ``int64_t`` seed pick a function whose accumulator is the seed's type. Folding at the input's
+    type instead would compile and wrap at 128, which is what the 300-element count catches.
+    """
+    body, definitions = scan_probe_body('::dace::scan::detail::scan_excl_sum(mask, rank, 0L, 300L, int64_t(0));', {
+        'mask': ('int8', True),
+        'rank': ('int64', True)
+    })
+    assert body == 'cpf_scan_excl_sum_int8_int64_int64(mask, rank, 0L, 300L, (int64_t)(0));'
+    code = _WIDENING_SCAN_PROBE.format(definitions=definitions, body=body)
+    diagnostics = compile_diagnostics(code, name='cpf_scan_widening', language='c')
+    assert diagnostics == '', f'the widening scan produced compiler diagnostics\n{diagnostics}'
+
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_scan_widening', language='c'))
+    out = np.zeros(3, dtype=np.float64)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    assert list(out) == [0.0, 1.0, 299.0], (f'the exclusive rank sequence is {list(out)}; an all-zero one means the '
+                                            'scan phase sits on the wrong side of the scan directive, and 43 at the '
+                                            'end means the fold ran at the int8 input type')
+
+
+#: A scan whose SEED is a read-only scalar. The backend emits every read-only scalar that way
+#: (``const double _scan_seed_b = b[0];`` in ``tsvc_2_s323``), so this is the ordinary case rather
+#: than an exotic one.
+_CONST_SEED_SCAN_PROBE = """
+#include <stdint.h>
+#include <math.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+{definitions}
+void probe(double * out) {{
+    double src[8];
+    double acc[8];
+    for (long i = 0; i < 8; ++i) src[i] = (double)(i + 1);
+    const double seed = 10.0;
+    {body}
+    out[0] = acc[0];
+    out[1] = acc[7];
+}}
+"""
+
+
+def test_a_c_scan_accepts_a_const_seed():
+    """The accumulator is built from the seed's type, and the seed is normally ``const``.
+
+    A ``const`` accumulator cannot be assigned, and OpenMP refuses a const reduction variable outright
+    ("may appear only in shared or firstprivate clauses"). The scan function takes the seed by value
+    and folds into a plain local of the seed's type, so the const-ness stays at the call site.
+
+    Not a corner case: every read-only scalar the backend hands a scan arrives ``const``, so this is
+    what ``tsvc_2_s323`` does and it stopped compiling entirely.
+    """
+    body, definitions = scan_probe_body('::dace::scan::detail::scan_incl_sum(src, acc, 0L, 8L, seed);', {
+        'src': ('float64', True),
+        'acc': ('float64', True),
+        'seed': ('float64', False)
+    })
+    code = _CONST_SEED_SCAN_PROBE.format(definitions=definitions, body=body)
+    diagnostics = compile_diagnostics(code, name='cpf_scan_const_seed', language='c')
+    assert diagnostics == '', f'a const seed produced compiler diagnostics\n{diagnostics}'
+
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_scan_const_seed', language='c'))
+    out = np.zeros(2, dtype=np.float64)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    # Inclusive from a seed of 10: first is 10+1, last is 10 + sum(1..8).
+    assert list(out) == [11.0, 46.0], f'the inclusive sequence from a const seed is {list(out)}'
+
+
+#: A dispatch macro whose argument has a SIDE EFFECT. ``_Generic``'s controlling expression is
+#: unevaluated, so the argument must be evaluated exactly once -- but the argument is written twice
+#: in the macro's expansion, and nothing but the standard says the first one does not run.
+_SINGLE_EVALUATION_PROBE = """
+#include <stdint.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <complex.h>
+#undef I
+{definitions}
+static int calls = 0;
+static double bump(void) {{ calls += 1; return 16.0; }}
+void probe(double * out) {{ calls = 0; out[0] = {call}; out[0] += calls; }}
+"""
+
+
+@pytest.mark.parametrize('name,call,expected', [
+    ('cpf_max_float64', 'cpf_max_float64(bump(), 1.0)', 17.0),
+    ('cpf_min_float64', 'cpf_min_float64(bump(), 1.0)', 2.0),
+],
+                         ids=['max', 'min'])
+def test_c_dispatch_macros_evaluate_each_argument_once(name, call, expected):
+    """One evaluation, proven by counting -- a duplicated argument would double a stateful call."""
+    definitions = '\n'.join(cpf_lowering.definitions_for({name}, Dialect.STANDALONE_C))
+    code = _SINGLE_EVALUATION_PROBE.format(definitions=definitions, call=call)
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_once_%s' % name, language='c'))
+    out = np.zeros(1, dtype=np.float64)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    assert out[0] == pytest.approx(expected), (f'{call} gave {out[0]!r}; the trailing digit is the number of times '
+                                               'the argument ran, and it must be 1')
+
+
+#: The two statements ``ExpandScatterConflictCheckPure`` / ``...CPU`` write, copied here rather
+#: than imported for the reason :data:`FIND_FIRST_STATEMENT` is: a change to the expansion's
+#: spelling must break this file instead of turning the C rewrite into a silent no-op.
+DETECT_COLLISION_STATEMENTS = {
+    'tagged': '_count_out = dace::detect_collision(_idx_in, (n), _owner_out, (cap), false);',
+    'sized': '_count_out = dace::detect_collision(_idx_in, (n), false);',
+}
+
+#: The typed names a duplicate-check site offers. Both arrays are ``int64_t``.
+DETECT_COLLISION_NAMES = {'_idx_in': ('int64', True), '_owner_out': ('int64', True), 'n': ('int64', False)}
+
+#: ``(rewritten call, the typed function it must name)`` per arity.
+DETECT_COLLISION_C_FORMS = {
+    'tagged': ('_count_out = cpf_detect_collision_int64_int64(_idx_in, (n), _owner_out, (cap), false);',
+               'cpf_detect_collision_int64_int64'),
+    'sized':
+    ('_count_out = cpf_detect_collision_sized_int64(_idx_in, (n), false);', 'cpf_detect_collision_sized_int64'),
+}
+
+#: ``(index array, whether it repeats a value)``. The empty and single-element cases are here
+#: because the check's two passes and its max sweep all bound on ``n``.
+DUPLICATE_CASES = [
+    ([], 0),
+    ([0], 0),
+    ([3, 1, 0, 2], 0),
+    ([0, 0], 1),
+    ([2, 1, 2, 0], 1),
+    ([1, 0, 3, 3], 1),
+]
+
+
+@pytest.mark.parametrize('arity', sorted(DETECT_COLLISION_STATEMENTS))
+def test_c_rewrites_the_duplicate_check_into_a_call_typed_for_its_arrays(arity):
+    """C has neither the template nor the overload pair, so the arity at the call site picks between
+    the function that takes a caller-sized tag array and the one that sizes its own, and the element
+    types the site gives the arrays pick its instantiation."""
+    statement = DETECT_COLLISION_STATEMENTS[arity]
+    expected, helper = DETECT_COLLISION_C_FORMS[arity]
+    rewritten = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C,
+                                                 cpf_lowering.NativeSite(DETECT_COLLISION_NAMES, 'probe'))
+    assert rewritten == expected
+    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {helper}
+    definitions = cpf_lowering.definitions_for({helper}, Dialect.STANDALONE_C)
+    assert all('#define' not in definition and 'typeof' not in definition for definition in definitions), definitions
+    # C++ has both overloads as one template pair, so it keeps the call and drops the namespace.
+    assert cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE) == statement.replace('dace::', '')
+
+
+def test_c_leaves_an_unrecognized_duplicate_check_call_for_verify():
+    """A call of an arity the rewrite does not know stays ``dace::``-qualified, so CPF's own gate
+    names the construct rather than emitting C that does not compile."""
+    unknown = '_count_out = dace::detect_collision(_idx_in, (n), _owner_out, (cap), false, 7);'
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+def typed_site(names, dialect):
+    """A typed site for the C dialect, which names its helpers for the types; ``None`` for C++."""
+    return cpf_lowering.NativeSite(names, 'probe') if dialect is Dialect.STANDALONE_C else None
+
+
+def duplicate_check_unit(arity, dialect):
+    """A standalone unit whose ``probe`` runs the duplicate check over a caller-supplied index."""
+    body = cpf_lowering.rewrite_native_code(DETECT_COLLISION_STATEMENTS[arity], dialect,
+                                            typed_site(DETECT_COLLISION_NAMES, dialect))
+    used = cpf_lowering.helpers_used(body, dialect) | ({'detect_collision'} if dialect is Dialect.STANDALONE else set())
+    signature = 'const int64_t * _idx_in, long long n, int64_t * _owner_out, long long cap, int64_t * _out'
+    return textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            int64_t _count_out = -1;
+            (void)_owner_out;
+            (void)cap;
+            {body}
+            _out[0] = _count_out;
+        }}
+        """).format(preamble=preamble(used, dialect), entry=entry(dialect, signature), body=body)
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('arity', sorted(DETECT_COLLISION_STATEMENTS))
+@pytest.mark.parametrize('index,expected', DUPLICATE_CASES, ids=[str(idx) for idx, _ in DUPLICATE_CASES])
+def test_the_duplicate_check_answers_one_exactly_when_an_index_repeats(arity, dialect, index, expected):
+    """The scatter guard reads this flag to decide whether a scatter may run as a parallel Map, so
+    a missed duplicate is a data race the compiler introduced."""
+    code = duplicate_check_unit(arity, dialect)
+    assert_standalone(code, label='detect_collision', language=LANGUAGE[dialect])
+    library = build_standalone(code, name='cpf_detect_%s_%s' % (arity, dialect.value), language=LANGUAGE[dialect])
+    idx = np.array(index, dtype=np.int64)
+    owner = np.zeros(max(len(index), 1), dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(idx.ctypes.data), len(index), ctypes.c_void_p(owner.ctypes.data), len(owner),
+             ctypes.c_void_p(out.ctypes.data))
+    assert out[0] == expected, f'{arity} check over {index} answered {out[0]}, not {expected}'
+
+
+#: The two lines ``ExpandIntegerSortPure`` writes, for the same reason the statements above are
+#: copied rather than imported.
+SORT_STATEMENT = 'std::copy(_in, _in + (n), _out);\nstd::sort(_out, _out + (n));'
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('values', [[], [5], [3, 3, 3], [4, 1, 3, 1, 0, -2, 9]],
+                         ids=['empty', 'single', 'equal', 'mixed'])
+def test_copy_then_sort_leaves_the_destination_ordered_and_the_source_untouched(dialect, values):
+    """``std::copy`` and ``std::sort`` are algorithms, not names C has; the C spellings CPF writes
+    for them must produce the same range the C++ algorithms do, the empty range included."""
+    body = cpf_lowering.rewrite_native_code(SORT_STATEMENT, dialect,
+                                            typed_site({
+                                                '_in': ('int64', True),
+                                                '_out': ('int64', True)
+                                            }, dialect))
+    assert dialect is Dialect.STANDALONE or 'cpf_sort_int64(_out, _out + (n));' in body, body
+    used = cpf_lowering.helpers_used(body, dialect)
+    signature = 'const int64_t * _in, long long n, int64_t * _out'
+    code = textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            {body}
+        }}
+        """).format(preamble=preamble(used, dialect), entry=entry(dialect, signature), body=body)
+    assert_standalone(code, label='sort', language=LANGUAGE[dialect])
+
+    library = build_standalone(code, name='cpf_sort_%s_%d' % (dialect.value, len(values)), language=LANGUAGE[dialect])
+    source = np.array(values, dtype=np.int64)
+    original = source.copy()
+    destination = np.zeros(max(len(values), 1), dtype=np.int64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(source.ctypes.data), len(values), ctypes.c_void_p(destination.ctypes.data))
+    assert list(destination[:len(values)]) == sorted(values)
+    assert list(source) == list(original), 'the sort must write the destination, not the source'
+
+
+#: ``(ctype, numpy dtype, the value each extreme must equal)``. The expected values come from the
+#: C++ class template's documented meaning -- ``lowest()`` is the most negative FINITE value, which
+#: for a float type is NOT ``<T>_MIN``.
+NUMERIC_LIMIT_CASES = [
+    ('int', np.int32, np.iinfo(np.int32).max, np.iinfo(np.int32).min),
+    ('long long', np.int64, np.iinfo(np.int64).max, np.iinfo(np.int64).min),
+    ('float', np.float32, np.finfo(np.float32).max, -np.finfo(np.float32).max),
+    ('double', np.float64, np.finfo(np.float64).max, -np.finfo(np.float64).max),
+]
+
+
+@pytest.mark.parametrize('ctype,dtype,largest,lowest',
+                         NUMERIC_LIMIT_CASES,
+                         ids=[c for c, _, _, _ in NUMERIC_LIMIT_CASES])
+def test_the_c_numeric_limit_constants_are_the_values_the_class_template_gives(ctype, dtype, largest, lowest):
+    """A tile reduction seeds its accumulator with these, so a constant that is off by a type makes
+    every min/max reduction start from a value the data can beat."""
+    body = cpf_lowering.rewrite_native_code(
+        'hi = std::numeric_limits<%s>::max(); lo = std::numeric_limits<%s>::lowest();' % (ctype, ctype),
+        Dialect.STANDALONE_C)
+    assert 'numeric_limits' not in body, body
+
+    code = textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            {ctype} hi, lo;
+            {body}
+            out[0] = hi;
+            out[1] = lo;
+        }}
+        """).format(preamble=preamble(set(), Dialect.STANDALONE_C),
+                    entry=entry(Dialect.STANDALONE_C, '%s * out' % ctype),
+                    ctype=ctype,
+                    body=body)
+    assert_standalone(code, label='numeric_limits', language='c')
+    library = build_standalone(code, name='cpf_limits_%s' % ctype.replace(' ', '_'), language='c')
+    out = np.zeros(2, dtype=dtype)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(out.ctypes.data))
+    assert out[0] == largest, f'numeric_limits<{ctype}>::max() gave {out[0]}, not {largest}'
+    assert out[1] == lowest, f'numeric_limits<{ctype}>::lowest() gave {out[1]}, not {lowest}'
+
+
+def test_an_unknown_numeric_limit_member_is_left_for_verify():
+    """Only ``max`` and ``lowest`` have a rewrite; anything else must stay ``std::``-qualified so
+    CPF's own gate names it rather than emitting C that does not compile."""
+    unknown = 'e = std::numeric_limits<double>::epsilon();'
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+#: ``(label, a body writing it the way the expansion does)`` for every ``std::`` name a library
+#: expansion CPF can SELECT writes by hand into a tasklet body. Recovered by reading those
+#: expansions rather than by grepping the output of the kernels that happened to be rendered: a
+#: name only one unrendered kernel reaches is the one that breaks a roster later.
+C_NATIVE_STD_BODIES = [
+    ('abort', 'if ((N < 0)) { std::abort(); }'),
+    ('memcpy', 'std::memcpy(_out, _in, 64);'),
+    ('copy', 'std::copy(_in, _in + (n), _out);'),
+    ('sort', 'std::sort(_out, _out + (n));'),
+    ('fill_n', 'std::fill_n(_out, 8, 0.0);'),
+    ('size_t', 'for (std::size_t i = 0; i < 8; ++i) { _out[i] = 0.0; }'),
+    ('isnan', '_out[0] = std::isnan(_in[0]);'),
+    ('minmax', '_out[0] = std::min<double>(_in[0], std::max<double>(_in[1], _in[2]));'),
+    ('numeric_limits', '_out[0] = std::numeric_limits<double>::max();'),
+]
+
+
+@pytest.mark.parametrize('label,body', C_NATIVE_STD_BODIES, ids=[label for label, _ in C_NATIVE_STD_BODIES])
+def test_the_c_lane_answers_every_cxx_name_a_selectable_expansion_writes(label, body):
+    """A hand-written tasklet body never reaches an expression printer, so this lane is the only
+    place its C++ spelling can be re-spelled -- and in C a ``std::`` name is not a name at all.
+
+    ``std::fill_n`` is the exception and is expected to survive: its C form depends on the FILL
+    VALUE, which only the expansion knows, so the expansion chooses between a memset and a loop
+    and nothing reaches this lane.
+    """
+    # The site types the connectors, which the sort is named for.
+    site = cpf_lowering.NativeSite({
+        '_in': ('float64', True),
+        '_out': ('float64', True),
+        'N': ('int64', False)
+    }, 'probe')
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C, site)
+    if label == 'fill_n':
+        assert rewritten == body, 'the fill is answered at expansion time, not here'
+        return
+    assert 'std::' not in rewritten, f'{label} kept a C++ spelling: {rewritten}'
+
+
+def test_a_typed_native_std_min_calls_the_helper_for_its_promoted_type():
+    """An ``int8_t`` operand is promoted to ``int`` before it is compared, so its helper is the int one."""
+    body = '_out[0] = std::min<int8_t>(_in[0], std::max<float>(_in[1], _in[2]));'
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    assert rewritten == '_out[0] = cpf_min_int32(_in[0], cpf_max_float32(_in[1], _in[2]));', rewritten
+
+
+#: ``std::`` maths a hand-written body could write. Each is overloaded on its argument type, which the
+#: body does not name.
+C_UNTYPED_NATIVE_MATHS = [
+    ('abs', '_out[0] = std::abs(_in[0]);'),
+    ('sqrt', '_out[0] = std::sqrt(_in[0]);'),
+    ('exp', '_out[0] = std::exp(_in[0]);'),
+    ('pow', '_out[0] = std::pow(_in[0], 2.0);'),
+    ('fma', '_out[0] = std::fma(_in[0], _in[1], _in[2]);'),
+    ('fmod', '_out[0] = std::fmod(_in[0], _in[1]);'),
+    ('hypot', '_out[0] = std::hypot(_in[0], _in[1]);'),
+    ('atan2', '_out[0] = std::atan2(_in[0], _in[1]);'),
+]
+
+
+@pytest.mark.parametrize('label,body', C_UNTYPED_NATIVE_MATHS, ids=[label for label, _ in C_UNTYPED_NATIVE_MATHS])
+def test_an_untyped_native_maths_call_is_left_for_verify(label, body):
+    """C names a different function per argument type, and the body names no type: renamed onto the
+    ``double`` function the call would compute a ``float`` at the wrong precision, so it must reach
+    CPF's gate by name. An expansion that knows its element type spells the C function itself."""
+    assert cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C) == body
+
+
+def test_an_untyped_native_std_min_is_left_for_verify():
+    """C has no overloading, so a ``std::min`` naming no element type has no helper to become: it must
+    reach CPF's gate by name rather than turn into a helper of a guessed type."""
+    body = '_out[0] = std::min(_in[0], _in[1]);'
+    assert cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C) == body
+
+
+#: ``(dialect, the text a cast in a symbolic expression must print as)``. Both dialects are held to
+#: the same expression here for the reason the value cases above are: the C tables are a second
+#: spelling of one semantics, and a cast is where the two spellings genuinely differ.
+CAST_REPARSE_FORMS = {
+    Dialect.STANDALONE: '((int64_t(la) + int64_t(lb)) + 1)',
+    Dialect.STANDALONE_C: '((((int64_t)(la)) + ((int64_t)(lb))) + 1)',
+}
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+def test_a_cast_survives_the_printers_own_reparse(dialect):
+    """``sym2cpp`` prints C++ and hands the text back to the PYTHON parser on its way out. A cast is
+    the one construct whose C++ spelling does not survive that: ``static_cast<T>(x)`` re-parses as
+    the comparison chain ``(static_cast < T) > (x)`` and is emitted with its parentheses moved, so
+    the extent it computes is a different number and the unit does not compile."""
+    expression = symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
+    with cpf_lowering.dialect_scope(dialect):
+        rendered = sym2cpp(expression)
+    assert rendered == CAST_REPARSE_FORMS[dialect], rendered
+
+
+#: C spelling of each dace type the typed maths is picked by, and a sample operand of it.
+C_MATHS_OPERANDS = {
+    'int32': ('int', '2'),
+    'int64': ('long', '3L'),
+    'float32': ('float', '0.3f'),
+    'float64': ('double', '0.3'),
+    'complex64': ('float _Complex', '(0.3f + 0.2f * I)'),
+    'complex128': ('double _Complex', '(0.3 + 0.2 * I)'),
+}
+C_MATHS_REAL = ('int32', 'int64', 'float32', 'float64')
+C_MATHS_ALL = C_MATHS_REAL + ('complex64', 'complex128')
+#: ``(runtime name, argument types)``: every family ``<tgmath.h>`` also spells, over each type its
+#: C++ counterpart accepts. ``abs`` is absent because ``<tgmath.h>`` has no integer absolute value.
+C_MATHS_CASES = ([(name, (dtype, )) for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items()
+                  if arity == 1 and family == 'real' and name not in ('ilogb', 'ROUND', 'ceiling')
+                  for dtype in C_MATHS_REAL] + [(name, (dtype, ))
+                                                for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items()
+                                                if arity == 1 and family in ('elementary', 'complex')
+                                                for dtype in C_MATHS_ALL] +
+                 [(name, types) for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items() if arity == 2
+                  for types in (('float32', 'float32'), ('float32', 'float64'), ('float64', 'float32'))])
+
+
+@pytest.fixture(scope='module')
+def tgmath_agreement():
+    """For each case: whether the function CPF names returns the same type and the same bits as the
+    ``<tgmath.h>`` macro of the same name, from one compiled probe."""
+    declarations, checks = [], []
+    for index, (name, types) in enumerate(C_MATHS_CASES):
+        base = cpf_lowering.C_TYPED_MATH[name][0]
+        operands = []
+        for position, dtype in enumerate(types):
+            ctype, sample = C_MATHS_OPERANDS[dtype]
+            declarations.append('static %s v%d_%d = %s;' % (ctype, index, position, sample))
+            operands.append('v%d_%d' % (index, position))
+        chosen = '%s(%s)' % (cpf_lowering.c_math_function(name, types), ', '.join(operands))
+        generic = '%s(%s)' % (base, ', '.join(operands))
+        checks.append('    { typeof(%s) a = %s; typeof(%s) b = %s; out[%d] = _Generic(%s, typeof(%s): 1, default: 0) '
+                      '&& memcmp(&a, &b, sizeof a) == 0; }' %
+                      (chosen, chosen, generic, generic, index, chosen, generic))
+    code = ('#include <tgmath.h>\n#include <stdlib.h>\n#include <string.h>\n%s\nvoid probe(int * out)\n{\n%s\n}\n' %
+            ('\n'.join(declarations), '\n'.join(checks)))
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_tgmath_agreement', language='c'))
+    out = np.full(len(C_MATHS_CASES), -1, dtype=np.int32)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    return dict(zip(C_MATHS_CASES, out))
+
+
+@pytest.mark.parametrize('name,types',
+                         C_MATHS_CASES,
+                         ids=['%s-%s' % (name, '-'.join(types)) for name, types in C_MATHS_CASES])
+def test_the_c_maths_function_is_the_one_tgmath_picks(tgmath_agreement, name, types):
+    """The printer names the function a type-generic call would have selected; a double function for a
+    float argument returns a different type and rounds twice, which is what this catches."""
+    assert tgmath_agreement[(name, types)] == 1, (
+        f'{cpf_lowering.c_math_function(name, types)} for {name}{types} disagrees with <tgmath.h>')
+
+
+#: ``(runtime name, argument types, the function named)`` where an integer meets a ``float``. The old
+#: dispatch selected on ``(a) + (b)``, which C converts to ``float``; ``<tgmath.h>`` would take an
+#: integer argument as ``double`` instead, so these are pinned on their own rather than against it.
+C_MIXED_MATHS = [
+    ('pow', ('int32', 'float32'), 'powf'),
+    ('atan2', ('int64', 'float32'), 'atan2f'),
+    ('hypot', ('float32', 'int32'), 'hypotf'),
+    ('fma', ('float32', 'int32', 'float32'), 'fmaf'),
+    ('pow', ('int32', 'int64'), 'pow'),
+]
+
+
+@pytest.mark.parametrize('name,types,function',
+                         C_MIXED_MATHS,
+                         ids=['%s-%s' % (n, '-'.join(t)) for n, t, _ in C_MIXED_MATHS])
+def test_a_mixed_integer_float_maths_call_keeps_the_float_function(name, types, function):
+    """A call picks by the type C's conversions give its arguments together, as the dispatch it replaces
+    did; picking ``double`` here would compute a ``float`` expression at a different precision."""
+    assert cpf_lowering.c_math_function(name, types) == function
+
+
+#: ``(argument types, the call a C heaviside prints as)``: the argument count picks the helper.
+C_HEAVISIDE_CALLS = [
+    (('float32', ), 'cpf_heaviside_1_float32(a)'),
+    (('float64', 'float64'), 'cpf_heaviside_2_float64(a, b)'),
+    (('int32', 'float32'), 'cpf_heaviside_2_float32(a, b)'),
+]
+
+
+@pytest.mark.parametrize('types,expected', C_HEAVISIDE_CALLS, ids=['-'.join(t) for t, _ in C_HEAVISIDE_CALLS])
+def test_a_c_heaviside_picks_its_helper_by_argument_count(types, expected):
+    """One C function cannot take one argument and two, and no counting macro is left to choose, so
+    the printer names the helper for the arity the call was written with."""
+    arguments = ('a', 'b')[:len(types)]
+    assert cpf_lowering.lowering_for('heaviside', arguments, Dialect.STANDALONE_C, types) == expected
+
+
+def test_a_c_heaviside_of_another_arity_is_refused():
+    """A third argument has no helper to reach, so the printer refuses rather than dropping it."""
+    with pytest.raises(NotImplementedError, match='heaviside taking 3'):
+        cpf_lowering.lowering_for('heaviside', ('a', 'b', 'c'), Dialect.STANDALONE_C, ('float64', ) * 3)
+
+
+def test_a_native_copy_is_the_memmove_it_performs():
+    """The unit carries no macros, so a copy is written out at the call site, and the argument with a
+    nested call in it is still one argument."""
+    body = 'std::copy(_in, _in + (cpf_max_int64(n, 0)), _out);'
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    assert rewritten == ('memmove((_out), (_in), (size_t)((_in + (cpf_max_int64(n, 0))) - (_in)) * sizeof(*(_in)));')
+    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'cpf_max_int64'}

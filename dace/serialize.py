@@ -182,23 +182,40 @@ def from_json(obj, context=None, known_type=None):
         raise TypeError("Type mismatch in JSON, found " + t + ", expected " + known_type.__name__)
 
     if t:
+        # Two failures used to share one handler, which is what made a bad parse surface as nonsense
+        # far away: an unparsable shape became a placeholder, the Subset holding it became one too,
+        # then the Memlet, then the whole block, and the load finally died on "Expected
+        # ControlFlowBlock, got SerializableObject" -- naming neither the real error nor where it was.
         try:
             serializer = get_serializer(t)
+        except KeyError as ex:
+            # UNREGISTERED type: exactly what the placeholder is for (see the ``deserialize_exception``
+            # config text -- "e.g., due to missing library node"). Keeping the raw JSON lets an SDFG
+            # carrying a third-party node still round-trip through a build that never defined it.
+            if config.Config.get_bool('testing', 'deserialize_exception'):
+                raise
+            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
+            return SerializableObject.from_json(obj, context=context, typename=t)
+
+        # REGISTERED type: this build knows how to read it, so a raised exception is a genuine parse
+        # failure on data we understand. Substituting a placeholder here is silent corruption, so
+        # report it where it happened, with the type that failed and the original error chained.
+        try:
             if is_dataclass(serializer):
                 # Special case for dataclasses
                 field_values = {}
                 for field in serializer.__dataclass_fields__.values():
                     if field.name in obj:
                         field_values[field.name] = from_json(obj[field.name], context, known_type=field.type)
-                deserialized = serializer(**field_values)
-            else:
-                deserialized = serializer.from_json(obj, context=context)
+                return serializer(**field_values)
+            return serializer.from_json(obj, context=context)
         except Exception as ex:
-            if config.Config.get_bool('testing', 'deserialize_exception'):
-                raise
-            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
-            deserialized = SerializableObject.from_json(obj, context=context, typename=t)
-        return deserialized
+            # A note rather than a rewrap: reconstructing the type would break every exception whose
+            # constructor takes more than a message (InvalidSDFGError wants the SDFG and a block id),
+            # and callers already catch these by type. Not ``add_note``: that is 3.11+, and on 3.10 it
+            # raised an AttributeError here that replaced the parse failure it was annotating.
+            ex.__dict__.setdefault('__notes__', []).append(f'while deserializing a {t}')
+            raise
 
     # No type was found, so treat this as a regular dictionary
     return {from_json(k, context): from_json(v, context) for k, v in obj.items()}
@@ -243,6 +260,11 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
+def deepcopy_returns_itself(value) -> bool:
+    """True where ``copy.deepcopy(value) is value``, so the copy can be skipped."""
+    return value is None or type(value) in (bool, int, float, str)
+
+
 def set_properties_from_json(object_with_properties, json_obj, context=None, ignore_properties=None):
     ignore_properties = ignore_properties or set()
     try:
@@ -250,32 +272,15 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
     except KeyError:
         attrs = json_obj
 
-    # Apply properties
-    ps = dict(object_with_properties.__properties__)
-    source_properties = set(attrs.keys())
-    for prop_name, prop in ps.items():
+    # Membership, not a raised KeyError per absent property: a Tasklet leaves most of its ~20 unwritten.
+    properties = object_with_properties.__properties__
+    unknown_names = [name for name in attrs if name not in properties]
+    for prop_name, prop in properties.items():
         if prop_name in ignore_properties:
             continue
 
-        missing_prop = False
-        try:
+        if prop_name in attrs:
             val = attrs[prop_name]
-            # Make sure we use all properties
-            source_properties.remove(prop_name)
-        except KeyError:
-            missing_prop = True
-            # Allow a property to not be set if it has a default value
-            # TODO: is this really the job of serialize?
-            if prop.default is not None:
-                # Prevent shared mutable defaults from being aliased across deserialized objects.
-                val = copy.deepcopy(prop.default)
-            elif prop.allow_none:
-                val = None
-            else:
-                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
-                               prop_name)
-
-        if not missing_prop:
             if isinstance(val, dict):
                 val = prop.from_json(val, context)
             else:
@@ -289,12 +294,24 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                     warnings.warn("Failed to parse object {}"
                                   " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
                     raise
+        else:
+            # Allow a property to not be set if it has a default value
+            # TODO: is this really the job of serialize?
+            default = prop.default
+            if default is not None:
+                # Prevent shared mutable defaults from being aliased across deserialized objects.
+                val = default if deepcopy_returns_itself(default) else copy.deepcopy(default)
+            elif prop.allow_none:
+                val = None
+            else:
+                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
+                               prop_name)
 
         setattr(object_with_properties, prop_name, val)
 
-    remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
-    remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
+    remaining_properties = set(name for name in unknown_names
+                               if name not in ignore_properties and not name.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

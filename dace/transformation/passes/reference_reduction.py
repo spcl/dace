@@ -8,6 +8,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
+from dace.ordered import OrderedSet
 
 
 @properties.make_properties
@@ -105,6 +106,19 @@ class ReferenceToView(ppl.Pass):
         if not result:  # Early return
             return result
 
+        # Safe: ``find_candidates`` only removes from ``result``, so the graph the helper walks is
+        # unchanged for the whole span. Worth memoizing because it enumerates SIMPLE PATHS between
+        # the two blocks -- exponential -- and the same pair recurs across candidates.
+        modified_between: Dict[Tuple[int, int], Set[str]] = {}
+
+        def modified_syms(src, dst) -> Set[str]:
+            key = (id(src), id(dst))
+            syms = modified_between.get(key)
+            if syms is None:
+                syms = modified_symbols_between(src, dst)
+                modified_between[key] = syms
+            return syms
+
         # If memlet does not depend on any symbol, it can be kept. Otherwise,
         # it may depend on a (free) symbol. There are multiple options:
         #   * If dependent on scope symbol (e.g., map parameter) - remove from candidates
@@ -120,7 +134,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
+                    if fsyms & entry.new_symbol_names(state):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)
@@ -132,7 +146,7 @@ class ReferenceToView(ppl.Pass):
                 for other_state in access_states[cand]:
                     if other_state is state:
                         continue
-                    if fsyms & modified_symbols_between(state, other_state):
+                    if fsyms & modified_syms(state, other_state):
                         result.remove(cand)
                         break
 
@@ -151,9 +165,9 @@ class ReferenceToView(ppl.Pass):
                 # set memlets, reconnecting the remaining surrounding nodes so as
                 # to not break scopes
                 edges_to_add = []
-                edges_to_remove = set()
-                nodes_to_remove = set()
-                affected_nodes = set()
+                edges_to_remove = OrderedSet()
+                nodes_to_remove = OrderedSet()
+                affected_nodes = OrderedSet()
                 for e in state.in_edges_by_connector(node, 'set'):
                     # This is a reference set edge. Consider scope and neighbors and remove set
                     if state.out_degree(e.dst) == 0:

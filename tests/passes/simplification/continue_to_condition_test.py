@@ -6,6 +6,7 @@ from dace.transformation.passes.simplification.continue_to_condition import Cont
 from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 
 def test_regular_loop():
@@ -342,6 +343,76 @@ def test_nested_loops():
     assert len(cont_nodes) == 1
 
 
+def test_consecutive_continues():
+    """Four single-branch continues in a row -- the shape subset_sum's backtracking search has.
+
+    Converting the first one MOVES every block after it into the conditional's branch and removes
+    them from the loop region, so a candidate collected before that apply names a region that no
+    longer holds it: ``outer_cfg.successors(pg)`` raised ``KeyError: ConditionalBlock`` rather than
+    answering, and the whole ``to_sdfg(simplify=True)`` died with it.
+    """
+
+    @dace.program
+    def tester(a: dace.int64[20], out: dace.int64[1]):
+        total = 0
+        for i in range(20):
+            v = a[i]
+            if v == 0:
+                continue
+            if v == 1:
+                continue
+            if v == 2:
+                continue
+            if v == 3:
+                continue
+            total += v
+        out[0] = total
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
+    sdfg.validate()
+
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 4
+
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Only the FIRST converts: converting it moves the other three inside the new branch region,
+    # whose parent is a ControlFlowRegion rather than the LoopRegion this pass requires. That is the
+    # pass declining, which is its job -- the defect was that it DIED here instead of declining.
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 3
+
+    a = np.arange(20, dtype=np.int64) % 7
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(a=a, out=out)
+    assert out[0] == int(a[a > 3].sum())
+
+
+def test_nested_loop_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """The blocks after the ``continue`` are copied into the branch and the originals dropped, in place."""
+
+    @dace.program
+    def tester(a: dace.float64[20, 20]):
+        for i in range(20):
+            for j in range(20):
+                if a[i, j] > 10:
+                    continue
+                a[i, j] = a[i, j] + 1
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
+    resets = spy_on_resets(monkeypatch)
+    assert ContinueToCondition().apply_pass(sdfg, {}) is not None
+    monkeypatch.undo()
+    assert resets == []
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_regular_loop()
     test_flipped()
@@ -354,3 +425,4 @@ if __name__ == '__main__':
     test_multiple_branches2()
     test_nested_conditions()
     test_nested_loops()
+    test_consecutive_continues()

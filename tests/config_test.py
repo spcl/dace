@@ -11,6 +11,15 @@ def test_set_temporary():
     assert Config.get(*path) == current_value
 
 
+def test_set_temporary_takes_a_dotted_path():
+    """``set_temporary("a.b", ...)`` is the same key as ``set_temporary("a", "b", ...)``."""
+    path = ["compiler", "build_type"]
+    current_value = Config.get(*path)
+    with set_temporary(".".join(path), value="I'm not a build type"):
+        assert Config.get(*path) == "I'm not a build type"
+    assert Config.get(*path) == current_value
+
+
 def test_temporary_config():
     path = ["compiler", "build_type"]
     current_value = Config.get(*path)
@@ -145,6 +154,7 @@ def test_config_isolation_multi_thread():
 
 if __name__ == '__main__':
     test_set_temporary()
+    test_set_temporary_takes_a_dotted_path()
     test_temporary_config()
     test_temporary_config_exception()
     test_set_temporary_exception()

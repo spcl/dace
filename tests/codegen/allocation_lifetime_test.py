@@ -6,20 +6,15 @@ import pytest
 
 import dace
 from dace.codegen.targets import framecode
-from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.sdfg import infer_types
+from dace.sdfg.state import LoopRegion
 import numpy as np
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
-    # The transients in these tests use the default alignment; consult the active
-    # cpp_standard: C++ >= 17 emits the aligned form
-    # ``new (std::align_val_t(64)) <type>``, earlier standards the plain form.
-    # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
-    probe = dace.data.Array(dace.float64, [1])
-    if _use_aligned_operator_new(probe):
-        return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
-    return len(re.findall(rf'new\s+{ctype}\b', code))
+    # The transients in these tests use the default alignment (0), which emits the
+    # aligned form ``new (std::align_val_t(64)) <type>``.
+    return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
 
 
 N = dace.symbol('N')
@@ -605,6 +600,86 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
+def test_persistent_transient_reallocates_when_its_symbol_changes():
+    """A persistent transient sized by a call-time symbol keeps the FIRST call's extent.
+
+    ``__dace_init`` runs once, so the allocation is sized by whatever symbols the first call
+    carried; a later call with a larger value then writes past it. Observed as a SIGSEGV on the
+    canonicalized examinimd, whose scratch buffers ``make_transients_persistent`` promotes.
+    """
+    sdfg = dace.SDFG('persistent_resize')
+    n = dace.symbol('n', dace.int64)
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('B', [n], dace.float64)
+    sdfg.add_transient('scratch', [n],
+                       dace.float64,
+                       storage=dace.StorageType.CPU_Heap,
+                       lifetime=dace.AllocationLifetime.Persistent)
+
+    produce = sdfg.add_state()
+    me, mx = produce.add_map('produce', dict(i='0:n'))
+    doubler = produce.add_tasklet('doubler', {'a'}, {'s'}, 's = a * 2.0')
+    produce.add_memlet_path(produce.add_read('A'), me, doubler, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    produce.add_memlet_path(doubler, mx, produce.add_write('scratch'), src_conn='s', memlet=dace.Memlet('scratch[i]'))
+
+    consume = sdfg.add_state_after(produce)
+    cme, cmx = consume.add_map('consume', dict(i='0:n'))
+    adder = consume.add_tasklet('adder', {'s'}, {'b'}, 'b = s + 1.0')
+    consume.add_memlet_path(consume.add_read('scratch'), cme, adder, dst_conn='s', memlet=dace.Memlet('scratch[i]'))
+    consume.add_memlet_path(adder, cmx, consume.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    assert sdfg.arrays['scratch'].lifetime == dace.AllocationLifetime.Persistent
+    csdfg = sdfg.compile()
+    # Small first, then large enough that the overflow leaves the first allocation's pages.
+    for size in (16, 1 << 20):
+        a = np.arange(size, dtype=np.float64)
+        b = np.zeros(size, dtype=np.float64)
+        csdfg(A=a, B=b, n=size)
+        assert np.allclose(b, a * 2.0 + 1.0)
+
+    del csdfg
+
+
+def test_a_view_does_not_reallocate_the_array_it_views():
+    """Viewing a transient in a LATER state must not allocate it a second time.
+
+    ``allocate_view`` allocates the viewed data "if necessary", and the necessity test lives in
+    ``allocate_array``: it returns early when the name is in ``defined_vars``. That set is SCOPED,
+    so once the allocating state's scope has been popped the guard cannot see the earlier
+    allocation, and the view gets a fresh buffer -- silently discarding everything the earlier state
+    wrote. It only bites a transient the frame allocates in ONE state rather than at SDFG entry,
+    i.e. one whose size depends on a loop variable. stockham_fft and velocity_tendencies both read
+    zeros out of transients for this; the frame's own DECLARATION is the marker that it already owns
+    the allocation.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+    i = dace.symbol('i', dtype=dace.int64)
+
+    sdfg = dace.SDFG('view_realloc')
+    sdfg.add_array('a', [N, N], dace.float64)
+    sdfg.add_array('out', [N], dace.float64)
+    sdfg.add_transient('t', [i + 1], dace.float64)
+    sdfg.add_view('tv', [i + 1], dace.float64)
+
+    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+
+    fill = loop.add_state('fill', is_start_block=True)
+    fill.add_mapped_tasklet('fill', {'j': '0:i + 1'}, {'x': dace.Memlet('a[i, j]')},
+                            'o = x', {'o': dace.Memlet('t[j]')},
+                            external_edges=True)
+
+    use = loop.add_state_after(fill)
+    tnode, vnode = use.add_access('t'), use.add_access('tv')
+    use.add_edge(tnode, None, vnode, 'views', dace.Memlet('t[0:i + 1]'))
+    use.add_edge(vnode, None, use.add_access('out'), None, dace.Memlet('tv[0] -> [i]'))
+
+    code = sdfg.generate_code()[0].clean_code
+    allocations = re.findall(r'\bt = new\b', code)
+    assert len(allocations) == 1, (f"'t' is allocated {len(allocations)} times; the second one is the view's, "
+                                   'and it throws away what the fill state wrote')
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -629,3 +704,4 @@ if __name__ == '__main__':
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
+    test_persistent_transient_reallocates_when_its_symbol_changes()

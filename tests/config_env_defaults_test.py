@@ -15,7 +15,7 @@ import pytest
 from dace.config import Config, set_temporary, temporary_config
 
 
-def _reload_from(yaml_text: str = ''):
+def reload_from(yaml_text: str = ''):
     """Reload the in-memory configuration from the given yaml content."""
     Config.load(file=io.StringIO(yaml_text))
 
@@ -24,7 +24,7 @@ def test_env_seeds_default_on_load():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from()
+            reload_from()
             assert Config.get('compiler', 'build_type') == 'FromEnv'
 
 
@@ -32,7 +32,7 @@ def test_set_temporary_overrides_env_seeded_value():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from()
+            reload_from()
             with set_temporary('compiler', 'build_type', value='FromSet'):
                 assert Config.get('compiler', 'build_type') == 'FromSet'
             assert Config.get('compiler', 'build_type') == 'FromEnv'
@@ -42,7 +42,7 @@ def test_temporary_config_overrides_env_seeded_value():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from()
+            reload_from()
             with temporary_config():
                 Config.set('compiler', 'build_type', value='FromSet')
                 assert Config.get('compiler', 'build_type') == 'FromSet'
@@ -52,7 +52,7 @@ def test_config_set_overrides_env_seeded_value():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from()
+            reload_from()
             Config.set('compiler', 'build_type', value='FromSet')
             assert Config.get('compiler', 'build_type') == 'FromSet'
 
@@ -63,7 +63,7 @@ def test_env_overrides_config_file():
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
             with warnings.catch_warnings():
                 warnings.simplefilter('error')
-                _reload_from('compiler:\n  build_type: FromFile\n')
+                reload_from('compiler:\n  build_type: FromFile\n')
             assert Config.get('compiler', 'build_type') == 'FromEnv'
 
 
@@ -72,10 +72,10 @@ def test_precedence_default_file_env_set():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.delenv('DACE_compiler_build_type', raising=False)
-            _reload_from('compiler:\n  build_type: FromFile\n')
+            reload_from('compiler:\n  build_type: FromFile\n')
             assert Config.get('compiler', 'build_type') == 'FromFile'
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from('compiler:\n  build_type: FromFile\n')
+            reload_from('compiler:\n  build_type: FromFile\n')
             assert Config.get('compiler', 'build_type') == 'FromEnv'
             Config.set('compiler', 'build_type', value='FromSet')
             assert Config.get('compiler', 'build_type') == 'FromSet'
@@ -85,13 +85,13 @@ def test_env_change_after_load_is_inert():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.delenv('DACE_compiler_build_type', raising=False)
-            _reload_from()
+            reload_from()
             default = Config.get_default('compiler', 'build_type')
             assert Config.get('compiler', 'build_type') == default
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
             assert Config.get('compiler', 'build_type') == default
             # A reload picks the new environment up.
-            _reload_from()
+            reload_from()
             assert Config.get('compiler', 'build_type') == 'FromEnv'
 
 
@@ -101,7 +101,7 @@ def test_env_bool_coercion():
             for raw, expected in [('1', True), ('true', True), ('on', True), ('0', False), ('false', False),
                                   ('off', False)]:
                 mp.setenv('DACE_debugprint', raw)
-                _reload_from()
+                reload_from()
                 assert Config.get('debugprint') is expected, f'env value {raw!r}'
                 assert Config.get_bool('debugprint') is expected, f'env value {raw!r}'
 
@@ -110,7 +110,7 @@ def test_env_int_coercion():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_max_stack_array_size', '1024')
-            _reload_from()
+            reload_from()
             assert Config.get('compiler', 'max_stack_array_size') == 1024
 
 
@@ -119,7 +119,7 @@ def test_env_bad_int_warns_and_falls_back_to_default():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_max_stack_array_size', 'not_a_number')
             with pytest.warns(UserWarning, match='DACE_compiler_max_stack_array_size'):
-                _reload_from()
+                reload_from()
             assert Config.get('compiler', 'max_stack_array_size') == \
                 Config.get_default('compiler', 'max_stack_array_size')
 
@@ -140,7 +140,7 @@ def test_legacy_config_file_is_migrated_on_load(tmp_path):
     rewritten once, in the new nondefaults-only format. The environment has
     been applied by then, so ``DACE_*`` values set during the migration are
     persisted into the file as well - documented behavior."""
-    from dace.config import _ConfigData
+    from dace import config as dace_config
 
     cfg = tmp_path / 'legacy.conf'
     cfg.write_text('execution: {}\ndebugprint: true\n')
@@ -148,7 +148,7 @@ def test_legacy_config_file_is_migrated_on_load(tmp_path):
         mp.setenv('DACE_CONFIG', str(cfg))
         mp.setenv('DACE_profiling', '1')
         mp.chdir(tmp_path)
-        _ConfigData()  # A fresh store runs _initialize -> load -> migration.
+        dace_config._ConfigData()  # A fresh store runs _initialize -> load -> migration.
     migrated = cfg.read_text()
     assert 'execution' not in migrated  # The legacy marker is gone...
     assert 'debugprint: true' in migrated  # ...nondefaults are kept...
@@ -158,7 +158,7 @@ def test_legacy_config_file_is_migrated_on_load(tmp_path):
 def test_load_does_not_rewrite_a_modern_config_file(tmp_path):
     """A file already in the new format is never written back: neither the
     environment nor anything else leaks into the user's file on load."""
-    from dace.config import _ConfigData
+    from dace import config as dace_config
 
     cfg = tmp_path / 'modern.conf'
     cfg.write_text('debugprint: true\n')
@@ -167,7 +167,7 @@ def test_load_does_not_rewrite_a_modern_config_file(tmp_path):
         mp.setenv('DACE_CONFIG', str(cfg))
         mp.setenv('DACE_profiling', '1')
         mp.chdir(tmp_path)
-        store = _ConfigData()
+        store = dace_config._ConfigData()
         assert store.get('debugprint') is True  # The file was read...
         assert store.get('profiling') is True  # ...the environment applied,
     assert cfg.read_text() == before  # ...and nothing wrote the file back.

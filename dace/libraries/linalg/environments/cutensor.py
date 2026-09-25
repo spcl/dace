@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the NVIDIA cuTENSOR backend."""
+import ctypes.util
+
 import dace.library
 
 
@@ -13,7 +15,7 @@ class cuTensor:
     cmake_includes = []
     cmake_libraries = ["cutensor"]
     cmake_compile_flags = []
-    cmake_link_flags = ["-L -lcutensor"]
+    cmake_link_flags = []
     cmake_files = []
 
     headers = {'frame': ["dace/dace_cutensor.h"], 'cuda': ["dace/dace_cutensor.h"]}
@@ -36,6 +38,15 @@ class cuTensor:
         dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
         dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
     }
+
+    #: cuTENSOR contracts every type it permutes, so the contraction map is TYPE_MAP itself. In hipTensor
+    #: the two maps differ; see its environment.
+    CONTRACTION_TYPE_MAP = TYPE_MAP
+
+    @staticmethod
+    def is_installed():
+        """Whether the cuTENSOR library is on this host; without it canonicalize's GPU library list leaves it out."""
+        return ctypes.util.find_library('cutensor') is not None
 
     @staticmethod
     def handle_setup_code(node):

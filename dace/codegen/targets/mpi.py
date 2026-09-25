@@ -47,6 +47,8 @@ class MPICodeGen(TargetCodeGenerator):
 MPI_Comm __dace_mpi_comm;
 int __dace_comm_size = 1;
 int __dace_comm_rank = 0;
+// Only finalize MPI if we initialized it; a host (e.g. mpi4py) keeps ownership otherwise.
+int __dace_mpi_owns_lifecycle = 0;
 
 {file_header}
 
@@ -60,6 +62,7 @@ int __dace_init_mpi({sdfg_state_name} *__state{params}) {{
     if (!isinit) {{
         if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
             return 1;
+        __dace_mpi_owns_lifecycle = 1;
     }}
 
     MPI_Comm_dup(MPI_COMM_WORLD, &__dace_mpi_comm);
@@ -72,8 +75,15 @@ int __dace_init_mpi({sdfg_state_name} *__state{params}) {{
 }}
 
 int __dace_exit_mpi({sdfg_state_name} *__state) {{
-    MPI_Comm_free(&__dace_mpi_comm);
-    MPI_Finalize();
+    // After MPI_Finalize no MPI call is legal, MPI_Comm_free included.
+    int isfinalized = 0;
+    MPI_Finalized(&isfinalized);
+    if (!isfinalized) {{
+        MPI_Comm_free(&__dace_mpi_comm);
+        if (__dace_mpi_owns_lifecycle) {{
+            MPI_Finalize();
+        }}
+    }}
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);

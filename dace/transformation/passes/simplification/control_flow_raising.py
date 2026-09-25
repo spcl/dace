@@ -4,19 +4,52 @@ import ast
 from typing import Dict, List, Optional, Tuple
 import warnings
 
-import networkx as nx
+from dace import graphlib as nx
 import sympy
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock, UnstructuredControlFlow
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
+                             ReturnBlock, UnstructuredControlFlow)
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_lifting import LoopLifting
+
+
+def region_has_cycle(region: AbstractControlFlowRegion) -> bool:
+    """Whether the blocks of ``region`` form a cycle, self-edges included (Kahn's algorithm over the whole graph)."""
+    in_degree: Dict[ControlFlowBlock, int] = {block: 0 for block in region.nodes()}
+    for edge in region.edges():
+        in_degree[edge.dst] += 1
+    ready: List[ControlFlowBlock] = [block for block, degree in in_degree.items() if degree == 0]
+    removed = 0
+    while ready:
+        block = ready.pop()
+        removed += 1
+        for edge in region.out_edges(block):
+            in_degree[edge.dst] -= 1
+            if in_degree[edge.dst] == 0:
+                ready.append(edge.dst)
+    return removed != len(in_degree)
+
+
+def remove_unreachable_blocks(sdfg: SDFG) -> int:
+    """Removes the blocks no path from their region's start block reaches, since they never run. Returns the count."""
+    removed = 0
+    for region in list(sdfg.all_control_flow_regions()):
+        if region.number_of_nodes() < 2 or isinstance(region, (ConditionalBlock, UnstructuredControlFlow)):
+            continue
+        reachable = OrderedSet(region.bfs_nodes(region.start_block))
+        if len(reachable) == region.number_of_nodes():
+            continue
+        dead = [block for block in region.nodes() if block not in reachable]
+        region.remove_nodes_from(dead)
+        removed += len(dead)
+    return removed
 
 
 @properties.make_properties
@@ -150,15 +183,25 @@ class ControlFlowRaising(ppl.Pass):
                     # Connect it.
                     graph.add_edge(block, conditional, InterstateEdge())
 
-                    # Populate branches.
+                    # Populate branches. ``ConditionalBlock`` requires the
+                    # ``else`` branch (the one with ``cond is None``) to be
+                    # the LAST entry (enforced by
+                    # ``DeadStateElimination._find_dead_branches``), so
+                    # iterate over the out-edges with unconditional edges
+                    # sorted to the tail. Stable sort preserves the original
+                    # order of the conditional edges, which is what the
+                    # cumulative ``full_cond_expression`` build below relies
+                    # on.
+                    ordered_oedges = sorted(oedges, key=lambda e: 1 if e.data.is_unconditional() else 0)
                     full_cond_expression: Optional[sympy.Basic] = None
                     uncond_generated = False
-                    for i, oe in enumerate(oedges):
+                    for i, oe in enumerate(ordered_oedges):
                         branch_name = 'branch_' + str(i) + '_' + block.label
                         branch = ControlFlowRegion(branch_name, sdfg)
 
                         if not oe.data.is_unconditional():
-                            if i == len(oedges) - 1 and oe.data.condition_sympy() == sympy.Not(full_cond_expression):
+                            if i == len(ordered_oedges) - 1 and oe.data.condition_sympy() == sympy.Not(
+                                    full_cond_expression):
                                 if uncond_generated:
                                     warnings.warn(
                                         f'Control flow raising: Found multiple unconditional branches in {block.label}')
@@ -210,7 +253,6 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
         lifted = n_cond_regions_post - n_cond_regions_pre
         if lifted:
-            sdfg.reset_cfg_list()
             sdfg.root_sdfg.using_explicit_control_flow = True
         return lifted
 
@@ -257,6 +299,14 @@ class ControlFlowRaising(ppl.Pass):
                 for edge in cfg.edges():
                     if edge.src in unstructured_nodes and edge.dst in unstructured_nodes or edge.dst is region_exit:
                         unstructured_region.add_edge(edge.src, edge.dst, edge.data)
+                # Re-assert the start block: adding edges (in particular back-edges
+                # to the entry when the unstructured region contains a cycle) may
+                # have invalidated the manually-set start block, leaving it
+                # ambiguous since the region has no source nodes.
+                try:
+                    assert unstructured_region.start_block is region_entry
+                except ValueError:
+                    unstructured_region.start_block = unstructured_region.node_id(region_entry)
                 if cfg.in_degree(region_entry) == 0:
                     # If there is no incoming edge, this is a start block.
                     cfg.add_node(unstructured_region, is_start_block=True)
@@ -273,7 +323,6 @@ class ControlFlowRaising(ppl.Pass):
 
                 lifted += 1
 
-                sdfg.reset_cfg_list()
         return lifted
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:
@@ -281,14 +330,19 @@ class ControlFlowRaising(ppl.Pass):
         lifted_loops = 0
         lifted_unstructured = 0
         lifted_branches = 0
+        removed_blocks = 0
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            # Dominance and DFS walks start at the start block, so a dead block would read as an unstructured entry.
+            removed_blocks += remove_unreachable_blocks(sdfg)
             lifted_returns += self._lift_returns(sdfg)
-            lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
+            # Every loop LoopLifting accepts closes a back edge, so the VF2 sweep can only match in a cyclic region.
+            if any(region_has_cycle(region) for region in sdfg.all_control_flow_regions(recursive=True)):
+                lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
             lifted_unstructured += self._lift_unstructured(sdfg)
             lifted_branches += self._lift_conditionals(sdfg)
-        if lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0 and lifted_returns == 0:
+        if (removed_blocks == 0 and lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0
+                and lifted_returns == 0):
             return None
-        top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
     def report(self, pass_retval: Optional[Tuple[int, int, int]]):

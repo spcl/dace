@@ -183,6 +183,15 @@ class ReloadableDLL(object):
         raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
 
 
+def init_argument_values(argtuple: Sequence[Any]) -> Tuple[Any, ...]:
+    """The plain Python values behind a marshalled ``__dace_init`` argument tuple.
+
+    :param argtuple: Marshalled init arguments, as built by ``CompiledSDFG.construct_arguments``.
+    :returns: One comparable value per argument.
+    """
+    return tuple(arg.value if isinstance(arg, ctypes._SimpleCData) else arg for arg in argtuple)
+
+
 class CompiledSDFG(object):
     """
     A compiled SDFG object that can be called through Python.
@@ -260,7 +269,14 @@ class CompiledSDFG(object):
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
-        self._free_symbols = self._sdfg.free_symbols
+        # The set the init arguments are filtered by BELOW must be the one the generated
+        # ``__dace_init_`` signature was built from -- `SDFG.init_signature` takes
+        # `used_symbols(all_symbols=False)`, the symbols the code actually needs as arguments. The
+        # wider `free_symbols` additionally carries symbols that only appear in descriptor shapes,
+        # and passing one of those hands ctypes an extra positional value that shifts every later
+        # parameter: pgemv's `GM` sorts ahead of `Px`, so `Cblacs_gridinit` received an array extent
+        # as the process-grid width and BLACS aborted the whole job.
+        self._init_symbols = self._sdfg.used_symbols(all_symbols=False)
         self._constants = self._sdfg.constants
         self.argnames = argnames
 
@@ -282,6 +298,16 @@ class CompiledSDFG(object):
             aval.storage
             for _, _, aval in self._sdfg.arrays_recursive() if aval.lifetime == dtypes.AllocationLifetime.External
         }
+
+        # A persistent transient is allocated in ``__dace_init``, i.e. ONCE, from the first call's
+        # symbol values. When its extent names a symbol the caller supplies per call, a later call
+        # with a larger value writes past that allocation -- silent out-of-bounds, a segfault on a
+        # good day. Detected here so the per-call comparison in ``fast_call`` costs nothing for the
+        # SDFGs that cannot hit it.
+        self.reinit_on_symbol_change = any(
+            aval.lifetime == dtypes.AllocationLifetime.Persistent and symbolic.issymbolic(aval.total_size)
+            for _, _, aval in self._sdfg.arrays_recursive())
+        self.init_symbol_values: Optional[Tuple[Any, ...]] = None
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
@@ -413,11 +439,29 @@ class CompiledSDFG(object):
     def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
-            if res == ctypes.c_void_p(0):
+            # ctypes pointers compare by identity, so the old ``== c_void_p(0)`` never matched and a
+            # failed initializer went on to be called with a null handle.
+            if res.value is None:
                 raise RuntimeError('DaCe application failed to initialize')
 
             self._libhandle = res
             self._initialized = True
+            self.init_symbol_values = init_argument_values(argtuple)
+
+    def reinitialize(self, argtuple):
+        """Free the init-time allocations and redo them for a new set of symbol values.
+
+        :param argtuple: The marshalled init arguments of the call that changed the symbols.
+        """
+        if self._exit is not None and self._initialized is True:
+            res: int = self._exit(self._libhandle)
+            self._initialized = False
+            if res != 0:
+                raise RuntimeError(f'An error was detected after running "{self._sdfg.name}": '
+                                   f'{self._get_error_text(res)}')
+        self._initialized = False
+        self._libhandle = ctypes.c_void_p(0)
+        self._initialize(argtuple)
 
     def initialize(self, *args, **kwargs):
         """
@@ -573,6 +617,9 @@ with open(r"{temp_path}", "wb") as f:
             if self._initialized is False:
                 self._lib.load()
                 self._initialize(initargs)
+            elif self.reinit_on_symbol_change and init_argument_values(initargs) != self.init_symbol_values:
+                # The persistent (init-time) allocations were sized by the previous call's symbols.
+                self.reinitialize(initargs)
 
             with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
                 if self.do_not_execute is False:
@@ -674,7 +721,7 @@ with open(r"{temp_path}", "wb") as f:
                                     argument_to_pyobject=self._argument_to_pyobject)
             for aval, atype, aname in zip(arglist, argtypes, argnames))
 
-        symbols = self._free_symbols
+        symbols = self._init_symbols
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
                            if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg)))
         newargs = tuple(carg for carg, _aname in callparams)

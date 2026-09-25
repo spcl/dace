@@ -5,13 +5,18 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 """
 import re
 
+import pytest
+
 import dace
+
+# The grid barrier is emitted by the legacy CUDA code generator only.
+pytestmark = pytest.mark.old_gpu_codegen_only
 
 N = 32
 W = 4
 
 
-def _kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
+def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
     sdfg = dace.SDFG('grid_barrier_nested' if nested else 'grid_barrier_flat')
     for name in ('A', 'T', 'B'):
         sdfg.add_array(name, [W, N], dace.float64, storage=dace.StorageType.GPU_Global)
@@ -72,19 +77,19 @@ def _kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
     return sdfg
 
 
-def _check_barrier(nested: bool):
-    sdfg = _kernel_with_consecutive_maps(nested)
+def check_barrier(nested: bool):
+    sdfg = kernel_with_consecutive_maps(nested)
     code = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
     assert '__gbar.Sync();' in code
-    assert re.search(r'cub::GridBarrier\s+__gbar|GridBarrier\s*&\s*__gbar', code)
+    assert re.search(r'dace::GridBarrier\s+__gbar|GridBarrier\s*&\s*__gbar', code)
 
 
 def test_grid_barrier_in_kernel():
-    _check_barrier(nested=False)
+    check_barrier(nested=False)
 
 
 def test_grid_barrier_in_nested_sdfg():
-    _check_barrier(nested=True)
+    check_barrier(nested=True)
 
 
 if __name__ == '__main__':

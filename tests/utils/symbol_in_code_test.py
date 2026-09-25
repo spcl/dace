@@ -86,3 +86,35 @@ def test_empty_potential_symbols():
     """Edge case: empty potential_symbols set should short-circuit."""
     result = dace.symbolic.symbols_in_code("x + y", potential_symbols=set())
     assert result == set()
+
+
+def test_result_is_not_the_cached_token_set():
+    """The tokenization is memoized, so a caller MUST NOT be able to reach the cache entry.
+
+    ``symbols_in_code`` returns a set and several callers in the tree build on it in place
+    (``found.update(...)``, ``referenced -= ...``). Handing back the memoized object would let one
+    caller's edit rewrite what every later query sees -- a wrong-answer bug with no crash and no
+    locality to the caller that caused it. Mutating the first result must leave the second alone.
+    """
+    code = "alpha + beta * gamma"
+    first = dace.symbolic.symbols_in_code(code)
+    first.add('injected')
+    first.discard('alpha')
+    assert dace.symbolic.symbols_in_code(code) == {'alpha', 'beta', 'gamma'}
+
+
+def test_the_tokenizer_is_memoized_per_code_string():
+    """Repeated queries about the same code must not re-tokenize it.
+
+    This is the point of the cache: a pass asking "who reads symbol ``s``" walks every interstate
+    condition and tasklet body once PER SYMBOL, and the strings do not change between those
+    queries. Asserted on the cache counters, since the observable result is identical either way.
+    """
+    code = "delta * 3 + epsilon_v - 1e-5"
+    dace.symbolic.symbols_in_code(code)  # prime, so the first call below is never the miss
+    before = dace.symbolic.name_tokens_in_code.cache_info()
+    for name in ('delta', 'epsilon_v', 'zeta'):
+        dace.symbolic.symbols_in_code(code, potential_symbols={name})
+    after = dace.symbolic.name_tokens_in_code.cache_info()
+    assert after.misses == before.misses, 'a repeated query re-tokenized the same string'
+    assert after.hits == before.hits + 3

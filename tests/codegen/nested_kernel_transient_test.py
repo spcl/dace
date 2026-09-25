@@ -13,6 +13,7 @@ def _test_kernel_transient(persistent: bool):
             A[i, :] = 1
 
     sdfg = nested.to_sdfg()
+    # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
     sdfg.apply_gpu_transformations()
 
     # Distinct per variant: these differ only in generated code, so sharing a name would put them in
@@ -26,7 +27,14 @@ def _test_kernel_transient(persistent: bool):
     state.add_edge(n, 'A', w, None, dace.Memlet('A'))
 
     if persistent:
-        sdfg.arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        # Mark any GPU-side transient created by apply_gpu_transformations as persistent.
+        # A_persistent lifetime requires GPU_Global storage; the codegen pipeline skips
+        # demoting arrays whose lifetime is already persistent.
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for name, desc in nsdfg.arrays.items():
+                if desc.transient and (name.endswith('_gpu') or name.startswith('gpu_')):
+                    desc.storage = dace.StorageType.GPU_Global
+                    desc.lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -50,10 +58,18 @@ def _test_transient(persistent: bool):
 
     sdfg = transient.to_sdfg()
     sdfg.name = 'nested_transient_persistent' if persistent else 'nested_transient'
+    # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        # Mark any GPU-side transient created by apply_gpu_transformations as persistent.
+        # A persistent lifetime requires GPU_Global storage; the codegen pipeline skips
+        # demoting arrays whose lifetime is already persistent.
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for name, desc in nsdfg.arrays.items():
+                if desc.transient and (name.endswith('_gpu') or name.startswith('gpu_')):
+                    desc.storage = dace.StorageType.GPU_Global
+                    desc.lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -88,10 +104,18 @@ def _test_double_transient(persistent: bool):
     if dace.Config.get_bool('optimizer', 'automatic_simplification'):
         sdfg.simplify()
 
+    # Persistent transients must stay GPU_Global (Register + Persistent is invalid).
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        # Mark any GPU-side transient created by apply_gpu_transformations as persistent.
+        # A persistent lifetime requires GPU_Global storage; the codegen pipeline skips
+        # demoting arrays whose lifetime is already persistent.
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for name, desc in nsdfg.arrays.items():
+                if desc.transient and (name.endswith('_gpu') or name.startswith('gpu_')):
+                    desc.storage = dace.StorageType.GPU_Global
+                    desc.lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)

@@ -1,12 +1,81 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 import pytest
 import dace
 import numpy as np
-from dace.sdfg.state import ConditionalBlock, UnstructuredControlFlow
+from dace.sdfg.state import ConditionalBlock, LoopRegion, UnstructuredControlFlow
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising, region_has_cycle
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
+
+def test_a_chain_with_a_diamond_is_acyclic():
+    sdfg = dace.SDFG('diamond')
+    top = sdfg.add_state('top', is_start_block=True)
+    left = sdfg.add_state('left')
+    right = sdfg.add_state('right')
+    bottom = sdfg.add_state('bottom')
+    sdfg.add_edge(top, left, dace.InterstateEdge(condition='N > 0'))
+    sdfg.add_edge(top, right, dace.InterstateEdge(condition='N <= 0'))
+    sdfg.add_edge(left, bottom, dace.InterstateEdge())
+    sdfg.add_edge(right, bottom, dace.InterstateEdge())
+
+    assert not region_has_cycle(sdfg)
+
+
+def test_a_self_edge_is_a_cycle():
+    sdfg = dace.SDFG('self_edge')
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    sdfg.add_edge(entry, body, dace.InterstateEdge())
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition='i < N', assignments={'i': 'i + 1'}))
+
+    assert region_has_cycle(sdfg)
+
+
+def test_a_cycle_unreachable_from_the_source_is_a_cycle():
+    sdfg = dace.SDFG('detached_cycle')
+    sdfg.add_state('entry', is_start_block=True)
+    first = sdfg.add_state('first')
+    second = sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.add_edge(second, first, dace.InterstateEdge())
+
+    assert region_has_cycle(sdfg)
+
+
+def test_raising_lifts_a_back_edge_loop_into_a_loop_region():
+    sdfg = dace.SDFG('back_edge_loop')
+    sdfg.add_array('A', [10], dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('body')
+    after = sdfg.add_state('after')
+    sdfg.add_edge(start, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i < N'))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, after, dace.InterstateEdge(condition='i >= N'))
+    writer = body.add_tasklet('write', {}, {'out': sdfg.arrays['A'].dtype}, 'out = i')
+    body.add_edge(writer, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+    assert_cfg_list_matches_reset(sdfg)
+
+    loops = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
+    assert len(loops) == 1
+    assert loops[0].loop_variable == 'i'
+    assert not region_has_cycle(sdfg)
 
 
 @pytest.mark.parametrize('lowered_returns', [False, True])
@@ -188,6 +257,138 @@ def test_unstructured_control_flow_sibling_loops():
     assert np.allclose(B_test, B_valid)
 
 
+def test_unconditional_edge_lifted_as_last_branch():
+    """The branch with ``cond is None`` (the ``else``) must always be the
+    LAST entry of the resulting ``ConditionalBlock`` so the downstream
+    ``DeadStateElimination._find_dead_branches`` invariant and the
+    codegen branch emitter both accept it.
+
+    Regression: when the graph's ``out_edges()`` returned the
+    unconditional edge BEFORE the conditional ones, the historical
+    code emitted ``cond = None`` at an early iteration index, so the
+    lifted ``ConditionalBlock`` had the ``else`` branch in slot 0 and
+    the conditional branches after it. ``DeadStateElimination`` then
+    aborted with ``InvalidSDFGNodeError(Conditional block ... else
+    branch is not the last branch)``. The fix is a stable-sort of the
+    out-edges so unconditional edges fall at the tail before
+    branch population."""
+    sdfg = dace.SDFG('uncond_branch_sort')
+    sdfg.add_array('A', (4, ), dace.int32)
+    sdfg.add_scalar('i', dace.int64, transient=False)
+
+    start = sdfg.add_state('start', is_start_block=True)
+    body_if = sdfg.add_state('body_if')
+    body_else = sdfg.add_state('body_else')
+    merge = sdfg.add_state('merge')
+
+    # Add the UNCONDITIONAL edge FIRST so it lands at index 0 in
+    # graph.out_edges() iteration order, then the conditional edge.
+    sdfg.add_edge(start, body_else, dace.InterstateEdge())
+    sdfg.add_edge(start, body_if, dace.InterstateEdge('i < 2'))
+    sdfg.add_edge(body_if, merge, dace.InterstateEdge())
+    sdfg.add_edge(body_else, merge, dace.InterstateEdge())
+
+    # Some side-effect-bearing dataflow so the regions aren't empty.
+    wa_if = body_if.add_write('A')
+    ti = body_if.add_tasklet('mark_if', {}, {'a_out'}, 'a_out = 1')
+    body_if.add_edge(ti, 'a_out', wa_if, None, dace.Memlet('A[0]'))
+    wa_else = body_else.add_write('A')
+    te = body_else.add_tasklet('mark_else', {}, {'a_out'}, 'a_out = 0')
+    body_else.add_edge(te, 'a_out', wa_else, None, dace.Memlet('A[0]'))
+
+    ppl = FixedPointPipeline([ControlFlowRaising()])
+    ppl.apply_pass(sdfg, {})
+
+    # Exactly one ConditionalBlock must surface at the SDFG root.
+    cb_nodes = [n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)]
+    assert len(cb_nodes) == 1, f'expected one lifted ConditionalBlock, got {len(cb_nodes)}'
+    cb = cb_nodes[0]
+
+    # The else branch (cond is None) must be the LAST entry.
+    none_positions = [i for i, (c, _) in enumerate(cb.branches) if c is None]
+    assert len(none_positions) == 1, f'expected exactly one else branch, got {len(none_positions)}'
+    assert none_positions[0] == len(cb.branches) - 1, \
+        (f'else branch must be last; got index {none_positions[0]} of '
+         f'{len(cb.branches)}: {[str(c) if c is not None else "None" for c, _ in cb.branches]}')
+
+    # Subsequent DeadStateElimination would abort on an else-not-last
+    # CB. Run it here as the end-to-end contract check.
+    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+    DeadStateElimination().apply_pass(sdfg, {})
+    sdfg.validate()
+
+
+def cycle_entered_twice_from_the_start_block_sdfg() -> dace.SDFG:
+    """``left`` and ``right`` jump into each other, and ``start`` branches into both: an irreducible cycle."""
+    sdfg = dace.SDFG('cycle_entered_twice_from_the_start_block')
+    sdfg.add_symbol('n', dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    left, right, end = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('end')
+    sdfg.add_edge(start, left, dace.InterstateEdge(condition='n > 0'))
+    sdfg.add_edge(start, right, dace.InterstateEdge(condition='n <= 0'))
+    sdfg.add_edge(left, right, dace.InterstateEdge(condition='n > 1', assignments={'n': 'n - 1'}))
+    sdfg.add_edge(left, end, dace.InterstateEdge(condition='n <= 1'))
+    sdfg.add_edge(right, left, dace.InterstateEdge(assignments={'n': 'n - 1'}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_an_unstructured_region():
+    sut = cycle_entered_twice_from_the_start_block_sdfg()
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert len(sut.nodes()) == 1
+    region = sut.nodes()[0]
+    assert isinstance(region, UnstructuredControlFlow)
+    assert region.start_block.label == 'start'
+    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+    assert region.number_of_edges() == 5
+    with pytest.raises(NotImplementedError, match='X requires structured control flow'):
+        dace.sdfg.utils.require_structured_control_flow(sut, 'X')
+
+
+def add_dead_cycle(sdfg: dace.SDFG) -> dace.SDFGState:
+    """Adds ``dead_a`` and ``dead_b`` jumping into each other, which no path from the start block reaches."""
+    dead_a, dead_b = sdfg.add_state('dead_a'), sdfg.add_state('dead_b')
+    sdfg.add_edge(dead_a, dead_b, dace.InterstateEdge())
+    sdfg.add_edge(dead_b, dead_a, dace.InterstateEdge())
+    return dead_b
+
+
+def test_a_dead_block_branching_into_live_code_is_dropped_and_the_loop_is_lifted():
+    sut = dace.SDFG('dead_block_branching_into_live_code')
+    sut.add_symbol('i', dace.int64)
+    init = sut.add_state('init', is_start_block=True)
+    guard, body, done = sut.add_state('guard'), sut.add_state('body'), sut.add_state('done')
+    sut.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
+    sut.add_edge(guard, body, dace.InterstateEdge(condition='i < 10'))
+    sut.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sut.add_edge(guard, done, dace.InterstateEdge(condition='i >= 10'))
+    sut.add_edge(add_dead_cycle(sut), done, dace.InterstateEdge(condition='i > 100'))
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert {block.label for block in sut.nodes() if isinstance(block, dace.SDFGState)} == {'init', 'done'}
+    assert len([block for block in sut.nodes() if isinstance(block, LoopRegion)]) == 1
+    assert not [block for block in sut.all_control_flow_blocks() if block.label.startswith('dead_')]
+
+
+def test_an_irreducible_cycle_beside_a_dead_cycle_is_lifted_without_the_dead_blocks():
+    sut = cycle_entered_twice_from_the_start_block_sdfg()
+    add_dead_cycle(sut)
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert len(sut.nodes()) == 1
+    region = sut.nodes()[0]
+    assert isinstance(region, UnstructuredControlFlow)
+    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -196,3 +397,5 @@ if __name__ == '__main__':
     test_elif_chain(False)
     test_elif_chain(True)
     test_unstructured_control_flow_sibling_loops()
+    test_unconditional_edge_lifted_as_last_branch()
+    test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_an_unstructured_region()

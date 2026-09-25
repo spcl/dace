@@ -29,27 +29,19 @@
 
 /**
  * \file
- * cub::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA grid
- * Implemented over CUB's GridBarrier
+ * dace::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA
+ * grid Implemented over CUB's GridBarrier
  */
 
 #pragma once
 
-#if __has_include(<cub/cub.cuh>)
-    #include <cub/cub.cuh>
-#else
-    #include "../../../../external/cub/cub/util_debug.cuh"
-    #include "../../../../external/cub/cub/util_namespace.cuh"
-    #include "../../../../external/cub/cub/thread/thread_load.cuh"
-#endif
+// Which CUB this is -- NVIDIA's or hipCUB -- is answered in one place, and asking for
+// <cub/cub.cuh> directly is what used to drag the vendored NVIDIA copy into every HIP build.
+#include "gpucub.cuh"
 
-/// Optional outer namespace(s)
-CUB_NS_PREFIX
-
-/// CUB namespace
-namespace cub {
-
-
+// The barrier lives in dace's own namespace. It was reopening CUB's, which cannot be done through
+// an alias and made the class a hostage of whichever CUB the include happened to find.
+namespace dace {
 
 /**
  * \addtogroup GridModule
@@ -107,10 +99,9 @@ public:
             // Wait for everyone else to report in
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
             {
-                while (ThreadLoad<LOAD_CG>(d_sync + peer_block) == 0)
-                {
-                    __threadfence_block();
-                }
+              while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + peer_block) == 0) {
+                __threadfence_block();
+              }
             }
 
             __syncthreads();
@@ -129,9 +120,8 @@ public:
                 d_vol_sync[linear_blockid] = 1;
 
                 // Wait for acknowledgment
-                while (ThreadLoad<LOAD_CG>(d_sync + linear_blockid) == 1)
-                {
-                    __threadfence_block();
+                while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + linear_blockid) == 1) {
+                  __threadfence_block();
                 }
             }
 
@@ -165,25 +155,23 @@ public:
     /**
      * DeviceFrees and resets the progress counters
      */
-    cudaError_t HostReset()
-    {
-        cudaError_t retval = cudaSuccess;
-        if (d_sync)
-        {
-            CubDebug(retval = cudaFree(d_sync));
-            d_sync = NULL;
-        }
-        sync_bytes = 0;
-        return retval;
+    gpuError_t HostReset() {
+      gpuError_t retval = gpuSuccess;
+      if (d_sync) {
+        DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync));
+        d_sync = NULL;
+      }
+      sync_bytes = 0;
+      return retval;
     }
-
 
     /**
      * Destructor
      */
     virtual ~GridBarrierLifetime()
     {
-        HostReset();
+      // A destructor has nowhere to report to, and hipCUB's error type is [[nodiscard]].
+      (void)HostReset();
     }
 
 
@@ -191,32 +179,28 @@ public:
      * Sets up the progress counters for the next kernel launch (lazily
      * allocating and initializing them if necessary)
      */
-    cudaError_t Setup(int sweep_grid_size)
-    {
-        cudaError_t retval = cudaSuccess;
-        do {
-            size_t new_sync_bytes = sweep_grid_size * sizeof(SyncFlag);
-            if (new_sync_bytes > sync_bytes)
-            {
-                if (d_sync)
-                {
-                    if (CubDebug(retval = cudaFree(d_sync))) break;
-                }
+    gpuError_t Setup(int sweep_grid_size) {
+      gpuError_t retval = gpuSuccess;
+      do {
+        size_t new_sync_bytes = sweep_grid_size * sizeof(SyncFlag);
+        if (new_sync_bytes > sync_bytes) {
+          if (d_sync) {
+            if (DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync))) break;
+          }
 
-                sync_bytes = new_sync_bytes;
+          sync_bytes = new_sync_bytes;
 
-                // Allocate and initialize to zero
-                if (CubDebug(retval = cudaMalloc((void**) &d_sync, sync_bytes))) break;
-                if (CubDebug(retval = cudaMemset(d_sync, 0, new_sync_bytes))) break;
-            }
-        } while (0);
+          // Allocate and initialize to zero
+          if (DACE_GPUCUB_DEBUG(retval = gpuMalloc((void**)&d_sync, sync_bytes))) break;
+          if (DACE_GPUCUB_DEBUG(retval = gpuMemset(d_sync, 0, new_sync_bytes))) break;
+        }
+      } while (0);
 
-        return retval;
+      return retval;
     }
 };
 
 
 /** @} */       // end group GridModule
 
-}               // CUB namespace
-CUB_NS_POSTFIX  // Optional outer namespace(s)
+}  // namespace dace

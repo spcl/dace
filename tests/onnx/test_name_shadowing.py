@@ -7,11 +7,14 @@ import dace
 
 import dace.libraries.onnx as donnx
 
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu
+
 
 @pytest.mark.onnx
-def test_shadowing():
+@pytest.mark.parametrize("device", DEVICES)
+def test_shadowing(device):
     new_shape = [8, 10]
-    sdfg = dace.SDFG("test_shadowing")
+    sdfg = dace.SDFG(f"test_shadowing_{device}")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
     sdfg.add_array("shape", [len(new_shape)], dace.int64)
@@ -30,8 +33,13 @@ def test_shadowing():
 
     state.add_edge(op_node, "reshaped", access_result, None, sdfg.make_array_memlet("__return"))
 
-    sdfg.compile()
+    if is_gpu(device):
+        sdfg.apply_gpu_transformations()
+        with experimental_cuda():
+            sdfg.compile()
+    else:
+        sdfg.compile()
 
 
 if __name__ == "__main__":
-    test_shadowing()
+    test_shadowing("cpu")

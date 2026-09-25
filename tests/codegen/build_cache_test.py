@@ -4,6 +4,7 @@ each test asserts the cache ENGAGES -- a declined header or unreplayed recording
 correct build save for wall-clock time.
 """
 import contextlib
+import glob
 import json
 import os
 import shutil
@@ -13,7 +14,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen import command_db, compiler
+from dace.codegen import build_cache, command_db, compiler
 
 N = dace.symbol('N')
 
@@ -102,6 +103,42 @@ def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
     assert not ran_cmake(build_and_check(tmp_path, 'stalerecovered')), 'the bad recording was not replaced'
 
 
+#: Templated name a recording gives the program's shared library (see ``command_db.template``).
+PROGRAM_LIBRARY = 'lib$NAME.so'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_recording_that_links_a_vanished_library_rebuilds_and_replaces_itself(tmp_path, private_cache):
+    """A recording bakes in the absolute library paths CMake's ``find_package`` probed -- libgomp on a
+    GNU toolchain among them -- and nothing revalidates them before a replay. A toolchain that moves
+    one out from under the recording must therefore cost a rebuild, never correctness, and must not
+    keep costing one: the linker rejects the operand it cannot find, the replay reports failure, and
+    the caller reconfigures and records the shape again. Distinct from the stale recording above,
+    which is refused before a single command runs -- this recipe runs, fails partway, and leaves a
+    build folder that has to be cleared before CMake can configure over it.
+    """
+    build_and_check(tmp_path, 'vanishedprime')
+    root = compiler.build_cache_root()
+    key = os.path.splitext(os.listdir(os.path.join(root, 'commands'))[0])[0]
+    recorded = command_db.load(root, key)
+    program_links = [e for e in recorded if e['output'] == PROGRAM_LIBRARY]
+    assert program_links, f'no {PROGRAM_LIBRARY} entry: the recording never links the program'
+    # Right after the output name, where the driver reads it as one more input file to resolve.
+    marker = f'-o {PROGRAM_LIBRARY}'
+    assert marker in program_links[0]['command'], 'the recorded link line no longer names its output'
+    absent = tmp_path / 'uninstalled-toolchain' / 'libgomp.so'
+    relinked = {
+        e['output']: dict(e, command=e['command'].replace(marker, f'{marker} {absent}', 1))
+        for e in program_links
+    }
+    # Written straight over the entry, so recovery below is the caller's alone to demonstrate.
+    with open(command_db.entry_path(root, key), 'w') as fp:
+        json.dump([relinked.get(e['output'], e) for e in recorded], fp)
+
+    assert ran_cmake(build_and_check(tmp_path, 'vanishedvictim')), 'the failed replay never reached CMake'
+    assert not ran_cmake(build_and_check(tmp_path, 'vanishedrecovered')), 'the broken recording was not replaced'
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
 def test_precompiled_header_is_actually_used(tmp_path):
     """The generated TU must really consume the cached header. A PCH is honored only when its flags
@@ -141,6 +178,43 @@ def test_precompiled_header_separates_source_trees(tmp_path, monkeypatch):
 
     assert theirs, 'no precompiled header was produced for the second tree'
     assert mine != theirs, 'both trees were handed the same precompiled header'
+
+
+def test_runtime_digest_sees_an_edit_that_keeps_the_mtime(tmp_path):
+    """A whole-second filesystem leaves the mtime of an edit made in the same second unchanged, so
+    only the content tells the two headers apart."""
+    header = tmp_path / 'include' / 'dace' / 'math.h'
+    header.parent.mkdir(parents=True)
+    header.write_text('int a;\n')
+    stat = header.stat()
+    before = build_cache.runtime_digest(str(tmp_path / 'include'))
+
+    header.write_text('int b;\n')
+    os.utime(header, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert build_cache.runtime_digest(str(tmp_path / 'include')) != before
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_a_runtime_edit_that_keeps_the_mtime_rebuilds_the_precompiled_header(tmp_path, monkeypatch):
+    """The cache sits in /dev/shm with nanosecond mtimes and the runtime on capstor with whole-second
+    ones, so a header edited in the second its .gch was built compared as older than the .gch."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    clone = tmp_path / 'clone' / 'dace'
+    real = os.path.dirname(os.path.dirname(os.path.abspath(compiler.__file__)))
+    shutil.copytree(os.path.join(real, 'runtime', 'include'), clone / 'runtime' / 'include')
+    shutil.copytree(os.path.join(real, 'external'), clone / 'external')  # stream.h reaches into it
+    monkeypatch.setattr(compiler, '__file__', str(clone / 'codegen' / 'compiler.py'))
+    before = compiler.prepare_precompiled_header({'cpu'})
+    assert before, 'no precompiled header was produced'
+
+    header = clone / 'runtime' / 'include' / 'dace' / 'math.h'
+    stat = header.stat()
+    header.write_text(header.read_text() + '\n// edited in the second the header was precompiled\n')
+    os.utime(header, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    after = compiler.prepare_precompiled_header({'cpu'})
+
+    assert after and after != before, 'the edited runtime was handed the pre-edit precompiled header'
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
@@ -220,6 +294,21 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
         assert ran_cmake(gpu_folder), 'the CPU+GPU shape records separately from the CPU one'
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_a_folder_reconfigured_under_new_flags_publishes_nothing(tmp_path, private_cache):
+    """A reconfigure keeps what CMake detected under the old flags, so it must not be filed under the new flags' key."""
+    build_and_check(tmp_path, 'reconfigured')
+    root = compiler.build_cache_root()
+    published = {cache: sorted(os.listdir(os.path.join(root, cache))) for cache in ('configure', 'commands')}
+    assert all(published.values()), f'the first build published nothing, so nothing is tested: {published}'
+    other_flags = dace.Config.get('compiler', 'cpu', 'args') + ' -DDACE_RECONFIGURED_UNDER_NEW_FLAGS'
+
+    with dace.config.set_temporary('compiler', 'cpu', 'args', value=other_flags):
+        build_and_check(tmp_path, 'reconfigured')
+
+    assert {cache: sorted(os.listdir(os.path.join(root, cache))) for cache in published} == published
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 
@@ -242,3 +331,71 @@ def test_host_isa_id_is_stable_and_nonempty():
     first = compiler.host_isa_id()
     assert first, 'no host identity derived; every CPU would share one cache key'
     assert compiler.host_isa_id() == first, 'host identity is not stable within a process'
+
+
+#: One variable per reader that changes what a configure finds or its compiler searches: CMake itself, its
+#: modules, the compiler driver, ``find_package``'s ``<PackageName>_DIR``/``_ROOT``, and ROCm's HIP config.
+CONFIGURE_INPUTS = ('CMAKE_PREFIX_PATH', 'CC', 'CXX', 'PKG_CONFIG_PATH', 'HIP_PATH', 'CUDA_PATH', 'LD_LIBRARY_PATH',
+                    'CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'OPENBLAS_DIR', 'FFTW_ROOT',
+                    'TBLIS_ROOT', 'ROCM_PATH')
+
+
+@pytest.mark.parametrize('name', CONFIGURE_INPUTS)
+def test_cache_key_separates_environments_a_configure_reads(name, tmp_path, monkeypatch):
+    """Every process of one user shares these caches, whatever environment it runs in. A configure that found a
+    package through one process's ``CMAKE_PREFIX_PATH`` must not be handed to a process whose environment lacks it."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setenv(name, '/configure/input/a')
+    under_a = compiler.cache_key('same', 'parts')
+    monkeypatch.setenv(name, '/configure/input/b')
+    assert compiler.cache_key('same', 'parts') != under_a, f'{name} does not reach the cache key'
+
+
+@pytest.mark.parametrize('name', ('PWD', 'OLDPWD', 'SLURM_JOB_ID', 'PYTEST_CURRENT_TEST', 'PYTEST_XDIST_WORKER'))
+def test_cache_key_ignores_variables_no_configure_reads(name, tmp_path, monkeypatch):
+    """A keyed variable that changes per directory, job or test turns every build into a miss."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setenv(name, 'a')
+    under_a = compiler.cache_key('same', 'parts')
+    monkeypatch.setenv(name, 'b')
+    assert compiler.cache_key('same', 'parts') == under_a, f'{name} reaches the cache key'
+
+
+def test_an_unreadable_cmake_keys_the_whole_environment():
+    """Without a CMake installation to derive the inputs from, only keying everything is safe."""
+    assert compiler.environment_pattern(None).fullmatch('PYTEST_CURRENT_TEST')
+
+
+def detected_compiler(build_folder):
+    """The compiler detection a build folder's configure used."""
+    found = glob.glob(os.path.join(build_folder, 'build', 'CMakeFiles', '[0-9]*', 'CMakeCXXCompiler.cmake'))
+    assert found, f'no compiler detection under {build_folder}'
+    with open(found[0]) as fp:
+        return fp.read()
+
+
+def test_a_configure_detected_under_another_cpath_is_not_reused(tmp_path, private_cache, monkeypatch):
+    """Compiler detection records ``CPATH`` as an implicit include directory, and the configure cache transplants
+    that detection into later build folders: seeded across a changed ``CPATH``, a build keeps a search directory its
+    own environment never named. Command cache off, or the second build would replay and never configure."""
+    marker = tmp_path / 'cpath-marker'
+    marker.mkdir()
+    with dace.config.set_temporary('compiler', 'command_cache', value=False):
+        with monkeypatch.context() as marked:
+            marked.setenv('CPATH', str(marker), prepend=os.pathsep)
+            marked_folder = build_and_check(tmp_path, 'cpathmarked')
+        plain_folder = build_and_check(tmp_path, 'cpathplain')
+    assert str(marker) in detected_compiler(marked_folder), 'CPATH never reached the detection, so nothing is tested'
+    assert str(marker) not in detected_compiler(plain_folder), 'the configure was seeded from another CPATH'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_a_recording_made_under_another_cpath_is_not_replayed(tmp_path, private_cache, monkeypatch):
+    """A replay runs the lines CMake authored under the recording's environment, so it must not stand in for a
+    build whose ``CPATH`` differs."""
+    marker = tmp_path / 'cpath-marker'
+    marker.mkdir()
+    with monkeypatch.context() as marked:
+        marked.setenv('CPATH', str(marker), prepend=os.pathsep)
+        assert ran_cmake(build_and_check(tmp_path, 'recordmarked'))
+    assert ran_cmake(build_and_check(tmp_path, 'recordplain')), 'a recording made under another CPATH was replayed'

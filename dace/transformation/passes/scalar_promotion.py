@@ -17,8 +17,9 @@ descriptor as text rather than through a memlet -- are identical whatever the cr
 """
 from typing import Any, Callable, Dict, Optional, Set
 
-from dace import data, dtypes, properties
+from dace import data, dtypes, properties, symbolic
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
+from dace.sdfg.utils import dynamic_map_inputs
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_is_written, rewrite_code_slots,
                                                                            rewrite_refs_to_element)
@@ -64,7 +65,7 @@ def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.Stor
 
     Module-level rather than a method because the MECHANISM is the same wherever a scalar has to
     become addressable, and only the CRITERIA differ. GPU promotion (below) needs it because device
-    memory has no scalar form; MPR's C rendering needs it because a written scalar reaches a nested
+    memory has no scalar form; CPF's C rendering needs it because a written scalar reaches a nested
     function as a C++ reference, which C cannot spell.
 
     :param sdfg: the SDFG declaring ``name``.
@@ -91,7 +92,36 @@ def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.Stor
     # descriptor textually, and the bare-reference -> ``name[0]`` transform, are the same rewrite.
     rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, {name: name}))
     for state in sdfg.states():
+        rename_same_named_range_inputs(state, name)
         push_promotion_into_nested(state, name, storage)
+
+
+def rename_same_named_range_inputs(state: SDFGState, name: str) -> None:
+    """Rename every map-range input connector spelled ``name`` that reads ``name``, in ``state``.
+
+    Code generation defines no local for a range input named like its container and reads the
+    container's own name instead: the value for a ``Scalar``, the POINTER once it is an array.
+
+    :param state: the state whose map entries are visited.
+    :param name: the descriptor that was promoted.
+    """
+    sdfg = state.sdfg
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+        for edge in dynamic_map_inputs(state, entry):
+            if edge.dst_conn != name or edge.data.data != name:
+                continue
+            fresh = sdfg.find_new_name_avoiding_connectors(f'{name}_value')
+            dtype = entry.in_connectors[name]
+            state.remove_edge(edge)
+            entry.remove_in_connector(name)
+            entry.add_in_connector(fresh, dtype)
+            state.add_edge(edge.src, edge.src_conn, entry, fresh, edge.data)
+            olds = {
+                s
+                for rng in entry.map.range.ranges
+                for expr in rng if symbolic.issymbolic(expr) for s in expr.free_symbols if str(s) == name
+            }
+            entry.map.range.replace({s: symbolic.symbol(fresh, s.dtype) for s in olds})
 
 
 def push_promotion_into_nested(state: SDFGState, name: str, storage: Optional[dtypes.StorageType] = None) -> None:

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from common import compare_numpy_output
 import pytest
@@ -188,6 +187,24 @@ def test_linspace_6():
     return np.linspace(-5, 5.5, dtype=np.float32)
 
 
+@compare_numpy_output()
+def test_linspace_scalar_default_num():
+    # Scalar endpoints with the default num=50: the endpoints have empty shape and the
+    # step-first formula must reproduce numpy's samples.
+    return np.linspace(0.0, 1.0)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_endpoint_false():
+    return np.linspace(2.0, 7.0, num=13, endpoint=False)
+
+
+@compare_numpy_output()
+def test_linspace_scalar_retstep():
+    space, step = np.linspace(-3.0, 4.0, num=9, retstep=True)
+    return space, step
+
+
 @dace.program
 def program_strides_0():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
@@ -258,15 +275,15 @@ def test_zeros_symbolic_size_scalar():
 
 
 def test_ones_scalar_size_scalar():
+    """A size held in a scalar is read into a symbol, so it can be used as an extent."""
 
     @dace.program
     def ones_scalar_size(k: dace.int32):
         a = np.ones(k, dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20
 
 
 def test_ones_scalar_size():
@@ -276,9 +293,40 @@ def test_ones_scalar_size():
         a = np.ones((k, k), dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20 * 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20 * 20
+
+
+def test_array_of_a_slice_copies_instead_of_viewing():
+    """``numpy.array`` copies; only slicing, ``asarray`` and ``.view()`` alias.
+
+    Inheriting the operand's descriptor made the result a View OF the source, so the next in-place
+    update wrote straight back into it -- and the copy edge left a View access node carrying no
+    viewed-data edge, which simplify rejects as ambiguous.
+    """
+    S = dace.symbol('S')
+
+    @dace.program
+    def copy_slice_then_scale(a: dace.float64[S, S, S], out: dace.float64[S, S]):
+        col = np.array(a[:, :, 1])
+        col *= 2.0
+        out[:] = col
+
+    sdfg = copy_slice_then_scale.to_sdfg(simplify=False)
+    desc = sdfg.arrays['col']
+    assert not isinstance(desc, dace.data.View), f'np.array must copy, but "col" is a {type(desc).__name__}'
+    assert [str(x) for x in desc.strides] == ['S', '1'], f'a copy is contiguous, got strides {desc.strides}'
+    assert str(desc.total_size) == 'S**2', f'a copy sizes itself, not its parent, got {desc.total_size}'
+    sdfg.simplify()
+
+    n = 5
+    rng = np.random.default_rng(0)
+    a = rng.random((n, n, n))
+    before = a.copy()
+    out = np.zeros((n, n))
+    sdfg(a=a, out=out, S=n)
+    assert np.allclose(out, before[:, :, 1] * 2.0), f'got {out}'
+    assert np.allclose(a, before), 'the in-place update wrote through into the sliced source'
 
 
 if __name__ == "__main__":
@@ -317,3 +365,4 @@ if __name__ == "__main__":
     test_zeros_symbolic_size_scalar()
     test_ones_scalar_size_scalar()
     test_ones_scalar_size()
+    test_array_of_a_slice_copies_instead_of_viewing()

@@ -1,6 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
-from dace.transformation.interstate import EndStateElimination, StateAssignElimination, StateFusion
+from dace.transformation.interstate import EndStateElimination, StartStateElimination, StateAssignElimination, StateFusion
 
 
 def test_eliminate_end_state():
@@ -63,6 +65,47 @@ def test_state_assign_elimination():
     assert str(sdfg.nodes()[-1].edges()[0].data.subset) == '2'
 
 
+def test_start_state_elimination_substitutes_moved_assignment_through_symbol_mapping():
+    N = dace.symbol('N', dtype=dace.int64)
+
+    inner = dace.SDFG('inner_start_state_elim')
+    inner.add_symbol('M', dace.int64)
+    inner.add_symbol('k', dace.int64)
+    inner.add_array('a', [N], dace.float64)
+    inner.add_array('b', [N], dace.float64)
+    start = inner.add_state('start', is_start_block=True)
+    body = inner.add_state('body')
+    inner.add_edge(start, body, dace.InterstateEdge(assignments={'k': 'M + 1'}))
+    body.add_mapped_tasklet('use', {'i': '0:N'}, {'__in': dace.Memlet('a[i]')},
+                            '__out = __in + k', {'__out': dace.Memlet('b[i]')},
+                            external_edges=True)
+
+    sdfg = dace.SDFG('outer_start_state_elim')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [N], dace.float64)
+    state = sdfg.add_state('call', is_start_block=True)
+    # 'M' is bound to a DIFFERENTLY NAMED outer expression, so a naive move of the inner
+    # assignment's RHS ('M + 1') into symbol_mapping leaks the inner-only name 'M'.
+    nsdfg_node = state.add_nested_sdfg(inner, {'a'}, {'b'}, symbol_mapping={'M': N})
+    nsdfg_node.no_inline = True
+    state.add_edge(state.add_read('a'), None, nsdfg_node, 'a', dace.Memlet('a[0:N]'))
+    state.add_edge(nsdfg_node, 'b', state.add_write('b'), None, dace.Memlet('b[0:N]'))
+
+    assert inner.apply_transformations(StartStateElimination) == 1
+
+    mapped_k = nsdfg_node.symbol_mapping['k']
+    outer_names = set(sdfg.symbols.keys()) | set(sdfg.arrays.keys())
+    assert {str(s) for s in mapped_k.free_symbols} <= outer_names
+    assert str(mapped_k) == 'N + 1'
+
+    sdfg.validate()
+
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8, dtype=np.float64)
+    sdfg(a=a, b=b, N=8)
+    assert np.allclose(b, a + 9.0)  # k = M + 1 = N + 1 = 9 when N = 8
+
+
 def test_sae_scalar():
     # Construct SDFG
     sdfg = dace.SDFG('state_assign_elimination_test')
@@ -87,5 +130,6 @@ def test_sae_scalar():
 if __name__ == '__main__':
     test_eliminate_end_state()
     test_eliminate_end_state_noassign()
+    test_start_state_elimination_substitutes_moved_assignment_through_symbol_mapping()
     test_state_assign_elimination()
     test_sae_scalar()

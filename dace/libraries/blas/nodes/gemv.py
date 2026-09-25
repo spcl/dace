@@ -7,11 +7,36 @@ from dace.sdfg import SDFG, SDFGState
 from dace import memlet as mm
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.libraries.blas import gpu_dialect
 import numpy as np
 import warnings
+from dace.ordered import OrderedSet
+
+
+def zero_extent_may_occur(extent) -> bool:
+    """True unless ``extent`` is provably a positive constant.
+
+    ``gemv`` returns IMMEDIATELY when either dimension is 0 -- without applying ``beta`` -- so a
+    contraction that can be empty leaves the output at whatever was already in memory. With
+    ``beta == 0`` the caller is promised a written result and gets uninitialized storage instead.
+    A provably positive extent skips the guard so the common shape stays a bare library call.
+    """
+    try:
+        value = symbolic.simplify(symbolic.pystr_to_symbolic(str(extent)))
+    except Exception:
+        return True
+    return not (value.is_number and value > 0)
+
+
+def coefficient_str(value, dtype) -> str:
+    """``value`` spelled in ``dtype`` when it is a number, and as written when it is symbolic."""
+    if symbolic.issymbolic(value) and not symbolic.pystr_to_symbolic(value).is_number:
+        return str(value)
+    return _cast_to_dtype_str(complex(value) if _is_complex(dtype) else value, dtype)
 
 
 @dace.library.expansion
@@ -42,7 +67,7 @@ class ExpandGemvPure(ExpandTransformation):
         else:
             trans_shape_a = shape_a
 
-        if trans_shape_a[1] != shape_x[0]:
+        if symbolic.inequal_symbols(trans_shape_a[1], shape_x[0]):
             raise SyntaxError("Matrix-vector product size mismatch: {} vs. {}".format(trans_shape_a[1], shape_x[0]))
 
         N, M = trans_shape_a[0], trans_shape_a[1]
@@ -55,7 +80,11 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=storage)
 
-        mul_program = "__out = {} * __A * __x".format(node.alpha)
+        # A numeric coefficient takes the element type: C++ has no operator* for int and std::complex.
+        if symbolic.equal_valued(1, node.alpha):
+            mul_program = "__out = __A * __x"
+        else:
+            mul_program = "__out = {} * __A * __x".format(coefficient_str(node.alpha, dtype_a))
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -73,14 +102,15 @@ class ExpandGemvPure(ExpandTransformation):
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}
 
-        # Initialization map
+        # Initialization map. Reserved (__-prefixed) connector name: after this expansion's
+        # nested SDFG is inlined, a bare 'out' would collide with an outer array named 'out'.
         init_state.add_mapped_tasklet(
             "gemv_init", {
                 "_o%d" % i: "0:%s" % symbolic.symstr(d)
                 for i, d in enumerate(shape_y)
             }, {},
-            "out = 0",
-            {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
+            "__out = 0",
+            {"__out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
             external_edges=True)
 
         # Multiplication map
@@ -95,7 +125,10 @@ class ExpandGemvPure(ExpandTransformation):
                                  external_edges=True,
                                  output_nodes=output_nodes)
 
-        add_program = "__y_out = ({} * __y_in) + __tmp".format(node.beta)
+        if symbolic.equal_valued(1, node.beta):
+            add_program = "__y_out = __y_in + __tmp"
+        else:
+            add_program = "__y_out = ({} * __y_in) + __tmp".format(coefficient_str(node.beta, dtype_y))
 
         memlet_idx = "__i"
 
@@ -113,12 +146,12 @@ class ExpandGemvPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemvCuBLAS(ExpandTransformation):
+class ExpandGemvGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
@@ -149,7 +182,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                           'one dimension. Falling back to pure expansion.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
-        trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
+        trans = cls.dialect.op('N' if transA else 'T')
         if not node.transA:
             m, n = n, m
 
@@ -162,14 +195,18 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
+        # Use the vendor's type name for both the coefficients and the operands. The connectors are
+        # dace::complex128 pointers, which do not convert to cuDoubleComplex* or rocblas_double_complex*.
+        ctype = cls.dialect.ctype(ctype)
+        scal_func = func + 'scal'
         func += 'gemv'
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants().{runtimetype}Pone()",
-            0.0: f"__state->cublas_handle.Constants().{runtimetype}Zero()",
+            1.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Pone()",
+            0.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -183,13 +220,13 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''dace::blas::CheckCublasError(
-            cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
+            call_prefix += f'''{cls.dialect.check_error}(
+            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''
-dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
+            call_suffix += f'''
+{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
             '''
             alpha = f'({ctype} *)&alpha'
             beta = f'({ctype} *)&beta'
@@ -197,10 +234,20 @@ dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_P
             alpha = constants[node.alpha]
             beta = constants[node.beta]
 
-        code = (call_prefix + f"""
-dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
-             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]}));
-                """ + call_suffix)
+        call = f"""
+{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {m}, {n}, {alpha}, ({ctype} *)_A, {lda},
+             ({ctype} *)_x, {strides_x[0]}, {beta}, ({ctype} *)_y, {strides_y[0]}));
+                """
+        # Same empty-contraction hazard as the cblas path, scaled on the device: cuBLAS also
+        # returns early for a zero dimension and leaves ``_y`` unwritten. ``scal`` applies the
+        # ``beta`` the skipped call owed, under whichever pointer mode this branch set up.
+        y_len, contracted = (n, m) if trans == cls.dialect.op('T') else (m, n)
+        if zero_extent_may_occur(contracted):
+            scal = f"""
+{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {y_len}, {beta}, ({ctype} *)_y, {strides_y[0]}));
+                """
+            call = f"if (({contracted}) <= 0) {{{scal}}} else {{{call}}}"
+        code = (call_prefix + call + call_suffix)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -281,8 +328,24 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = '&__alpha'
             beta = '&__beta'
 
-        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
+        call = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
                                 _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
+        # ``_y`` is indexed by the dimension BLAS does not contract over; the other one is the
+        # contraction, and an empty contraction is what makes the call return without touching
+        # ``_y``. Measured on cholesky: at ``j == 0`` the contraction is empty and the freshly
+        # allocated output came back as ~1e251 garbage with a run-to-run NaN count.
+        y_len, contracted = (n, m) if trans == 'CblasTrans' else (m, n)
+        if zero_extent_may_occur(contracted):
+            beta_value = '__beta' if dtype in (dace.complex64, dace.complex128) else beta
+            code += f"""if (({contracted}) <= 0) {{
+                for (long long __i = 0; __i < ({y_len}); ++__i) {{
+                    _y[__i * ({strides_y[0]})] = ({beta_value}) * _y[__i * ({strides_y[0]})];
+                }}
+            }} else {{
+                {call}
+            }}"""
+        else:
+            code += call
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -366,6 +429,18 @@ class ExpandGemvPBLAS(ExpandTransformation):
         return sdfg
 
 
+@dace.library.expansion
+class ExpandGemvCuBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGemvRocBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
@@ -375,6 +450,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
+        "rocBLAS": ExpandGemvRocBLAS,
         "PBLAS": ExpandGemvPBLAS
     }
     default_implementation = None
@@ -391,7 +467,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
-                         inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
+                         inputs=OrderedSet(('_A', '_x', '_y')) if beta != 0 else OrderedSet(('_A', '_x')),
                          outputs={"_y"})
         self.transA = transA
         self.alpha = alpha
@@ -422,7 +498,9 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         a_cols = size_a[1] if not self.transA else size_a[0]
         a_rows = size_a[0] if not self.transA else size_a[1]
 
-        if a_cols != size_x[0]:
+        # Equalized, not raw '!=': the two subsets can carry the same name as different sympy
+        # instances, which compare unequal by identity and reject matching shapes.
+        if symbolic.inequal_symbols(a_cols, size_x[0]):
             raise ValueError(f"Columns of A ({a_cols}) don't match "
                              f"size of x ({size_x[0]}).")
 
@@ -434,9 +512,9 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         out_subset = copy.deepcopy(out_memlet.subset)
         out_subset.squeeze()
         size_y_out = out_subset.size()
-        if size_y_in is not None and size_y_in != size_y_out:
+        if size_y_in is not None and not symbolic.shapes_equal(size_y_in, size_y_out):
             raise ValueError("Input y-vector must match output y-vector.")
-        if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
+        if (len(size_y_out) != 1 or symbolic.inequal_symbols(size_y_out[0], a_rows)):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 
 

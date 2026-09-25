@@ -14,6 +14,7 @@ from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.parser import DaceProgram
+from dace.libraries.standard import Reduce
 
 from math import isclose
 
@@ -138,7 +139,7 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]
     }, 21 / (13 * 3 * 8)),
     'nested_reuse': (nested_reuse, 1024, 64, {
         'N': 1024
-    }, 2048 / (3 * 1024 * 8 + 128)),
+    }, 2048 / (3 * 1024 * 8 + 64)),
     'mmm': (mmm, 20, 16, {
         'N': 24
     }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
@@ -162,6 +163,11 @@ def test_operational_intensity(test_name: str):
     op_in_map: Dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if test_name == 'nested_reuse':
+        # pin 'pure': the 'auto' default picks OpenMP for a top-level CPU reduce, collapsing it into
+        # one CPP tasklet whose internal loop work analysis can't count exactly (see get_tasklet_work).
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, Reduce):
+                node.implementation = 'pure'
         sdfg.expand_library_nodes()
     if test_name in ['sequential_maps', 'sequential_maps_small', 'nested_reuse', 'mmm', 'tiled_mmm', 'tiled_mmm_32']:
         sdfg.simplify()

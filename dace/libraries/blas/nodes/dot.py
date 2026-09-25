@@ -7,8 +7,9 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -38,13 +39,22 @@ class ExpandDotPure(ExpandTransformation):
         sdfg.add_array("_y", [n], dtype_y, strides=[stride_y], storage=desc_y.storage)
         sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
 
-        mul_program = "__out = __x * __y"
+        # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
+        # default Dot models ?dotu (no conjugation). conj on a real type would promote to
+        # complex, so only apply it for complex operands.
+        if node.conjugate and desc_x.dtype.is_complex():
+            mul_program = "__out = conj(__x) * __y"
+        else:
+            mul_program = "__out = __x * __y"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
+        # A one-iteration MAP, the way every sibling expansion (asum, nrm2, gemm, gemv) writes its
+        # accumulator's identity. A bare tasklet carries no schedule, so it stays on the host, and a
+        # host write into a GPU_Global scalar is rejected outright ("stored as StorageType.GPU_Global
+        # but accessed on host") -- which took down every offloaded dot: symm, trmm, trisolv, durbin, lu.
+        init_state.add_mapped_tasklet("_dot_init", {"__u": "0:1"}, {},
                                       "_out = 0", {"_out": dace.Memlet("_result[0]")},
                                       external_edges=True)
 
@@ -53,7 +63,7 @@ class ExpandDotPure(ExpandTransformation):
             "__x": dace.Memlet("_x[__i]"),
             "__y": dace.Memlet("_y[__i]")
         },
-                                 mul_program, {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+                                 mul_program, {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=None)
 
@@ -71,6 +81,11 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
+        # A conjugated (?dotc) complex dot is not modelled by this cblas_?dot emission; route it
+        # to the pure conj expansion rather than silently emit an unconjugated ?dotu.
+        if node.conjugate and desc_x.dtype.is_complex():
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
+
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
@@ -78,6 +93,12 @@ class ExpandDotOpenBLAS(ExpandTransformation):
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         func = func.lower() + 'dot'
+
+        # The mixed-precision form names vendor DATATYPE enums, and ``dtype_to_cudadatatype`` only
+        # speaks CUDA's. Fall back rather than emit a rocBLAS call with CUDA enum names in it.
+        if node.accumulator_type is not None and not cls.ex_name:
+            warnings.warn(f'{cls.__name__} has no mixed-precision dot. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
         if veclen != 1:
@@ -101,16 +122,26 @@ class ExpandDotMKL(ExpandTransformation):
         return ExpandDotOpenBLAS.expansion(*args, **kwargs)
 
 
-@dace.library.expansion
-class ExpandDotCuBLAS(ExpandTransformation):
+class ExpandDotGPUBLAS(ExpandTransformation):
+    """``?dot`` on a vendor GPU BLAS. The two backends differ only in the vocabulary below.
 
-    environments = [environments.cublas.cuBLAS]
+    Same split as :class:`~dace.libraries.blas.nodes.gemm.ExpandGemmGPUBLAS`: the body -- operand
+    validation, the veclen division, the conjugate and unsupported-dtype fallbacks -- is identical
+    for both, and only the handle, the error check and the routine spelling move.
+    """
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
+
+        # Conjugated (?dotc) complex dot is not emitted here; use the pure conj expansion
+        # rather than a silently unconjugated cublas ?dotu.
+        if node.conjugate and desc_x.dtype.is_complex():
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
@@ -123,14 +154,14 @@ class ExpandDotCuBLAS(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        code = cls.environments[0].handle_setup_code(node)
         if node.accumulator_type is None:
-            code += f"""dace::blas::CheckCublasError(cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y,
+            code += f"""{cls.check_error}({cls.funcname(func)}({cls.handle}, {n}, _x, {stride_x}, _y,
                              {stride_y}, _result));"""
         else:
             code += f"""
-            dace::blas::CheckCublasError(cublasDotEx(
-                __dace_cublas_handle,
+            {cls.check_error}({cls.ex_name}(
+                {cls.handle},
                 {n},
                 _x,
                 {blas_helpers.dtype_to_cudadatatype(dtype)},
@@ -151,6 +182,34 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandDotCuBLAS(ExpandDotGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    handle = "__dace_cublas_handle"
+    check_error = "dace::blas::CheckCublasError"
+    ex_name = "cublasDotEx"
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        return f"cublas{func}"
+
+
+@dace.library.expansion
+class ExpandDotRocBLAS(ExpandDotGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    handle = "__dace_rocblas_handle"
+    check_error = "dace::blas::CheckRocblasError"
+    #: No mixed-precision path: ``rocblas_dot_ex`` takes ``rocblas_datatype_*`` enums, which the
+    #: shared body has no mapping for. Empty makes the base fall back to ``pure`` for that case
+    #: instead of emitting a rocBLAS call carrying CUDA enum names.
+    ex_name = ""
+
+    @classmethod
+    def funcname(cls, func: str) -> str:
+        # ``Ddot`` -> ``rocblas_ddot``: rocBLAS is snake_case with the type letter lowered.
+        return f"rocblas_{func.lower()}"
+
+
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
 
@@ -160,6 +219,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "rocBLAS": ExpandDotRocBLAS,
     }
     default_implementation = None
 
@@ -168,11 +228,16 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     accumulator_type = dace.properties.TypeClassProperty(default=None,
                                                          allow_none=True,
                                                          desc="Accumulator or intermediate storage type")
+    conjugate = dace.properties.Property(dtype=bool,
+                                         default=False,
+                                         desc="Conjugate operand _x (BLAS ?dotc / Fortran complex "
+                                         "DOT_PRODUCT); no-op for real operands")
 
-    def __init__(self, name, n=None, accumulator_type=None, **kwargs):
-        super().__init__(name, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
+    def __init__(self, name, n=None, accumulator_type=None, conjugate=False, **kwargs):
+        super().__init__(name, inputs=OrderedSet(('_x', '_y')), outputs={"_result"}, **kwargs)
         self.n = n
         self.accumulator_type = accumulator_type
+        self.conjugate = conjugate
 
     def validate(self, sdfg, state):
         """
@@ -220,7 +285,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         stride_x = desc_x.strides[sqdims1[0]]
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
-        if squeezed1.num_elements() != squeezed2.num_elements():
+        if symbolic.inequal_symbols(squeezed1.num_elements(), squeezed2.num_elements()):
             raise ValueError('Size mismatch in inputs')
 
         return (desc_x, stride_x), (desc_y, stride_y), desc_res, n
