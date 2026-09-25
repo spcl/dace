@@ -123,9 +123,9 @@ def fuse_counting_propagations(sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch,
     original_memlet_propagation = propagation.propagate_memlet
     original_scope_propagation = mfhelper.propagate_fused_map_scope
 
-    def counting_sdfg_propagation(nested: dace.SDFG) -> None:
+    def counting_sdfg_propagation(nested: dace.SDFG, symbols=None) -> None:
         propagated.append(nested)
-        original_sdfg_propagation(nested)
+        original_sdfg_propagation(nested, symbols)
 
     def counting_memlet_propagation(*args, **kwargs):
         memlets[0] += 1
