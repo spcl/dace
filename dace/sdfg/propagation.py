@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 import sympy
 from sympy import Symbol, ceiling
