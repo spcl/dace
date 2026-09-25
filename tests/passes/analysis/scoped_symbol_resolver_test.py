@@ -118,8 +118,10 @@ def test_one_name_at_two_dtypes_is_two_symbols_that_refuse_to_cancel():
     assert hash(narrow) != hash(wide)
     # sympy reached through dace.symbolic; Min is the construction the injectivity test builds.
     assert str(symbolic.sympy.Min(narrow, wide)) == 'Min(i, i)'
-    assert symbolic.simplify(narrow - wide) != 0
-    assert str(symbolic.simplify(narrow - wide)) == 'i - i'
+    difference = symbolic.simplify(narrow - wide)
+    assert difference != 0
+    # Both terms print as ``i``, so the printed order is a sympy tie-break; compare the terms.
+    assert set(difference.args) == {narrow, -wide}
     # The asymmetry that makes the trap hard to see: ``_eval_subs`` matches by NAME, so substitution
     # crosses the dtype boundary that equality, hashing and cancellation all refuse to cross.
     assert str(wide.subs({narrow: 4})) == '4'
