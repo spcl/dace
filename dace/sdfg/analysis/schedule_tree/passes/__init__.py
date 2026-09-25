@@ -20,4 +20,5 @@ from dace.sdfg.analysis.schedule_tree.passes.dead_code import remove_empty_scope
 from dace.sdfg.analysis.schedule_tree.passes.dead_code import remove_dead_stores
 from dace.sdfg.analysis.schedule_tree.passes.flattening import flatten_contiguous_nests
 from dace.sdfg.analysis.schedule_tree.passes.loop_fusion import fuse_loops_for_reuse
+from dace.sdfg.analysis.schedule_tree.passes.transient_refinement import refine_loop_local_transients
 from dace.sdfg.analysis.schedule_tree.passes.loop_range_reduction import reduce_loop_ranges

@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for fusing coarse loops for data reuse in schedule trees."""
+"""Tests for fusing coarse loops for data reuse, and refining loop-local transients, in schedule trees."""
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import fuse_loops_for_reuse
+from dace.sdfg.analysis.schedule_tree.passes import fuse_loops_for_reuse, refine_loop_local_transients
 
 NI, NJ, NK = 4, 4, 16
 
@@ -32,10 +32,11 @@ def _plane(body: list, name: str) -> tn.ForScope:
 
 def _tree(loops: list) -> tn.ScheduleTreeRoot:
     """Vertical loops ``for k in range(first, last + 1): <plane>``, one per ``(first, last, body)``, over arrays
-    ``A`` to ``D`` of shape (NI, NJ, NK), a view ``Bv`` of ``B`` and a transient scalar ``t``."""
+    ``A`` to ``D`` of shape (NI, NJ, NK), a transient ``T`` of the same shape and a transient scalar ``t``."""
     sdfg = dace.SDFG('fusion')
     for name in 'ABCD':
         sdfg.add_array(name, [NI, NJ, NK], dace.float64)
+    sdfg.add_array('T', [NI, NJ, NK], dace.float64, transient=True)
     sdfg.add_scalar('t', dace.float64, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = sdfg.as_schedule_tree()
@@ -176,6 +177,75 @@ def test_fuse_not_innermost_loops():
     assert fuse_loops_for_reuse(stree, cache_bytes=16) == 0
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Refining loop-local transients
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _run_equal(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot):
+    rng = np.random.default_rng(1)
+    inputs = {name: rng.random((NI, NJ, NK)) for name in 'ABCD'}
+    results = []
+    for tree in (reference, stree):
+        arrays = {name: value.copy() for name, value in inputs.items()}
+        tree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))(**arrays)
+        results.append(arrays)
+    for name in 'ABCD':
+        assert np.array_equal(results[0][name], results[1][name]), name
+
+
+def _two_nests(read: str) -> tn.ScheduleTreeRoot:
+    """``for k: [plane: T[i, j, k] = 2 * A[i, j, k]]; [plane: B[i, j, k] = <read of T>]``."""
+    stree = _tree([(0, NK - 1, [_tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'})], 'k')])
+    loop = stree.children[0]
+    loop.add_children([_plane([_tasklet('b = x + 1', {'x': read}, {'b': 'B[i, j, k]'})], 'second')])
+    return stree
+
+
+def test_refine_field_to_plane():
+    stree, reference = _two_nests('T[i, j, k]'), _two_nests('T[i, j, k]')
+    assert refine_loop_local_transients(stree) == 1
+    assert tuple(stree.containers['T'].shape) == (NI, NJ, 1)
+    _run_equal(stree, reference)
+
+
+def test_refine_not_across_levels():
+    """``T[k - 1]`` is read in the next iteration of the vertical loop."""
+    make = lambda: _two_nests('T[i, j, k - 1]')
+    stree = make()
+    stree.children[0].loop = dace.sdfg.state.LoopRegion('vertical0', f'k < {NK}', 'k', 'k = 1', 'k = k + 1')
+    assert refine_loop_local_transients(stree) == 0
+
+
+def test_refine_not_across_loops():
+    """Written in one vertical loop and read in another."""
+    make = lambda: _tree([(0, NK - 1, [_tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'})], 'k'),
+                          (0, NK - 1, [_tasklet('b = x', {'x': 'T[i, j, k]'}, {'b': 'B[i, j, k]'})], 'k')])
+    assert refine_loop_local_transients(make()) == 0
+
+
+def test_refine_pointwise_to_scalar():
+    body = lambda: [
+        _tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'}),
+        _tasklet('b = x + 1', {'x': 'T[i, j, k]'}, {'b': 'B[i, j, k]'})
+    ]
+    stree, reference = _tree([(0, NK - 1, body(), 'k')]), _tree([(0, NK - 1, body(), 'k')])
+    assert refine_loop_local_transients(stree) == 3
+    assert isinstance(stree.containers['T'], dace.data.Scalar)
+    _run_equal(stree, reference)
+
+
+def test_fuse_then_refine():
+    """Fusing a producer and its consumer makes their transient loop-local."""
+    make = lambda: _tree([(0, NK - 1, [_tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'})], 'k'),
+                          (0, NK - 1, [_tasklet('b = x', {'x': 'T[i, j, k]'}, {'b': 'B[i, j, k]'})], 'k')])
+    stree, reference = make(), make()
+    assert fuse_loops_for_reuse(stree, cache_bytes=1024) == 1
+    assert refine_loop_local_transients(stree) == 1
+    assert tuple(stree.containers['T'].shape) == (NI, NJ, 1)
+    _run_equal(stree, reference)
+
+
 if __name__ == '__main__':
     test_fuse_producer_consumer('B[i, j, k - 1]')
     test_fuse_renames_loop_variable_and_guards_range()
@@ -188,3 +258,8 @@ if __name__ == '__main__':
     test_fuse_not_when_iteration_overflows_cache()
     test_fuse_not_through_view()
     test_fuse_not_innermost_loops()
+    test_refine_field_to_plane()
+    test_refine_not_across_levels()
+    test_refine_not_across_loops()
+    test_refine_pointwise_to_scalar()
+    test_fuse_then_refine()
