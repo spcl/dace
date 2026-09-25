@@ -761,11 +761,23 @@ def arms_requested(value: str) -> bool:
     return value not in ('', '0', 'false', 'False')
 
 
-#: Two g++ DaCe pipelines by default; the full table only on request. Enabling here raises on an
-#: unusable toolchain: the intended loud failure, since a silently-disabled arm is a fabricated
-#: number. Registration also pins the toolchain of the default pair, so a label means the same
-#: measurement whether or not the external arms were asked for.
-register_arms(ARMS if arms_requested(os.environ.get('CANON_PERF_ARMS', '')) else DEFAULT_ARMS)
+def register_default_arms() -> None:
+    """Two g++ DaCe pipelines by default; the full table only on request. Registering raises on an
+    unusable toolchain: the intended loud failure, since a silently-disabled arm is a fabricated
+    number. Registration also pins the toolchain of the default pair, so a label means the same
+    measurement whether or not the external arms were asked for.
+
+    Called on first use, never at import: probing compiles and runs code and dlopens OpenBLAS, and
+    at import that would map an OpenMP runtime into every interpreter that merely collects the suite.
+    """
+    if not REGISTERED_ARMS:
+        register_arms(ARMS if arms_requested(os.environ.get('CANON_PERF_ARMS', '')) else DEFAULT_ARMS)
+
+
+@pytest.fixture(autouse=True, scope='module')
+def registered_arms() -> None:
+    register_default_arms()
+
 
 HOST = socket.gethostname()
 #: Appended-to only. Every pre-existing column keeps its exact meaning, so an old CSV consumer
@@ -1715,6 +1727,8 @@ if __name__ == '__main__':
     if args.arms:
         for label, line in register_arms(ARMS).items():
             print(f"arm {label} engaged: {line}", flush=True)
+    else:
+        register_default_arms()
     if not args.no_run:
         index, total = (int(p) for p in args.shard.split('/'))
         _run_sweep(only=args.only or '', force=args.force, suite=args.suite, shard=(index, total), limit=args.limit)

@@ -316,4 +316,7 @@ class OpenBLAS:
 
     @staticmethod
     def is_installed():
-        return len(OpenBLAS.cmake_libraries()) > 0
+        # _mode(), not cmake_libraries(): the latter dlopens the library to probe its threading
+        # flavor, which maps an OpenMP OpenBLAS's libgomp -- and is_installed() runs in ``skipif``
+        # arguments at test collection.
+        return OpenBLAS._mode() is not None
