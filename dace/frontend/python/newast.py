@@ -2960,12 +2960,15 @@ class ProgramVisitor(ExtNodeVisitor):
             # ``None`` is represented by a placeholder symbol in symbolic expressions (e.g., ``B is None``)
             if astr == 'NoneSymbol':
                 continue
-            # Check for undefined variables
-            if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+            # Already known: a symbol, a variable, or data -- arrays here or a scalar in an enclosing scope
+            # (``scope_arrays``). A scalar is NOT a symbol; an index use materializes its own ``__sym_x``
+            # (see ``_promote``), and registering the scalar here would mis-type it.
+            if (astr in self.sdfg.symbols or astr in self.variables or astr in self.sdfg.arrays
+                    or astr in self.scope_arrays):
+                continue
+            if astr not in self.defined:
                 raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
-            # Add to global SDFG symbols if not a scalar
-            if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
-                self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
+            self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -3077,21 +3080,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_If(self, node: ast.If):
         # Generate conditions
+        # _visit_test registers the condition's free symbols (add_symbols_from_condition).
         cond, _, _ = self._visit_test(node.test)
-
-        # Register any symbol used purely in the branch condition (e.g. a loop-invariant config flag
-        # ``if K > 0``) as an SDFG symbol, else arglist/codegen raise KeyError on it. Exclude data
-        # descriptors -- arrays here or a scalar in an enclosing scope (``scope_arrays``): a scalar in
-        # the condition is NOT a symbol; an index use of it materializes its own ``__sym_x`` (see
-        # ``_promote``), and registering it here would leave the scalar mis-typed and crash that binop.
-        symcond = pystr_to_symbolic(cond)
-        if symbolic.issymbolic(symcond):
-            for atom in symcond.free_symbols:
-                astr = str(atom)
-                if (symbolic.issymbolic(atom, self.sdfg.constants) and astr not in self.sdfg.symbols
-                        and astr not in self.variables and astr not in self.sdfg.arrays
-                        and astr not in self.scope_arrays):
-                    self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
 
         # Add conditional region
         cond_block = ConditionalBlock(f'if_{node.lineno}')
