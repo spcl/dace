@@ -128,15 +128,17 @@ class PatternMatchAndApply(ppl.Pass):
             if self.validate_all:
                 sdfg.validate()
 
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
+
         if self.validate:
             sdfg.validate()
 
-        if (len(applied_transformations) > 0
-                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
+        if self.print_report or (self.print_report is None and Config.get_bool('debugprint')):
             print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
 
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
-            return None
         return applied_transformations
 
 
@@ -231,15 +233,20 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     applied = True
                     while applied:
                         applied = False
-                        for match in match_patterns(sdfg,
-                                                    permissive=self.permissive,
-                                                    patterns=[xform],
-                                                    states=self.states,
-                                                    metadata=self._metadata):
-                            self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                        matched_pattern = next(
+                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on the cached order of transformations.
+                            match_patterns(sdfg,
+                                           permissive=self.permissive,
+                                           patterns=[xform],
+                                           states=self.states,
+                                           metadata=None),
+                            None)
+                        if matched_pattern is not None:
+                            self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results,
+                                                     applied_transformations)
+                            match = matched_pattern
                             applied = True
                             applied_anything = True
-                            break
 
                 if apply_once:
                     break
@@ -247,27 +254,31 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             applied = True
             while applied:
                 applied = False
-                for match in match_patterns(sdfg,
-                                            permissive=self.permissive,
-                                            patterns=xforms,
-                                            states=self.states,
-                                            metadata=self._metadata):
-                    self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                matched_pattern = next(
+                    match_patterns(sdfg,
+                                   permissive=self.permissive,
+                                   patterns=xforms,
+                                   states=self.states,
+                                   metadata=self._metadata), None)
+                if matched_pattern is not None:
+                    self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                    match = matched_pattern
                     applied = True
-                    break
+
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied and match is not None:
-                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
-                                           match.state_id) from err
-                else:
-                    raise err
-
-        if len(applied_transformations) == 0:
-            return None
+                # `print_match()` needs the control flow region the match belongs to, not this pass, hence `cfg_list[cfg_id]`.
+                assert match is not None
+                tcfg = sdfg.cfg_list[match.cfg_id]
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.", sdfg,
+                                       match.state_id) from err
 
         return applied_transformations
 
