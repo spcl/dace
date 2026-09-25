@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reusing the memory of transients whose live ranges do not overlap, and moving small transients to the stack."""
 import copy
+import itertools
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -8,8 +9,8 @@ import sympy
 
 from dace import data, dtypes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, memlets_of, names_read, names_written,
-                                                            repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (bound_names, iteration_spaces, memlets_of,
+                                                            names_in_subtrees, names_read, names_written, repository_of)
 
 # A region: per dimension, (first, last) as integers, or as equal symbolic expressions for dimensions indexed by
 # variables of loops outside the context (the same in every access of one iteration)
@@ -60,6 +61,26 @@ def _covered(read: Optional[_Box], writes: List[_Box]) -> bool:
     return not remaining
 
 
+def _covered_under(read: Tuple[Optional[_Box], frozenset],
+                   writes: List[Tuple[Optional[_Box], frozenset]],
+                   max_conditions: int = 6) -> bool:
+    """Whether a read is covered by the writes that run whenever it does. Guards are sets of ``(condition, value)``;
+    the read's guards hold, and every combination of the other conditions of the writes is considered (e.g., writes
+    in both branches of an ``if``/``else`` together cover a read outside it)."""
+    box, guards = read
+    if _covered(box, [w for w, g in writes if g <= guards]):
+        return True
+    known = dict(guards)
+    free = sorted({c for _, g in writes for c, _ in g if c not in known})
+    if not free or len(free) > max_conditions:
+        return False
+    for values in itertools.product((False, True), repeat=len(free)):
+        case = dict(known, **dict(zip(free, values)))
+        if not _covered(box, [w for w, g in writes if all(case.get(c) == v for c, v in g)]):
+            return False
+    return True
+
+
 @dataclass
 class _Use:
     node: tn.ScheduleTreeNode
@@ -74,8 +95,8 @@ class _Event:
     context), the regions it certainly writes, and its extent in program order."""
     start: int
     end: int
-    reads: List[Optional[_Box]] = field(default_factory=list)
-    writes: List[Optional[_Box]] = field(default_factory=list)
+    reads: List[Tuple[Optional[_Box], frozenset]] = field(default_factory=list)  # (region, guards)
+    writes: List[Tuple[Optional[_Box], frozenset]] = field(default_factory=list)
     inner: Optional[List[Tuple[int, int]]] = None  # Live segments within one iteration, if the child is a loop whose
     # iterations do not pass values of the container to each other
     writes_at_all: bool = False  # Whether the child may write the container (also conditionally)
@@ -94,6 +115,7 @@ class _Liveness:
         self._number(root, 0)
         self._spaces: Dict[int, Optional[List[Tuple[str, int, int]]]] = {}
         self._boxes: Dict[tuple, Optional[_Box]] = {}
+        self._written: Dict[int, Set[str]] = {}
 
     def _ranges(self, scope: tn.ScheduleTreeScope) -> Optional[List[Tuple[str, int, int]]]:
         """``(variable, first, last)`` of each variable a loop or map binds (in iteration order), or ``None`` if some
@@ -166,15 +188,42 @@ class _Liveness:
             box.append(tuple(bounds))
         return box
 
-    def _unconditional(self, use: _Use, context: tn.ScheduleTreeNode) -> bool:
-        """Whether an access runs in every iteration of ``context`` (not in a branch, nor in a loop that may not run)."""
+    def _written_in(self, context: tn.ScheduleTreeNode) -> Set[str]:
+        """Names assigned within one iteration of ``context`` (its own iteration variables excluded)."""
+        if id(context) not in self._written:
+            self._written[id(context)] = names_in_subtrees([context], names_written) - bound_names(context)
+        return self._written[id(context)]
+
+    def _guards(self, use: _Use, context: tn.ScheduleTreeNode) -> Optional[frozenset]:
+        """The conditions under which an access runs in an iteration of ``context`` (empty if it always runs), or
+        ``None`` if that cannot be described by conditions that are the same throughout the iteration (conditions on
+        variables of inner loops or on names assigned in the iteration, loops that may not run, other scopes)."""
+        guards, inner_variables = set(), set()
         for scope in self._path(use.node, context)[:-1]:
-            if not isinstance(scope, (tn.ForScope, tn.MapScope)):
-                return False
-            spaces = self._ranges(scope)
-            if spaces is None or any(first is None for _, first, _ in spaces):
-                return False
-        return True
+            if isinstance(scope, (tn.ForScope, tn.MapScope)):
+                spaces = self._ranges(scope)
+                if spaces is None or any(first is None for _, first, _ in spaces):
+                    return None
+                inner_variables |= bound_names(scope)
+            elif isinstance(scope, tn.IfScope) and not isinstance(scope, tn.StateIfScope):
+                condition = scope.condition
+            elif isinstance(scope, tn.ElseScope):
+                siblings = scope.parent.children
+                previous = siblings[next(k for k, c in enumerate(siblings) if c is scope) - 1]
+                if type(previous) is not tn.IfScope:
+                    return None
+                condition = previous.condition
+            else:
+                return None
+            if isinstance(scope, (tn.IfScope, tn.ElseScope)):
+                if condition.get_free_symbols() & (inner_variables | self._written_in(context)):
+                    return None
+                guards.add((condition.as_string, isinstance(scope, tn.IfScope)))  # (condition, whether it holds)
+        return frozenset(guards)
+
+    def _read(self, use: _Use, context: tn.ScheduleTreeNode) -> Tuple[Optional[_Box], frozenset]:
+        guards = self._guards(use, context)
+        return self._box(use, context), frozenset() if guards is None else guards
 
     def segments(self, uses: List[_Use]) -> Tuple[List[Tuple[int, int]], bool]:
         """Live segments of a container, and whether it is read before being written (live on entry)."""
@@ -191,20 +240,21 @@ class _Liveness:
             start, end = self.position[id(child)], self.last[id(child)]
             if isinstance(child, (tn.ForScope, tn.MapScope)):
                 inner, exposed = self._analyze(child, child_uses)
-                reads = [self._box(u, context) for u in child_uses if not u.write] if exposed else []
+                reads = [self._read(u, context) for u in child_uses if not u.write] if exposed else []
                 event = _Event(start, end, reads, inner=None if exposed else inner)
             elif isinstance(child, tn.ScheduleTreeScope):
-                event = _Event(start, end, [self._box(u, context) for u in child_uses if not u.write])
+                event = _Event(start, end, [self._read(u, context) for u in child_uses if not u.write])
             else:  # A statement reads its inputs before writing its outputs
-                event = _Event(start, start, [self._box(u, context) for u in child_uses if not u.write])
-            event.writes = [self._box(u, context) for u in child_uses if u.write and self._unconditional(u, context)]
+                event = _Event(start, start, [self._read(u, context) for u in child_uses if not u.write])
+            event.writes = [(self._box(u, context), g) for u in child_uses if u.write
+                            for g in [self._guards(u, context)] if g is not None]
             event.writes_at_all = any(u.write for u in child_uses)
             events.append(event)
 
         # Chains of events through which a value of the container stays live
         chains: List[List[_Event]] = []
-        chain_writes: List[_Box] = []
-        all_writes: List[_Box] = []
+        chain_writes: List[Tuple[Optional[_Box], frozenset]] = []
+        all_writes: List[Tuple[Optional[_Box], frozenset]] = []
         chain_written = any_written = False  # For trusted reads: whether the chain or context wrote at all before
         exposed = False
         for event in events:
@@ -213,8 +263,8 @@ class _Liveness:
                 if self.trust_reads:
                     covered_here, covered_before = chain_written, any_written
                 else:
-                    covered_here = bool(chains) and _covered(read, chain_writes)
-                    covered_before = covered_here or _covered(read, all_writes)
+                    covered_here = bool(chains) and _covered_under(read, chain_writes)
+                    covered_before = covered_here or _covered_under(read, all_writes)
                 if covered_here:
                     continue
                 needs_older = True
@@ -373,6 +423,10 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     (keep it below the stack size of the threads that run the program, e.g., ``OMP_STACKSIZE``). Run after
     :func:`reuse_transients`, which reduces how much memory the transients need.
 
+    Arrays that may be read before being written (live on entry, e.g., stencils reading halo points of a temporary
+    that were never computed) are not moved: on the heap such reads see the values of a previous call (or of freshly
+    allocated memory), and on the stack they would see whatever the stack held, which changes results.
+
     :param stree: The schedule tree to transform in place.
     :param max_array_bytes: Only move arrays of at most this many bytes.
     :param max_total_bytes: Move arrays of at most this many bytes in total.
@@ -381,14 +435,17 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     root = stree.get_root()
     containers = root.containers
     uses, opaque = _usable_accesses(root)
+    liveness = _Liveness(root, trust_reads=False)
     candidates = []
     for name, desc in containers.items():
-        if (not desc.transient or type(desc) is not data.Array or name in opaque
+        if (not desc.transient or type(desc) is not data.Array or name in opaque or name not in uses
                 or desc.storage not in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)):
             continue
         size = _integer(desc.total_size)
         if size is None or size * desc.dtype.bytes > max_array_bytes:
             continue
+        if liveness.segments(uses[name])[1]:
+            continue  # Read before written
         candidates.append((-len(uses.get(name, ())), name, size * desc.dtype.bytes))
     moved, total = 0, 0
     for _, name, size in sorted(candidates):

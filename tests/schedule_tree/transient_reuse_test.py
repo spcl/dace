@@ -103,6 +103,27 @@ def test_reuse_partially_written_plane(trust_reads):
     assert reuse_transients(stree, trust_reads=trust_reads) == (2 if trust_reads else 0)
 
 
+def _branch_write(plane: str, both: bool) -> list:
+    """``if C[0, 0, k] > 0.5: <plane> = 2 * A else: <plane> = 3 * A`` (the ``else`` only if ``both``)."""
+    condition = dace.properties.CodeBlock('C[0, 0, k] > 0.5')
+    result = [tn.IfScope(condition=condition, children=[_write(plane, 'A', name='t')])]
+    if both:
+        result.append(
+            tn.ElseScope(
+                children=[_nest(_tasklet('o = 3 * a', {'a': 'A[i, j, k]'}, {'o': f'{plane}[i, j, 0]'}), 'e' + plane)]))
+    return result
+
+
+def test_reuse_plane_written_in_both_branches():
+    make = lambda: _tree(_branch_write('P', both=True) + [_read('P', 'B'), _write('Q', 'C'), _read('Q', 'D')])
+    _check(make, shared=2)
+
+
+def test_reuse_not_plane_written_in_one_branch():
+    stree = _tree(_branch_write('P', both=False) + [_read('P', 'B'), _write('Q', 'C'), _read('Q', 'D')])
+    assert reuse_transients(stree) == 0  # (Not run: reads uninitialized values when the condition does not hold)
+
+
 def test_reuse_smaller_plane_in_larger_slot():
     make = lambda: _tree([
         _write('P', 'A'),
@@ -133,6 +154,14 @@ def test_move_small_transients_to_stack():
         assert np.array_equal(results[0][name], results[1][name]), name
 
 
+def test_move_to_stack_not_read_before_written():
+    """``P`` is read before it is written: moving it to the stack would change the values those reads see."""
+    stree = _tree([_read('P', 'B'), _write('P', 'A'), _write('Q', 'C'), _read('Q', 'D')])
+    assert move_small_transients_to_stack(stree) == 1
+    assert stree.containers['Q'].storage == dace.StorageType.Register
+    assert stree.containers['P'].storage != dace.StorageType.Register
+
+
 def test_move_to_stack_respects_limits():
     stree = _tree([_write('P', 'A'), _read('P', 'B')])
     assert move_small_transients_to_stack(stree, max_array_bytes=NI * NJ * 8 - 1) == 0
@@ -145,6 +174,9 @@ if __name__ == '__main__':
     test_reuse_plane_written_and_read_on_some_rows()
     test_reuse_partially_written_plane(False)
     test_reuse_partially_written_plane(True)
+    test_reuse_plane_written_in_both_branches()
+    test_reuse_not_plane_written_in_one_branch()
     test_reuse_smaller_plane_in_larger_slot()
     test_move_small_transients_to_stack()
+    test_move_to_stack_not_read_before_written()
     test_move_to_stack_respects_limits()
