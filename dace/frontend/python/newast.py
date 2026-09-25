@@ -79,9 +79,31 @@ def defer_extent_equalities(sdfg: SDFG, pairs: List[Tuple[Any, Any]]) -> None:
     sdfg.deferred_extent_equalities = [*getattr(sdfg, 'deferred_extent_equalities', []), *pairs]
 
 
-def pop_extent_equalities(sdfg: SDFG) -> List[Tuple[Any, Any]]:
-    """Removes and returns every deferred extent equality of ``sdfg`` and the SDFGs nested in it."""
-    return [pair for sd in sdfg.all_sdfgs_recursive() for pair in sd.__dict__.pop('deferred_extent_equalities', [])]
+def pop_extent_equalities(sdfg: SDFG) -> List[Tuple[Tuple[Any, Any], SDFG]]:
+    """Removes and returns every deferred extent equality of ``sdfg`` and the SDFGs nested in it, each
+    with the SDFG that deferred it."""
+    return [(pair, sd) for sd in sdfg.all_sdfgs_recursive()
+            for pair in sd.__dict__.pop('deferred_extent_equalities', [])]
+
+
+def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: Dict[str, Any]) -> None:
+    """Spells the bare extent symbol ``target`` as the ``source`` extent it was taken equal to, inside the
+    SDFG that deferred the equality.
+
+    A caller takes the equality up (proves it, or defers it further), so from here on it holds; without
+    the re-spelling the callee's own copy still reads ``source -> target`` volumes it cannot relate, and
+    validating the callee on its own -- a nested SDFG that simplification does not inline -- refuses
+    it. The symbol leaves the callee's mapping (``mapping`` for the callee itself, the enclosing
+    NestedSDFG node's for an SDFG nested in it), since the callee no longer reads it.
+    """
+    name = str(target)
+    if not isinstance(target, sympy.Symbol) or name not in sdfg.symbols or name in sdfg.arrays:
+        return
+    sdfg.replace_dict({name: str(source)}, symrepl={target: source})
+    sdfg.symbols.pop(name, None)
+    parent = sdfg.parent_nsdfg_node
+    owner = parent.symbol_mapping if parent is not None else mapping
+    owner.pop(name, None)
 
 
 def extent_mismatch(pairs: List[Tuple[Any, Any]]) -> str:
@@ -93,13 +115,15 @@ def check_extent_equalities(pv: 'ProgramVisitor', node: ast.Call, sdfg: SDFG, ma
     """Proves the extent equalities the callee ``sdfg`` deferred, under this call's symbol ``mapping``.
     What the caller still cannot prove is deferred to its own caller, or refused at the top level."""
     unproven = []
-    for pair in pop_extent_equalities(sdfg):
+    for pair, origin in pop_extent_equalities(sdfg):
         bound = [
             e.subs({s: pystr_to_symbolic(str(mapping[s.name]))
                     for s in e.free_symbols if s.name in mapping}) for e in pair
         ]
         if inequal_symbols(*bound):
             unproven.append(tuple(bound))
+        # Unproven here means proven by an enclosing caller or refused below; either way it is taken.
+        spell_extent_as_source(origin, *pair, mapping if origin is sdfg else {})
     if not unproven:
         return
     if NESTED_PROGRAM_CALLS.get() > 0 and all(deferrable_extents(*pair) for pair in unproven):
@@ -4831,6 +4855,8 @@ class ProgramVisitor(ExtNodeVisitor):
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
         check_extent_equalities(self, node, sdfg, mapping)
+        # The check may have spelled an extent symbol out of the callee.
+        symbols = sdfg.used_symbols(all_symbols=False)
         if len(mapping) == 0:  # Default to same-symbol mapping
             mapping = None
 

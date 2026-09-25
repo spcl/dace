@@ -59,6 +59,19 @@ def test_the_call_site_proves_the_extents_a_pooling_callee_assigned(program):
     assert np.allclose(y, x.reshape(2, 3, 2, 4, 2, 6).max(axis=(2, 4)))
 
 
+@pytest.mark.parametrize('program', [lenet_pool, outer])
+def test_the_pooling_callee_validates_as_a_nested_sdfg_of_its_own(program):
+    """Without simplification the callee stays a nested SDFG and validates alone, so the extent the
+    call site proved must be spelled into it rather than live only in the caller's check."""
+    with dace.config.set_temporary('optimizer', 'automatic_simplification', value=False):
+        sdfg = program.to_sdfg()
+    sdfg.validate()
+    x = np.random.rand(2, 6, 8, 6)
+    y = np.zeros((2, 3, 4, 6))
+    sdfg(x=x, y=y, N=2, H=6, W=8)
+    assert np.allclose(y, x.reshape(2, 3, 2, 4, 2, 6).max(axis=(2, 4)))
+
+
 def test_a_top_level_program_with_unrelated_extents_is_refused():
     with pytest.raises(IndexError, match='could not broadcast'):
         maxpool2d.to_sdfg(simplify=False)
