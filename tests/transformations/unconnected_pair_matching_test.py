@@ -50,6 +50,41 @@ def test_same_matches_as_vf2_on_random_graphs():
     assert checked > 1000
 
 
+def test_same_matches_as_vf2_on_long_path():
+    """ Two nodes at distance > 2 along a chain are not adjacent, so both matchers pair them up.
+
+        This documents that VF2 (and hence the fast matcher) matches an unconnected two-node
+        pattern based on direct adjacency only, not reachability: chained map entries several
+        hops apart still form a match.
+    """
+    # A chain map_0 -> access_1 -> map_2 -> ... -> map_8 with 5 map entries at even indices,
+    # so the map entries are pairwise at distance >= 2 and never directly connected.
+    graph = nx.DiGraph()
+    types = [nodes.MapEntry, nodes.AccessNode] * 4 + [nodes.MapEntry]
+    map_indices = [i for i, kind in enumerate(types) if kind is nodes.MapEntry]
+    assert len(map_indices) == 5
+    for i, kind in enumerate(types):
+        if kind is nodes.MapEntry:
+            node = nodes.MapEntry(nodes.Map(f'map_{i}', ['i'], subsets.Range([(0, 9, 1)])))
+        else:
+            node = nodes.AccessNode(f'data_{i}')
+        graph.add_node(i, node=node)
+    for src in range(len(types) - 1):
+        graph.add_edge(src, src + 1)
+
+    pattern = _pattern(nodes.MapEntry, nodes.MapEntry)
+    expected = list(pm._subgraph_isomorphism_matcher(graph, pattern, pm.type_match, None))
+    actual = list(pm._unconnected_pair_matcher(graph, pattern, pm.type_match, None))
+
+    # VF2 pairs every ordered pair of distinct, non-adjacent map entries. None of the map
+    # entries are directly connected in the chain, so all 5 * 4 ordered pairs match.
+    expected_pairs = sorted((u, v) for u in map_indices for v in map_indices if u != v)
+    assert sorted((u, v) for m in expected for u, v in [sorted(m)]) == \
+        sorted(tuple(sorted(p)) for p in expected_pairs)
+    assert len(expected) == len(map_indices) * (len(map_indices) - 1)
+    assert actual == expected
+
+
 def test_metadata_selects_pair_matcher():
     _, singlestate = pm.get_transformation_metadata([MapFusionHorizontal()])
     assert [matcher for _, _, _, matcher, _ in singlestate] == [pm._unconnected_pair_matcher]
@@ -112,6 +147,7 @@ def test_fusion_result_unchanged():
 
 if __name__ == '__main__':
     test_same_matches_as_vf2_on_random_graphs()
+    test_same_matches_as_vf2_on_long_path()
     test_metadata_selects_pair_matcher()
     test_same_matches_as_vf2_on_sdfg()
     test_fusion_result_unchanged()
