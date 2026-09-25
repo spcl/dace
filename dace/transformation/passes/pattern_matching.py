@@ -381,10 +381,9 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
     Helper function that tries to instantiate a pattern match into a
     transformation object.
     """
-    subgraph = {
-        nxpattern.nodes[j]['node']: graph.node_id(collapsed_graph.nodes[i]['node'])
-        for i, j in subgraph.items()
-    }
+    # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
+    # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
+    subgraph = {nxpattern.nodes[j]['node']: i for i, j in subgraph.items()}
 
     try:
         if isinstance(xform, xf.PatternTransformation):
