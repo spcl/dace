@@ -5,7 +5,8 @@ from typing import Dict, List, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             FunctionCallRegion, LoopRegion, NamedRegion, ReturnBlock, SDFGState,
                              UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
@@ -321,11 +322,13 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
     identifiers_seen = set()
 
     for nsdfg in sdfg.all_sdfgs_recursive():
-        # Rename duplicate states
-        for state in nsdfg.states():
-            if state.label in state_names_seen:
-                state.label = data.find_new_name(state.label, state_names_seen)
-            state_names_seen.add(state.label)
+        # Rename duplicate states and control flow blocks, whose labels are targets of gotos
+        for block in nsdfg.all_control_flow_blocks():
+            if block is nsdfg:
+                continue
+            if block.label in state_names_seen:
+                block.label = data.find_new_name(block.label, state_names_seen)
+            state_names_seen.add(block.label)
 
         replacements: Dict[str, str] = {}
         parent_node = nsdfg.parent_nsdfg_node
@@ -547,6 +550,10 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                 if e in edge_to_stree:
                     result.append(edge_to_stree[e])
                     edges_to_ignore.add(e)
+                elif isinstance(node, dace.nodes.ConsumeEntry) and e.dst_conn == 'IN_stream':
+                    # The consumed stream is read through the scope, so its edge is not a memlet tree leaf
+                    result.append(tn.DynScopeCopyNode(target='IN_stream', memlet=copy.deepcopy(e.data)))
+                    edges_to_ignore.add(e)
 
             # Handle all scoped edges to generate (views)
             views = _generate_views_in_scope(scope_to_edges[node], edge_to_stree)
@@ -605,6 +612,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
+            _bind_exits_to_label(nested_stree, state, node)
             result.extend(nested_stree.children)
 
             if generated_nviews:
@@ -646,6 +654,39 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
+def _nested_sdfg_return_label(state: SDFGState, node: nd.NestedSDFG) -> str:
+    """
+    Returns a unique label name for the end of a flattened nested SDFG.
+
+    :param state: The state containing the nested SDFG node.
+    :param node: The nested SDFG node.
+    :return: A label name that does not clash with any control flow block label in the SDFG tree.
+    """
+    existing = {block.label for block in state.sdfg.root_sdfg.all_control_flow_blocks(recursive=True)}
+    return data.find_new_name(f'__return_{state.label}_{state.node_id(node)}', existing)
+
+
+def _bind_exits_to_label(scope: tn.ScheduleTreeScope, state: SDFGState, node: nd.NestedSDFG) -> None:
+    """
+    Rewrites the exit gotos of a flattened nested SDFG to jump to a label at its end instead.
+
+    Exiting a nested SDFG (e.g., through a return block) only exits the nested SDFG, not the SDFG it is contained in.
+    Since exit gotos of nested SDFGs within this one were already bound to their own labels, all remaining exit gotos
+    belong to this nested SDFG.
+
+    :param scope: The schedule tree of the nested SDFG, which is modified in-place.
+    :param state: The state containing the nested SDFG node.
+    :param node: The nested SDFG node.
+    """
+    exits = [n for n in scope.preorder_traversal() if isinstance(n, tn.GotoNode) and n.target is None]
+    if not exits:
+        return
+    label = _nested_sdfg_return_label(state, node)
+    for goto in exits:
+        goto.target = label
+    scope.add_child(tn.StateLabel(state=label))
+
+
 def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
                           emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
@@ -671,7 +712,8 @@ def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
             # rather than hiding any successors behind a condition, we create a return / exit goto node that is executed
             # if the inverse of the condition holds, i.e., the successor is NOT executed.
             exit_goto = tn.GotoNode(target=None)
-            state_if_node = tn.StateIfScope(condition=CodeBlock(negate_expr(edge.data.condition)), children=[exit_goto])
+            state_if_node = tn.StateIfScope(condition=CodeBlock([negate_expr(edge.data.condition)]),
+                                            children=[exit_goto])
         result.append(state_if_node)
 
     return result
@@ -680,21 +722,20 @@ def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
 def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
     if isinstance(block, ControlFlowRegion):
         children: List[tn.ScheduleTreeNode] = []
-        if isinstance(block.start_block, SDFGState):
-            first_state_node = tn.StateLabel(state=block.start_block)
-            children.append(first_state_node)
 
         if isinstance(block, UnstructuredControlFlow) or any(block.out_degree(n) > 1 for n in block.nodes()):
             # This control flow graph contains multiple outgoing edges from a single node, which indicates
-            # unstructured control flow. This is represented through a GBlock that wraps everything.
+            # unstructured control flow. This is represented through a GBlock that wraps everything. Every block
+            # starts with a label, followed by its contents and the gotos of its outgoing edges. The start block comes
+            # first, and falling off the end of a block exits the GBlock.
             subnodes: List[tn.ScheduleTreeNode] = []
-            processed_edges: Set[gr.Edge[InterstateEdge]] = set()
-            for n in block.nodes():
+            start_block = block.start_block
+            for n in [start_block] + [n for n in block.nodes() if n is not start_block]:
+                subnodes.append(tn.StateLabel(state=n))
                 subnodes.extend(_block_schedule_tree(n))
-                for oe in block.out_edges(n):
-                    if oe not in processed_edges:
-                        subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
-                        processed_edges.add(oe)
+                # Conditional transitions come first, such that an unconditional transition does not shadow them
+                for oe in sorted(block.out_edges(n), key=lambda e: e.data.is_unconditional()):
+                    subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
             gblock = tn.GBlock(children=subnodes)
             children = [gblock]
         else:
@@ -708,6 +749,10 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                     children.extend(_isedge_schedule_tree(oedges[0], emit_goto_for_successors=False))
                 else:
                     pivot = None
+
+        # Function call regions derive from named regions, but are flattened like any other region
+        if isinstance(block, NamedRegion) and not isinstance(block, FunctionCallRegion):
+            return [tn.NamedRegionScope(label=block.label, children=children)]
 
         if isinstance(block, LoopRegion):
             # If this is a loop region, wrap everything in a loop scope node.
@@ -741,6 +786,12 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
 
     if isinstance(block, SDFGState):
         return _state_schedule_tree(block)
+
+    if isinstance(block, BreakBlock):
+        return [tn.BreakNode()]
+
+    if isinstance(block, ContinueBlock):
+        return [tn.ContinueNode()]
 
     if isinstance(block, ReturnBlock):
         # For return blocks, add a goto node to the end of the schedule tree.
@@ -813,6 +864,8 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     stree.containers = sdfg.arrays
     stree.symbols = sdfg.symbols
     stree.constants = sdfg.constants_prop
+    stree.callback_mapping = dict(sdfg.callback_mapping)
+    stree.arg_names = list(sdfg.arg_names)
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
     # the nested SDFGs' descriptor repositories
@@ -823,6 +876,17 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
         stree.containers.update(transients)
         stree.symbols.update(symbols)
         stree.constants.update(constants)
+        for name, callback in nsdfg.callback_mapping.items():
+            stree.callback_mapping.setdefault(name, callback)
+
+        # Code blocks of all SDFGs are merged per code generation target, without duplicates
+        for merged, code in ((stree.global_code, nsdfg.global_code), (stree.init_code, nsdfg.init_code),
+                             (stree.exit_code, nsdfg.exit_code)):
+            for target, block in code.items():
+                if target not in merged:
+                    merged[target] = CodeBlock(block.as_string, block.language)
+                elif block.as_string.strip() and block.as_string not in merged[target].as_string:
+                    merged[target] = CodeBlock(merged[target].as_string + '\n' + block.as_string, block.language)
 
 
 def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:

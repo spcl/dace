@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion
+from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion, UnstructuredControlFlow
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -114,6 +114,11 @@ class InlineControlFlowRegions(ppl.Pass):
     no_inline_named_regions = properties.Property(dtype=bool,
                                                   default=True,
                                                   desc='Whether to prevent inlining named control flow regions.')
+    no_inline_unstructured = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Whether to prevent inlining regions of unstructured control flow. Since control flow raising lifts '
+        'unstructured control flow into such regions, inlining them prevents simplification from converging.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -138,6 +143,8 @@ class InlineControlFlowRegions(ppl.Pass):
             ignore_region_types.append(NamedRegion)
         if self.no_inline_function_call_regions:
             ignore_region_types.append(FunctionCallRegion)
+        if self.no_inline_unstructured:
+            ignore_region_types.append(UnstructuredControlFlow)
         if len(ignore_region_types) < 1:
             ignore_region_types = None
 
