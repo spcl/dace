@@ -18,7 +18,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState,
-                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow,
+                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow, SymbolResolver,
                              sdfg_scope_symbols)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
@@ -1014,7 +1014,7 @@ def consolidate_edges(
     # a scope and propagation rewrites memlet subsets, so neither adds a symbol, a descriptor or an
     # interstate edge. Rebuilding it per scope walked every descriptor again -- 93% of this
     # function's time on CloudSC.
-    scope_symbols = sdfg_scope_symbols(sdfg) if propagate else None
+    resolver = SymbolResolver(sdfg, sdfg_scope_symbols(sdfg)) if propagate else None
 
     total_consolidated = 0
     for state in sdfg.states():
@@ -1037,7 +1037,7 @@ def consolidate_edges(
                                             scope,
                                             entry_consolidated > 0,
                                             exit_consolidated > 0,
-                                            scope_symbols=scope_symbols)
+                                            symbols=resolver)
 
                 if scope.parent is not None:
                     next_queue.append(scope.parent)

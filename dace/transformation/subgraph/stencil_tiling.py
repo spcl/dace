@@ -8,7 +8,7 @@ from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import propagate_node
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
@@ -529,8 +529,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                                                     (old_range[1] + self.tile_offset_upper[-1]), old_range[2])
 
                 # We have to propagate here for correct outer volume and subset sizes
-                _propagate_node(graph, map_entry)
-                _propagate_node(graph, graph.exit_node(map_entry))
+                propagate_node(graph, map_entry)
+                propagate_node(graph, graph.exit_node(map_entry))
 
                 # usual tiling pipeline
                 if last_map_entry:

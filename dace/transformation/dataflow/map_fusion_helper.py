@@ -8,6 +8,7 @@ import sympy
 import dace
 from dace import subsets, symbolic
 from dace.sdfg import graph, nodes as nodes, propagation, utils as sdutils, validation
+from dace.sdfg.state import SymbolResolver
 from dace.sdfg.scope import ScopeTree
 from dace.transformation import helpers
 
@@ -423,13 +424,13 @@ def propagate_fused_map_scope(
             propagation.propagate_memlets_sdfg(node.sdfg)
             if propagated_nsdfgs is not None:
                 propagated_nsdfgs[node.sdfg] = None
-        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, scope_symbols)
+        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, SymbolResolver(sdfg, scope_symbols))
 
     # Only the scopes on the walk up from the leaves inside `map_entry` are built, not the whole state's
     #  `scope_tree()`, which every fusion invalidates.
     leaves = scope_leaves_below(state, map_entry)
     if scope_records is None:
-        propagation.propagate_memlets_scope(sdfg, state, leaves, scope_symbols=scope_symbols)
+        propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=SymbolResolver(sdfg, scope_symbols))
         return
     # `propagate_memlets_scope()`'s frontier walk; each scope's last visit comes after all of its children's.
     frontier: Dict[ScopeTree, None] = dict.fromkeys(leaves)
@@ -483,12 +484,12 @@ def propagate_scope_node(
     scope_symbols: Dict[str, dace.dtypes.typeclass],
     scope_records: ScopeRecords,
 ) -> None:
-    """`propagation._propagate_node()`, skipping each external edge whose propagation would rewrite nothing.
+    """`propagation.propagate_node()`, skipping each external edge whose propagation would rewrite nothing.
 
     An edge is skipped when its memlet is one a propagation wrote, unchanged, and that propagation read the
     same objects (entry node, Map, range, descriptor, every internal memlet of the connector with its subsets
     and volume) with the same text and the same defined symbols. The result is a function of exactly these, so
-    propagating again would write an equal memlet. Any other edge is propagated as `_propagate_node()`
+    propagating again would write an equal memlet. Any other edge is propagated as `propagate_node()`
     does and its record replaced.
     """
     entry_node = node if isinstance(node, nodes.EntryNode) else state.entry_node(node)
@@ -500,7 +501,7 @@ def propagate_scope_node(
                                             state, [lone_scope],
                                             propagate_entry=node is entry_node,
                                             propagate_exit=node is not entry_node,
-                                            scope_symbols=scope_symbols)
+                                            symbols=SymbolResolver(state.parent, scope_symbols))
         return
     if isinstance(node, nodes.EntryNode):
         internal_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]

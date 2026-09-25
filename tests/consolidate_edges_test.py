@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
-from dace.sdfg.state import sdfg_scope_symbols
+from dace.sdfg.state import SymbolResolver, sdfg_scope_symbols
 from dace.sdfg.utils import consolidate_edges
 
 import pytest
@@ -597,7 +597,7 @@ def test_propagated_memlets_ignore_who_built_the_symbol_table():
     for state in rebuilt.states():
         propagate_memlets_scope(rebuilt, state, state.scope_leaves())
     for state in precomputed.states():
-        propagate_memlets_scope(precomputed, state, state.scope_leaves(), scope_symbols=table)
+        propagate_memlets_scope(precomputed, state, state.scope_leaves(), symbols=SymbolResolver(precomputed, table))
 
     def outer_subsets(sdfg: dace.SDFG) -> list:
         return [(state.label, edge.data.data, str(edge.data.subset)) for state in sdfg.states()

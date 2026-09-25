@@ -9,7 +9,7 @@ from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node, propagate_subset
+from dace.sdfg.propagation import propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
 from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import consolidate_edges_scope
@@ -1166,8 +1166,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # propagate edges adjacent to global map entry and exit
         # if desired
         if self.propagate:
-            _propagate_node(graph, global_map_entry)
-            _propagate_node(graph, global_map_exit)
+            propagate_node(graph, global_map_entry)
+            propagate_node(graph, global_map_exit)
 
         # create a hook for outside access to global_map
         self._global_map_entry = global_map_entry

@@ -24,7 +24,7 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
-    from dace.sdfg.state import SDFGState
+    from dace.sdfg.state import SDFGState, SymbolResolver
 
 
 @registry.make_registry
@@ -1330,13 +1330,14 @@ def extents_provably_differ(inner: 'tuple[symbolic.SymbolicType, ...]', outer: '
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
                                   parent_state: 'SDFGState',
                                   nsdfg_node: nodes.NestedSDFG,
-                                  scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
+                                  symbols: Optional['SymbolResolver'] = None):
     """
     Propagate memlets out of a nested sdfg.
 
     :param parent_sdfg: The parent SDFG this nested SDFG is in.
     :param parent_state: The state containing this nested SDFG.
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     :note: This operates in-place on the parent SDFG.
     """
     # We import late to avoid cyclic imports here.
@@ -1352,7 +1353,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
     })
 
     sdfg = nsdfg_node.sdfg
-    outer_symbols = parent_state.symbols_defined_at(nsdfg_node, scope_symbols)
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+        symbols = SymbolResolver()
+    outer_symbols = symbols.defined_at(parent_state, nsdfg_node)
 
     # Collect contributions from top-level CFG blocks. Plain states contribute
     # directly, while control-flow regions aggregate their child blocks via
@@ -1450,33 +1454,30 @@ def reset_state_annotations(sdfg: 'SDFG'):
         state.ranges = {}
 
 
-def propagate_memlets_sdfg(sdfg: 'SDFG'):
+def propagate_memlets_sdfg(sdfg: 'SDFG', symbols: Optional['SymbolResolver'] = None):
     """ Propagates memlets throughout an entire given SDFG.
 
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
         :note: This is an in-place operation on the SDFG.
     """
-    from dace.sdfg.state import sdfg_scope_symbols
-
     # Reset previous annotations first
     reset_state_annotations(sdfg)
 
-    # Once per SDFG: propagation rewrites memlets and annotations, never the symbols, descriptors and
-    # interstate edges this table reads, and rebuilding it per scope walked every descriptor each time.
-    scope_symbols = sdfg_scope_symbols(sdfg)
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+        symbols = SymbolResolver()
     for state in sdfg.states():
-        propagate_memlets_state(sdfg, state, scope_symbols)
+        propagate_memlets_state(sdfg, state, symbols)
 
     propagate_states(sdfg)
 
 
-def propagate_memlets_state(sdfg: 'SDFG',
-                            state: 'SDFGState',
-                            scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
+def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState', symbols: Optional['SymbolResolver'] = None):
     """ Propagates memlets throughout one SDFG state.
 
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
-        :param scope_symbols: ``sdfg_scope_symbols(sdfg)`` when the caller already holds it.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
         :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
@@ -1502,22 +1503,22 @@ def propagate_memlets_state(sdfg: 'SDFG',
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
 
-    if scope_symbols is None:
-        from dace.sdfg.state import sdfg_scope_symbols
-        scope_symbols = sdfg_scope_symbols(sdfg)
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+        symbols = SymbolResolver()
 
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
 
             # Propagate memlets inside the nested SDFG.
-            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_sdfg(node.sdfg, symbols)
 
             # Propagate memlets out of the nested SDFG.
-            propagate_memlets_nested_sdfg(sdfg, state, node, scope_symbols)
+            propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
 
     # Process scopes from the leaves upwards
-    propagate_memlets_scope(sdfg, state, state.scope_leaves(), scope_symbols=scope_symbols)
+    propagate_memlets_scope(sdfg, state, state.scope_leaves(), symbols=symbols)
 
 
 def propagate_memlets_scope(sdfg,
@@ -1525,7 +1526,7 @@ def propagate_memlets_scope(sdfg,
                             scopes,
                             propagate_entry=True,
                             propagate_exit=True,
-                            scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
+                            symbols: Optional['SymbolResolver'] = None):
     """
     Propagate memlets from the given scopes outwards.
 
@@ -1534,14 +1535,14 @@ def propagate_memlets_scope(sdfg,
     :param scopes: The ScopeTree object or a list thereof to start from.
     :param propagate_entry: If False, skips propagating out of the scope entry node.
     :param propagate_exit: If False, skips propagating out of the scope exit node.
-    :param scope_symbols: ``sdfg_scope_symbols(sdfg)`` when the caller already holds it.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     :note: This operation is performed in-place on the given SDFG.
     """
     from dace.sdfg.scope import ScopeTree
-    from dace.sdfg.state import sdfg_scope_symbols
 
-    if scope_symbols is None:
-        scope_symbols = sdfg_scope_symbols(sdfg)
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+        symbols = SymbolResolver()
 
     if isinstance(scopes, ScopeTree):
         scopes_to_process = [scopes]
@@ -1559,11 +1560,11 @@ def propagate_memlets_scope(sdfg,
 
             # Propagate out of entry
             if propagate_entry:
-                _propagate_node(state, scope.entry, scope_symbols)
+                propagate_node(state, scope.entry, symbols)
 
             # Propagate out of exit
             if propagate_exit:
-                _propagate_node(state, scope.exit, scope_symbols)
+                propagate_node(state, scope.exit, symbols)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)
@@ -1571,10 +1572,13 @@ def propagate_memlets_scope(sdfg,
         next_scopes = set()
 
 
-def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
+def propagate_memlets_map_scope(sdfg: 'SDFG',
+                                state: 'SDFGState',
+                                map_entry: nodes.MapEntry,
+                                symbols: Optional['SymbolResolver'] = None) -> None:
     """Propagate Memlets from the given Map outside.
 
-    The main difference to `propagate_memlets_scope()` is that this function operates on Maps
+    The main difference to ``propagate_memlets_scope()`` is that this function operates on Maps
     instead of `ScopeTree` it is thus much more accessible.
     The function will first propagate the Memlets of the nested SDFGs that are enclosed by the
     Map. Then the propagation will start bit only for those Melets that starts with `map_entry`.
@@ -1582,6 +1586,7 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
     :param map_entry: Defining the Map scope to which propagation should be restricted.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     """
     if not isinstance(map_entry, nodes.MapEntry):
         raise TypeError(
@@ -1591,11 +1596,14 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     # This code is an adapted version of `propagate_memlet_state()` and as there we
     #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
     #  ones that are inside the scope we are in.
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+        symbols = SymbolResolver()
     nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
     for node in nodes_in_scope:
         if isinstance(node, nodes.NestedSDFG):
-            propagate_memlets_sdfg(node.sdfg)
-            propagate_memlets_nested_sdfg(sdfg, state, node)
+            propagate_memlets_sdfg(node.sdfg, symbols)
+            propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
 
     # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
     #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
@@ -1605,10 +1613,11 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
         sdfg,
         state,
         contained_leaf_scopes,
+        symbols=symbols,
     )
 
 
-def _propagate_node(dfg_state, node, scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
+def propagate_node(dfg_state, node, symbols: Optional['SymbolResolver'] = None):
     if isinstance(node, nodes.EntryNode):
         entry_node = node
         internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
@@ -1632,7 +1641,8 @@ def _propagate_node(dfg_state, node, scope_symbols: Optional[dict[str, dtypes.ty
             edge.data = Memlet()
             continue
         if defined_variables is None:
-            defined_variables = (dfg_state.symbols_defined_at(entry_node, scope_symbols).keys()
+            defined_variables = ((symbols.defined_at(dfg_state, entry_node)
+                                  if symbols is not None else dfg_state.symbols_defined_at(entry_node)).keys()
                                  | dfg_state.parent.constants.keys())
         connector = geteconn(edge)
         # An empty internal edge is an ORDERING edge, and ``propagate_memlet`` answers Memlet()
@@ -1687,7 +1697,8 @@ def propagate_memlet(dfg_state,
                      union_inner_edges: bool,
                      arr=None,
                      connector=None,
-                     defined_variables: Optional[Set[str]] = None):
+                     defined_variables: Optional[Set[str]] = None,
+                     symbols: Optional['SymbolResolver'] = None):
     """ Tries to propagate a memlet through a scope (computes the image of
         the memlet function applied on an integer set of, e.g., a map range)
         and returns a new memlet object.
@@ -1701,6 +1712,8 @@ def propagate_memlet(dfg_state,
         :param defined_variables: The symbols defined at ``scope_node`` plus the SDFG's constants,
                                   when the caller already has them. Deriving them here walks every
                                   descriptor in the SDFG, once per memlet.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation, if there is one; without
+                        it the state resolves the symbols itself.
     """
     if memlet.is_empty():
         return Memlet()
@@ -1724,7 +1737,8 @@ def propagate_memlet(dfg_state,
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
     if defined_variables is None:
-        defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()
+        defined_variables = (symbols.defined_at(dfg_state, entry_node) if symbols is not None else
+                             dfg_state.symbols_defined_at(entry_node)).keys() | sdfg.constants.keys()
     defined_vars = set(defined_variables) - scope_node_symbols
 
     # Find other adjacent edges within the connected to the scope node
