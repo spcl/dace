@@ -275,8 +275,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 sdfg.validate()
             except InvalidSDFGError as err:
                 assert match is not None
-                raise InvalidSDFGError(f"Validation failed after applying {matched_pattern.print_match(self)}.", self,
-                                       matched_pattern.state_id) from err
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
+                                       match.state_id) from err
 
         return applied_transformations
 
