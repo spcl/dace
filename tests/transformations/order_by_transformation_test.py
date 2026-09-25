@@ -83,7 +83,7 @@ def test_order_by_transformation():
 
 
 @pytest.mark.parametrize("order_by_transformation, last_applied", [(True, "TrivialMapElimination"),
-                                                                    (False, "MapFusionVertical")])
+                                                                   (False, "MapFusionVertical")])
 def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool, last_applied: str):
     # Both transformations apply, in the order `test_order_by_transformation` established for this SDFG and
     #  mode; `last_applied` here is the second (last) one of that order, not just any applied transformation.
