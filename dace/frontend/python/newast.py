@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections.abc
+import contextvars
 from collections import OrderedDict
 import copy
 import itertools
@@ -63,6 +64,48 @@ if sys.version_info < (3, 12):
     TypeAlias = type(None)
 else:
     TypeAlias = ast.TypeAlias
+
+#: How many nested ``@dace.program`` calls enclose the program being parsed (0 for a top-level parse).
+NESTED_PROGRAM_CALLS: contextvars.ContextVar[int] = contextvars.ContextVar('dace_nested_program_calls', default=0)
+
+
+def deferrable_extents(target: Any, source: Any) -> bool:
+    """Whether an assignment may assume two extents equal until a call site binds their symbols."""
+    return all(isinstance(e, sympy.Basic) and bool(e.free_symbols) for e in (target, source))
+
+
+def defer_extent_equalities(sdfg: SDFG, pairs: List[Tuple[Any, Any]]) -> None:
+    """Records ``(target, source)`` extents an assignment took as equal without proof."""
+    sdfg.deferred_extent_equalities = [*getattr(sdfg, 'deferred_extent_equalities', []), *pairs]
+
+
+def pop_extent_equalities(sdfg: SDFG) -> List[Tuple[Any, Any]]:
+    """Removes and returns every deferred extent equality of ``sdfg`` and the SDFGs nested in it."""
+    return [pair for sd in sdfg.all_sdfgs_recursive() for pair in sd.__dict__.pop('deferred_extent_equalities', [])]
+
+
+def extent_mismatch(pairs: List[Tuple[Any, Any]]) -> str:
+    targets, sources = (', '.join(str(p[i]) for p in pairs) for i in (0, 1))
+    return f'could not broadcast input array from extents [{sources}] into extents [{targets}]'
+
+
+def check_extent_equalities(pv: 'ProgramVisitor', node: ast.Call, sdfg: SDFG, mapping: Dict[str, Any]) -> None:
+    """Proves the extent equalities the callee ``sdfg`` deferred, under this call's symbol ``mapping``.
+    What the caller still cannot prove is deferred to its own caller, or refused at the top level."""
+    unproven = []
+    for pair in pop_extent_equalities(sdfg):
+        bound = [
+            e.subs({s: pystr_to_symbolic(str(mapping[s.name]))
+                    for s in e.free_symbols if s.name in mapping}) for e in pair
+        ]
+        if inequal_symbols(*bound):
+            unproven.append(tuple(bound))
+    if not unproven:
+        return
+    if NESTED_PROGRAM_CALLS.get() > 0 and all(deferrable_extents(*pair) for pair in unproven):
+        defer_extent_equalities(pv.sdfg, unproven)
+        return
+    raise DaceSyntaxError(pv, node, extent_mismatch(unproven))
 
 
 class SkipCall(Exception):
@@ -3230,8 +3273,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 ssize = squeezed.size()
                 osize = squeezed_op.size()
 
-                if (indirect_indices or boolarr or len(ssize) != len(osize)
-                        or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op):
+                # A whole-array copy between extents only the caller can relate (an output argument's
+                # own extent symbol against one derived from the inputs) is taken as equal here; the call
+                # site proves it once it binds both (``check_extent_equalities``).
+                unproven = [(s, o) for s, o in zip(ssize, osize) if inequal_symbols(s, o)]
+                if (unproven and not (indirect_indices or boolarr or op) and len(ssize) == len(osize)
+                        and all(deferrable_extents(s, o) for s, o in unproven)):
+                    defer_extent_equalities(self.sdfg, unproven)
+                    unproven = []
+
+                if indirect_indices or boolarr or len(ssize) != len(osize) or unproven or op:
 
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
@@ -4675,6 +4726,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy.global_vars = {**self.globals, **func.global_vars}
 
             cnt = self.progress_count()
+            depth = NESTED_PROGRAM_CALLS.set(NESTED_PROGRAM_CALLS.get() + 1)
             try:
                 fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
                 fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
@@ -4707,6 +4759,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
                         ex.__noskipcall__ = True
                     raise ex
+            finally:
+                NESTED_PROGRAM_CALLS.reset(depth)
 
             funcname = sdfg.name
             all_args = required_args
@@ -4776,6 +4830,7 @@ class ProgramVisitor(ExtNodeVisitor):
             }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
+        check_extent_equalities(self, node, sdfg, mapping)
         if len(mapping) == 0:  # Default to same-symbol mapping
             mapping = None
 

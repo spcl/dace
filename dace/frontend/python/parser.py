@@ -1004,6 +1004,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                     print(astutils.unparse(parsed_ast.preprocessed_ast))
                 raise
 
+            # Extents an assignment took as equal are proven by the caller; a top-level program has none.
+            if newast.NESTED_PROGRAM_CALLS.get() == 0:
+                unproven = newast.pop_extent_equalities(sdfg)
+                if unproven:
+                    raise IndexError(newast.extent_mismatch(unproven))
+
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
