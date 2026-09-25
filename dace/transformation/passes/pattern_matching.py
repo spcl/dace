@@ -128,15 +128,17 @@ class PatternMatchAndApply(ppl.Pass):
             if self.validate_all:
                 sdfg.validate()
 
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
+
         if self.validate:
             sdfg.validate()
 
-        if (len(applied_transformations) > 0
-                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
+        if self.print_report or (self.print_report is None and Config.get_bool('debugprint')):
             print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
 
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
-            return None
         return applied_transformations
 
 
@@ -242,6 +244,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                         if matched_pattern is not None:
                             self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results,
                                                      applied_transformations)
+                            match = matched_pattern
                             applied = True
                             applied_anything = True
 
@@ -259,21 +262,21 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                    metadata=self._metadata), None)
                 if matched_pattern is not None:
                     self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                    match = matched_pattern
                     applied = True
+
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied:
-                    assert matched_pattern is not None
-                    raise InvalidSDFGError(f"Validation failed after applying {matched_pattern.print_match(self)}.",
-                                           self, matched_pattern.state_id) from err
-                else:
-                    raise err
-
-        if len(applied_transformations) == 0:
-            return None
+                assert match is not None
+                raise InvalidSDFGError(f"Validation failed after applying {matched_pattern.print_match(self)}.", self,
+                                       matched_pattern.state_id) from err
 
         return applied_transformations
 

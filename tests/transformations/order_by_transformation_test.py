@@ -2,7 +2,10 @@
 from typing import List, Tuple
 from unittest import mock
 
+import pytest
+
 import dace
+from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation.dataflow import MapFusionVertical, TrivialMapElimination
 from dace.transformation.passes import pattern_matching
 
@@ -79,5 +82,22 @@ def test_order_by_transformation():
     assert enumerations_unordered == len(applied_unordered) + 1
 
 
+@pytest.mark.parametrize("order_by_transformation", [True, False])
+def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool):
+    sdfg = _make_sdfg()
+    failure = InvalidSDFGError("invalid", sdfg, None)
+
+    with mock.patch.object(dace.SDFG, "validate", side_effect=failure):
+        with pytest.raises(InvalidSDFGError, match="after applying TrivialMapElimination") as info:
+            sdfg.apply_transformations_repeated(
+                [TrivialMapElimination()],
+                validate=True,
+                order_by_transformation=order_by_transformation,
+            )
+    assert info.value.__cause__ is failure
+
+
 if __name__ == "__main__":
     test_order_by_transformation()
+    test_validation_failure_names_last_applied_transformation(True)
+    test_validation_failure_names_last_applied_transformation(False)
