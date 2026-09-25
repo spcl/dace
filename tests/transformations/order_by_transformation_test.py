@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import List, Tuple
 from unittest import mock
 
 import dace
@@ -6,14 +7,10 @@ from dace.transformation.dataflow import MapFusionVertical, TrivialMapEliminatio
 from dace.transformation.passes import pattern_matching
 
 
-def _make_sdfg() -> dace.SDFG:
-    """Three maps in a row, the last one with a single iteration, so both transformations match."""
-    sdfg = dace.SDFG("order_by_transformation")
-    for array, transient in [("a", False), ("t1", True), ("t2", True), ("b", False)]:
-        sdfg.add_array(array, shape=(10, ), dtype=dace.float64, transient=transient)
-    state = sdfg.add_state(is_start_block=True)
-    previous = state.add_access("a")
-    for target, rng in [("t1", "0:10"), ("t2", "0:10"), ("b", "0:1")]:
+def _add_maps(state: dace.SDFGState, chain: List[Tuple[str, str]]) -> None:
+    """Adds a chain of maps to `state`, where each `(array, range)` pair writes `array` over `range`."""
+    previous = state.add_access(chain[0][0])
+    for target, rng in chain[1:]:
         _, _, exit_node = state.add_mapped_tasklet(
             f"comp_{target}",
             map_ranges={"__i": rng},
@@ -24,15 +21,37 @@ def _make_sdfg() -> dace.SDFG:
             external_edges=True,
         )
         previous = next(e.dst for e in state.out_edges(exit_node))
+
+
+def _make_sdfg() -> dace.SDFG:
+    """
+    Two states: the first one only matches `TrivialMapElimination`, the second one only matches
+    `MapFusionVertical`. Since matching visits states before transformations, the first match found
+    over all transformations is `TrivialMapElimination`, even if it is listed last.
+    """
+    sdfg = dace.SDFG("order_by_transformation")
+    for array, transient in [("a", False), ("b", False), ("c", False), ("t", True), ("d", False)]:
+        sdfg.add_array(array, shape=(10, ), dtype=dace.float64, transient=transient)
+    first = sdfg.add_state(is_start_block=True)
+    _add_maps(first, [("a", ""), ("b", "0:1")])
+    second = sdfg.add_state_after(first)
+    _add_maps(second, [("c", ""), ("t", "0:10"), ("d", "0:10")])
     sdfg.validate()
     return sdfg
 
 
-def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> tuple[int, int]:
-    """Returns the number of applied transformations and of pattern enumerations."""
-    original = pattern_matching.match_patterns
-    with mock.patch.object(pattern_matching, "match_patterns", side_effect=original) as spy:
-        applied = sdfg.apply_transformations_repeated(
+def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> Tuple[List[str], int]:
+    """Returns the names of the applied transformations, in order, and the number of pattern enumerations."""
+    applied = []
+    original_apply = pattern_matching.PatternMatchAndApplyRepeated._apply_and_validate
+
+    def _record(self, match, *args, **kwargs):
+        applied.append(type(match).__name__)
+        return original_apply(self, match, *args, **kwargs)
+
+    with (mock.patch.object(pattern_matching.PatternMatchAndApplyRepeated, "_apply_and_validate", _record),
+          mock.patch.object(pattern_matching, "match_patterns", side_effect=pattern_matching.match_patterns) as spy):
+        sdfg.apply_transformations_repeated(
             [MapFusionVertical(), TrivialMapElimination()],
             validate=False,
             order_by_transformation=order_by_transformation,
@@ -40,20 +59,25 @@ def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> tuple[int, int]:
     return applied, spy.call_count
 
 
-def test_order_by_transformation_applies_the_same_matches():
+def test_order_by_transformation():
     ordered, unordered = _make_sdfg(), _make_sdfg()
 
     applied_ordered, enumerations_ordered = _apply(ordered, True)
     applied_unordered, enumerations_unordered = _apply(unordered, False)
 
-    assert applied_ordered == 2
-    assert applied_ordered == applied_unordered
+    # Ordered: each transformation is exhausted before moving to the next one.
+    assert applied_ordered == ["MapFusionVertical", "TrivialMapElimination"]
+    # Unordered: the first match found over all transformations is applied.
+    assert applied_unordered == ["TrivialMapElimination", "MapFusionVertical"]
+    # The matches are independent, so both orders lead to the same result.
     assert ordered.hash_sdfg() == unordered.hash_sdfg()
-    # Matching runs on the metadata of all transformations of the pass, so ordering by
-    #  transformation cannot narrow it: one enumeration per application, plus the final empty one.
-    assert enumerations_ordered == applied_ordered + 1
-    assert enumerations_unordered == applied_unordered + 1
+
+    # Ordered: per transformation, one enumeration per application plus the final empty one, and
+    #  since something was applied, one more round of empty enumerations.
+    assert enumerations_ordered == len(applied_ordered) + 2 * 2
+    # Unordered: one enumeration per application, plus the final empty one.
+    assert enumerations_unordered == len(applied_unordered) + 1
 
 
 if __name__ == "__main__":
-    test_order_by_transformation_applies_the_same_matches()
+    test_order_by_transformation()

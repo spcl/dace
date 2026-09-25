@@ -211,43 +211,62 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             raise ValueError('Transformation set must be unique')
 
         if self.order_by_transformation:
-            # `match_patterns()` matches on `self._metadata`, which covers every transformation of
-            # this pass, and ignores its `patterns` argument. A loop per transformation therefore
-            # enumerates the same matches and applies them in the same order as the loop below, and
-            # only adds enumerations that apply nothing: one per remaining transformation, plus a
-            # full round of them once anything applied. The loop here keeps the warning those
-            # enumerations would have emitted.
-            for xform in xforms:
-                if sdfg.root_sdfg.using_explicit_control_flow:
-                    if not xform.__explicit_cf_compatible__:
-                        warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                      ' due to incompatibility with experimental control flow blocks. If the ' +
-                                      'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                      'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                      xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                      'please annotate it with the class decorator ' +
-                                      '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                      '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                      'for more information.')
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    if sdfg.root_sdfg.using_explicit_control_flow:
+                        if not xform.__explicit_cf_compatible__:
+                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                          ' due to incompatibility with experimental control flow blocks. If the ' +
+                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
+                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                                          'please annotate it with the class decorator ' +
+                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
+                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                          'for more information.')
+                            continue
 
-        applied = True
-        while applied:
-            applied = False
-            matched_pattern = next(
-                match_patterns(sdfg,
-                               permissive=self.permissive,
-                               patterns=xforms,
-                               states=self.states,
-                               metadata=self._metadata), None)
-            if matched_pattern is not None:
-                self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
-                applied = True
+                    applied = True
+                    while applied:
+                        applied = False
+                        matched_pattern = next(
+                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on the cached order of transformations.
+                            match_patterns(sdfg,
+                                           permissive=self.permissive,
+                                           patterns=[xform],
+                                           states=self.states,
+                                           metadata=None),
+                            None)
+                        if matched_pattern is not None:
+                            self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results,
+                                                     applied_transformations)
+                            applied = True
+                            applied_anything = True
+
+                if apply_once:
+                    break
+        else:
+            applied = True
+            while applied:
+                applied = False
+                matched_pattern = next(
+                    match_patterns(sdfg,
+                                   permissive=self.permissive,
+                                   patterns=xforms,
+                                   states=self.states,
+                                   metadata=self._metadata), None)
+                if matched_pattern is not None:
+                    self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                    applied = True
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied and matched_pattern is not None:
+                if applied:
+                    assert matched_pattern is not None
                     raise InvalidSDFGError(f"Validation failed after applying {matched_pattern.print_match(self)}.",
                                            self, matched_pattern.state_id) from err
                 else:
