@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import os
 import dace.dtypes
 import numpy as np
 import dace as dc
@@ -134,10 +133,8 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    run_trmm_autodiff()
-    os.environ['DACE_testing_serialization'] = last_value
+    with dace.config.set_temporary('testing', 'serialization', value=False):
+        run_trmm_autodiff()
 
 
 if __name__ == "__main__":

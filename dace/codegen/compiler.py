@@ -223,9 +223,6 @@ def generate_program_folder(
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
-        # NOTE: There is a bug here, as this only saves they keys inside the configuration
-        #   `dict`. It ignores the configuration values set through environment variables.
-        #   instead it will store the ones in the `dict`.
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.

@@ -225,9 +225,10 @@ def stage_library_headers(folder: str) -> None:
 def emit_variant(ctx: dict, variant: str, transform: Callable, codegen: str) -> str:
     """Run one pipeline and write its program folder; return the generated ``.cpp`` path."""
     from dace.codegen.compiler import generate_program_folder
+    from dace.config import Config
     from tests.corpus import corpus_suite as suite_mod
 
-    os.environ['DACE_compiler_cpu_implementation'] = codegen  # noqa: SIM112 -- DaCe env keys are mixed case
+    Config.set('compiler', 'cpu', 'implementation', value=codegen)
     sdfg = suite_mod.build(ctx, transform, variant)
     force_pure_library_nodes(sdfg)
     if variant == 'serialize':

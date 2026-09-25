@@ -135,19 +135,14 @@ def xdist_build_folder():
 
     DaCe keys a build on the SDFG NAME and many tests reuse generic ones ("testing", "tester"), so two
     workers compiling same-named SDFGs race on one build entry and load a half-written .so. Sets the
-    CONFIG rather than exporting ``DACE_default_build_folder``: ``Config.get`` returns an env var
-    before it consults the config, so exporting it would defeat every
-    ``set_temporary('default_build_folder')`` for the whole session. An already-exported env var is
-    moved too, or the config write it outranks buys no isolation. Serial runs are untouched.
+    config (an exported ``DACE_default_build_folder`` is already folded into it at load). Serial runs
+    are untouched.
     """
     worker = os.environ.get('PYTEST_XDIST_WORKER')
     if not worker:
         return
     from dace.config import Config
     target = os.path.join(Config.get('default_build_folder'), worker)
-    # An exported env var outranks the config, so it has to move too or isolation is silently lost.
-    if 'DACE_default_build_folder' in os.environ:
-        os.environ['DACE_default_build_folder'] = target
     Config.set('default_build_folder', value=target)
 
 

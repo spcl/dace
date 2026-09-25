@@ -9,7 +9,6 @@ from typing import Optional, Tuple, Type, Union, List
 import copy
 import numpy as np
 import uuid
-import os
 import warnings
 import pytest
 
@@ -619,10 +618,8 @@ def test_inline_unsqueeze4():
 
     A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
     B = np.zeros((5, 3), np.int32)
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    sdfg(A, B)
-    os.environ['DACE_testing_serialization'] = last_value
+    with dace.config.set_temporary('testing', 'serialization', value=False):
+        sdfg(A, B)
     for i in range(3):
         if i < 2:
             assert (np.array_equal(B[i + 1:2 * i + 3, 1 - i], A[i, i:2 * i + 2]))
