@@ -153,6 +153,19 @@ def test_an_error_leaves_no_state_behind():
     assert SymbolResolver()._per_state == {}
 
 
+def test_declared_symbol_types_win_over_descriptor_instances():
+    """A shape given as a string builds its symbols with the default dtype; the SDFG's declaration decides."""
+    sdfg = dace.SDFG("declared_symbol_types")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", shape=("N", ), dtype=dace.float64)
+    state = sdfg.add_state()
+    me, _ = state.add_map("m", {"i": "0:N"})
+
+    assert state.sdfg_symbols()["N"] == dace.int64
+    assert state.symbols_defined_at(me)["N"] == dace.int64
+    assert SymbolResolver().defined_at(state, me)["N"] == dace.int64
+
+
 if __name__ == "__main__":
     test_state_symbols_give_the_same_result()
     test_propagation_resolves_the_state_symbols_once_per_state()
@@ -160,3 +173,4 @@ if __name__ == "__main__":
     test_the_enclosing_regions_are_part_of_the_state_symbols()
     test_propagation_keeps_the_loop_iterator()
     test_an_error_leaves_no_state_behind()
+    test_declared_symbol_types_win_over_descriptor_instances()
