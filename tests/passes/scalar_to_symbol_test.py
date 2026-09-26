@@ -783,6 +783,83 @@ def test_scalar_index_regression(memlet_volume_n):
     assert np.allclose(a, ref)
 
 
+def _cast_tasklet_sdfg(code: str, input_dtype: dace.typeclass) -> dace.SDFG:
+    """ An SDFG computing a transient scalar ``res`` with the given tasklet, from an ``int32`` symbol ``i`` and a
+    transient scalar ``inp`` of the given type, and then using ``res`` to index an array. """
+    sdfg = dace.SDFG('cast_tasklet')
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_scalar('inp', input_dtype, transient=True)
+    sdfg.add_scalar('res', dace.int64, transient=True)
+    state = sdfg.add_state()
+    t = state.add_tasklet('init', {}, {'o'}, 'o = 3')
+    state.add_edge(t, 'o', state.add_write('inp'), None, dace.Memlet('inp'))
+    state = sdfg.add_state_after(state)
+    t = state.add_tasklet('compute', {'inp'}, {'out'}, code)
+    state.add_edge(state.add_read('inp'), None, t, 'inp', dace.Memlet('inp'))
+    state.add_edge(t, 'out', state.add_write('res'), None, dace.Memlet('res'))
+    state = sdfg.add_state_after(state)
+    state.add_nedge(state.add_read('A'), state.add_write('B'), dace.Memlet('A[res]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('code', ['out = dace.int64(i) - inp', 'out = dace.int64(i) - dace.int64(inp)'])
+def test_promote_widening_cast(code: str):
+    """ A lossless cast of a signed integer (as the frontend emits for ``i - inp`` with an ``int32`` symbol ``i`` and
+    an ``int64`` scalar) does not prevent promotion, and is dropped from the promoted expression. Casts that keep the
+    width do not count towards the one widening cast allowed per expression. """
+    sdfg = _cast_tasklet_sdfg(code, dace.int64)
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'inp', 'res'}
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert 'res' in sdfg.symbols
+    assignments = {k: v for e in sdfg.all_interstate_edges() for k, v in e.data.assignments.items()}
+    assert 'dace' not in assignments['res']
+    assert dace.symbolic.pystr_to_symbolic(assignments['res']) == dace.symbolic.pystr_to_symbolic('i - inp')
+    sdfg.validate()
+
+    A = np.random.rand(20)
+    B = np.zeros(1)
+    sdfg(A=A, B=B, i=7)
+    assert B[0] == A[4]
+
+
+@pytest.mark.parametrize('code, input_dtype', [
+    ('out = dace.int16(inp) - i', dace.int32),
+    ('out = dace.int64(inp) - i', dace.uint32),
+    ('out = dace.int64(inp + 1) - i', dace.int32),
+    ('out = dace.int64(i) * dace.int64(inp)', dace.int32),
+])
+def test_do_not_promote_lossy_cast(code: str, input_dtype: dace.typeclass):
+    """ Casts that may change their argument's value (narrowing, changing signedness) or cast a compound expression are
+    not dropped, so the scalar is not promoted. Neither are two widening casts in one expression, since dropping both
+    would evaluate the expression in the narrower type. """
+    sdfg = _cast_tasklet_sdfg(code, input_dtype)
+    assert 'res' not in scalar_to_symbol.find_promotable_scalars(sdfg)
+
+
+def test_promote_widened_loop_index():
+    """ An index computed from a narrower loop variable and a wider scalar is promoted into the memlet. """
+
+    @dace.program
+    def widened_index(b: dace.float64[32], c: dace.float64[32]):
+        idx = int(b[0]) % 3
+        for i in range(3, 32):
+            b[i] = c[i - idx]
+
+    sdfg = widened_index.to_sdfg(simplify=True)
+    c_subsets = [e.data.subset for e, _ in sdfg.all_edges_recursive() if getattr(e.data, 'data', None) == 'c']
+    assert c_subsets and all('i' in {str(s) for s in subset.free_symbols} for subset in c_subsets)
+
+    b = np.random.rand(32) * 10
+    c = np.random.rand(32)
+    expected = b.copy()
+    idx = int(b[0]) % 3
+    expected[3:] = c[3 - idx:32 - idx]
+    sdfg(b=b, c=c)
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -810,3 +887,10 @@ if __name__ == '__main__':
     test_reversed_order()
     test_scalar_index_regression(False)
     test_scalar_index_regression(True)
+    test_promote_widening_cast('out = dace.int64(i) - inp')
+    test_promote_widening_cast('out = dace.int64(i) - dace.int64(inp)')
+    test_do_not_promote_lossy_cast('out = dace.int16(inp) - i', dace.int32)
+    test_do_not_promote_lossy_cast('out = dace.int64(inp) - i', dace.uint32)
+    test_do_not_promote_lossy_cast('out = dace.int64(inp + 1) - i', dace.int32)
+    test_do_not_promote_lossy_cast('out = dace.int64(i) * dace.int64(inp)', dace.int32)
+    test_promote_widened_loop_index()

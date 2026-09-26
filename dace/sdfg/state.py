@@ -1644,8 +1644,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         sdfg: SDFG = self.sdfg
 
         symbols = collections.OrderedDict(sdfg.symbols)
+        # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries
         for desc in sdfg.arrays.values():
-            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+            for s in desc.free_symbols:
+                symbols.setdefault(str(s), s.dtype)
 
         return symbols
 

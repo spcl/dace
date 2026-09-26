@@ -15,7 +15,7 @@ from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 import dace.frontend.python.astutils
-from typing import Callable, Union
+from typing import Callable, Optional, Union
 
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
@@ -24,6 +24,12 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'round': lambda arg_types: dtypes.typeclass(int),
+    # Symbolic functions (as they appear in subsets and range bounds), typed like their C++ runtime counterparts
+    'Abs': lambda arg_types: arg_types[0],
+    'Min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'Max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'int_floor': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'int_ceil': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
 }
 
 _cmpops = {
@@ -131,6 +137,61 @@ def infer_expr_type(code, symbols=None):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
         raise TypeError("Expected expression, got: {}".format(type(code)))
+
+
+def _range_bound_type(bound, symbols) -> dtypes.typeclass:
+    """The dtype a single range bound contributes; see :func:`infer_iteration_symbol_type`."""
+    try:
+        expr = symbolic.pystr_to_symbolic(bound)
+    except Exception:
+        expr = None
+    # sympy.Integer holds exactly the untyped integer literals: a TypedConstant declares its own
+    # dtype and is not one. Each literal is typed as the corresponding C literal would be: the
+    # default type if it fits, otherwise 64-bit signed (``sym2cpp`` prints it with ``LL``). This
+    # keeps the inclusive end ``N - 1`` a range stores for ``0:N`` as wide as ``N``, and a large
+    # literal from turning the iterate unsigned.
+    if isinstance(expr, sympy.Basic):
+        literal_types = {a: _literal_type(int(a)) for a in expr.atoms(sympy.Integer)}
+        if None not in literal_types.values():
+            if isinstance(expr, sympy.Integer):
+                return literal_types[expr]
+            if literal_types:
+                return infer_expr_type(
+                    expr.xreplace({
+                        a: symbolic.TypedConstant(a, t)
+                        for a, t in literal_types.items()
+                    }), symbols)
+    return infer_expr_type(bound, symbols)
+
+
+def _literal_type(value: int) -> Optional[dtypes.typeclass]:
+    """The narrowest of the default symbol type and ``int64`` that holds ``value``, or None if neither does."""
+    for dtype in (symbolic.DEFAULT_SYMBOL_TYPE, dtypes.int64):
+        info = np.iinfo(dtype.type)
+        if info.min <= value <= info.max:
+            return dtype
+    return None
+
+
+def infer_iteration_symbol_type(*bounds, symbols=None) -> dtypes.typeclass:
+    """
+    Return the dtype to declare an iteration symbol (map parameter, loop variable, PE index) with,
+    given the bounds of the range it iterates over.
+
+    An integer literal, bare or within a bound expression, carries no width of its own, so it only
+    promotes the result when it does not fit in :data:`~dace.symbolic.DEFAULT_SYMBOL_TYPE`, and then
+    to a signed 64-bit type as its C counterpart would. Inferring each bound in isolation instead
+    maps a Python ``int`` to 64 bits, which declares ``0:N`` 64-bit on account of the literal alone
+    and leaves the declaration disagreeing with every symbol instance the IR builds for that name.
+
+    :param bounds: Range bounds, as strings or symbolic expressions; ``None`` bounds are skipped.
+    :param symbols: Already-declared symbols, as a mapping from name to dtype.
+    :return: The dtype to declare the iteration symbol with.
+    """
+    inferred = [_range_bound_type(b, symbols or {}) for b in bounds if b is not None]
+    if not inferred:
+        return symbolic.DEFAULT_SYMBOL_TYPE
+    return dtypes.result_type_of(inferred[0], *inferred)
 
 
 def _dispatch(tree, symbols, inferred_symbols):
