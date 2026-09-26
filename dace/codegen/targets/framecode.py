@@ -972,6 +972,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+                # Further loop-carried symbols defined by the init statement (e.g. address cursors)
+                for name, rhs in loop_analysis.get_assignments(cfr.init_statement).items():
+                    if name == cfr.loop_variable or name in interstate_symbols:
+                        continue
+                    if name in global_symbols:
+                        interstate_symbols[name] = global_symbols[name]
+                    else:
+                        interstate_symbols[name] = infer_expr_type(rhs, global_symbols)
+                        global_symbols[name] = interstate_symbols[name]
 
             for e in cfr.dfs_edges(cfr.start_block):
                 symbols = e.data.new_symbols(sdfg, global_symbols)

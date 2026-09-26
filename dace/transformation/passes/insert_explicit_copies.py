@@ -190,6 +190,9 @@ class InsertExplicitCopies(ppl.Pass):
             # honours it the same way); dropping it here turns a legal copy into an expansion error.
             in_memlet.allow_oob = memlet.allow_oob
             out_memlet.allow_oob = memlet.allow_oob
+            # A memlet schedule (e.g. a loop-carried address cursor) describes the side the memlet's data names.
+            if not memlet.schedule.is_default:
+                (in_memlet if memlet.data == src_name else out_memlet).schedule = memlet.schedule.copy()
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)

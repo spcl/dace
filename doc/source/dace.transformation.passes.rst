@@ -73,6 +73,15 @@ Memlet Consolidation
    :show-inheritance:
 
 
+Memlet Schedules (Loop-Carried Address Cursors)
+-----------------------------------------------
+
+.. automodule:: dace.transformation.passes.memlet_schedules
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 State Fusion and SDFG Inlining
 ------------------------------
 
