@@ -3,6 +3,7 @@
 from .utils import *
 
 # ``from x import *`` is used to not break compatibility with previous versions of dace
+from .ai import *
 from .array_creation import *
 from .array_creation_dace import *
 from .array_creation_cupy import *
