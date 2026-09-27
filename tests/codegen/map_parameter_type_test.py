@@ -6,7 +6,8 @@ from typing import List
 import numpy as np
 
 import dace
-from dace import subsets
+from dace import subsets, symbolic
+from dace.transformation.dataflow import MapTiling
 
 
 def _map_sdfg(name: str, bound_type: dace.typeclass, begin, end, step=1, size=None) -> dace.SDFG:
@@ -59,6 +60,19 @@ def test_integer_function_bound_keeps_argument_type():
     sdfg = _map_sdfg('map_param_type_int_floor', dace.uint64, 0, 'int_floor(N, 2) - 1')
     headers = _loop_headers(sdfg)
     assert headers and all(h.startswith('for (uint64_t i = 0;') for h in headers), headers
+
+
+def test_tiled_map_keeps_default_type():
+    """A tiled map's inner end is a SymExpr (``Min(N - 1, tile_i + 31)``); its literals must not widen the iterate."""
+    sdfg = _map_sdfg('map_param_type_tiled', dace.int32, 0, 'N - 1')
+    map_entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    MapTiling.apply_to(sdfg, options={'tile_sizes': (32, )}, map_entry=map_entry)
+    assert any(
+        isinstance(rng[1], symbolic.SymExpr) for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) for rng in n.map.range)
+
+    headers = _loop_headers(sdfg) + _loop_headers(sdfg, 'tile_i')
+    assert len(headers) == 2 and all(h.startswith('for (int ') for h in headers), headers
 
 
 def test_dynamic_map_range_declares_connector_type():
@@ -118,6 +132,7 @@ if __name__ == '__main__':
     test_out_of_range_literal_bound_declares_int64()
     test_negative_start_with_out_of_range_literal_stays_signed()
     test_integer_function_bound_keeps_argument_type()
+    test_tiled_map_keeps_default_type()
     test_dynamic_map_range_declares_connector_type()
     test_64bit_iteration_does_not_overflow()
     test_consume_pe_index_declares_inferred_type()

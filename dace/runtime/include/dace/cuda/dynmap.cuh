@@ -175,7 +175,7 @@ namespace dace {
 
                 // do work
                 if (localSize > 0) {
-                    for (int j = localStart; j < localEnd; j++) {
+                    for (index_type j = localStart; j < localEnd; j++) {
                         work(localSrc, j);
                     }
                 }
