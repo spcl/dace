@@ -1742,6 +1742,20 @@ def _view_source_memlets(memlets: Sequence[Memlet], views: dict[str, Memlet]) ->
     return result
 
 
+def _unordered_access(accesses: mmu.MemletDict[list[tn.ScheduleTreeNode]], memlet: Memlet,
+                      ordered_before: set[int]) -> bool:
+    """
+    Returns whether a previous access in the current state to the data in ``memlet`` might be performed in parallel
+    with the node being registered.
+
+    :param accesses: The reads or writes performed so far in the current state.
+    :param memlet: The memlet accessed by the node being registered.
+    :param ordered_before: IDs of the nodes ordered before the node being registered through the dataflow.
+    :return: True if an access to ``memlet`` exists that is not ordered before the node.
+    """
+    return memlet in accesses and any(id(a) not in ordered_before for a in accesses[memlet])
+
+
 def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, views: dict[str, Memlet] | None = None):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
@@ -1787,45 +1801,40 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
         inputs = _view_source_memlets(n.input_memlets(), scope_views)
         outputs = _view_source_memlets(n.output_memlets(), scope_views)
 
-        def register_reads() -> None:
-            for inp in inputs:
-                if inp not in reads:
-                    reads[inp] = [n]
-                else:
-                    reads[inp].append(n)
+        # Nodes that write this node's inputs (transitively) are ordered before it in the state
+        node_parents: set[int] = set()
+        for inp in inputs:
+            if inp in writes:
+                for parent in writes[inp]:
+                    node_parents.add(id(parent))
+                    node_parents.update(parents[id(parent)])
 
-                # Transitively add parents
-                if inp in writes:
-                    for parent in writes[inp]:
-                        parents[id(n)].add(id(parent))
-                        parents[id(n)].update(parents[id(parent)])
+        if isinstance(n, tn.AssignNode):
+            # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
+            hazard = any(inp in writes for inp in inputs)
+        else:
+            # Potential write/write or read/write data race: a previous write or read of the written data that is
+            # not ordered before this node (i.e., this node does not depend on it through the dataflow)
+            hazard = any(
+                _unordered_access(writes, o, node_parents) or _unordered_access(reads, o, node_parents)
+                for o in outputs)
 
-        def unordered_reads(o: Memlet) -> bool:
-            """Returns True if another node read the output before, but is not guaranteed to run before this node."""
-            return any(r is not n and id(r) not in parents[id(n)] for r in reads[o])
-
-        register_reads()
-
-        # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
-        needs_boundary = isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs)
-
-        # Write after write or potential write/write data race, insert state boundary
-        needs_boundary = needs_boundary or any(o in writes and (o not in reads or unordered_reads(o)) for o in outputs)
-
-        # Potential read/write data race: if any read is not in the parents of this node, it might
-        # be performed in parallel
-        needs_boundary = needs_boundary or any(o in reads and unordered_reads(o) for o in outputs)
-
-        if needs_boundary:
+        if hazard:
+            # Insert a state boundary before this node, which then starts a new state
             boundaries_to_insert.append(i)
             reads.clear()
             writes.clear()
             parents.clear()
+            node_parents.clear()
 
-            # This node is the first one after the boundary
-            register_reads()
-
-        # Register writes after all hazards have been tested for
+        # Register the accesses of this node, also when it starts a new state: later nodes in that state must be
+        # ordered with respect to them
+        parents[id(n)] = node_parents
+        for inp in inputs:
+            if inp not in reads:
+                reads[inp] = [n]
+            else:
+                reads[inp].append(n)
         for out in outputs:
             if out not in writes:
                 writes[out] = [n]
