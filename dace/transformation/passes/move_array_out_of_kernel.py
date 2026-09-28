@@ -118,17 +118,19 @@ def assigns_symbol(sdfg: SDFG, name: str) -> bool:
 class SubscriptPrefixer(ast.NodeTransformer):
     """Prepend fixed leading index expressions to every subscript of one array name."""
 
-    __slots__ = ('array_name', 'prefix')
+    __slots__ = ('array_name', 'prefix', 'changed')
 
     def __init__(self, array_name: str, prefix: List[str]):
         self.array_name = array_name
         self.prefix = [ast.parse(expr, mode='eval').body for expr in prefix]
+        self.changed = False
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         self.generic_visit(node)
         if isinstance(node.value, ast.Name) and node.value.id == self.array_name:
             existing = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
             node.slice = ast.Tuple(elts=copy.deepcopy(self.prefix) + existing, ctx=ast.Load())
+            self.changed = True
         return node
 
 
@@ -140,7 +142,9 @@ def prepend_subscript_indices(code: str, array_name: str, prefix: List[str]) -> 
         tree = ast.parse(code)
     except SyntaxError:
         return code
-    return ast.unparse(ast.fix_missing_locations(SubscriptPrefixer(array_name, prefix).visit(tree)))
+    prefixer = SubscriptPrefixer(array_name, prefix)
+    tree = prefixer.visit(tree)
+    return ast.unparse(ast.fix_missing_locations(tree)) if prefixer.changed else code
 
 
 def free_symbol_names(exprs) -> OrderedSet:

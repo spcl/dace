@@ -11,7 +11,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.move_array_out_of_kernel import tile_extent, MoveArrayOutOfKernel
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel, prepend_subscript_indices, tile_extent
 
 NX, NZ = (dace.symbol(s, dtype=dace.int64) for s in ('NX', 'NZ'))
 GLOBAL = dtypes.StorageType.GPU_Global
@@ -726,6 +726,13 @@ def test_control_flow_reading_a_per_thread_buffer_is_refused():
     with pytest.warns(UserWarning, match='will be lifted'):
         with pytest.raises(NotImplementedError, match='varies per GPU thread'):
             sut.apply_pass(sdfg, {})
+
+
+def test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim():
+    """A name that only appears as a substring must not count as a rewrite, not even through reformatting."""
+    code = 'x+1 if tmp_flag else 0'
+    assert prepend_subscript_indices(code, 'tmp', ['i']) is code
+    assert prepend_subscript_indices('tmp[0]+1', 'tmp', ['i']) == 'tmp[i, 0] + 1'
 
 
 if __name__ == '__main__':
