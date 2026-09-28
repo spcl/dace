@@ -1,37 +1,54 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Turn a table filled once with literals into an SDFG constant, which every kernel reads without a copy."""
+"""Fold literal-filled tables into SDFG constants."""
 import ast
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, symbolic
+from dace import data, properties, symbolic
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import LoopRegion, SDFGState
+from dace.transformation import pass_pipeline as ppl, transformation
 
 #: Per table: the state that fills it, and the fill tasklets with the index and value each writes.
 Fill = Tuple[SDFGState, Dict[nodes.Tasklet, Tuple[int, object]]]
 
 
-def fold_constant_tables(sdfg: SDFG) -> None:
-    """Replace each literal-filled table (CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``) by an SDFG constant.
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class FoldConstantTables(ppl.Pass):
+    """Replace each table filled once with literals (CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``) by an SDFG
+    constant, removing the fill.
 
-    Every constant array becomes a register: host code and each kernel declare it locally, so any side reads it.
+    Only a transient 1-D array qualifies whose every element is written exactly once, by an input-less tasklet
+    assigning a literal, in one state outside every loop, and that nothing else writes.
     """
-    for name, (state, writes) in literal_fills(sdfg).items():
-        desc = sdfg.arrays[name]
-        values = np.zeros(desc.total_size, dtype=desc.dtype.type)
-        for index, value in writes.values():
-            values[index] = value
-        sdfg.add_constant(name, values, desc)
-        for tasklet in writes:
-            targets = [edge.dst for edge in state.out_edges(tasklet)]
-            state.remove_node(tasklet)
-            state.remove_nodes_from([target for target in targets if state.degree(target) == 0])
-    for name in sdfg.constants:
-        if name in sdfg.arrays:
-            sdfg.arrays[name].storage = dtypes.StorageType.Register
+
+    CATEGORY: str = 'Simplification'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.Nodes
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[OrderedSet[str]]:
+        """
+        :return: the names of the folded tables, or None if there is none.
+        """
+        folded = literal_fills(sdfg)
+        for name, (state, writes) in folded.items():
+            desc = sdfg.arrays[name]
+            values = np.zeros(desc.total_size, dtype=desc.dtype.type)
+            for index, value in writes.values():
+                values[index] = value
+            sdfg.add_constant(name, values, desc)
+            for tasklet in writes:
+                targets = [edge.dst for edge in state.out_edges(tasklet)]
+                state.remove_node(tasklet)
+                state.remove_nodes_from([target for target in targets if state.degree(target) == 0])
+        return OrderedSet(folded) or None
 
 
 def literal_fills(sdfg: SDFG) -> Dict[str, Fill]:

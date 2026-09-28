@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import properties
+from dace import dtypes, properties
 from dace.sdfg import SDFG
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
@@ -15,7 +15,7 @@ from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_ma
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
-from dace.transformation.passes.offloading.phases.constant_tables import fold_constant_tables
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.offloading.phases.host_level_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
@@ -102,7 +102,11 @@ class OffloadToAccelerator(ppl.Pass):
         # An early return leaves before the end, so its copy-backs need a state of their own on its path.
         entries = helpers.separate_early_returns(sdfg)
         # Before the placement: a table filled with literals is a constant every kernel reads, not one to copy.
-        fold_constant_tables(sdfg)
+        FoldConstantTables().apply_pass(sdfg, {})
+        # A constant is declared locally by host code and by each kernel, so it is a register on either side.
+        for name in sdfg.constants:
+            if name in sdfg.arrays:
+                sdfg.arrays[name].storage = dtypes.StorageType.Register
         analysis, IR, wrapped = self.place(sdfg, host_map_entries)
         insertion = CopyInsertion(sdfg, analysis.scopes)
         insertion.apply(IR)
