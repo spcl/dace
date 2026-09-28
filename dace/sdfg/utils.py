@@ -1010,10 +1010,12 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     view_edge = get_view_edge(state, view)
     if view_edge is None:
         return None
+
+    # Follow the memlet path
+    memlet_path = state.memlet_path(view_edge)
     if view_edge.dst == view:
-        return view_edge.src
-    else:
-        return view_edge.dst
+        return memlet_path[0].src
+    return memlet_path[-1].dst
 
 
 def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:

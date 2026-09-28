@@ -25,7 +25,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, propagation
+from dace.sdfg import nodes, graph as gr, propagation, utils as sdutil
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -281,7 +281,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           conntype: dtypes.typeclass,
                           codegen: 'TargetCodeGenerator',
                           ancestor: int = 1,
-                          is_write: bool = None) -> Tuple[str, str, str]:
+                          is_write: bool = None,
+                          const_read_only_array: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -333,6 +334,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
                 ref = '*'
+                typedef = make_const(typedef)
+            elif is_write is False and const_read_only_array:
+                # ``is_write`` is a direction at one node, not "never written in the callee".
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -746,6 +750,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
             return dst
+
+        # Writes through views conflict on the viewed container
+        dst = sdutil.get_last_view_node(dfg, dst) or dst
 
         if dfg.in_degree(dst) > 0:
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):
