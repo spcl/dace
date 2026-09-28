@@ -31,11 +31,7 @@ def gpu_device_depth(state: SDFGState, node: nodes.Node) -> int:
 
 
 def bound_check(map_entry: nodes.MapEntry) -> str:
-    """Condition selecting exactly the iterations ``map_entry``'s range owns, step included.
-
-    :param map_entry: Map whose range the condition reproduces.
-    :returns: A Python condition over the map's parameters.
-    """
+    """Condition selecting exactly the iterations ``map_entry``'s range owns, step included."""
     terms = []
     for param, (begin, end, step) in zip(map_entry.map.params, map_entry.map.range):
         terms.append(f'({param} >= {begin} and {param} <= {end})')
@@ -81,11 +77,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         return bool(modified & ppl.Modifies.Nodes)
 
     def move_map_to_if(self, state: SDFGState, map_entry: nodes.MapEntry) -> None:
-        """Replace a map scope with a bound-checked nested SDFG holding its body.
-
-        :param state: State holding the map.
-        :param map_entry: Map whose scope is dissolved.
-        """
+        """Replace a map scope with a bound-checked nested SDFG holding its body."""
         map_exit = state.exit_node(map_entry)
         # The map's own params are defined by the map, so the scope symbol table cannot list them.
         defined = state.symbols_defined_at(map_entry)
@@ -140,15 +132,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         state.remove_nodes_from([map_entry, map_exit])
 
     def next_level_maps(self, state: SDFGState, gpu_dev_map: nodes.MapEntry) -> OrderedSet[InnerMap]:
-        """``GPU_Device`` maps one nesting level below ``gpu_dev_map``.
-
-        They sit either directly in its scope or, when it holds none, in the nearest NestedSDFGs
-        below it.
-
-        :param state: State holding ``gpu_dev_map``.
-        :param gpu_dev_map: Kernel map to search under.
-        :returns: ``(state, map entry)`` pairs, in state node order.
-        """
+        """``GPU_Device`` maps directly in ``gpu_dev_map``'s scope, else in the nearest NestedSDFGs below it."""
         scope = list(state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map)))
         direct = OrderedSet((state, n) for n in scope if is_gpu_device_map(n))
         if direct:
@@ -213,14 +197,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             inner_map.map.range = outer_range
 
     def absorb(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
-        """Absorb one kernel's next level of nested ``GPU_Device`` maps into it.
-
-        :param state: State holding ``kernel``.
-        :param kernel: Kernel map that grows by the inner maps' parameters.
-        :returns: How many inner maps were lowered.
-        :raises NotImplementedError: An inner map contains further ``GPU_Device`` maps, or its range
-                                     cannot be evaluated where the kernel is launched.
-        """
+        """Absorb one kernel's next level of nested ``GPU_Device`` maps into it."""
         inner_maps = self.next_level_maps(state, kernel)
         if not inner_maps:
             return 0
