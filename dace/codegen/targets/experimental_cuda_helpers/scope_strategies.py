@@ -11,7 +11,8 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
-from dace.codegen.targets.cuda import _named_idx, kernel_launch_qualifiers
+from dace.codegen.targets.cuda import (_named_idx, chiplet_padding_condition, kernel_grid_conditions,
+                                       kernel_index_definitions, kernel_launch_qualifiers)
 from dace.transformation.dataflow.add_threadblock_map import product
 
 
@@ -109,10 +110,20 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
-            # Without an inner ThreadBlock map the kernel-map variables bind
-            # to thread indices instead -- same blockIdx-based formulas.
-            emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype, callsite_stream,
-                                       cfg, state_id, kernel_entry_node, self._dispatcher)
+            ctype = kernel_spec.gpu_index_ctype
+            for var_name, expr in kernel_index_definitions(kernel_spec.kernel_map, kernel_spec.block_dims,
+                                                           kernel_spec.per_thread, kernel_spec.chiplets,
+                                                           kernel_spec.chiplet_chunk):
+                callsite_stream.write(f'{ctype} {var_name} = {expr};', cfg, state_id, kernel_entry_node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
+            # Without a thread-block map every thread handles one iteration and masks the trailing blocks
+            if kernel_spec.per_thread:
+                conditions = kernel_grid_conditions(kernel_spec.kernel_map, kernel_spec.block_dims,
+                                                    kernel_spec.chiplets)
+            else:
+                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if kernel_spec.chiplets > 1 else []
+            for condition in filter(None, conditions):
+                scope_manager.open(condition=condition)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
 

@@ -20,8 +20,9 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
-from dace.codegen.targets.cuda import (POOL_RELEASED_LIFETIMES, compute_pool_release, gpu_cmake_options,
-                                       gpu_runtime_code, location_condition, location_index_exprs)
+from dace.codegen.targets.cuda import (chiplet_count, compute_pool_release, distribute_over_chiplets,
+                                       dynamic_map_input_args, gpu_cmake_options, gpu_runtime_code,
+                                       gpu_scope_maps_recursive, location_condition, location_index_exprs)
 from dace.codegen.target import TargetCodeGenerator
 
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
@@ -35,6 +36,10 @@ from dace.codegen.targets import cpp
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
+
+#: Lifetimes that allocate an array for the whole program rather than inside a state or scope.
+GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                    dtypes.AllocationLifetime.External)
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -70,6 +75,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._toplevel_schedule = None
 
         self.pool_release: Dict[Tuple[SDFG, str], Tuple[SDFGState, Set[nodes.Node]]] = {}
+        # Every pooled array released early, which the end of its lifetime must not free again
+        self.pool_released_early: Set[Tuple[SDFG, str]] = OrderedSet()
         self.has_pool = False
 
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
@@ -125,6 +132,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True
+        self.pool_released_early = OrderedSet(self.pool_release)
 
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
@@ -133,6 +141,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+                self._kernel_arglists[node].update(dynamic_map_input_args(state, node))
 
     @property
     def has_initializer(self) -> bool:
@@ -241,7 +250,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._in_device_code = False
             host_ptrname = cpp.ptr(name, data_desc, sdfg, self._frame)
 
-            is_global: bool = data_desc.lifetime in POOL_RELEASED_LIFETIMES
+            is_global: bool = data_desc.lifetime in GLOBAL_LIFETIMES
             defined_type, ctype = dispatcher.defined_vars.get(host_ptrname, is_global=is_global)
 
             self._in_device_code = True
@@ -276,6 +285,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', cfg, state_id, scope_entry)
 
         for e in dyn_inputs:
+            if e.data.data == e.dst_conn:
+                continue  # Already in scope under that name; redefining it would self-initialize.
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
@@ -692,7 +703,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             dataname = f'({dataname} - {sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(dataname):
-            is_global = nodedesc.lifetime in POOL_RELEASED_LIFETIMES
+            is_global = nodedesc.lifetime in GLOBAL_LIFETIMES
             self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
@@ -705,7 +716,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if nodedesc.pool:
                 # Pooled arrays whose release point was picked up by compute_pool_release are
                 # freed in generate_state; everything else is freed here.
-                if (sdfg, dataname) not in self.pool_release:
+                if (sdfg, node.data) not in self.pool_released_early:
                     gpu_stream = assigned_stream_expr(node)
                     callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeAsync({dataname}, {gpu_stream}));\n', cfg,
                                           state_id, node)
@@ -821,6 +832,13 @@ class KernelSpec:
         cudaCodeGen._in_device_code = restore_in_device_code
 
         self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
+        # Without a thread-block map, a kernel's own map spans the threads rather than the blocks
+        self.per_thread: bool = not any(
+            m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry)))
+        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(kernel_map_entry, list(self.grid_dims),
+                                                                      self.chiplets)
         self.gpu_index_ctype: str = self.get_gpu_index_ctype()
 
         if cudaCodeGen.backend not in ['cuda', 'hip']:
