@@ -16,6 +16,8 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 class CopyInsertion:
     """One copy insertion into ``sdfg`` from its placement IR; run it with :meth:`apply`."""
 
+    __slots__ = ('sdfg', 'scopes', 'no_copy_in_needed', 'written', 'placed_on_gpu', 'placed', 'entry_fills')
+
     def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]) -> None:
         self.sdfg = sdfg
         self.scopes = scopes

@@ -17,6 +17,8 @@ class OffloadingIRNode:
     OPEN_COND = 3
     EDGE = 4  # interstate edge
 
+    __slots__ = ('type', 'block', 'cpu_set', 'gpu_set', 'next', 'close', 'open', 'debug_name')
+
     def __init__(self, type: int, block: ControlFlowBlock | None, cpu_set: OrderedSet[str], gpu_set: OrderedSet[str],
                  next: list['OffloadingIRNode'], close: 'OffloadingIRNode | None'):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"

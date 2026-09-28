@@ -19,6 +19,8 @@ Locations = Tuple[OrderedSet[str], OrderedSet[str]]
 class CopyAnalysis:
     """One analysis of ``sdfg``; ``hybrid_states`` collects the states that touch an array from both sides."""
 
+    __slots__ = ('sdfg', 'scopes', 'hybrid_states')
+
     def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]) -> None:
         self.sdfg = sdfg
         self.scopes = scopes
@@ -175,19 +177,21 @@ class CopyAnalysis:
             if isinstance(node, nodes.MapEntry):
                 self.locations_of_map(state, node, gpu_set, cpu_set, is_gpu)
                 continue
-            if isinstance(node, nodes.AccessNode):
-                names = helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
-            elif isinstance(node, nodes.Tasklet):
-                names = self.arrays_used_by_node(state, node)
-            elif isinstance(node, (nodes.NestedSDFG, nodes.MapExit, nodes.LibraryNode)):
-                continue  # what it touches is at the boundary already
-            else:
-                raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} inside map {map_entry}")
-            for name in names:
+            for name in self.arrays_used_in_scope(state, node, map_entry):
                 if name in gpu_set and not is_gpu:
                     raise RuntimeError(f"{name} is used on the device and on the host inside map {map_entry}")
                 if is_gpu or name not in gpu_set:
                     (gpu_set if is_gpu else cpu_set).add(name)
+
+    def arrays_used_in_scope(self, state: SDFGState, node: nodes.Node, map_entry: nodes.MapEntry) -> OrderedSet[str]:
+        """What ``node``, inside ``map_entry``'s scope, accesses beyond the scope boundary already counted."""
+        if isinstance(node, nodes.AccessNode):
+            return helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
+        if isinstance(node, nodes.Tasklet):
+            return self.arrays_used_by_node(state, node)
+        if isinstance(node, (nodes.NestedSDFG, nodes.MapExit, nodes.LibraryNode)):
+            return OrderedSet()
+        raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} inside map {map_entry}")
 
     def locations_of_state(self, state: SDFGState) -> Locations:
         """Where the top-level nodes of ``state`` want each array; a hybrid state is recorded and put on the device."""
