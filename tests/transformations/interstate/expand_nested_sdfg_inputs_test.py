@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import dace
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.sdfg.state import LoopRegion
@@ -298,6 +299,51 @@ def test_widening_a_strided_window_scales_the_inner_index_by_its_step():
     a, b = np.arange(10.0), np.zeros(5)
     sdfg(a=a, b=b, N=10)
     np.testing.assert_array_equal(b, a[0:10:2])
+
+
+def indexed_window_sdfg(read: str, x_stride: int, by_condition: bool) -> dace.SDFG:
+    """``b[0] = x[1]`` for the window ``x = a[read]``, read by index on an interstate edge (an assignment, or a
+    condition that selects which of two values is written)."""
+    inner = dace.SDFG('indexed')
+    inner.add_array('x', [4], dace.float64, strides=[x_stride])
+    inner.add_array('y', [1], dace.float64)
+    inner.add_symbol('t', dace.float64)
+    first = inner.add_state(is_start_block=True)
+    second = inner.add_state()
+    if by_condition:
+        for condition, value in (('x[1] > 2', '1.0'), ('x[1] <= 2', '0.0')):
+            branch = inner.add_state()
+            inner.add_edge(first, branch, dace.InterstateEdge(condition=condition))
+            inner.add_edge(branch, second, dace.InterstateEdge(assignments={'t': value}))
+    else:
+        inner.add_edge(first, second, dace.InterstateEdge(assignments={'t': 'x[1]'}))
+    write = second.add_tasklet('write', {}, {'o'}, 'o = t')
+    second.add_edge(write, 'o', second.add_write('y'), None, dace.Memlet('y[0]'))
+
+    outer = dace.SDFG('indexed_outer')
+    outer.add_array('a', [16], dace.float64)
+    outer.add_array('b', [1], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {'x'}, {'y'})
+    state.add_edge(state.add_read('a'), None, node, 'x', dace.Memlet(read))
+    state.add_edge(node, 'y', state.add_write('b'), None, dace.Memlet('b[0]'))
+    return outer
+
+
+@pytest.mark.parametrize('read, x_stride, element', [('a[1:8:2]', 2, 3), ('a[2:6]', 1, 3)])
+@pytest.mark.parametrize('by_condition', [False, True])
+def test_an_index_read_on_an_interstate_edge_moves_with_the_window(read, x_stride, element, by_condition):
+    sdfg = indexed_window_sdfg(read, x_stride, by_condition)
+
+    assert sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs) == 1
+
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    edge_code = ' '.join(e.data.condition.as_string + ' ' + ' '.join(e.data.assignments.values())
+                         for e in inner.all_interstate_edges())
+    assert f'a[{element}]' in edge_code and 'x[' not in edge_code
+    a, b = np.arange(16.0), np.zeros(1)
+    sdfg(a=a, b=b)
+    assert b[0] == (float(element > 2) if by_condition else a[element])
 
 
 if __name__ == "__main__":

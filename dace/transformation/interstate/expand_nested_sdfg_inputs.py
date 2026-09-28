@@ -20,7 +20,7 @@ Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``
 """
 import ast
 import copy
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
@@ -160,6 +160,29 @@ def widened_range(lo: sympy.Basic, hi: sympy.Basic, stp: sympy.Basic, offset: sy
     position ``p`` is outer ``offset + p * step``."""
     # a single element keeps its own step: there is nothing to stride over
     return (offset + lo * step, offset + hi * step, stp if lo == hi else stp * step)
+
+
+def outer_indices(indices: Sequence[sympy.Basic], offset_dims: List[sympy.Basic], collapsed_dims: List[bool],
+                  step_dims: List[sympy.Basic], inner_shape: Tuple) -> List[sympy.Basic]:
+    """Map the inner indices of a symbolic subscript to the outer array, as ``_rewrite_memlets_with_offset`` maps
+    memlet begins: a full-rank subscript maps each axis, a rank-reduced one reads collapsed axes at their offset."""
+    if len(indices) == len(offset_dims):
+        return [
+            index if keeps_absolute_index(index, offset, inner_shape, dim) else offset + index * step
+            for dim, (index, offset, step) in enumerate(zip(indices, offset_dims, step_dims))
+        ]
+    surviving = iter(indices)
+    return [
+        offset if collapsed else offset + next(surviving) * step
+        for offset, collapsed, step in zip(offset_dims, collapsed_dims, step_dims)
+    ]
+
+
+def uncollapsed_indices(indices: Sequence[sympy.Basic], offset_dims: List[sympy.Basic],
+                        collapsed_dims: List[bool]) -> List[sympy.Basic]:
+    """Reinsert the collapsed axes of an already offset subscript at their offsets."""
+    surviving = iter(indices)
+    return [offset if collapsed else next(surviving) for offset, collapsed in zip(offset_dims, collapsed_dims)]
 
 
 def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
@@ -323,6 +346,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # renaming ``__tmp_b`` → A would match BOTH A-memlets and erase the [1] offset.
     # Offset once per array (``apply_offset``): a second pass (array read AND written, shared
     # outer name) still renames/widens its own connector, but re-offsetting double-counts.
+    step_dims = step_dims or [1] * len(offset_dims)
     if apply_offset:
         _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims, inner_shape, step_dims)
 
@@ -350,11 +374,10 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             # whenever a dim was collapsed to size 1. A ``zip(args[1:], ...)`` truncated to that
             # shorter length, so a collapsed mask ``I[0]`` on an (N, N) map widened to ``I[__i0]``
             # (a whole row) instead of ``I[__i0, __i1]`` -- dropping every trailing map dim.
-            orig_indices = iter(args[1:])
-            new_indices = [
-                offset if collapsed else next(orig_indices) for offset, collapsed in zip(offset_dims, collapsed_dims)
-            ]
-            return symbolic.Subscript(base, *new_indices)
+            if not apply_offset:
+                return symbolic.Subscript(base, *uncollapsed_indices(args[1:], offset_dims, collapsed_dims))
+            return symbolic.Subscript(base, *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims,
+                                                           inner_shape))
         # Not our target: rebuild the original Subscript verbatim.
         return symbolic.Subscript(*args)
 
@@ -370,7 +393,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     outer_is_scalar = isinstance(desc, data.Scalar)
 
     # Uncollapse dims (interstate edges).
-    for edge in inner_sdfg.edges():
+    for edge in inner_sdfg.all_interstate_edges():
         assignments = edge.data.assignments
         new_assignments = dict()
         for var, str_expr in assignments.items():
@@ -417,6 +440,9 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             return cb
         return CodeBlock(symbolic.symstr(_rewrite_connector_refs(sym)))
 
+    for edge in inner_sdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            edge.data.condition = _rewrite_codeblock(edge.data.condition)
     for cfg in inner_sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
             cfg.loop_condition = _rewrite_codeblock(cfg.loop_condition)
@@ -448,9 +474,12 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         outer_sym = symbolic.symbol(outer_name)
 
         def _index_to_outer(*args):
-            # ``inner_name[x...]`` -> ``outer_name[x...]`` (keep the existing index).
-            if str(args[0]) == inner_name:
+            # ``inner_name[x...]`` -> ``outer_name[offset + x * step...]``.
+            if str(args[0]) == inner_name and not apply_offset:
                 return symbolic.Subscript(outer_sym, *args[1:])
+            if str(args[0]) == inner_name:
+                return symbolic.Subscript(outer_sym,
+                                          *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims, inner_shape))
             return symbolic.Subscript(*args)
 
         def _rw_index_expr(expr):

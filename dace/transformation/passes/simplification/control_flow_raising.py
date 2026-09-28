@@ -222,8 +222,11 @@ class ControlFlowRaising(ppl.Pass):
 
                         conditional.add_branch(cond, branch)
                         if oe.dst is merge_block:
-                            # Empty branch.
-                            branch.add_state('noop')
+                            # Empty branch; it still runs the edge's assignments.
+                            noop = branch.add_state('noop', is_start_block=True)
+                            if oe.data.assignments:
+                                branch.add_edge(noop, branch.add_state('noop_end'),
+                                                InterstateEdge(assignments=oe.data.assignments))
                             graph.remove_edge(oe)
                             continue
 
