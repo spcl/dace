@@ -145,6 +145,16 @@ def test_fill_cuda_1d_gpu():
     assert cp.all(B[50:100] == 0)
 
 
+def test_fill_cuda_frame_includes_no_cuda_runtime():
+    """The host frame reaches the GPU runtime through ``dace.h``, which picks CUDA or HIP; a HIP
+    build cannot include ``cuda_runtime.h``."""
+    sdfg = _get_sdfg("CUDA", gpu=True)
+    sdfg.name += "_frame_headers"
+    sdfg.expand_library_nodes()
+    host_code = '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cpp')
+    assert 'cuda_runtime.h' not in host_code
+
+
 @pytest.mark.gpu
 def test_fill_cuda_3d_gpu():
     """``CUDA`` zeros the 3D GPU sub-block, leaving the rest unchanged."""

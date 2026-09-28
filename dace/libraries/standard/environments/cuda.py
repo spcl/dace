@@ -14,7 +14,7 @@ class CUDA:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["cuda_runtime.h"]}
+    headers = []
     state_fields = []
     init_code = ""
     finalize_code = ""
