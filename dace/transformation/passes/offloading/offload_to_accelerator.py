@@ -37,11 +37,17 @@ class OffloadToAccelerator(ppl.Pass):
         desc="Safety bound on the placement fixpoint. Reaching it is a bug, not a workload property: the loop "
         "converges once no state is hybrid and no container changed.")
     verbose = properties.Property(dtype=bool, default=False, desc="Print the host maps, hybrid states and IR.")
+    pin_host_loop_maps = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Keep a serial host loop's small maps on the host when offloading them would copy the containers "
+        "they share with the loop's host code every iteration (see maps_pinned_by_host_loops).")
 
     def __init__(self,
                  host_maps: HostMapSpec = False,
                  max_iterations: Optional[int] = None,
                  verbose: Optional[bool] = None,
+                 pin_host_loop_maps: Optional[bool] = None,
                  **kwargs: Any) -> None:
         """
         :param host_maps: maps that keep a host schedule so the maps under them become the kernels; see
@@ -49,6 +55,7 @@ class OffloadToAccelerator(ppl.Pass):
             ``MapEntry`` cannot round-trip through JSON.
         :param max_iterations: overrides the safety bound on the placement fixpoint.
         :param verbose: print the host maps, hybrid states and IR.
+        :param pin_host_loop_maps: overrides the ``pin_host_loop_maps`` property.
         :note: a map holding a callback is kept on the host whatever ``host_maps`` says.
         """
         super().__init__(**kwargs)
@@ -56,6 +63,8 @@ class OffloadToAccelerator(ppl.Pass):
             self.max_iterations = max_iterations
         if verbose is not None:
             self.verbose = verbose
+        if pin_host_loop_maps is not None:
+            self.pin_host_loop_maps = pin_host_loop_maps
         # make_properties allows a non-Property attribute only with a leading underscore.
         self._host_maps = host_maps
 
@@ -79,7 +88,8 @@ class OffloadToAccelerator(ppl.Pass):
         host_map_entries = host_maps(sdfg, self._host_maps)
         if self.verbose and host_map_entries:
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
-        assign_schedules(sdfg, host_map_entries, maps_pinned_by_host_loops(sdfg))
+        pinned = maps_pinned_by_host_loops(sdfg) if self.pin_host_loop_maps else OrderedSet()
+        assign_schedules(sdfg, host_map_entries, pinned)
 
         analysis, IR, wrapped = self.place(sdfg)
         insertion = CopyInsertion(sdfg, analysis.scopes)

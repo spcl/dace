@@ -748,9 +748,9 @@ def copies_inside_loops(sdfg: dace.SDFG) -> list[str]:
     ]
 
 
-def offloaded_program(program: dace.frontend.python.parser.DaceProgram) -> dace.SDFG:
+def offloaded_program(program: dace.frontend.python.parser.DaceProgram, pin: bool = True) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False, pin_host_loop_maps=pin)
     sdfg.validate()
     return sdfg
 
@@ -765,6 +765,16 @@ def test_a_small_map_in_a_host_loop_stays_on_the_host():
         if isinstance(n, dace.nodes.MapEntry) and n.map.range.num_elements() == 4
     ]
     assert gather and all(n.map.schedule == dtypes.ScheduleType.Sequential for n in gather)
+
+
+def test_without_pinning_a_small_map_in_a_host_loop_is_a_kernel():
+    """Pinning is opt-in: by default every top-level map is a kernel."""
+    sdfg = offloaded_program(rows_with_a_small_gather, pin=False)
+    gather = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.range.num_elements() == 4
+    ]
+    assert gather and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in gather)
 
 
 def test_a_map_over_the_whole_shared_array_stays_a_kernel():

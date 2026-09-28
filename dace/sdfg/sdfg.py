@@ -3085,7 +3085,13 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True, host_maps=False):
+    def apply_gpu_transformations(self,
+                                  states=None,
+                                  validate=True,
+                                  validate_all=False,
+                                  simplify=True,
+                                  host_maps=False,
+                                  pin_host_loop_maps=False):
         """ Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
             :param states: unused; kept so a caller passing it keeps working.
@@ -3097,6 +3103,8 @@ class SDFG(ControlFlowRegion):
                               no heuristics; ``True`` derives them; a list names them outright, each
                               as a map label or as the ``MapEntry`` itself. A map holding a callback
                               stays on the host whatever this says -- a kernel cannot issue one.
+            :param pin_host_loop_maps: keep a serial host loop's small maps on the host when offloading them
+                                       would copy what they share with the loop's host code every iteration.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
@@ -3104,7 +3112,8 @@ class SDFG(ControlFlowRegion):
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
         # The pipeline runs ControlFlowRaising first, which the offloading depends on.
-        ppl.Pipeline([OffloadToAccelerator(host_maps=host_maps)]).apply_pass(self, {})
+        ppl.Pipeline([OffloadToAccelerator(host_maps=host_maps,
+                                           pin_host_loop_maps=pin_host_loop_maps)]).apply_pass(self, {})
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
         # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:
