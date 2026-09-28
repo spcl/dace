@@ -324,11 +324,12 @@ class SplitMapForTileRemainder(ppl.Pass):
         # freshly replicated remainder map.
         # Safe: the comprehension is fully evaluated before the first ``_split`` mutates anything.
         scan_cache: dict[int, Any] = {}
-        eligible = [(n, g, map_tile_widths(g, n, tuple(self.widths))) for n, g in sdfg.all_nodes_recursive()
-                    if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState)
-                    and is_vectorizable_map(g, n, K, scan_cache=scan_cache) and len(n.map.params) >= K
-                    and not n.map.label.endswith(TILE_MAIN_MARKER) and not n.map.label.endswith(SCALAR_TAIL_MARKER)
-                    and not n.map.label.endswith(TILE_K1_TAIL_MARKER) and not n.map.label.endswith(MASKED_TAIL_MARKER)]
+        eligible = [
+            (n, g, map_tile_widths(g, n, tuple(self.widths))) for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and len(n.map.params) >= K
+            and not n.map.label.endswith((TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, TILE_K1_TAIL_MARKER,
+                                          MASKED_TAIL_MARKER)) and is_vectorizable_map(g, n, K, scan_cache=scan_cache)
+        ]
         for n, g, widths in eligible:
             if self._split(g, n, widths):
                 applied += 1
@@ -336,11 +337,6 @@ class SplitMapForTileRemainder(ppl.Pass):
                     self._record_stride_facts(g, n)
         if self.range_check and (self._range_checks or self._stride_checks):
             self._emit_range_checks()
-        if applied:
-            # ``replicate_scope`` deep-copies body NestedSDFGs without registering
-            # the clone in ``cfg_list``; rebuild so later passes (and
-            # ``expand_library_nodes``) resolve the new nested CFGs.
-            sdfg.reset_cfg_list()
         assert_invariant(no_memlet_dim_mismatch(sdfg), "SplitMapForTileRemainder",
                          "memlet subset and other_subset have matching dimensionality")
         return applied or None

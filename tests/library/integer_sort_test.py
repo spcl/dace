@@ -42,7 +42,7 @@ def _build_sort_sdfg(dace_dtype: dace.dtypes.typeclass, n: int, implementation: 
 
 
 @pytest.mark.parametrize('dace_dtype,np_dtype', _DTYPES)
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'ISO C++'])
 def test_integer_sort_matches_numpy(dace_dtype: dace.dtypes.typeclass, np_dtype, implementation: str):
     """Sorting matches ``np.sort`` for each supported integer dtype and implementation."""
     n = 257  # not a power of 2; avoids hiding stride/length bugs
@@ -56,7 +56,7 @@ def test_integer_sort_matches_numpy(dace_dtype: dace.dtypes.typeclass, np_dtype,
                                                       f'{np.argmax(arr_out != np.sort(arr_in))}.')
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'ISO C++'])
 def test_integer_sort_single_element(implementation: str):
     """A length-1 array is already sorted; output must equal input."""
     sdfg = _build_sort_sdfg(dace.int32, 1, implementation)
@@ -66,7 +66,7 @@ def test_integer_sort_single_element(implementation: str):
     assert arr_out[0] == 42
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'ISO C++'])
 def test_integer_sort_already_sorted_is_identity(implementation: str):
     """Sorting an already-sorted array yields the same array."""
     n = 100
@@ -77,7 +77,7 @@ def test_integer_sort_already_sorted_is_identity(implementation: str):
     assert np.array_equal(arr_out, arr_in)
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'ISO C++'])
 def test_integer_sort_with_duplicates(implementation: str):
     """Duplicates are preserved and clustered together by ``np.sort``-equivalent ordering."""
     n = 64

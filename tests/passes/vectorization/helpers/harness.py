@@ -444,6 +444,10 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                 remainder_strategy=tile_remainder,
                                 branch_mode=branch_mode,
                                 scalar_remainder_emit=scalar_remainder_emit)).apply_pass(copy_sdfg, {})
+        # The vectorizer never rebuilds ``cfg_list``: every region it adds or drops must already be
+        # registered exactly where a full rebuild would put it.
+        regions = list(copy_sdfg.all_control_flow_regions(recursive=True))
+        assert copy_sdfg.cfg_list == regions, "vectorizer left cfg_list out of step with the CFG tree"
         copy_sdfg.validate()
         # Read before ``compile()``, which expands the tile nodes away.
         control = tile_library_nodes(sdfg)

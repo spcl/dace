@@ -2667,7 +2667,7 @@ def c_scan_identities(code: str) -> str:
 
 
 #: ``target = dace::find_first_index((begin), (end), [&](long long __i) -> bool { return (pred); },
-#: parallel);`` -- the one statement ``ExpandFindFirstPure`` and ``ExpandFindFirstOpenMP`` write.
+#: parallel);`` -- the one statement ``ExpandFindFirstSequential`` and ``ExpandFindFirstCPU`` write.
 #: Anchored on the whole statement, target included. The bounds are captured as ONE group and spliced
 #: through unread: the expansion parenthesizes each of them, so they arrive as two call arguments
 #: however many commas the extents contain.

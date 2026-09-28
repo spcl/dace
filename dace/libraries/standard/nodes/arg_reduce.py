@@ -29,8 +29,8 @@ Expansions:
 * ``pure``: the same sequential scan built from SDFG components (a loop region and Python
   tasklets), for consumers that read the SDFG rather than compile it. Slower than ``sequential``,
   which is why nothing picks it for speed.
-* ``OpenMP``: the same scan split across threads under a ``declare reduction``
-  over the (value, index) pair (see :class:`ExpandArgReduceOpenMP`).
+* ``CPU``: the same scan split across threads under a ``declare reduction``
+  over the (value, index) pair (see :class:`ExpandArgReduceCPU`).
 * ``CUDA`` (GPU): ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin`` through
   ``dace::cub::arg_reduce``, which answers both scalar outputs. A contiguous
   untransformed operand goes in as a raw pointer, which is what lets CUB use
@@ -243,7 +243,7 @@ class ExpandArgReducePure(ExpandTransformation):
 
 
 @library.expansion
-class ExpandArgReduceOpenMP(ExpandTransformation):
+class ExpandArgReduceCPU(ExpandTransformation):
     """Parallel CPU lowering: an OpenMP ``declare reduction`` over a (value, index) pair.
 
     argmax is associative on the PAIR, not on the value alone -- combining two partial results has
@@ -368,15 +368,15 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ArgReduce(nodes.LibraryNode):
     """Argmax / argmin over ``_in`` -> ``_out_val`` (value) + ``_out_idx`` (index).
 
-    :cvar implementations: ``"sequential"`` (CPU sequential scan), ``"pure"`` (the same scan as SDFG
-        components), ``"OpenMP"`` (parallel lane-blocked pair reduction) and ``"CUDA"`` (CUB
+    :cvar implementations: ``"sequential"`` (C++ sequential scan), ``"pure"`` (the same scan as SDFG
+        components), ``"CPU"`` (parallel lane-blocked pair reduction) and ``"CUDA"`` (CUB
         ArgMax/ArgMin). ``default_implementation = "sequential"``.
     """
 
     implementations = {
         'sequential': ExpandArgReduceSequential,
         'pure': ExpandArgReducePure,
-        'OpenMP': ExpandArgReduceOpenMP,
+        'CPU': ExpandArgReduceCPU,
         'CUDA': ExpandArgReduceCUDA,
     }
     default_implementation = 'sequential'

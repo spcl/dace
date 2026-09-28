@@ -15,8 +15,8 @@ This transformation does that offset adjustment up-front. Per in/out edge:
   * add the offset to every inner memlet referencing the connector's array.
 After it runs, every edge passes the full-array check and ``InlineMultistateSDFG.apply()`` is correct.
 
-Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``a[0:1, 0:M]`` →
-1-D ``[M]``); the outer array is absent from the parent SDFG (orphan descriptor).
+A connector of lower rank than its outer array (axis-collapse, ``a[0:1, 0:M]`` as 1-D ``[M]``) is widened
+back to the outer rank. Refuses when the outer array is absent from the parent SDFG (orphan descriptor).
 """
 import ast
 import copy
@@ -183,6 +183,25 @@ def uncollapsed_indices(indices: Sequence[sympy.Basic], offset_dims: List[sympy.
     """Reinsert the collapsed axes of an already offset subscript at their offsets."""
     surviving = iter(indices)
     return [offset if collapsed else next(surviving) for offset, collapsed in zip(offset_dims, collapsed_dims)]
+
+
+def window_steps(outer_subset: subsets.Range, collapsed_dims: List[bool], inner_desc: data.Data,
+                 outer_desc: data.Data) -> List[sympy.Basic]:
+    """Per outer dim, the step an inner index is scaled by when the window is widened: the window's step where
+    the inner array is a COMPACT view of it (inner stride = outer stride * step, so ``x[k]`` is element ``k``
+    of ``a[0:N:2]``), ``1`` where the inner array keeps the outer stride and its indices already carry the
+    step (``x[2*i]`` over the same window)."""
+    full_rank = len(inner_desc.shape) == len(outer_subset.ranges)
+    steps, inner_dim = [], 0
+    for d, ((_lo, _hi, stp), collapsed) in enumerate(zip(outer_subset.ranges, collapsed_dims)):
+        if not full_rank and collapsed:
+            steps.append(1)
+            continue
+        inner_stride = inner_desc.strides[d if full_rank else inner_dim]
+        inner_dim += 1
+        compact = stp != 1 and symbolic.simplify(inner_stride - outer_desc.strides[d] * stp) == 0
+        steps.append(stp if compact else 1)
+    return steps
 
 
 def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
@@ -617,6 +636,11 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 continue
             if edge.data.subset != _full_subset(sdfg, edge.data.data):
                 return True
+            # A whole-array edge can still bind a connector of lower rank (``mass[0:N, 0]`` of an
+            # ``(N, 1)`` array as an ``(N,)`` connector), which the inner memlets index by that rank.
+            inner_arr = nsdfg_node.sdfg.arrays.get(edge.dst_conn if edge.dst is nsdfg_node else edge.src_conn)
+            if inner_arr is not None and len(inner_arr.shape) != len(outer_arr.shape):
+                return True
         return False
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> None:
@@ -684,6 +708,13 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # (``i - Min`` → ``i`` → ``i + Min``), collapsing the slide. So offset only on the FIRST
         # pass (``apply_offset``); BOTH passes still rename/widen their own connector (direction-
         # gated; skipping a pass leaves a dangling connector → hang).
+        # Before any rename: an array both read and written loses its inner name on the first pass.
+        steps = {
+            (direction, conn):
+            window_steps(outer_subset, collapsed_dims, nsdfg_node.sdfg.arrays[conn], sdfg.arrays[outer_arr_name])
+            for direction, subsets_by_conn in (('in', read_subsets), ('out', write_subsets))
+            for conn, (outer_arr_name, outer_subset, collapsed_dims) in subsets_by_conn.items()
+        }
         for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in read_subsets.items():
             apply_offset = conn not in processed_inner_arrays
             processed_inner_arrays.add(conn)
@@ -695,7 +726,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
                                               direction='in',
                                               apply_offset=apply_offset,
-                                              step_dims=[stp for (_lo, _hi, stp) in outer_subset.ranges])
+                                              step_dims=steps['in', conn])
 
         for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in write_subsets.items():
             apply_offset = conn not in processed_inner_arrays
@@ -708,7 +739,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
                                               direction='out',
                                               apply_offset=apply_offset,
-                                              step_dims=[stp for (_lo, _hi, stp) in outer_subset.ranges])
+                                              step_dims=steps['out', conn])
 
         # Thread any gather/scatter INDEX array referenced inside an inner memlet SUBSET but
         # absent from ``inner_sdfg.arrays``. ``A[B[i]]`` where ``B`` was never a boundary

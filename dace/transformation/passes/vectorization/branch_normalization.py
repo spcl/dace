@@ -513,7 +513,6 @@ class BranchNormalization(ppl.Pass):
             raise NotImplementedError(f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
                                       f"({cond_text!r}) although its arms write data it reads; "
                                       f"serializing the arms would re-test a mutated guard")
-        parent.reset_cfg_list()
         cond_name = resolved[0]
         snapshot_subset = "0" if local_sdfg.arrays[cond_name].total_size == 1 else subset_str
         return f"{cond_name}[{snapshot_subset}]"
@@ -602,7 +601,6 @@ class BranchNormalization(ppl.Pass):
         for edge in list(parent.out_edges(cb)):
             parent.add_edge(chain[-1], edge.dst, edge.data)
         parent.remove_node(cb)
-        parent.reset_cfg_list()
 
     def serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
                           body1: ControlFlowRegion) -> bool:
@@ -640,7 +638,6 @@ class BranchNormalization(ppl.Pass):
             parent.remove_edge(oe)
             parent.add_edge(neg_block, oe.dst, copy.deepcopy(oe.data))
         parent.add_edge(cb, neg_block, dace.InterstateEdge())
-        parent.reset_cfg_list()
         return True
 
     def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,

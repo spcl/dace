@@ -82,12 +82,12 @@ def refuse_wrong_machine(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
         raise NotImplementedError(f"{node.label}: FindFirst reads GPU memory; set implementation='CUDA' on the node "
                                   "(a host expansion would dereference a device pointer).")
     if want_device and not on_device:
-        raise NotImplementedError(f"{node.label}: FindFirst(CUDA) reads host memory; use the 'OpenMP' or 'pure' "
+        raise NotImplementedError(f"{node.label}: FindFirst(CUDA) reads host memory; use the 'CPU' or 'sequential' "
                                   "implementation (a device kernel cannot dereference a host pointer).")
 
 
 @library.expansion
-class ExpandFindFirstPure(ExpandTransformation):
+class ExpandFindFirstSequential(ExpandTransformation):
     """Serial CPU lowering: :cpp:func:`dace::find_first_index` with the chunk loop unthreaded.
 
     Still blocked and ``simd``-scanned inside a chunk, and still cancels between chunks -- serial
@@ -99,14 +99,14 @@ class ExpandFindFirstPure(ExpandTransformation):
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         node.validate(sdfg, state)
         refuse_wrong_machine(node, state, sdfg, want_device=False)
-        return nodes.Tasklet(f'{node.label}_pure',
+        return nodes.Tasklet(f'{node.label}_sequential',
                              find_first_connectors(node, state, sdfg), {OUTPUT_CONNECTOR_NAME: None},
                              find_first_code(node, parallel=False),
                              language=dace.dtypes.Language.CPP)
 
 
 @library.expansion
-class ExpandFindFirstOpenMP(ExpandTransformation):
+class ExpandFindFirstCPU(ExpandTransformation):
     """Parallel CPU lowering: chunks handed out ``schedule(dynamic, 1)``, cancelling on a shared
     hint. See :cpp:func:`dace::find_first_index` for why the hint's race is benign."""
 
@@ -200,16 +200,16 @@ class ExpandFindFirstCUDA(ExpandTransformation):
 class FindFirst(nodes.LibraryNode):
     """Smallest ``i`` in ``[begin, end)`` with ``predicate`` true, or ``begin >= end``'s ``end``.
 
-    :cvar implementations: ``"OpenMP"`` (parallel chunked search, the default), ``"pure"``
+    :cvar implementations: ``"CPU"`` (parallel chunked search, the default), ``"sequential"``
         (the same search on one thread) and ``"CUDA"`` (the device search).
     """
 
     implementations = {
-        'pure': ExpandFindFirstPure,
-        'OpenMP': ExpandFindFirstOpenMP,
+        'sequential': ExpandFindFirstSequential,
+        'CPU': ExpandFindFirstCPU,
         'CUDA': ExpandFindFirstCUDA,
     }
-    default_implementation = 'OpenMP'
+    default_implementation = 'CPU'
 
     #: The ANSWER is a host scalar in every expansion, the CUDA one included: the device search
     #: leaves its result in CUB scratch and ``find_first_index_device`` copies it back and writes
