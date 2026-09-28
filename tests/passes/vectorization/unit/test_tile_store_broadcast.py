@@ -25,6 +25,7 @@ constant store is now a ``TileStore`` lib node.
 
 import pytest
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -118,6 +119,9 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
     sdfg = _tidy_branch.to_sdfg()
     sdfg.name = "tidy_branch_tile_only"
     sdfg.validate()
+    # The vectorizer's input contract: canonical form. ``lift_copy`` off: the constant stores are the
+    # subject, not a memset library node.
+    canonicalize(sdfg, validate=True, lift_copy=False)
 
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -125,7 +129,6 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=False,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
         )).apply_pass(sdfg, {})

@@ -17,6 +17,7 @@ in both modes (no postamble interaction needed for this knob).
 """
 
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 import pytest
 
 from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
@@ -51,6 +52,8 @@ def _count_tile_lib_nodes(sdfg: dace.SDFG) -> int:
 
 
 def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(sdfg, validate=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(
             widths=(8, 8),

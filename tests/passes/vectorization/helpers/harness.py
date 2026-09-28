@@ -27,6 +27,7 @@ from dace.sdfg import ControlFlowRegion
 from dace.sdfg.state import ConditionalBlock
 
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 
@@ -382,6 +383,10 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # vectorizer emits nothing. The knob is the documented escape hatch for exactly that -- a
     # constant-store kernel is the SUBJECT of these tests, so they must not let the lift consume it.
     canonicalize(copy_sdfg, validate=True, lift_copy=canon_lift_copy)
+    if loop_to_map_permissive:
+        # The vectorizer parallelizes nothing itself; a scatter loop only the caller can vouch for
+        # is made a map here, as the caller's parallelization step would.
+        ParallelizeLoops(permissive=True).apply_pass(copy_sdfg, {})
 
     if vectorize_config == "tile_nodes":
         # Tile-op path (``VectorizeCPUMultiDim``), hybrid emit:
@@ -438,7 +443,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                 target_isa=ISA.SCALAR,
                                 remainder_strategy=tile_remainder,
                                 branch_mode=branch_mode,
-                                loop_to_map_permissive=loop_to_map_permissive,
                                 scalar_remainder_emit=scalar_remainder_emit)).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
         # Read before ``compile()``, which expands the tile nodes away.

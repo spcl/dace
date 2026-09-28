@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end integration test: the four CloudSC optimization pipelines each stay NUMERICALLY
+"""End-to-end integration test: the five CloudSC optimization pipelines each stay NUMERICALLY
 FAITHFUL to the un-transformed kernel.
 
 Every leg starts from the same oracle -- the un-transformed ``simplify=False`` CloudSC SDFG run
 sequentially under the IEEE build (:data:`~tests.corpus.cloudsc.generate_data_for_cloudsc.
 IEEE_CPU_ARGS`, ``-O0 -fno-fast-math -ffp-contract=off``) on the physical input set from the dwarf
-reference -- and each leg re-drives the SAME inputs and compares every output array to it. The four
-legs are the four recipes this branch ships for CloudSC:
+reference -- and each leg re-drives the SAME inputs and compares every output array to it. The five
+legs are the five recipes this branch ships for CloudSC:
 
 * ``canonicalize_cpu`` -- ``canonicalize(target='cpu')``, run multicore on the host.
 * ``canonicalize_gpu`` -- ``canonicalize(target='gpu')`` followed by CloudSC's own offload recipe
@@ -17,6 +17,8 @@ legs are the four recipes this branch ships for CloudSC:
   ``finalize_for_target(..., 'gpu')``, RUN ON THE DEVICE.
 * ``vectorize_canonical_cpu`` -- ``VectorizeCPUMultiDim`` on top of the CPU-canonicalized graph,
   run multicore on the host.
+* ``vectorize_canonical_gpu`` -- ``VectorizeGPU`` on top of the ``canonicalize_gpu`` leg's offloaded
+  graph, RUN ON THE DEVICE.
 
 The two device legs deliberately use the two different offload recipes this branch ships, over the
 two different canonical forms, so a red device leg separates the offload from the target preset that
@@ -26,7 +28,7 @@ copy-in / copy-out states and is therefore called with ordinary host arrays, whi
 runs ``apply_gpu_storage`` and leaves the non-transients themselves in ``GPU_Global``, so those
 arguments must be device buffers.
 
-The CPU-canonicalized graph is the shared baseline of three of the four legs, which is why its own
+The CPU-canonicalized graph is the shared baseline of three of the five legs, which is why its own
 numeric leg is here rather than only in ``cloudsc_canonicalize_test``: without it a red vectorize or
 offload leg cannot be attributed to the vectorizer / the offload rather than to canonicalization.
 
@@ -63,6 +65,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_CONSTANTS, IEEE_CPU_ARGS, build_cloudsc_sdfg,
                                                             compare_outputs)
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
+from tests.corpus.cloudsc.reproduce import vectorize_gpu
 from tests.corpus.cloudsc.pipelines import (build_reference_outputs, generate_cuda_code, gpu_is_runnable,
                                             is_device_scheduled, map_entries, omp_parallel_for_count, run_candidate,
                                             strict_fp_device_build)
@@ -197,7 +200,7 @@ def reference_bundle(reference_file):
 
 @pytest.fixture(scope='module')
 def canonical_cpu_file(reference_file, tmp_path_factory):
-    """CloudSC canonicalized for the CPU once; the baseline of three of the four legs."""
+    """CloudSC canonicalized for the CPU once; the baseline of three of the five legs."""
     return canonicalized(reference_file, 'cpu', str(tmp_path_factory.mktemp('canon_cpu') / 'cloudsc_cpu.sdfgz'))
 
 
@@ -285,6 +288,28 @@ def test_gpu_offload_of_canonical_cpu_is_numerically_correct(reference_bundle, c
 
     out = run_on_device(sdfg, inputs, 'offload_canon_cpu')
     assert_matches(out, reference_out, 'gpu_offload/canonical_cpu')
+
+
+@pytest.mark.gpu
+@pytest.mark.integration
+def test_vectorize_on_canonical_gpu_is_numerically_correct(reference_bundle, canonical_gpu_file):
+    """``VectorizeGPU`` on the offloaded ``canonicalize(target='gpu')`` graph emitted tile ops inside
+    device kernels, and the result still matches the un-transformed reference."""
+    require_gpu()
+    inputs, reference_out = reference_bundle
+    sdfg = dace.SDFG.from_file(canonical_gpu_file)
+
+    offload_cloudsc_to_gpu(sdfg)
+    vectorize_gpu(sdfg)
+    sdfg.validate()
+
+    tiles = tile_nodes(sdfg)
+    assert tiles, 'the vectorizer left no tile ops -- the leg would compare the canonical graph to itself'
+    kernels = generate_cuda_code(sdfg)
+    print(f'vectorize/gpu: tile_nodes={len(tiles)} __global__ kernels={kernels}')
+
+    out = run_on_device(sdfg, inputs, 'vectorize_gpu')
+    assert_matches(out, reference_out, 'vectorize/gpu')
 
 
 if __name__ == '__main__':

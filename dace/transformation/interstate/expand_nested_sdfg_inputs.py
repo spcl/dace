@@ -20,7 +20,7 @@ Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``
 """
 import ast
 import copy
-from typing import List, Set, Dict, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
@@ -154,13 +154,27 @@ def keeps_absolute_index(lo: Union[int, sympy.Basic], offset: Union[int, sympy.B
     return not in_extent
 
 
-def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims: List[sympy.Basic],
-                                 collapsed_dims: List[bool], inner_shape: Tuple) -> None:
+def widened_range(lo: sympy.Basic, hi: sympy.Basic, stp: sympy.Basic, offset: sympy.Basic,
+                  step: sympy.Basic) -> Tuple[sympy.Basic, sympy.Basic, sympy.Basic]:
+    """An inner range of a window starting at ``offset`` with outer step ``step``, in outer coordinates: inner
+    position ``p`` is outer ``offset + p * step``."""
+    # a single element keeps its own step: there is nothing to stride over
+    return (offset + lo * step, offset + hi * step, stp if lo == hi else stp * step)
+
+
+def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
+                                 inner_name: str,
+                                 offset_dims: List[sympy.Basic],
+                                 collapsed_dims: List[bool],
+                                 inner_shape: Tuple,
+                                 step_dims: Optional[List[sympy.Basic]] = None) -> None:
     """Rewrite every memlet referencing ``inner_name``: add ``offset_dims``, uncollapse
-    ``collapsed_dims``. Runs BEFORE ``replace_dict({inner_name: outer_name})`` so it matches
-    only THIS inner_name's memlets -- else two connectors binding the same outer array at
-    different offsets (``A[1,i,j]`` AND ``A[0,i,j]``) clobber cross-iteration.
+    ``collapsed_dims``, and scale a strided window's inner index by its outer ``step_dims``. Runs BEFORE
+    ``replace_dict({inner_name: outer_name})`` so it matches only THIS inner_name's memlets -- else two
+    connectors binding the same outer array at different offsets (``A[1,i,j]`` AND ``A[0,i,j]``) clobber
+    cross-iteration.
     """
+    step_dims = step_dims or [1] * len(offset_dims)
     for state in inner_sdfg.all_states():
         for edge in state.edges():
             memlet = edge.data
@@ -183,7 +197,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
             # Indexing rank-reduced against a full-rank inner = classic stencil miscompile:
             # ``A[0,1]`` consumes collapsed dim0's inner begin (``0``) for dim1, dropping ``+1``.
             inner_is_full_rank = (len(inner_subset) == len(offset_dims))
-            for d, (offset, collapsed) in enumerate(zip(offset_dims, collapsed_dims)):
+            for d, (offset, collapsed, step) in enumerate(zip(offset_dims, collapsed_dims, step_dims)):
                 if inner_is_full_rank:
                     (lo, hi, stp) = inner_subset[d]
                     # Nest rebases each access RELATIVE to boundary begin
@@ -200,12 +214,12 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                     if keeps_absolute_index(lo, offset, inner_shape, d):
                         new_range_list.append((lo, hi, stp))
                     else:
-                        new_range_list.append((lo + offset, hi + offset, stp))
+                        new_range_list.append(widened_range(lo, hi, stp, offset, step))
                 elif collapsed is True:
                     new_range_list.append((offset, offset, 1))
                 else:
                     (lo, hi, stp) = inner_subset[memlet_access_idx]
-                    new_range_list.append((lo + offset, hi + offset, stp))
+                    new_range_list.append(widened_range(lo, hi, stp, offset, step))
                     memlet_access_idx += 1
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
             # subset like any memlet and carry the ``wcr`` lambda through (dropping it would
@@ -280,7 +294,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                                       collapsed_dims: List[bool],
                                       offset_dims: List[sympy.Basic],
                                       direction: str,
-                                      apply_offset: bool = True) -> None:
+                                      apply_offset: bool = True,
+                                      step_dims: Optional[List[sympy.Basic]] = None) -> None:
     # Replace inner_name occurrences + data descriptor with outer_name.
     assert isinstance(inner_name, str) and isinstance(outer_name, str)
 
@@ -309,7 +324,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # Offset once per array (``apply_offset``): a second pass (array read AND written, shared
     # outer name) still renames/widens its own connector, but re-offsetting double-counts.
     if apply_offset:
-        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims, inner_shape)
+        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims, inner_shape, step_dims)
 
     # ``expr.replace(SubscriptClass, fn)``: SymPy splats the matched node's args positionally
     # (not the node), so the callback takes ``*args`` = Subscript arity: ``args[0]`` container,
@@ -650,7 +665,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                                               sdfg.arrays[outer_arr_name],
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
                                               direction='in',
-                                              apply_offset=apply_offset)
+                                              apply_offset=apply_offset,
+                                              step_dims=[stp for (_lo, _hi, stp) in outer_subset.ranges])
 
         for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in write_subsets.items():
             apply_offset = conn not in processed_inner_arrays
@@ -662,7 +678,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                                               sdfg.arrays[outer_arr_name],
                                               collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
                                               direction='out',
-                                              apply_offset=apply_offset)
+                                              apply_offset=apply_offset,
+                                              step_dims=[stp for (_lo, _hi, stp) in outer_subset.ranges])
 
         # Thread any gather/scatter INDEX array referenced inside an inner memlet SUBSET but
         # absent from ``inner_sdfg.arrays``. ``A[B[i]]`` where ``B`` was never a boundary

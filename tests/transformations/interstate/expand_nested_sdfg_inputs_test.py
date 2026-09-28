@@ -266,6 +266,40 @@ def test_an_introduced_loop_iterator_is_declared_inside_at_the_width_its_loop_gi
     assert str(nsdfg.symbol_mapping['it']) == 'it'
 
 
+def strided_window_sdfg() -> dace.SDFG:
+    """``b[k] = x[k]`` in a nested SDFG whose ``x`` is the strided window ``a[0:N:2]``."""
+    inner = dace.SDFG('inner')
+    inner.add_array('x', [N // 2], dace.float64, strides=[2])
+    inner.add_array('y', [N // 2], dace.float64)
+    inner.add_state().add_mapped_tasklet('copy', {'k': '0:N//2'}, {'v': dace.Memlet('x[k]')},
+                                         'w = v', {'w': dace.Memlet('y[k]')},
+                                         external_edges=True)
+    outer = dace.SDFG('strided_window')
+    outer.add_array('a', [N], dace.float64)
+    outer.add_array('b', [N // 2], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {'x': None}, {'y': None})
+    state.add_edge(state.add_read('a'), None, node, 'x', dace.Memlet('a[0:N:2]'))
+    state.add_edge(node, 'y', state.add_write('b'), None, dace.Memlet('b[0:N//2]'))
+    return outer
+
+
+def test_widening_a_strided_window_scales_the_inner_index_by_its_step():
+    sdfg = strided_window_sdfg()
+
+    assert sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs) == 1
+
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    reads = [
+        e.data for s in inner.all_states() for e in s.edges()
+        if e.data.data == 'a' and e.data.subset.num_elements() == 1
+    ]
+    assert [str(m.subset) for m in reads] == ['2*k']
+    a, b = np.arange(10.0), np.zeros(5)
+    sdfg(a=a, b=b, N=10)
+    np.testing.assert_array_equal(b, a[0:10:2])
+
+
 if __name__ == "__main__":
     test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e()
     test_expand_terminates_on_wcr_reduction_out_edge()

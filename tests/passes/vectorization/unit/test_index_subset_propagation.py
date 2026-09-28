@@ -13,6 +13,7 @@ These tests build the exact pattern via the SDFG API (the `@dace.program` fronte
 reliably reproduce the promotion) and pin both the contiguous-inline and gather-stop behaviors.
 """
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 import pytest
 
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -172,6 +173,8 @@ def test_iplusoffset_kernel_emits_no_gather():
     widths = _auto_tile_widths(sdfg, 8)
     cs = copy.deepcopy(sdfg)
     cs.name = "iplusoffset_nogather"
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(cs, validate=True)
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, expand_tile_nodes=False)).apply_pass(cs, {})
 
     gather_nodes = []

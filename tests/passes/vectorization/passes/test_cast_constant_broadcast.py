@@ -41,7 +41,6 @@ def _config(expand: bool) -> VectorizeConfig:
                            target_isa=ISA.SCALAR,
                            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
                            branch_mode=BranchMode.MERGE,
-                           loop_to_map_permissive=False,
                            scalar_remainder_emit="tile_k1",
                            expand_tile_nodes=expand)
 

@@ -213,4 +213,4 @@ test_cscs_gh200_cloudsc_pipelines:
     - export DACE_optimizer_automatic_simplification=0
     # Serial: the dwarf is parsed once per process and memoized, so a worker per test would pay the
     # multi-minute parse again instead of sharing one.
-    - pytest --tb=short --timeout_method thread --timeout=14400 -m "integration and gpu" tests/corpus/cloudsc/cloudsc_parallel_pipeline_test.py
+    - pytest --tb=short --timeout_method thread --timeout=14400 -m "integration and gpu" tests/corpus/cloudsc/cloudsc_parallel_pipeline_test.py tests/corpus/cloudsc/cloudsc_target_pipelines_test.py

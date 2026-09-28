@@ -33,13 +33,17 @@ Implementations:
 - ``CUDA`` -- ``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan`` (Blelloch
   upsweep + downsweep; memory-bandwidth-bound on modern NVIDIA GPUs at
   GKeys/s rates).
-- ``pure`` -- portable single-loop fallback (used when neither CPU nor CUDA
+- ``sequential`` -- portable single-loop fallback (used when neither CPU nor CUDA
   expansion applies, e.g. for FPGA backends in v1).
+- ``pure`` -- the same single-loop scan built from SDFG components (loop regions and Python
+  tasklets), for consumers that read the SDFG rather than compile it.
 
 For supported binary ops, see :func:`_combine_expr` and :data:`_OP_TO_CUB`. The
 op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
+
+from typing import Tuple, Union
 
 import numpy
 
@@ -47,6 +51,11 @@ import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.pure_components import chain as chain_blocks
+from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
+from dace.memlet import Memlet
+from dace.sdfg.state import LoopRegion
+from dace.sdfg.tasklet_utils import add_abort_guard
 from dace.properties import Property, EnumProperty, SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 import enum
@@ -762,7 +771,7 @@ SEQUENTIAL_SCAN_HINT = ('sequential scan; this expansion runs the recurrence as 
 
 
 @library.expansion
-class ExpandPure(ExpandTransformation):
+class ExpandSequential(ExpandTransformation):
     """Portable fallback: a hand-written single-loop scan."""
 
     environments = [CPUEnv]
@@ -834,6 +843,147 @@ class ExpandPure(ExpandTransformation):
         )
 
 
+#: ``acc OP x`` in a Python tasklet, per op. ``min`` / ``max`` spell ``std::min`` / ``std::max``'s own
+#: comparison, which also keeps a widening accumulator's type out of template deduction.
+COMBINE_PY = {
+    ScanOp.SUM: '{a} + {x}',
+    ScanOp.PRODUCT: '{a} * {x}',
+    ScanOp.MIN: '{x} if {x} < {a} else {a}',
+    ScanOp.MAX: '{x} if {a} < {x} else {a}',
+    ScanOp.AFFINE: 'c * {a} + {x}',
+}
+#: Loop variables of the ``pure`` scan: the position, and the residue class of a strided scan.
+SCAN_INDEX = 'scan_k'
+CLASS_INDEX = 'scan_r'
+
+
+def accumulator(nsdfg: dace.SDFG, chain: int) -> str:
+    """The chain's accumulator, a transient scalar of the OUTPUT type, which a widening scan reads into."""
+    name = f'acc_{chain}'
+    nsdfg.add_scalar(name, nsdfg.arrays[out_connector(chain)].dtype, transient=True)
+    return name
+
+
+def seed_state(nsdfg: dace.SDFG, chain: int, acc: str, seed: str, at: str) -> dace.SDFGState:
+    """``acc = seed``, where ``seed`` is a literal, ``'init'`` (the chain's ``_scan_init[at]``) or ``'first'``
+    (the chain's input at ``at``)."""
+    reads = {}
+    if seed == 'init':
+        reads['x'] = Memlet(f'{init_connector(chain)}[{at}]')
+    elif seed == 'first':
+        reads['x'] = Memlet(element(nsdfg, in_connector(chain), at))
+    code = f'a = x' if reads else f'a = {seed}'
+    return tasklet_state(nsdfg, f'seed_{chain}', code, reads, {'a': Memlet(f'{acc}[0]')})
+
+
+def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: Tuple[str, str, str]) -> LoopRegion:
+    """One pass of the recurrence over positions ``range(*bounds)``, writing every prefix to the output."""
+    combined = COMBINE_PY[node.op].format(a='a', x='x')
+    code = f'y = a\nna = {combined}' if node.exclusive else f'na = {combined}\ny = na'
+    reads = {'x': Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), 'a': Memlet(f'{acc}[0]')}
+    if node.op is ScanOp.AFFINE:
+        reads['c'] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
+    writes = {'na': Memlet(f'{acc}[0]'), 'y': Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
+    loop = counted_loop(f'scan_{chain}', SCAN_INDEX, *bounds)
+    chain_blocks(loop, [tasklet_state(nsdfg, f'step_{chain}', code, reads, writes)])
+    return loop
+
+
+def chain_seed(node: "Scan", chain: int) -> str:
+    """How a unit-stride chain seeds its accumulator, per :func:`seed_state`: the wired init, the identity, or
+    -- inclusive ``min`` / ``max`` with neither -- the first element, which the combine then leaves alone."""
+    # a single exclusive chain seeds from its identity, not its init, exactly as the sequential loop does
+    if _has_init(node, chain) and not (node.chains == 1 and node.exclusive):
+        return 'init'
+    if node.op is ScanOp.AFFINE:
+        return '0'
+    if node.identity is not None:
+        return str(node.identity)
+    literal = _OP_TO_IDENTITY_CPP[node.op]
+    if literal is not None:
+        return literal
+    if node.exclusive:
+        raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
+    return 'first'
+
+
+def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopRegion:
+    """The strided scan: one independent chain per residue class of the position modulo the stride. A scalar
+    op seeds each class from its first element, the affine one from its ``_scan_init`` entry or zero."""
+    stride = symbolic.symstr(node.stride)
+    classes = LoopRegion('classes', f'{CLASS_INDEX} < {stride} and {CLASS_INDEX} < {n}', CLASS_INDEX,
+                         f'{CLASS_INDEX} = 0', f'{CLASS_INDEX} = {CLASS_INDEX} + 1')
+    if node.op is ScanOp.AFFINE:
+        seed = seed_state(nsdfg, 0, acc, 'init' if _has_init(node) else '0', CLASS_INDEX)
+        chain_blocks(classes, [seed, position_loop(nsdfg, node, 0, acc, (CLASS_INDEX, n, stride))])
+        return classes
+    seed = seed_state(nsdfg, 0, acc, 'first', CLASS_INDEX)
+    first = tasklet_state(nsdfg, 'first', 'y = a', {'a': Memlet(f'{acc}[0]')},
+                          {'y': Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))})
+    rest = position_loop(nsdfg, node, 0, acc, (f'{CLASS_INDEX} + {stride}', n, stride))
+    chain_blocks(classes, [seed, first, rest])
+    return classes
+
+
+def pure_scan_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+    """The scan as SDFG components; every refusal and the abort on a non-positive stride match
+    :class:`ExpandSequential`."""
+    nsdfg = dace.SDFG(f'{node.label}_pure')
+    for edge in [*state.in_edges(node), *state.out_edges(node)]:
+        operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
+    n = symbolic.symstr(
+        next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset.num_elements())
+    if not symbolic.equal_valued(1, node.stride):
+        blocks = []
+        if node.op is not ScanOp.AFFINE:
+            check = dace.SDFGState('check_stride', sdfg=nsdfg)
+            add_abort_guard(check, 'check_stride', f'{symbolic.symstr(node.stride)} <= 0')
+            blocks.append(check)
+        chain_blocks(nsdfg, [*blocks, residue_classes(nsdfg, node, accumulator(nsdfg, 0), n)])
+        return nsdfg
+    blocks = []
+    for chain in range(node.chains):
+        acc = accumulator(nsdfg, chain)
+        seed = chain_seed(node, chain)
+        blocks += [seed_state(nsdfg, chain, acc, seed, '0'), position_loop(nsdfg, node, chain, acc, ('0', n, '1'))]
+    chain_blocks(nsdfg, blocks)
+    return nsdfg
+
+
+@library.expansion
+class ExpandPure(ExpandTransformation):
+    """The single-loop scan as SDFG components -- seed states, loop regions and Python tasklets -- for consumers
+    that read the SDFG rather than compile it. Slower than :class:`ExpandSequential`, so nothing picks it for
+    speed."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> Union[nodes.Tasklet, dace.SDFG]:
+        refuse_unsupported_affine_flags(node)
+        in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        if node.specialization_hint == PARALLEL_SCAN_HINT:
+            node.specialization_hint = SEQUENTIAL_SCAN_HINT
+        strided = not symbolic.equal_valued(1, node.stride)
+        # the same refusals, in the same order, as ExpandSequential
+        if node.op is ScanOp.AFFINE:
+            refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
+            if _is_length_one(node, state):
+                return degenerate_affine_tasklet(node)
+        elif node.chains > 1:
+            refuse_widening(node, in_desc, out_desc, 'chains > 1')
+            if strided:
+                raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
+                                          "Scan libnode per strided chain.")
+        elif _is_length_one(node, state):
+            return _degenerate_single_element_tasklet(node, in_desc)
+        elif strided:
+            refuse_widening(node, in_desc, out_desc, 'stride > 1')
+            if node.exclusive:
+                raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
+        return pure_scan_sdfg(node, state, sdfg)
+
+
 @library.expansion
 class ExpandCPU(ExpandTransformation):
     """PARALLEL-schedule scan: the blocked ``dace::scan`` runtime header.
@@ -853,7 +1003,7 @@ class ExpandCPU(ExpandTransformation):
     The blocking makes the floating-point association depend on the team size, so
     results MOVE WITH ``OMP_NUM_THREADS`` above the header's parallel threshold.
     Callers that need a reproducible scan want the SEQUENTIAL shape instead --
-    :class:`ExpandPure`, a plain loop with no pragma and no call into the header.
+    :class:`ExpandSequential`, a plain loop with no pragma and no call into the header.
     """
 
     environments = [CPUEnv]
@@ -868,7 +1018,7 @@ class ExpandCPU(ExpandTransformation):
         from dace.transformation.auto.auto_optimize import libnode_is_sequential
         if libnode_is_sequential(node, state, sdfg):
             # Already inside an OpenMP region or a loop: take the sequential naked-loop shape.
-            return ExpandPure.expansion(node, state, sdfg)
+            return ExpandSequential.expansion(node, state, sdfg)
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
             if _is_length_one(node, state):
@@ -1285,7 +1435,8 @@ class Scan(nodes.LibraryNode):
     - ``'CPU'`` (default) -- ``std::inclusive_scan`` / ``std::exclusive_scan`` (C++17 ``<numeric>``),
       or ``dace::scan::inclusive_affine`` for ``op=AFFINE``.
     - ``'CUDA'``           -- ``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan``. No ``AFFINE``.
-    - ``'pure'``           -- portable single-loop fallback.
+    - ``'sequential'``     -- portable single-loop fallback.
+    - ``'pure'``           -- the same loop as SDFG components, for consumers that read the SDFG.
 
     The libnode is contractually pure: no aliasing between ``in`` and ``out`` is required
     (and not assumed), and no other state is read or written.
@@ -1330,6 +1481,7 @@ class Scan(nodes.LibraryNode):
         "CPU": ExpandCPU,
         "CUDA": ExpandCUDA,
         "CUDA (block)": ExpandCUDABlock,
+        "sequential": ExpandSequential,
         "pure": ExpandPure,
     }
     default_implementation = 'CPU'

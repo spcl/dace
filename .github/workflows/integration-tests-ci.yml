@@ -102,7 +102,7 @@ jobs:
           -m "integration and not gpu" \
           "$ROOT/tests/corpus/cloudsc/cloudsc_parallel_pipeline_test.py"
 
-  # A separate runner from ``cloudsc-e2e``: the four target pipelines each canonicalize and rebuild
+  # A separate runner from ``cloudsc-e2e``: the target pipelines each canonicalize and rebuild
   # the dwarf, so sharing a job would put both under one timeout and make either failure look like
   # the other's. The two device legs of the same file carry the ``gpu`` marker and run in the GPU
   # workflow, which is the only place a device is available.

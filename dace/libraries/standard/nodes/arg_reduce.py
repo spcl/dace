@@ -24,8 +24,11 @@ whole extra copy of the array.
 
 Expansions:
 
-* ``pure`` (CPU default): a CPP tasklet with a sequential scan over the
+* ``sequential`` (CPU default): a CPP tasklet with a sequential scan over the
   input -- correctness-first, no external dependency.
+* ``pure``: the same sequential scan built from SDFG components (a loop region and Python
+  tasklets), for consumers that read the SDFG rather than compile it. Slower than ``sequential``,
+  which is why nothing picks it for speed.
 * ``OpenMP``: the same scan split across threads under a ``declare reduction``
   over the (value, index) pair (see :class:`ExpandArgReduceOpenMP`).
 * ``CUDA`` (GPU): ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin`` through
@@ -48,6 +51,8 @@ from typing import Callable, Optional, Tuple
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
+from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
@@ -163,7 +168,7 @@ def _connectors(has_val: bool):
 
 
 @library.expansion
-class ExpandArgReducePure(ExpandTransformation):
+class ExpandArgReduceSequential(ExpandTransformation):
     """Correctness-only CPU lowering: a sequential argmax/argmin scan."""
 
     environments = []
@@ -181,11 +186,60 @@ class ExpandArgReducePure(ExpandTransformation):
                 f"    const {vt} __v = {read('__i')};\n"
                 f"    if (__v {op} __ar_best.__ar_v) {{ __ar_best.__ar_v = __v; __ar_best.__ar_i = __i; }}\n"
                 f"}}\n" + _writeback(has_val))
-        return nodes.Tasklet(label=f"{node.label}_pure",
+        return nodes.Tasklet(label=f"{node.label}_sequential",
                              inputs={'_in': dace.pointer(in_dtype)},
                              outputs=_connectors(has_val),
                              code=code,
                              language=dace.dtypes.Language.CPP)
+
+
+#: Unary element transforms as a Python expression over the element.
+TRANSFORM_PY = {'': '{}', 'abs': 'abs({})'}
+#: The loop variable of the ``pure`` scan; a nested SDFG's own symbol, so it shadows nothing outside.
+SCAN_INDEX = 'argreduce_k'
+
+
+@library.expansion
+class ExpandArgReducePure(ExpandTransformation):
+    """The sequential scan as SDFG components: seed from element 0, a loop keeping the first extreme, and a
+    write-back of whichever results are wired."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
+        node.validate(parent_sdfg, parent_state)
+        edges = {e.dst_conn: e for e in parent_state.in_edges(node)}
+        edges.update({e.src_conn: e for e in parent_state.out_edges(node)})
+        nsdfg = dace.SDFG(f'{node.label}_pure')
+        for conn, edge in edges.items():
+            operand_array(nsdfg, conn, edge, parent_sdfg)
+        if '_out_val' not in edges:  # an unwired connector would become a nested SDFG output with no edge
+            node.remove_out_connector('_out_val')
+        nsdfg.add_scalar('best_val', nsdfg.arrays['_in'].dtype, transient=True)
+        nsdfg.add_scalar('best_idx', nsdfg.arrays['_out_idx'].dtype, transient=True)
+        read = TRANSFORM_PY[node.transform]
+        best = {'v': Memlet('best_val[0]'), 'i': Memlet('best_idx[0]')}
+        seed = tasklet_state(nsdfg, 'seed', f"v = {read.format('x')}\ni = 0", {'x': Memlet(element(nsdfg, '_in', '0'))},
+                             best)
+        # A strict comparison keeps the FIRST extreme element, as the sequential source does.
+        step_code = (f"c = {read.format('x')}\nif c {_OP_CPP[node.op]} v:\n    nv = c\n    ni = {SCAN_INDEX}\n"
+                     f"else:\n    nv = v\n    ni = i")
+        step = tasklet_state(nsdfg, 'step', step_code, {
+            'x': Memlet(element(nsdfg, '_in', SCAN_INDEX)),
+            **best
+        }, {
+            'nv': Memlet('best_val[0]'),
+            'ni': Memlet('best_idx[0]')
+        })
+        loop = counted_loop('scan', SCAN_INDEX, '1', symbolic.symstr(_count(edges['_in'])))
+        chain(loop, [step])
+        results = {'oi': Memlet('_out_idx[0]')}
+        if '_out_val' in edges:
+            results['ov'] = Memlet('_out_val[0]')
+        done = tasklet_state(nsdfg, 'write_back', 'oi = i\nov = v' if '_out_val' in edges else 'oi = i', best, results)
+        chain(nsdfg, [seed, loop, done])
+        return nsdfg
 
 
 @library.expansion
@@ -314,17 +368,18 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ArgReduce(nodes.LibraryNode):
     """Argmax / argmin over ``_in`` -> ``_out_val`` (value) + ``_out_idx`` (index).
 
-    :cvar implementations: ``"pure"`` (CPU sequential scan), ``"OpenMP"`` (parallel lane-blocked
-        pair reduction) and ``"CUDA"`` (CUB ArgMax/ArgMin).
-        ``default_implementation = "pure"``.
+    :cvar implementations: ``"sequential"`` (CPU sequential scan), ``"pure"`` (the same scan as SDFG
+        components), ``"OpenMP"`` (parallel lane-blocked pair reduction) and ``"CUDA"`` (CUB
+        ArgMax/ArgMin). ``default_implementation = "sequential"``.
     """
 
     implementations = {
+        'sequential': ExpandArgReduceSequential,
         'pure': ExpandArgReducePure,
         'OpenMP': ExpandArgReduceOpenMP,
         'CUDA': ExpandArgReduceCUDA,
     }
-    default_implementation = 'pure'
+    default_implementation = 'sequential'
 
     #: Both answers are HOST scalars in every expansion, the CUDA one included: CUB leaves its
     #: result in device scratch and the wrapper copies it back before writing them.

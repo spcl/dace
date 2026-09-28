@@ -16,6 +16,8 @@ and emit at least one ``TileLoad`` (gather) AND at least one ``TileStore`` (scat
 import pytest
 import dace
 
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -81,6 +83,9 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
     """Mixed gather + scatter ICON-style kernel lowers to zero raw Tasklets at K=2."""
     sdfg = _icon_zekinh_gather_scatter.to_sdfg()
     sdfg.validate()
+    # The tiler's input contract -- canonical form; only the test knows the scatter is injective.
+    canonicalize(sdfg, validate=True)
+    ParallelizeLoops(permissive=True).apply_pass(sdfg, {})
 
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -88,7 +93,6 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=True,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
         )).apply_pass(sdfg, {})

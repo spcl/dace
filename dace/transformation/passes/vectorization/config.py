@@ -27,7 +27,6 @@ class VectorizeConfig:
     :param remainder_strategy: How a non-divisible map extent is tiled.
     :param branch_mode: How a same-write-set ``if/else`` lowers to a per-lane select.
     :param scalar_remainder_emit: ``"scalar"`` step-1 tail or ``"tile_k1"`` masked K=1 tile.
-    :param loop_to_map_permissive: Pass ``permissive=True`` to the up-front ``LoopToMap``.
     :param expand_tile_nodes: Expand tile lib nodes to tasklets before returning.
         Default ``False``: left intact for inspection/further transformation, lowered
         later by the caller or ``compile()``.
@@ -44,7 +43,6 @@ class VectorizeConfig:
     remainder_strategy: RemainderStrategy = RemainderStrategy.MASKED_TAIL
     branch_mode: BranchMode = BranchMode.MERGE
     scalar_remainder_emit: str = "scalar"
-    loop_to_map_permissive: bool = False
     expand_tile_nodes: bool = False
     validate: bool = True
     validate_all: bool = False

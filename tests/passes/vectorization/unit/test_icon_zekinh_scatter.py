@@ -14,6 +14,7 @@ and emit at least one :class:`TileStore` (scatter).
 import pytest
 import dace
 
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.libraries.tileops import TileStore
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -69,6 +70,8 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
     sdfg.validate()
     # The tiler's input contract -- canonical (or dace-parallelized) form.
     canonicalize(sdfg, validate=True)
+    # Only the test knows the scatter index is injective; the vectorizer parallelizes nothing.
+    ParallelizeLoops(permissive=True).apply_pass(sdfg, {})
 
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -76,7 +79,6 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=True,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
         )).apply_pass(sdfg, {})
