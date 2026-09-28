@@ -15,6 +15,7 @@ from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_ma
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
+from dace.transformation.passes.offloading.phases.device_tables import fill_device_tables
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
     single_element_copies_into_map)
@@ -91,6 +92,8 @@ class OffloadToAccelerator(ppl.Pass):
         pinned = maps_pinned_by_host_loops(sdfg) if self.pin_host_loop_maps else OrderedSet()
         assign_schedules(sdfg, host_map_entries, pinned)
 
+        # Before the placement: a table filled on the device is one kernels read, not one to copy down.
+        fill_device_tables(sdfg)
         analysis, IR, wrapped = self.place(sdfg)
         insertion = CopyInsertion(sdfg, analysis.scopes)
         insertion.apply(IR)
