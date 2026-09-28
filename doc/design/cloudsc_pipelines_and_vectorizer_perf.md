@@ -19,7 +19,7 @@ reproduces all four and runs them against the un-transformed reference.
 |-----------|---------------------------------------------|------------------------------|
 | canon_cpu | OK, bit-exact                               | 403 s                        |
 | canon_gpu | OK on device, worst abs 9.1e-13             | 430 s                        |
-| vec_cpu   | OK on CI; local check: see Open             | >2 h -> 1078 s               |
+| vec_cpu   | OK, bit-exact (local + CI)                  | >2 h -> 1078 s               |
 | vec_gpu   | was MISMATCH; fixed, re-check: see Open     | died -> 2243 s               |
 
 ## Vectorizer contract (changed)
