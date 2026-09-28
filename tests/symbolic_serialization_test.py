@@ -716,7 +716,7 @@ def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():
     state.add_edge(mx, None, state.add_write('A'), None, dace.Memlet('A[0:N]'))
 
     code = sdfg.generate_code()[0].clean_code
-    loops = [line.strip() for line in code.splitlines() if 'for (auto i' in line]
+    loops = [line.strip() for line in code.splitlines() if 'for (int64_t i' in line]
     assert loops
     assert all('ceil' not in line for line in loops), loops
 
