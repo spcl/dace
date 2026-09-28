@@ -95,6 +95,22 @@ def test_broadcast_to_frontend():
     np.testing.assert_array_equal(out, np.broadcast_to(a, (3, 4)))
 
 
+def test_broadcast_library_call_in_a_program():
+    """``dace.libraries.standard.broadcast`` in a dace.program becomes one SPREAD node with the given dim."""
+
+    @dace.program
+    def spread(a: dace.float64[3], out: dace.float64[3, 4]):
+        dace.libraries.standard.broadcast(a, out, dim=2)
+
+    sdfg = spread.to_sdfg(simplify=False)
+    assert [n.dim for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Broadcast)] == [2]
+
+    a = np.arange(3.0)
+    out = np.zeros((3, 4))
+    spread(a=a, out=out)
+    np.testing.assert_array_equal(out, np.broadcast_to(a[:, None], (3, 4)))
+
+
 if __name__ == '__main__':
     test_broadcast_1d_to_2d_dim1()
     test_broadcast_1d_to_2d_dim2()
@@ -103,4 +119,5 @@ if __name__ == '__main__':
     test_broadcast_numpy_rule_rejects_a_mismatch()
     test_broadcast_keeps_the_operand_layout()
     test_broadcast_to_frontend()
+    test_broadcast_library_call_in_a_program()
     print('Broadcast tests PASS')
