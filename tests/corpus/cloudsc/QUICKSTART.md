@@ -2,7 +2,7 @@
 
 Reproduce the four optimized CloudSC SDFGs and run each one against the un-transformed reference.
 
-Tested on dace branch `extended` at commit `COMMIT_SHA`.
+Tested on dace branch `extended` at commit `a57fab95228e82e216e1fc3db93ef20b02b4fe17`.
 
 ## Pipeline
 
@@ -19,7 +19,7 @@ Both canonicalizations bake in the species constants (`nclv=5`, `ncldq*`) and th
 
 ```bash
 git clone -b extended https://github.com/spcl/dace.git && cd dace
-git checkout COMMIT_SHA
+git checkout a57fab95228e82e216e1fc3db93ef20b02b4fe17
 pip install -e .          # Python >= 3.10; islpy and z3-solver are required deps
 export PYTHONHASHSEED=0 OMP_STACKSIZE=64M DACE_compiler_max_stack_array_size=65536
 ulimit -s 65536           # CloudSC keeps large arrays on the stack
