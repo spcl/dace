@@ -119,7 +119,7 @@ def build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
     has a *non-transient* array as an internal inout ``AccessNode`` (written then read
     inside the kernel body: ``c_read -> map -> t1 -> c_mid -> t2 -> map -> c_write``).
 
-    This is the shape that drives the inout-collection branch of ``_move_map_to_if``.
+    This is the shape that drives the inout-collection branch of ``move_map_to_if``.
     """
     K = dace.symbol('K', dtype=dace.int32)
     J = dace.symbol('J', dtype=dace.int32)
@@ -487,7 +487,8 @@ def test_sibling_bounds_carrying_an_overapproximation_are_unioned():
 
     begin, end, _ = absorbed_range(sdfg, '__j')
     assert begin == 0
-    assert dace.symbolic.pystr_to_symbolic('J + 1') in (end, getattr(end, 'approx', None)), end
+    widest = end.approx if isinstance(end, dace.symbolic.SymExpr) else end
+    assert widest == dace.symbolic.pystr_to_symbolic('J + 1'), end
     sdfg.validate()
 
 
