@@ -40,7 +40,12 @@ def tile_extent(max_elem, min_elem):
 
 
 def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
-    """True if ``desc`` has a literal shape of at most ``max_elements`` elements, so it fits in registers."""
+    """True if ``desc`` has a literal shape of at most ``max_elements`` elements, so it fits in registers.
+
+    A persistent or external array outlives an invocation, which a per-thread register cannot.
+    """
+    if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+        return False
     if any(symbolic.issymbolic(dim) for dim in desc.shape):
         return False
     try:
