@@ -122,55 +122,14 @@ class DefaultSharedMemorySync(ppl.Pass):
             ``has_parent_tb_map`` is True if another TB map sits between the enclosing
             GPU_Device map and this one.
         """
-        writes_to_shared_memory = False
-        race_cond_danger = False
-        has_parent_tb_map = False
-
-        # Direct write at the TB MapExit.
-        for edge in state.out_edges(map_exit):
-            is_smem: bool = (isinstance(edge.dst, AccessNode)
-                             and edge.dst.desc(state).storage == dtypes.StorageType.GPU_Shared)
-            if is_smem and not edge.data.is_empty():
-                writes_to_shared_memory = True
-                break
-
-        # Writes inside the scope, plus nested SDFGs to analyze below.
-        nested_sdfgs: OrderedSet[NestedSDFG] = OrderedSet()
-
-        for node in state.all_nodes_between(map_entry, map_exit):
-            if not writes_to_shared_memory and is_shared_memory_write(node, state):
-                writes_to_shared_memory = True
-            elif isinstance(node, NestedSDFG):
-                nested_sdfgs.add(node)
-
-        # Recurse into nested SDFGs for writes and LoopRegion race hazards.
-        for nsdfg in nested_sdfgs:
-            subs_sdfg = nsdfg.sdfg
-            if not writes_to_shared_memory:
-                writes_to_shared_memory = self.sdfg_writes_to_smem(subs_sdfg)
-
-            if not race_cond_danger:
-                race_cond_danger = self.writes_to_smem_inside_loopregion(subs_sdfg)
-
-        # Sequential inner maps writing shared memory are a race hazard.
-        if not race_cond_danger:
-            race_cond_danger = any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
+        writes_to_shared_memory = self.map_writes_to_smem(map_entry, state)
+        nested_sdfgs = [n.sdfg for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, NestedSDFG)]
+        # Loop regions in nested SDFGs and sequential inner maps writing shared memory are race hazards.
+        race_cond_danger = (any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs)
+                            or any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
                                    and self.map_writes_to_smem(inner_scope, inner_state)
-                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry))
-
-        # Is this TB map nested within another TB map (before the GPU_Device map)?
-        parent = helpers.get_parent_map(state, map_entry)
-
-        while parent:
-            parent_map, parent_state = parent
-            if parent_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                has_parent_tb_map = True
-                break
-            if parent_map.map.schedule == dtypes.ScheduleType.GPU_Device:
-                break
-            parent = helpers.get_parent_map(parent_state, parent_map)
-
-        return writes_to_shared_memory, race_cond_danger, has_parent_tb_map
+                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)))
+        return writes_to_shared_memory, race_cond_danger, nested_in_threadblock_map(state, map_entry)
 
     def writes_to_smem_inside_loopregion(self, sdfg: SDFG) -> bool:
         """True if the SDFG writes shared memory inside a LoopRegion
@@ -232,3 +191,16 @@ class DefaultSharedMemorySync(ppl.Pass):
                 state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
 
             state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
+
+
+def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:
+    """Whether another ``GPU_ThreadBlock`` map sits between the enclosing kernel and ``map_entry``."""
+    parent = helpers.get_parent_map(state, map_entry)
+    while parent:
+        parent_map, parent_state = parent
+        if parent_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            return True
+        if parent_map.map.schedule == dtypes.ScheduleType.GPU_Device:
+            return False
+        parent = helpers.get_parent_map(parent_state, parent_map)
+    return False

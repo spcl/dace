@@ -130,7 +130,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
 
-        self._compute_pool_release(sdfg)
+        self.compute_pool_release(sdfg)
 
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
@@ -161,16 +161,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         result.add(edge.dst_conn)
                 frame._symbols_and_constants[nsdfg.cfg_id] = result
 
-    def _compute_pool_release(self, top_sdfg: SDFG):
+    def compute_pool_release(self, top_sdfg: SDFG):
         """Find the point at which each pooled array should be released (``cudaFreeAsync``).
 
         :raises ValueError: if the backend does not support memory pools.
         """
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            pooled = OrderedSet(
-                aname for aname, arr in sdfg.arrays.items()
-                if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
+            pooled = pooled_transients(sdfg)
             if not pooled:
                 continue
             self.has_pool = True
@@ -187,52 +185,23 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
                 access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
-
-            reachable = reachability[sdfg.cfg_id]
-            access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.states():
-                last_state_arrays: Set[str] = OrderedSet(
-                    s for s in access_sets
-                    if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
-
-                anodes = list(state.data_nodes())
-                for aname in last_state_arrays:
-                    ans = [an for an in anodes if an.data == aname]
-                    terminator = None
-                    for an1 in ans:
-                        if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1):
-                            terminator = an1
-                            break
-
-                    # If the terminator sits inside a scope, defer release to the
-                    # end of state (empty set); otherwise release at the common
-                    # descendant following the ends of all memlet paths
-                    # (e.g., (a)->...->[tasklet]-->...->(b)).
-                    terminators = OrderedSet()
-                    if terminator is not None and state.entry_node(terminator) is None:
-                        for e in state.out_edges(terminator):
-                            if isinstance(e.dst, nodes.EntryNode):
-                                terminators.add(state.exit_node(e.dst))
-                            else:
-                                terminators.add(e.dst)
-
-                    self.pool_release[(sdfg, aname)] = (state, terminators)
+            self.record_last_use_releases(sdfg, pooled, reachability[sdfg.cfg_id], access_nodes[sdfg.cfg_id])
 
             # Release anything still live at SDFG sink.
             unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
             if unfreed:
-                sinks = sdfg.sink_nodes()
-                if len(sinks) == 1:
-                    sink = sinks[0]
-                elif len(sinks) > 1:
-                    sink = sdfg.add_state()
-                    for s in sinks:
-                        sdfg.add_edge(s, sink)
-                else:
-                    raise ValueError('End state not found when trying to free pooled memory')
-
+                sink = single_sink_state(sdfg)
                 for arr in unfreed:
                     self.pool_release[(sdfg, arr)] = (sink, OrderedSet())
+
+    def record_last_use_releases(self, sdfg: SDFG, pooled, reachable, access_sets) -> None:
+        """Release each pooled array in the state after which no reachable state accesses it."""
+        for state in sdfg.states():
+            last_state_arrays: Set[str] = OrderedSet(
+                s for s in access_sets
+                if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
+            for aname in last_state_arrays:
+                self.pool_release[(sdfg, aname)] = (state, release_terminators(state, aname))
 
     @property
     def has_initializer(self) -> bool:
@@ -846,7 +815,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
-                # Pooled arrays whose release point was picked up by _compute_pool_release are
+                # Pooled arrays whose release point was picked up by compute_pool_release are
                 # freed in generate_state; everything else is freed here.
                 if (sdfg, dataname) not in self.pool_release:
                     gpu_stream = self._gpu_stream_manager.get_stream_node(node)
@@ -870,55 +839,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         fileheader = CodeIOStream()
 
         self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
-
-        # The GPU stream array has a persistent allocation lifetime and is declared in the state
-        # struct under an SDFG-id-prefixed name by the frame codegen; resolve the prefixed name so
-        # our backend initialization can refer to the same storage.
-        cnt = 0
-        init_gpu_stream_vars = ""
-        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
-        for csdfg, name, desc in self._global_sdfg.arrays_recursive(include_nested_data=True):
-            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
-                init_gpu_stream_vars = f"__state->__{csdfg.cfg_id}_{name}"
-                break
-
-        initcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            if 'cuda' in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
-        initcode.write(self._initcode.getvalue())
-
-        exitcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            if 'cuda' in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
-        exitcode.write(self._exitcode.getvalue())
-
-        if self.backend == 'cuda':
-            backend_header = 'cuda_runtime.h'
-        elif self.backend == 'hip':
-            backend_header = 'hip/hip_runtime.h'
-        else:
+        initcode = target_code_blocks(((sd, sd.init_code) for sd in self._global_sdfg.all_sdfgs_recursive()),
+                                      self._initcode)
+        exitcode = target_code_blocks(((sd, sd.exit_code) for sd in self._global_sdfg.all_sdfgs_recursive()),
+                                      self._exitcode)
+        backend_header = {'cuda': 'cuda_runtime.h', 'hip': 'hip/hip_runtime.h'}.get(self.backend)
+        if backend_header is None:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
         params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
 
-        pool_header = ''
-        if self.has_pool:
-            poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
-            pool_header = f'''
-    {self.backend}MemPool_t mempool;
-    {self.backend}DeviceGetDefaultMemPool(&mempool, 0);
-    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
-'''
-        # Depending on `max_concurrent_streams` we decide how to allocate the streams
+        pool_header = mempool_setup(self.backend) if self.has_pool else ''
+        # With ``max_concurrent_streams == -1`` every stream is the default (null) stream
         if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
             stream_alloc_call = "__state->gpu_context->internal_streams[i] = nullptr"
             stream_free_call = "{ /* no action needed */ }"
@@ -1001,8 +935,8 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
 {localcode}
 """.format(params=params_comma,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           initcode=initcode.getvalue(),
-           exitcode=exitcode.getvalue(),
+           initcode=initcode,
+           exitcode=exitcode,
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
@@ -1153,3 +1087,57 @@ class KernelSpec:
                 'no matching DaCe data type found.\n'
                 'Please use a valid type from dace.dtypes (e.g., "int32", "uint64").')
         return dtype.ctype
+
+
+def pooled_transients(sdfg: SDFG) -> OrderedSet:
+    return OrderedSet(aname for aname, arr in sdfg.arrays.items()
+                      if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
+
+
+def release_terminators(state: SDFGState, aname: str) -> OrderedSet:
+    """Nodes after which a pooled array last used in ``state`` is released; empty means the state end.
+
+    The release follows the common descendant access node, unless that node sits inside a scope, where
+    the release is deferred to the end of the state.
+    """
+    ans = [an for an in state.data_nodes() if an.data == aname]
+    terminator = next((an1 for an1 in ans if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1)),
+                      None)
+    if terminator is None or state.entry_node(terminator) is not None:
+        return OrderedSet()
+    return OrderedSet(
+        state.exit_node(e.dst) if isinstance(e.dst, nodes.EntryNode) else e.dst for e in state.out_edges(terminator))
+
+
+def single_sink_state(sdfg: SDFG) -> SDFGState:
+    """The one sink state of ``sdfg``, joining several sinks into a new one."""
+    sinks = sdfg.sink_nodes()
+    if not sinks:
+        raise ValueError('End state not found when trying to free pooled memory')
+    if len(sinks) == 1:
+        return sinks[0]
+    sink = sdfg.add_state()
+    for s in sinks:
+        sdfg.add_edge(s, sink)
+    return sink
+
+
+def target_code_blocks(blocks_per_sdfg, own_code: CodeIOStream) -> str:
+    """The untargeted and ``cuda``-targeted code blocks of every ``(sdfg, blocks)`` pair, then the target's own."""
+    code = CodeIOStream()
+    for sd, blocks in blocks_per_sdfg:
+        for target in (None, 'cuda'):
+            if target in blocks:
+                code.write(codeblock_to_cpp(blocks[target]), sd)
+    code.write(own_code.getvalue())
+    return code.getvalue()
+
+
+def mempool_setup(backend: str) -> str:
+    poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
+    return f'''
+    {backend}MemPool_t mempool;
+    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
+    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+'''

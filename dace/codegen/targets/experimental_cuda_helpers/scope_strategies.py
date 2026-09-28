@@ -241,22 +241,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
                                                callsite_stream, scope_manager)
 
-            # Define the flat thread ID within the block.
-            flattened_terms = []
-
-            for i, dim_size in enumerate(block_dims):
-
-                if dim_size == 1:
-                    continue
-
-                dim = get_cuda_dim(i)
-                stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
-                idx_expr = " * ".join(stride + [f"threadIdx.{get_cuda_dim(i)}"]) if stride else f"threadIdx.{dim}"
-                flattened_terms.append(idx_expr)
-
-            joined_terms = " + ".join(flattened_terms)
-            flat_thread_idx_expr = f"({joined_terms})" if len(flattened_terms) > 1 else joined_terms
-
+            flat_thread_idx_expr = flat_thread_index_expr(block_dims)
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id,
                                                       state_dfg.node_id(node))
 
@@ -264,17 +249,10 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                   state_id, node)
             self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, ids_ctype)
 
-            # Compute the map indices (the warp indices).
+            # Compute the map indices (the warp indices), in reverse parameter order.
             for i in range(warp_dim):
-                var_name = scope_map.params[-i - 1]  # reverse order
-                previous_sizes = warp_dim_bounds[:i]
-
-                if len(previous_sizes) > 0:
-                    divisor = product(previous_sizes)
-                    expr = f"(({threadID_name} / {divisor}) % ({warp_dim_bounds[i]}))"
-                else:
-                    expr = f"({threadID_name} % ({warp_dim_bounds[i]}))"
-
+                var_name = scope_map.params[-i - 1]
+                expr = warp_index_expr(threadID_name, warp_dim_bounds, i)
                 callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
 
@@ -287,19 +265,9 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             warp_range = [(start, end + 1, stride) for start, end, stride in map_range.ranges]
 
-            for dim, (var_name, (start, _, stride)) in enumerate(zip(scope_map.params[::-1], warp_range)):
-
-                condition_terms = []
-
-                if start != 0:
-                    condition_terms.append(f"{var_name} >= {start}")
-
-                if stride != 1:
-                    expr = var_name if start == 0 else f"({var_name} - {start})"
-                    condition_terms.append(f'{expr} % {stride} == 0')
-
-                if condition_terms:
-                    condition = " && ".join(condition_terms)
+            for var_name, (start, _, stride) in zip(scope_map.params[::-1], warp_range):
+                condition = strided_range_guard(var_name, start, stride)
+                if condition:
                     scope_manager.open(condition)
 
             self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
@@ -421,3 +389,33 @@ class ScopeManager:
             line += f" // {self.comment} (open {self._opened + 1})"
         self.callsite_stream.write(line, self.cfg, self.state_id, self.entry_node)
         self._opened += 1
+
+
+def flat_thread_index_expr(block_dims) -> str:
+    """The thread's flat index within its block, skipping unit block dimensions."""
+    terms = []
+    for i, dim_size in enumerate(block_dims):
+        if dim_size == 1:
+            continue
+        stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
+        terms.append(" * ".join(stride + [f"threadIdx.{get_cuda_dim(i)}"]))
+    joined = " + ".join(terms)
+    return f"({joined})" if len(terms) > 1 else joined
+
+
+def warp_index_expr(warp_id: str, warp_dim_bounds, i: int) -> str:
+    """Index of warp dimension ``i`` within the flat warp id."""
+    if i == 0:
+        return f"({warp_id} % ({warp_dim_bounds[0]}))"
+    return f"(({warp_id} / {product(warp_dim_bounds[:i])}) % ({warp_dim_bounds[i]}))"
+
+
+def strided_range_guard(var_name: str, start, stride) -> str:
+    """Condition selecting the iterations of ``start::stride`` among ``start, start + 1, ...``; empty if all."""
+    terms = []
+    if start != 0:
+        terms.append(f"{var_name} >= {start}")
+    if stride != 1:
+        expr = var_name if start == 0 else f"({var_name} - {start})"
+        terms.append(f'{expr} % {stride} == 0')
+    return " && ".join(terms)
