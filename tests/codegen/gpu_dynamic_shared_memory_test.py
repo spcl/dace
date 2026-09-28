@@ -173,6 +173,40 @@ def _two_level_sdfg(setzero: bool = False) -> dace.SDFG:
     return sdfg
 
 
+def _two_kernel_sdfg(first=('s', ), second=('s', ), storage: S = S.GPU_Shared) -> dace.SDFG:
+    """
+    Two kernels in one state: the first copies ``A`` to ``B`` and the second ``B`` to ``C``, each through the shared
+    containers it names, in order. Containers named by both kernels are one data descriptor of the SDFG.
+    """
+    sdfg = dace.SDFG('two_kernels')
+    for name in 'ABC':
+        sdfg.add_array(name, [N], dace.float64, storage=S.GPU_Global)
+    for name in sorted(set(first) | set(second)):
+        sdfg.add_array(name, [KIB32], dace.float64, storage=storage, transient=True)
+    state = sdfg.add_state()
+    source = state.add_read('A')
+    for label, names, src, dst in (('first', first, 'A', 'B'), ('second', second, 'B', 'C')):
+        kernel_entry, kernel_exit = state.add_map(label, {'i': '0:N:32'}, schedule=dace.ScheduleType.GPU_Device)
+        block_entry, block_exit = state.add_map(f'{label}_block', {'j': '0:32'},
+                                                schedule=dace.ScheduleType.GPU_ThreadBlock)
+        last = state.add_tasklet(f'{label}_load', {'v'}, {'w'}, 'w = v')
+        state.add_memlet_path(source,
+                              kernel_entry,
+                              block_entry,
+                              last,
+                              dst_conn='v',
+                              memlet=dace.Memlet(f'{src}[i + j]'))
+        for k, name in enumerate(names):
+            container = state.add_access(name)
+            state.add_edge(last, 'w', container, None, dace.Memlet(f'{name}[j]'))
+            last = state.add_tasklet(f'{label}_{k}', {'v'}, {'w'}, 'w = v')
+            state.add_edge(container, None, last, 'v', dace.Memlet(f'{name}[j]'))
+        source = state.add_access(dst)
+        state.add_memlet_path(last, block_exit, kernel_exit, source, src_conn='w', memlet=dace.Memlet(f'{dst}[i + j]'))
+    sdfg.validate()
+    return sdfg
+
+
 # Storage type #########################################################################################################
 
 
@@ -296,6 +330,30 @@ def test_nested_sdfg_offset_is_passed_as_symbol():
     sdfg.validate()
 
 
+def test_kernels_do_not_share_containers():
+    """A container two kernels access is a separate container, with its own place in shared memory, in each."""
+    sdfg = _two_kernel_sdfg(storage=S.GPU_Shared(dynamic=True))
+    code, _ = _generate(sdfg)
+    assert _placement(sdfg, 's') is True and _placement(sdfg, 's_0') is True
+    kernels = re.findall(r'__global__ void .*? (first|second)_\w+\((.*?)\) \{', code)
+    assert len(kernels) == 2
+    # Shared memory is not passed to either kernel, which would mean it was allocated outside of them
+    assert all('__dace_dynsmem' not in args and ' s' not in args for _, args in kernels)
+    assert re.search(r'\bs = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);', code)
+    assert re.search(r'\bs_0 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);', code)
+    assert len(re.findall(r'LaunchKernel\(.*, 32768, ', code)) == 2
+
+
+def test_placement_is_per_kernel():
+    """``s`` fits in the static shared memory of the first kernel, but not in the second, after ``a``."""
+    sdfg = _two_kernel_sdfg(first=('s', ), second=('a', 's'))
+    code, shared_warnings = _generate(sdfg)
+    assert len(shared_warnings) == 1 and '"s_0"' in shared_warnings[0]
+    assert _placement(sdfg, 's') is False and _placement(sdfg, 'a') is False and _placement(sdfg, 's_0') is True
+    assert '__shared__ double s[4096];' in code and '__shared__ double a[4096];' in code
+    assert re.search(r'\bs_0 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);', code)
+
+
 def test_hip_limit():
     """HIP allows 64 KiB of static shared memory, so two of the three containers are static and none is requested."""
     sdfg = three_arrays.to_sdfg(simplify=False)
@@ -346,6 +404,17 @@ def test_nested_sdfg_offset():
 
 
 @pytest.mark.gpu
+def test_kernels_with_separate_containers():
+    import cupy
+    sdfg = _two_kernel_sdfg(first=('s', ), second=('a', 's'))
+    A = cupy.arange(1024, dtype=cupy.float64)
+    B = cupy.zeros(1024, dtype=cupy.float64)
+    C = cupy.zeros(1024, dtype=cupy.float64)
+    sdfg(A=A, B=B, C=C, N=1024)
+    assert np.array_equal(cupy.asnumpy(C), np.arange(1024, dtype=np.float64))
+
+
+@pytest.mark.gpu
 def test_request_beyond_the_device_raises(capfd):
     """No GPU grants 16 MiB of shared memory per thread-block; the launch fails with the request and the limit."""
     with pytest.raises(RuntimeError, match='symbolic_size'):
@@ -365,9 +434,12 @@ if __name__ == '__main__':
     test_symbolic_size_is_placed_dynamically()
     test_size_known_only_in_kernel_raises()
     test_nested_sdfg_offset_is_passed_as_symbol()
+    test_kernels_do_not_share_containers()
+    test_placement_is_per_kernel()
     test_hip_limit()
     test_configured_limit()
     test_dynamic_shared_memory_beyond_the_default_limit()
     test_symbolic_size()
     test_nested_sdfg_offset()
+    test_kernels_with_separate_containers()
     # test_request_beyond_the_device_raises needs pytest's ``capfd`` fixture

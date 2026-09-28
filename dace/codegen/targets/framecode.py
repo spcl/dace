@@ -757,7 +757,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break
