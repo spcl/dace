@@ -229,7 +229,7 @@ RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 #: the expansion, not of the name, so a name absent from the global list can still qualify for one
 #: node and not for another.
 #:
-#: ``ArgReduce``'s ``OpenMP`` is the case that matters. Unlike ``Reduce``'s and ``FindFirst``'s
+#: ``ArgReduce``'s ``CPU`` is the case that matters. Unlike ``Reduce``'s and ``FindFirst``'s
 #: same-named expansions, which call into ``dace::reduce`` / ``dace::find_first_index``, it emits a
 #: self-contained tasklet: an ``omp declare reduction`` over a (value, index) pair, no runtime
 #: symbol and no environment. Without it an ArgReduce falls to ``pure``, which is a SEQUENTIAL
@@ -237,10 +237,12 @@ RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 #: pipeline itself parallelizes -- ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all
 #: measured 9-11x over numpy in the parallel form and rendered with no ``omp`` at all.
 #:
-#: ``sequential`` is the C++ single-loop lowering of the three nodes whose ``pure`` is built from SDFG components:
-#: the loop is what CPF rendered for them before, and it is faster than the component form.
+#: ``pure`` is built from SDFG components only; ``CPU`` is the parallel C++ lowering and ``sequential`` the C++
+#: single loop, which is what CPF rendered for these nodes before and is faster than the component form.
 RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
-    'ArgReduce': ('OpenMP', 'sequential'),
+    'ArgReduce': ('CPU', 'sequential'),
+    'FindFirst': ('sequential', ),
+    'IntegerSort': ('ISO C++', ),
     'Scan': ('sequential', ),
     'ScatterConflictCheck': ('sequential', ),
 }

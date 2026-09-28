@@ -95,10 +95,10 @@ def _degenerate_single_element_tasklet(node: "IntegerSort") -> nodes.Tasklet:
 
 
 @library.expansion
-class ExpandPure(ExpandTransformation):
-    """Portable fallback: a ``std::sort`` C++ tasklet."""
+class ExpandISOCpp(ExpandTransformation):
+    """Portable ISO C++ lowering: ``std::sort`` under ``std::execution::par_unseq``."""
 
-    environments = []
+    environments = [environments.ParallelSTL]
 
     @staticmethod
     def expansion(node: "IntegerSort", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -107,12 +107,12 @@ class ExpandPure(ExpandTransformation):
             return _degenerate_single_element_tasklet(node)
         n_expr = _resolve_length(node, state, sdfg)
         code = (f"std::copy({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), {OUTPUT_CONNECTOR_NAME});\n"
-                f"std::sort({OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));")
+                f"std::sort(std::execution::par_unseq, {OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));")
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME},
             outputs={OUTPUT_CONNECTOR_NAME},
-            code=f"{{\n#include <algorithm>\n{code}\n}}",
+            code=f"{{\n#include <algorithm>\n#include <execution>\n{code}\n}}",
             language=dace.Language.CPP,
         )
 
@@ -219,7 +219,7 @@ class IntegerSort(nodes.LibraryNode):
 
     - ``'CPU'`` -- ska_sort (vendored, fast MSD radix). Default on host.
     - ``'CUDA'`` -- ``gpucub::DeviceRadixSort::SortKeys`` (memory-bandwidth bound on GPU).
-    - ``'pure'`` -- ``std::sort`` portable fallback.
+    - ``'ISO C++'`` -- ``std::sort`` under ``std::execution::par_unseq``, portable.
 
     The libnode is contractually pure: it neither aliases the input/output buffers
     nor reads/writes any other state. A caller may pass the same buffer for input
@@ -229,7 +229,7 @@ class IntegerSort(nodes.LibraryNode):
     INPUT_CONNECTOR_NAME = INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
+    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "ISO C++": ExpandISOCpp}
     default_implementation = 'CPU'
 
     def __init__(self, name: str = 'IntegerSort', *args, **kwargs):

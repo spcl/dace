@@ -696,7 +696,7 @@ def find_first_input(hit):
     return a, FIND_FIRST_SPAN if hit is None else hit
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['sequential', 'CPU'])
 def test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c(implementation):
     """C has no lambda, so the search is a function of its own taking what the predicate reads.
 

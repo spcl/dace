@@ -742,7 +742,7 @@ def find_first_input(hit):
     return a, FIND_FIRST_SPAN if hit is None else hit
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['sequential', 'CPU'])
 def test_find_first_renders_the_cancelling_search(implementation):
     """A find-first must render as the short-circuiting parallel search, not as a scan of the range.
 

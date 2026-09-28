@@ -71,7 +71,7 @@ def restore_omp_threads(previous: str | None) -> None:
         os.environ['OMP_NUM_THREADS'] = previous
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['sequential', 'CPU'])
 def test_find_first_is_exact_when_most_indices_fire(implementation):
     """Numeric guard for the same bug: with a dense firing tail every chunk finds something and
     they all race to publish, so a lost update answers too large an index. Repeated, because a
@@ -98,7 +98,7 @@ def test_find_first_is_exact_when_most_indices_fire(implementation):
         restore_omp_threads(previous)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['sequential', 'CPU'])
 @pytest.mark.parametrize('first', [0, 1, 517, 4095, None])
 def test_find_first_answers_every_firing_position(implementation, first):
     """Every firing position, and the no-hit case whose answer is the exclusive end -- the one a
