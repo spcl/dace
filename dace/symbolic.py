@@ -766,6 +766,41 @@ def issymbolic(value, constants=None):
     return False
 
 
+def align(value: Union[SymbolicType, int], alignment: Union[SymbolicType, int]) -> Union[SymbolicType, int]:
+    """
+    Rounds a value up to the nearest multiple of an alignment.
+
+    :param value: The (possibly symbolic) non-negative value to align.
+    :param alignment: The (possibly symbolic) positive alignment.
+    :return: The smallest multiple of ``alignment`` that is not less than ``value``, as an integer if neither is
+             symbolic.
+    :note: Symbolic values are rounded with ``int_ceil``, never ``//``: ``(N + a - 1) // a`` builds a sympy
+           ``floor(...)``, whose argument ``symstr`` prints without the floor, truncating each term (N=1, a=8
+           would give 0, not 8).
+    """
+    if issymbolic(value) or issymbolic(alignment):
+        return int_ceil(value, alignment) * alignment
+    return ((int(value) + int(alignment) - 1) // int(alignment)) * int(alignment)
+
+
+def is_multiple(value: Union[SymbolicType, int], alignment: Union[SymbolicType, int]) -> bool:
+    """
+    Returns whether a value is provably a multiple of an alignment.
+
+    :param value: The (possibly symbolic) value to check.
+    :param alignment: The (possibly symbolic) positive alignment.
+    :return: True if ``value`` is a multiple of ``alignment`` for every value of its symbols, False otherwise
+             (including if it cannot be proven). For a ``SymExpr``, its exact expression is checked.
+    """
+    if isinstance(value, SymExpr):
+        value = value.expr
+    if isinstance(alignment, SymExpr):
+        alignment = alignment.expr
+    if issymbolic(value) or issymbolic(alignment):
+        return sympy.Mod(value, alignment) == 0
+    return int(value) % int(alignment) == 0
+
+
 def overapproximate(expr):
     """
     Takes a sympy expression and returns its maximal possible value

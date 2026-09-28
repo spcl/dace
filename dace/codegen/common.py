@@ -12,7 +12,7 @@ from io import StringIO
 import numpy as np
 import os
 import subprocess
-from typing import List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Union
 import warnings
 
 
@@ -227,6 +227,104 @@ def get_gpu_chiplet_count() -> Optional[int]:
                       '`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of '
                       'the GPU (6 on MI300A) to enable it.')
         return None
+
+
+def gpu_thread_id_type() -> dtypes.typeclass:
+    """
+    Returns the configured type of GPU thread and block indices (``compiler.cuda.thread_id_type``).
+
+    :return: The configured index type.
+    """
+    ttype = config.Config.get('compiler', 'cuda', 'thread_id_type')
+    tidtype = getattr(dtypes, ttype, False)
+    if not isinstance(tidtype, dtypes.typeclass):
+        raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
+                         'See ``dace.dtypes`` for available types (for example ``int32``).')
+    return tidtype
+
+
+def gpu_map_index_types(sdfg: SDFG, state: 'sd.SDFGState',
+                        map_entry: 'sd.nodes.MapEntry') -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the type to declare each parameter of a GPU map with.
+
+    That is the configured ``thread_id_type``, unless the type inferred for the parameter from its range is a wider
+    integer. 64-bit integer arithmetic costs several instructions and twice the registers on GPUs, so indices stay as
+    narrow as configured unless the range needs more, e.g., when it spans a 64-bit symbol.
+
+    :param sdfg: The SDFG that contains the map.
+    :param state: The state that contains the map.
+    :param map_entry: The entry node of the map.
+    :return: A dictionary mapping each map parameter to its type.
+    """
+    tidtype = gpu_thread_id_type()
+    inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry))
+    result = {}
+    for param in map_entry.map.params:
+        dtype = inferred.get(param)
+        wider = dtype in dtypes.INTEGER_TYPES and dtype.bytes > tidtype.bytes
+        result[param] = dtype if wider else tidtype
+    return result
+
+
+def gpu_dynamic_map_index_type(sdfg: SDFG, state: 'sd.SDFGState',
+                               kernel_entry: 'sd.nodes.MapEntry') -> dtypes.typeclass:
+    """
+    Returns the index type of the dynamic thread-block maps in a GPU kernel, which ``dace::DynamicMap`` uses both for
+    the index of the enclosing map and for its own. The type is the widest over every dynamic map in the kernel, the
+    maps that enclose them, and the kernel map.
+
+    :param sdfg: The SDFG that contains the kernel.
+    :param state: The state that contains the kernel.
+    :param kernel_entry: The entry node of the kernel map.
+    :return: The index type of the dynamic maps.
+    """
+    result = gpu_thread_id_type()
+
+    def widen(types: Dict[str, dtypes.typeclass]) -> None:
+        nonlocal result
+        for dtype in types.values():
+            if dtype.bytes > result.bytes:
+                result = dtype
+
+    def visit(sdfg: SDFG, state: 'sd.SDFGState', graph_nodes: List['sd.nodes.Node']) -> None:
+        for node in graph_nodes:
+            if isinstance(node, sd.nodes.NestedSDFG):
+                for nstate in node.sdfg.states():
+                    visit(node.sdfg, nstate, nstate.nodes())
+            elif (isinstance(node, sd.nodes.MapEntry)
+                  and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+                widen(gpu_map_index_types(sdfg, state, node))
+                outer = state.entry_node(node)
+                if outer is not None:
+                    widen(gpu_map_index_types(sdfg, state, outer))
+
+    widen(gpu_map_index_types(sdfg, state, kernel_entry))
+    visit(sdfg, state, state.scope_subgraph(kernel_entry).nodes())
+    return result
+
+
+def gpu_warp_size() -> int:
+    """
+    Returns the number of threads in a warp of the GPU backend: 32 on CUDA, and 64 (a wavefront) on HIP.
+
+    :return: The warp size.
+    """
+    return 64 if get_gpu_backend() == 'hip' else 32
+
+
+def gpu_max_static_shared_memory() -> int:
+    """
+    Returns the number of bytes of shared memory a GPU thread-block may declare statically: the
+    ``compiler.cuda.max_static_shared_memory`` configuration entry, or the limit of the GPU backend if it is 0.
+
+    :return: The limit in bytes.
+    """
+    limit = config.Config.get('compiler', 'cuda', 'max_static_shared_memory')
+    if limit > 0:
+        return limit
+    # CUDA caps static shared memory at 48 KiB on every architecture; AMD GPUs have 64 KiB of LDS per work-group
+    return 64 * 1024 if get_gpu_backend() == 'hip' else 48 * 1024
 
 
 def platform_library_name(libname: str) -> str:
