@@ -23,6 +23,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import uuid
 import warnings
 from functools import lru_cache
 
@@ -40,58 +41,47 @@ from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
 
+#: Untested on Windows.
+CACHES_SUPPORTED = os.name != 'nt'
 
-@lru_cache(maxsize=None)
-def _nanobind_available() -> bool:
-    """Whether the nanobind package is importable. Cached: ``resolve_compiler_interface`` runs on
-    every ``compile()`` and must not pay a filesystem probe each time."""
-    return importlib.util.find_spec('nanobind') is not None
+#: Last-resort cache location inside the build folder. Prefixed so it cannot collide with the
+#: per-SDFG folders next to it, which are named after the SDFG.
+BUILD_CACHE_FOLDER = '__dace_build_cache'
 
+#: Namespace under which generated nanobind modules are registered in ``sys.modules``.
+GENERATED_NAMESPACE = 'dace.generated'
 
-@lru_cache(maxsize=None)
-def _warn_nanobind_unavailable() -> None:
-    """Warns once per process that ``auto`` degrades to ctypes-only. nanobind is a declared
-    dependency of DaCe, so a missing package usually means a broken installation -- a completely
-    silent fallback would mask that."""
-    warnings.warn('compiler.interface is "auto", but the nanobind package is not installed; '
-                  'falling back to the ctypes interface for all SDFGs. nanobind is a declared '
-                  'dependency of DaCe, so a missing package usually indicates a broken installation.')
+#: Glob for nanobind's helper archive. nanobind derives the library NAME from the options passed
+#: to ``nanobind_add_module()`` (e.g. ``NB_STATIC`` selects ``nanobind-static``, ``PROTECT_STACK``
+#: appends ``-ps`` - variants are compiled differently, so each deliberately gets its own name).
+#: The name is therefore never assumed anywhere: publishing discovers it from what the build
+#: actually produced, and the CMake side verifies a cached candidate against the helper target it
+#: really links before swapping it in (a non-matching candidate is ignored, costing only the
+#: cache benefit). This keeps the cache working - or at worst, harmlessly inactive - when the
+#: option list or nanobind's naming scheme changes.
+NANOBIND_STATIC_GLOB = 'libnanobind*.a'
 
+#: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
+#: precompiled header with the same flags the translation unit will get; nothing here reaches the
+#: real build. A wrong entry costs the PCH speedup, never correctness. NVHPC needs its own row --
+#: it differs from GNU in every config. Verified against CMake, not documentation.
+BUILD_TYPE_FLAGS_BY_FAMILY = {
+    'gnu': {
+        'Debug': ['-g'],
+        'Release': ['-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
+        'MinSizeRel': ['-Os', '-DNDEBUG'],
+    },
+    'nvhpc': {
+        'Debug': ['-g', '-O0'],
+        'Release': ['-fast', '-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-gopt'],
+        'MinSizeRel': ['-O2', '-s', '-DNDEBUG'],
+    },
+}
 
-def resolve_compiler_interface(sdfg=None) -> str:
-    """Decides the concrete Python interface ('ctypes' or 'nanobind') for compiling ``sdfg``.
-
-    This is the single decision point for the ``compiler.interface``
-    configuration: ``SDFG.compile()`` calls it once and passes the decided
-    mode down (``is_loaded()``, :func:`generate_program_folder`), so code
-    generation never re-reads the configuration.
-
-    - ``ctypes``: always the ctypes interface.
-    - ``nanobind``: always the nanobind interface; an SDFG outside its scope
-      is refused fail-fast at code generation (see
-      ``nanobind_bindings.argument_unsupported``), never silently redirected,
-      and a missing nanobind package stays a hard error at compile time.
-    - ``auto`` (the default): the nanobind interface iff the nanobind package
-      is available (a missing package falls back to ctypes with a one-time
-      warning) and it supports every argument and return value of ``sdfg``
-      (``nanobind_bindings.unsupported_reason``), else the ctypes interface.
-
-    :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
-                 SDFG (raw code objects); ``auto`` then resolves to ``ctypes``,
-                 since without an SDFG no bindings can be generated.
-    :return: ``'ctypes'`` or ``'nanobind'``.
-    """
-    interface = Config.get('compiler', 'interface')
-    if interface not in ('ctypes', 'nanobind', 'auto'):
-        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
-    if interface != 'auto':
-        return interface
-    if not _nanobind_available():
-        _warn_nanobind_unavailable()
-        return 'ctypes'
-    if sdfg is None:
-        return 'ctypes'
-    return 'nanobind' if nanobind_bindings.unsupported_reason(sdfg) is None else 'ctypes'
+#: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
+CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY['gnu']
 
 
 def generate_program_folder(
@@ -120,6 +110,13 @@ def generate_program_folder(
 
     :note: The ``config`` argument is retained for compatibility and should not be used.
     """
+
+    def _write_file_atomically(path: str, content: str) -> None:
+        # Not PID based, as the folder may be on a file system shared by hosts with colliding PIDs.
+        staging = f'{path}.{uuid.uuid4().hex}'
+        with open(staging, 'x') as fp:
+            fp.write(content)
+        os.replace(staging, path)
 
     # NOTE: In older version the argument `config` could be a used to pass a custom
     #   "configuration" (probably a `dict`) object, that would then be written to
@@ -263,8 +260,8 @@ def generate_program_folder(
     # Write cachedir tag
     cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
     if not os.path.exists(cachedir_tag):
-        with open(cachedir_tag, "w") as f:
-            f.write("\n".join([
+        _write_file_atomically(
+            cachedir_tag, "\n".join([
                 "Signature: 8a477f597d28d172789f06886806bc55",
                 "# This file is a cache directory tag created by DaCe.",
                 "# For information about cache directory tags, see:",
@@ -273,9 +270,6 @@ def generate_program_folder(
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
-        # NOTE: There is a bug here, as this only saves they keys inside the configuration
-        #   `dict`. It ignores the configuration values set through environment variables.
-        #   instead it will store the ones in the `dict`.
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.
@@ -287,14 +281,63 @@ def generate_program_folder(
         os.makedirs(os.path.join(out_path, 'perf'), exist_ok=True)
 
     # The folder mode file is always generated. In case it is missing we assume the old version.
-    with open(os.path.join(out_path, "FOLDER_MODE"), "w") as version_file:
-        version_file.write(folder_mode)
+    #  Concurrent processes probe it, e.g. through `get_binary_name()`, thus it must never be observed incomplete.
+    _write_file_atomically(os.path.join(out_path, "FOLDER_MODE"), folder_mode)
 
     return out_path
 
 
-#: Namespace under which generated nanobind modules are registered in ``sys.modules``.
-GENERATED_NAMESPACE = 'dace.generated'
+def resolve_compiler_interface(sdfg=None) -> str:
+    """Decides the concrete Python interface ('ctypes' or 'nanobind') for compiling ``sdfg``.
+
+    This is the single decision point for the ``compiler.interface``
+    configuration: ``SDFG.compile()`` calls it once and passes the decided
+    mode down (``is_loaded()``, :func:`generate_program_folder`), so code
+    generation never re-reads the configuration.
+
+    - ``ctypes``: always the ctypes interface.
+    - ``nanobind``: always the nanobind interface; an SDFG outside its scope
+      is refused fail-fast at code generation (see
+      ``nanobind_bindings.argument_unsupported``), never silently redirected,
+      and a missing nanobind package stays a hard error at compile time.
+    - ``auto`` (the default): the nanobind interface iff the nanobind package
+      is available (a missing package falls back to ctypes with a one-time
+      warning) and it supports every argument and return value of ``sdfg``
+      (``nanobind_bindings.unsupported_reason``), else the ctypes interface.
+
+    :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
+                 SDFG (raw code objects); ``auto`` then resolves to ``ctypes``,
+                 since without an SDFG no bindings can be generated.
+    :return: ``'ctypes'`` or ``'nanobind'``.
+    """
+    interface = Config.get('compiler', 'interface')
+    if interface not in ('ctypes', 'nanobind', 'auto'):
+        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
+    if interface != 'auto':
+        return interface
+    if not _nanobind_available():
+        _warn_nanobind_unavailable()
+        return 'ctypes'
+    if sdfg is None:
+        return 'ctypes'
+    return 'nanobind' if nanobind_bindings.unsupported_reason(sdfg) is None else 'ctypes'
+
+
+@lru_cache(maxsize=None)
+def _nanobind_available() -> bool:
+    """Whether the nanobind package is importable. Cached: ``resolve_compiler_interface`` runs on
+    every ``compile()`` and must not pay a filesystem probe each time."""
+    return importlib.util.find_spec('nanobind') is not None
+
+
+@lru_cache(maxsize=None)
+def _warn_nanobind_unavailable() -> None:
+    """Warns once per process that ``auto`` degrades to ctypes-only. nanobind is a declared
+    dependency of DaCe, so a missing package usually means a broken installation -- a completely
+    silent fallback would mask that."""
+    warnings.warn('compiler.interface is "auto", but the nanobind package is not installed; '
+                  'falling back to the ctypes interface for all SDFGs. nanobind is a declared '
+                  'dependency of DaCe, so a missing package usually indicates a broken installation.')
 
 
 def nanobind_qualified_module_name(build_folder, module_name: str) -> str:
@@ -396,41 +439,6 @@ def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG",
     return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)
 
 
-#: Untested on Windows.
-CACHES_SUPPORTED = os.name != 'nt'
-
-#: Last-resort cache location inside the build folder. Prefixed so it cannot collide with the
-#: per-SDFG folders next to it, which are named after the SDFG.
-BUILD_CACHE_FOLDER = '__dace_build_cache'
-
-
-def build_cache_root() -> str:
-    """Directory holding the machine-global build caches, shared by every SDFG.
-
-    All advisory: a miss costs speed, never correctness. RAM-backed when possible, since on HPC
-    nodes the temp directory is often a shared file system where re-reading a large precompiled
-    header costs more than it saves.
-    """
-    root = os.environ.get('DACE_BUILD_CACHE_DIR')
-    if not root:
-        usable = (c for c in ('/dev/shm', tempfile.gettempdir()) if os.path.isdir(c) and os.access(c, os.W_OK))
-        root = next(usable, None)
-        if root is None:
-            return os.path.join(Config.get('default_build_folder'), BUILD_CACHE_FOLDER)
-    return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
-
-
-#: Glob for nanobind's helper archive. nanobind derives the library NAME from the options passed
-#: to ``nanobind_add_module()`` (e.g. ``NB_STATIC`` selects ``nanobind-static``, ``PROTECT_STACK``
-#: appends ``-ps`` - variants are compiled differently, so each deliberately gets its own name).
-#: The name is therefore never assumed anywhere: publishing discovers it from what the build
-#: actually produced, and the CMake side verifies a cached candidate against the helper target it
-#: really links before swapping it in (a non-matching candidate is ignored, costing only the
-#: cache benefit). This keeps the cache working - or at worst, harmlessly inactive - when the
-#: option list or nanobind's naming scheme changes.
-NANOBIND_STATIC_GLOB = 'libnanobind*.a'
-
-
 def nanobind_static_cache_dir() -> str:
     """Cache directory of nanobind's prebuilt helper archive(s).
 
@@ -447,6 +455,23 @@ def nanobind_static_cache_dir() -> str:
     import nanobind
     tag = f'{getattr(nanobind, "__version__", "unknown")}-py{sys.version_info.major}.{sys.version_info.minor}'
     return os.path.join(build_cache_root(), 'nanobind', tag)
+
+
+def _nanobind_pch_identity() -> Optional[Tuple[Tuple[str, str], str, str]]:
+    """The include directories and version identity the nanobind umbrella adds to the binary
+    header: ``((nanobind include, Python include), nanobind version, Python version)``, or ``None``
+    when the ``nanobind`` package is absent.
+
+    The versions belong in the PCH cache key: the mtime guard in
+    :func:`prepare_precompiled_header` only walks DaCe's own runtime tree, so an in-place nanobind
+    upgrade or another interpreter must miss the cache, never reuse a header built from foreign
+    includes.
+    """
+    try:
+        import nanobind
+    except ImportError:
+        return None
+    return ((nanobind.include_dir(), sysconfig.get_paths()['include']), nanobind.__version__, sys.version)
 
 
 def publish_nanobind_static(build_folder: str, cache_dir: str) -> None:
@@ -473,27 +498,20 @@ def publish_nanobind_static(build_folder: str, cache_dir: str) -> None:
                 pass
 
 
-#: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
-#: precompiled header with the same flags the translation unit will get; nothing here reaches the
-#: real build. A wrong entry costs the PCH speedup, never correctness. NVHPC needs its own row --
-#: it differs from GNU in every config. Verified against CMake, not documentation.
-BUILD_TYPE_FLAGS_BY_FAMILY = {
-    'gnu': {
-        'Debug': ['-g'],
-        'Release': ['-O3', '-DNDEBUG'],
-        'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
-        'MinSizeRel': ['-Os', '-DNDEBUG'],
-    },
-    'nvhpc': {
-        'Debug': ['-g', '-O0'],
-        'Release': ['-fast', '-O3', '-DNDEBUG'],
-        'RelWithDebInfo': ['-O2', '-gopt'],
-        'MinSizeRel': ['-O2', '-s', '-DNDEBUG'],
-    },
-}
+def build_cache_root() -> str:
+    """Directory holding the machine-global build caches, shared by every SDFG.
 
-#: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
-CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY['gnu']
+    All advisory: a miss costs speed, never correctness. RAM-backed when possible, since on HPC
+    nodes the temp directory is often a shared file system where re-reading a large precompiled
+    header costs more than it saves.
+    """
+    root = os.environ.get('DACE_BUILD_CACHE_DIR')
+    if not root:
+        usable = (c for c in ('/dev/shm', tempfile.gettempdir()) if os.path.isdir(c) and os.access(c, os.W_OK))
+        root = next(usable, None)
+        if root is None:
+            return os.path.join(Config.get('default_build_folder'), BUILD_CACHE_FOLDER)
+    return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
 def build_type_flags() -> list:
@@ -580,23 +598,6 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         os.rename(staging, entry)  # atomic, and loses harmlessly to a concurrent publisher
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
-
-
-def _nanobind_pch_identity() -> Optional[Tuple[Tuple[str, str], str, str]]:
-    """The include directories and version identity the nanobind umbrella adds to the binary
-    header: ``((nanobind include, Python include), nanobind version, Python version)``, or ``None``
-    when the ``nanobind`` package is absent.
-
-    The versions belong in the PCH cache key: the mtime guard in
-    :func:`prepare_precompiled_header` only walks DaCe's own runtime tree, so an in-place nanobind
-    upgrade or another interpreter must miss the cache, never reuse a header built from foreign
-    includes.
-    """
-    try:
-        import nanobind
-    except ImportError:
-        return None
-    return ((nanobind.include_dir(), sysconfig.get_paths()['include']), nanobind.__version__, sys.version)
 
 
 def prepare_precompiled_header(targets) -> Optional[str]:
@@ -1013,6 +1014,9 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
     if (object_folder / 'FOLDER_MODE').exists():
         with open(object_folder / 'FOLDER_MODE', 'rt') as F:
             folder_mode = F.readline().strip()
+        if probe and folder_mode not in ('development', 'production'):
+            # E.g. an older DaCe version, which does not write the file atomically, might have left it empty.
+            return None
         return folder_mode
     else:
         # This is to check an old style folder, i.e. a cache folder that was generated
