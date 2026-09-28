@@ -2670,8 +2670,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             is_wide = index_type.bytes > 4
             template_args = f'{"true" if Config.get_bool("compiler", "cuda", "dynamic_map_fine_grained") else "false"}'
             template_args += f', {total_block_size}'
+            # The warp size and the index type default to 32 and 32 bits (see ``dynmap.cuh``)
+            warp_size = common.gpu_warp_size()
+            if is_wide or warp_size != 32:
+                template_args += f', {warp_size}'
             if is_wide:
-                template_args += f', 32, {index_type.ctype}'
+                template_args += f', {index_type.ctype}'
             dynmap_class = f'dace::DynamicMap<{template_args}>'
             dynmap_state_bytes = sym2cpp(dynmap_state_desc.total_size * index_type.bytes)
             callsite_stream.write(

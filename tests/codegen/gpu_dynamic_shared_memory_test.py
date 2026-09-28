@@ -354,6 +354,20 @@ def test_placement_is_per_kernel():
     assert re.search(r'\bs_0 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);', code)
 
 
+@pytest.mark.parametrize('backend,warp_size', [('cuda', 32), ('hip', 64)])
+def test_dynamic_map_state_follows_the_warp_size(backend: str, warp_size: int):
+    """The fine-grained scheduling state holds two arrays of ``WARP_SIZE`` squared indices per warp."""
+    with dace.config.temporary_config():
+        dace.config.Config.set('compiler', 'cuda', 'backend', value=backend)
+        common.get_gpu_backend.cache_clear()
+        try:
+            assert common.gpu_warp_size() == warp_size
+            assert gpu_shared_memory.dynamic_map_state_elements(True, 128) == 2 * (128 // warp_size) * warp_size**2
+            assert gpu_shared_memory.dynamic_map_state_elements(False, 128) == 4
+        finally:
+            common.get_gpu_backend.cache_clear()
+
+
 def test_hip_limit():
     """HIP allows 64 KiB of static shared memory, so two of the three containers are static and none is requested."""
     sdfg = three_arrays.to_sdfg(simplify=False)
@@ -436,6 +450,8 @@ if __name__ == '__main__':
     test_nested_sdfg_offset_is_passed_as_symbol()
     test_kernels_do_not_share_containers()
     test_placement_is_per_kernel()
+    test_dynamic_map_state_follows_the_warp_size('cuda', 32)
+    test_dynamic_map_state_follows_the_warp_size('hip', 64)
     test_hip_limit()
     test_configured_limit()
     test_dynamic_shared_memory_beyond_the_default_limit()

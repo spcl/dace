@@ -298,6 +298,15 @@ def gpu_dynamic_map_index_type(sdfg: SDFG, state: 'sd.SDFGState',
     return result
 
 
+def gpu_warp_size() -> int:
+    """
+    Returns the number of threads in a warp of the GPU backend: 32 on CUDA, and 64 (a wavefront) on HIP.
+
+    :return: The warp size.
+    """
+    return 64 if get_gpu_backend() == 'hip' else 32
+
+
 def gpu_max_static_shared_memory() -> int:
     """
     Returns the number of bytes of shared memory a GPU thread-block may declare statically: the

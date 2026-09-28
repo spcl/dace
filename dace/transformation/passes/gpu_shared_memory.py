@@ -74,13 +74,13 @@ def dynamic_map_state_elements(fine_grained: bool, block_size: int) -> int:
     """
     Returns the size of the shared scheduling state of ``dace::DynamicMap`` (``shared_type`` in ``dynmap.cuh``), in
     elements of its index type: the union of four indices for thread-block scheduling, and either two arrays of
-    ``WARP_SIZE`` squared indices per warp (fine-grained) or two indices.
+    ``WARP_SIZE`` squared indices per warp (fine-grained) or two indices. The warp size is that of the GPU backend.
 
     :param fine_grained: Whether the fine-grained schedule is used.
     :param block_size: The total thread-block size.
     :return: The number of index elements.
     """
-    warp_size = 32
+    warp_size = common.gpu_warp_size()
     fine_grained_elements = 2 * (block_size // warp_size) * warp_size * warp_size if fine_grained else 2
     return max(4, fine_grained_elements)
 
