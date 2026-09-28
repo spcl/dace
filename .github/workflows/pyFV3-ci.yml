@@ -35,8 +35,6 @@ jobs:
        uses: astral-sh/setup-uv@v7
        with:
          enable-cache: true
-         pyproject-file: pyproject.toml
-         cache-dependency-glob: pyproject.toml
      - name: Set matrix data
        id: set-matrix
        run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT

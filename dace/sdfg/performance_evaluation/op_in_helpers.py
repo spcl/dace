@@ -26,7 +26,7 @@ class CacheLineTracker:
             self.array_info[name] = a
             self.start_lines[name] = self.next_free_line
             # increase next_free_line
-            self.next_free_line += symbolic.int_ceil(a.total_size.subs(mapping) * a.dtype.bytes, self.L)
+            self.next_free_line += symbolic.int_ceil(a.total_size_in_bytes.subs(mapping), self.L)
 
     def cache_line_id(self, name: str, access: [int], mapping):
         arr = self.array_info[name]

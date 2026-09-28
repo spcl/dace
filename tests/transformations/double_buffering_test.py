@@ -55,5 +55,60 @@ def test_double_buffering():
     assert (diff <= 1e-5 and diff2 <= 1e-5)
 
 
+ROWS, COLS = 4, 5
+
+
+def _row_sum_body():
+    """Sums a tile into ``o[k]``."""
+    sdfg = dace.SDFG('row_sum')
+    sdfg.add_array('t', [COLS], dace.float64)
+    sdfg.add_array('o', [ROWS], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('r', dict(q='0:%d' % COLS))
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    state.add_memlet_path(state.add_read('t'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('t[q]'))
+    state.add_memlet_path(tasklet,
+                          exit_,
+                          state.add_write('o'),
+                          src_conn='y',
+                          memlet=dace.Memlet('o[k]', wcr='lambda a, b: a + b'))
+    return sdfg
+
+
+def test_double_buffering_final_computation_symbols():
+    """The computation after the loop must not refer to the loop variable."""
+    A = np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS).copy()
+
+    sdfg = dace.SDFG('double_buffering_final_computation')
+    sdfg.add_array('A', [ROWS, COLS], dace.float64)
+    sdfg.add_array('B', [ROWS], dace.float64)
+    sdfg.add_transient('tile', [COLS], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(k='0:%d' % ROWS))
+    tile = state.add_access('tile')
+    node = state.add_nested_sdfg(_row_sum_body(), {'t'}, {'o'}, {'k': 'k'})
+    state.add_memlet_path(state.add_read('A'), entry, tile, memlet=dace.Memlet('A[k, 0:%d]' % COLS))
+    state.add_edge(tile, None, node, 't', dace.Memlet('tile[0:%d]' % COLS))
+    state.add_memlet_path(node,
+                          exit_,
+                          state.add_write('B'),
+                          src_conn='o',
+                          memlet=dace.Memlet('B[0:%d]' % ROWS, wcr='lambda a, b: a + b'))
+
+    DoubleBuffering.apply_to(sdfg, map_entry=entry, transient=tile, verify=True, save=False)
+    sdfg.validate()
+    final_states = [
+        s for sd in sdfg.all_sdfgs_recursive() for s in sd.states() if s.label.endswith('_final_computation')
+    ]
+    assert len(final_states) == 1
+    assert 'k' not in final_states[0].free_symbols
+
+    B = np.zeros(ROWS)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A.sum(axis=1))
+
+
 if __name__ == '__main__':
     test_double_buffering()
+    test_double_buffering_final_computation_symbols()
