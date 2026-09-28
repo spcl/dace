@@ -12,6 +12,23 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
+class InferDefaultSchedulesAndStorages(ppl.Pass):
+    """:func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types` as a Pipeline Pass: the GPU
+    passes after it read final schedules and storages."""
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+        from dace.sdfg import infer_types
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
 class ExpandLibraryNodes(ppl.Pass):
     """Recursive :meth:`SDFG.expand_library_nodes` as a Pipeline Pass."""
 
@@ -70,7 +87,7 @@ class AddThreadBlockMaps(ppl.Pass):
 class ReinferConnectorTypes(ppl.Pass):
     """Clear and re-derive NestedSDFG connector types from their inner descriptors.
 
-    Earlier passes mutate descriptors (e.g. ``PromoteGPUScalarsToArrays`` widens a ``Scalar`` to a
+    Earlier passes mutate descriptors (e.g. ``PromoteScalarOutputsToArrays`` widens a ``Scalar`` to a
     length-1 ``Array``), leaving stale scalar-typed connectors that miscompile (``T name`` vs.
     ``name[0]``). Re-inference makes them pointer-typed.
     """
@@ -111,7 +128,7 @@ class ReinferConnectorTypes(ppl.Pass):
         :returns: Number of connectors whose type changed, or ``None`` if none did.
         """
         from dace.sdfg import infer_types
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
         before = self._connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():

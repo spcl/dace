@@ -11,9 +11,9 @@ import re
 
 import dace
 from dace import data, dtypes
-from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages
-from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (DemoteKernelInternalArraysToScalars,
-                                                                                 written_by_gpu_map_exit)
+from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import DemoteKernelInternalArraysToScalars
+from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import InferDefaultSchedulesAndStorages
+from dace.transformation.passes.scalar_promotion import written_by_gpu_map_exit
 
 GPU_GLOBAL = dtypes.StorageType.GPU_Global
 GPU_SHARED = dtypes.StorageType.GPU_Shared

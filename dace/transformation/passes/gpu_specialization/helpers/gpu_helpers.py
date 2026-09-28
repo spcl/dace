@@ -24,22 +24,6 @@ def dependency_edge():
     return Memlet()
 
 
-def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
-    """Whether ``name`` is written across a GPU-scheduled map's ``MapExit``, i.e. is a kernel output."""
-    for state in sdfg.states():
-        for node in state.nodes():
-            if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                continue
-            for in_edge in state.in_edges(node):
-                src = in_edge.src
-                if not isinstance(src, nodes.ExitNode):
-                    continue
-                entry = state.entry_node(src)
-                if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                    return True
-    return False
-
-
 def is_stream_wiring_applied(sdfg: SDFG) -> bool:
     """Whether wiring already produced the ``gpu_streams`` array. Only wiring is single-shot;
     scheduling persists per node in ``Node.gpu_stream_id``."""
