@@ -688,3 +688,109 @@ def test_a_transient_one_kernel_uses_is_a_register():
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()
     assert sdfg.arrays['tmp'].storage == dtypes.StorageType.Register
+
+
+ROWS = dace.symbol('ROWS')
+COLS = dace.symbol('COLS')
+
+
+@dace.program
+def rows_with_a_small_gather(agg: dace.int64[ROWS], w: dace.float64[ROWS], out: dace.float64[4]):
+    """amg_setup's shape: a host loop over every row updates ``acc`` on the host, and a map over a few
+    entries reads it every row."""
+    acc = np.zeros([ROWS], dtype=np.float64)
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:4]:
+            out[j] = out[j] + acc[j]
+
+
+@dace.program
+def rows_with_a_full_stencil(agg: dace.int64[ROWS], w: dace.float64[ROWS], acc: dace.float64[ROWS]):
+    """The same loop around a map over ALL of ``acc``: the map moves what the loop would copy."""
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:ROWS]:
+            acc[j] = acc[j] * 0.5
+
+
+@dace.program
+def rows_with_an_unranked_gather(agg: dace.int64[ROWS], w: dace.float64[ROWS], out: dace.float64[COLS]):
+    """The small gather over another symbol's extent, which no rule may rank against ``ROWS``."""
+    acc = np.zeros([ROWS], dtype=np.float64)
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:COLS]:
+            out[j] = out[j] + acc[j]
+
+
+def is_copy_state(sdfg: dace.SDFG, block: dace.sdfg.state.ControlFlowBlock) -> bool:
+    """A state of access nodes only, with an edge joining a ``GPU_Global`` container to a host one."""
+    if not isinstance(block, dace.SDFGState) or not block.nodes():
+        return False
+    if not all(isinstance(n, dace.nodes.AccessNode) for n in block.nodes()):
+        return False
+    gpu = dtypes.StorageType.GPU_Global
+    return any(
+        (sdfg.arrays[e.src.data].storage is gpu) != (sdfg.arrays[e.dst.data].storage is gpu) for e in block.edges())
+
+
+def copies_inside_loops(sdfg: dace.SDFG) -> list[str]:
+    return [
+        b.label for loop in sdfg.all_control_flow_blocks(recursive=True) if isinstance(loop, LoopRegion)
+        for b in loop.all_control_flow_blocks(recursive=True) if is_copy_state(sdfg, b)
+    ]
+
+
+def offloaded_program(program: dace.frontend.python.parser.DaceProgram) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_small_map_in_a_host_loop_stays_on_the_host():
+    """Offloaded, the gather copied the whole ``acc`` host<->device on every row: O(rows^2) traffic,
+    amg_setup at 344 s per call against 0.8 s on the CPU."""
+    sdfg = offloaded_program(rows_with_a_small_gather)
+    assert not copies_inside_loops(sdfg), copies_inside_loops(sdfg)
+    gather = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.range.num_elements() == 4
+    ]
+    assert gather and all(n.map.schedule == dtypes.ScheduleType.Sequential for n in gather)
+
+
+def test_a_map_over_the_whole_shared_array_stays_a_kernel():
+    sdfg = offloaded_program(rows_with_a_full_stencil)
+    full = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert full and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in full)
+
+
+def test_a_map_whose_size_cannot_be_ranked_stays_a_kernel():
+    sdfg = offloaded_program(rows_with_an_unranked_gather)
+    gather = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and 'COLS' in map(str, n.map.range.free_symbols)
+    ]
+    assert gather and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in gather)
+
+
+@pytest.mark.gpu
+def test_a_small_map_kept_on_the_host_computes_what_numpy_computes():
+    sdfg = offloaded_program(rows_with_a_small_gather)
+    agg = np.array([0, 2, 1, 3, 0, 5, 7, 2], dtype=np.int64)
+    w = np.arange(8, dtype=np.float64)
+    out = np.zeros(4)
+    sdfg(agg=agg, w=w, out=out, ROWS=8)
+    acc, want = np.zeros(8), np.zeros(4)
+    for i in range(8):
+        acc[agg[i]] += w[i]
+        want += acc[:4]
+    np.testing.assert_allclose(out, want)

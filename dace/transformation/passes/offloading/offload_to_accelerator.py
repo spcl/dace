@@ -11,7 +11,7 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 import dace.transformation.passes.offloading.offloading_helpers as helpers
-from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
+from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
@@ -37,17 +37,11 @@ class OffloadToAccelerator(ppl.Pass):
         desc="Safety bound on the placement fixpoint. Reaching it is a bug, not a workload property: the loop "
         "converges once no state is hybrid and no container changed.")
     verbose = properties.Property(dtype=bool, default=False, desc="Print the host maps, hybrid states and IR.")
-    sequential_innermaps = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Make every map and library node inside a kernel Sequential. Off, their schedule is left as it is, "
-        "so a Default map inside a kernel becomes the thread-block level.")
 
     def __init__(self,
                  host_maps: HostMapSpec = False,
                  max_iterations: Optional[int] = None,
                  verbose: Optional[bool] = None,
-                 sequential_innermaps: Optional[bool] = None,
                  **kwargs: Any) -> None:
         """
         :param host_maps: maps that keep a host schedule so the maps under them become the kernels; see
@@ -55,7 +49,6 @@ class OffloadToAccelerator(ppl.Pass):
             ``MapEntry`` cannot round-trip through JSON.
         :param max_iterations: overrides the safety bound on the placement fixpoint.
         :param verbose: print the host maps, hybrid states and IR.
-        :param sequential_innermaps: overrides the ``sequential_innermaps`` property.
         :note: a map holding a callback is kept on the host whatever ``host_maps`` says.
         """
         super().__init__(**kwargs)
@@ -63,8 +56,6 @@ class OffloadToAccelerator(ppl.Pass):
             self.max_iterations = max_iterations
         if verbose is not None:
             self.verbose = verbose
-        if sequential_innermaps is not None:
-            self.sequential_innermaps = sequential_innermaps
         # make_properties allows a non-Property attribute only with a leading underscore.
         self._host_maps = host_maps
 
@@ -88,7 +79,7 @@ class OffloadToAccelerator(ppl.Pass):
         host_map_entries = host_maps(sdfg, self._host_maps)
         if self.verbose and host_map_entries:
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
-        assign_schedules(sdfg, host_map_entries, self.sequential_innermaps)
+        assign_schedules(sdfg, host_map_entries, maps_pinned_by_host_loops(sdfg))
 
         analysis, IR, wrapped = self.place(sdfg)
         insertion = CopyInsertion(sdfg, analysis.scopes)

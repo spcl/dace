@@ -10,7 +10,8 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.host_maps import host_maps
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops, provably_moves_less
 from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
 
 NB = dace.symbol("NB")
@@ -285,3 +286,29 @@ def test_a_sequential_scan_in_a_loop_region_is_not_offloaded():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+@pytest.mark.parametrize('traffic, size, moves_less', [
+    (4, dace.symbol('ROWS'), True),
+    (dace.symbol('ROWS'), dace.symbol('ROWS'), False),
+    (dace.symbol('COLS'), dace.symbol('ROWS'), False),
+    (dace.symbol('ROWS'), 2 * dace.symbol('ROWS') + 3, True),
+    (14 * dace.symbol('nstate'), dace.symbol('nstate')**2, False),
+])
+def test_a_map_is_pinned_only_on_provably_smaller_traffic(traffic, size, moves_less):
+    assert provably_moves_less(traffic, size) is moves_less
+
+
+def test_a_loop_whose_map_shares_nothing_with_host_code_keeps_it_a_kernel():
+    sdfg = dace.SDFG('loop_without_host_code')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', ['N'], dace.float64)
+    sdfg.add_array('B', ['N'], dace.float64)
+    loop = LoopRegion('steps', 'i < 4', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    body.add_mapped_tasklet('add_i', {'j': '0:4'}, {'a': dace.Memlet('A[j]')},
+                            'b = a + i', {'b': dace.Memlet('B[j]')},
+                            external_edges=True)
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == []

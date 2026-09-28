@@ -40,7 +40,10 @@ def test_blockreduce():
 
     Adata = np.random.rand(128).astype(np.float32)
     Bdata = np.random.rand(2).astype(np.float32)
-    sdfg.apply_gpu_transformations(sequential_innermaps=False)
+    sdfg.apply_gpu_transformations()
+    # The offload makes everything inside a kernel Sequential; the block-wide reduce needs a thread-block map.
+    mei.map.schedule = dace.ScheduleType.GPU_ThreadBlock
+    red.schedule = dace.ScheduleType.Default
     sdfg(A=Adata, B=Bdata)
 
     B_regression = np.zeros(2, dtype=np.float32)
