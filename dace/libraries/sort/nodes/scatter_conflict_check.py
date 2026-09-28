@@ -34,7 +34,7 @@ from typing import Dict, Optional, Tuple
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
-from dace.libraries.standard.pure_components import chain, counted_loop, operand_array, tasklet_state
+from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
@@ -157,7 +157,7 @@ def index_loop(label: str, n: str, code: str, reads: Dict[str, Memlet], writes: 
     """One pass over the index array: ``x`` is element ``CHECK_INDEX`` of ``_idx_in``."""
     loop = counted_loop(label, CHECK_INDEX, '0', n)
     body = tasklet_state(nsdfg, f'{label}_body', code, {
-        'x': Memlet(f'{INPUT_CONNECTOR_NAME}[{CHECK_INDEX}]'),
+        'x': Memlet(element(nsdfg, INPUT_CONNECTOR_NAME, CHECK_INDEX)),
         **reads
     }, writes)
     chain(loop, [body])

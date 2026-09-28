@@ -130,6 +130,41 @@ def test_the_pure_scan_is_python_loops_computing_what_the_sequential_scan_comput
         np.testing.assert_allclose(got, want, rtol=1e-14)
 
 
+def matrix_sdfg(implementation: str) -> dace.SDFG:
+    """A Scan and an ArgReduce over a whole matrix, both of which walk it in row-major order."""
+    sdfg = dace.SDFG(f'matrix_{implementation}')
+    sdfg.add_array('x', [M, M], dace.float64)
+    sdfg.add_array('y', [M, M], dace.float64)
+    sdfg.add_array('idx', [1], dace.int64)
+    state = sdfg.add_state()
+    scan = Scan('scan', op=ScanOp.MAX)
+    arg = ArgReduce('argreduce', op='max')
+    for node in (scan, arg):
+        node.implementation = implementation
+        state.add_node(node)
+    read = state.add_read('x')
+    state.add_edge(read, None, scan, in_connector(0), dace.Memlet('x[0:M, 0:M]'))
+    state.add_edge(scan, out_connector(0), state.add_write('y'), None, dace.Memlet('y[0:M, 0:M]'))
+    state.add_edge(read, None, arg, '_in', dace.Memlet('x[0:M, 0:M]'))
+    state.add_edge(arg, '_out_idx', state.add_write('idx'), None, dace.Memlet('idx[0]'))
+    return expanded(sdfg)
+
+
+def run_matrix(sdfg: dace.SDFG) -> tuple:
+    x = np.random.default_rng(SEED).standard_normal((5, 5))
+    y, idx = np.zeros((5, 5)), np.zeros(1, np.int64)
+    sdfg(x=x, y=y, idx=idx, M=5)
+    return y, idx[0]
+
+
+def test_a_matrix_operand_is_walked_in_row_major_order_like_the_sequential_loop():
+    got_y, got_idx = run_matrix(matrix_sdfg('pure'))
+    want_y, want_idx = run_matrix(matrix_sdfg('sequential'))
+
+    np.testing.assert_array_equal(got_y, want_y)
+    assert got_idx == want_idx
+
+
 def test_the_pure_strided_scan_guards_its_stride_with_a_python_abort():
     sut = scan_sdfg('pure', ScanOp.SUM, stride=3)
 

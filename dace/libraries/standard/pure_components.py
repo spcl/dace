@@ -9,7 +9,7 @@ import copy
 from typing import Dict, Iterable, Optional
 
 import dace
-from dace import subsets
+from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.graph import MultiConnectorEdge
@@ -33,6 +33,17 @@ def operand_array(nsdfg: dace.SDFG, name: str, edge: MultiConnectorEdge, outer: 
     strides = [desc.strides[dim] * subset.ranges[dim][2] for dim in kept] or [1]
     nsdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
     return nsdfg.arrays[name]
+
+
+def element(nsdfg: dace.SDFG, name: str, position: str) -> str:
+    """The memlet text of element ``position`` of array ``name`` counted in row-major order, the order the C++
+    lowerings walk an operand through one pointer."""
+    shape = nsdfg.arrays[name].shape
+    index = [f'{position}']
+    for extent in reversed(shape[1:]):
+        extent_text = symbolic.symstr(extent, cpp_mode=False)
+        index[0:1] = [f'({index[0]}) // ({extent_text})', f'({index[0]}) % ({extent_text})']
+    return f'{name}[{", ".join(index)}]'
 
 
 def chain(region: ControlFlowRegion, blocks: Iterable[ControlFlowBlock]) -> None:

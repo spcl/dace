@@ -52,7 +52,7 @@ from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.libraries.standard.pure_components import chain as chain_blocks
-from dace.libraries.standard.pure_components import counted_loop, operand_array, tasklet_state
+from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.tasklet_utils import add_abort_guard
@@ -871,7 +871,7 @@ def seed_state(nsdfg: dace.SDFG, chain: int, acc: str, seed: str, at: str) -> da
     if seed == 'init':
         reads['x'] = Memlet(f'{init_connector(chain)}[{at}]')
     elif seed == 'first':
-        reads['x'] = Memlet(f'{in_connector(chain)}[{at}]')
+        reads['x'] = Memlet(element(nsdfg, in_connector(chain), at))
     code = f'a = x' if reads else f'a = {seed}'
     return tasklet_state(nsdfg, f'seed_{chain}', code, reads, {'a': Memlet(f'{acc}[0]')})
 
@@ -880,10 +880,10 @@ def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: 
     """One pass of the recurrence over positions ``range(*bounds)``, writing every prefix to the output."""
     combined = COMBINE_PY[node.op].format(a='a', x='x')
     code = f'y = a\nna = {combined}' if node.exclusive else f'na = {combined}\ny = na'
-    reads = {'x': Memlet(f'{in_connector(chain)}[{SCAN_INDEX}]'), 'a': Memlet(f'{acc}[0]')}
+    reads = {'x': Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), 'a': Memlet(f'{acc}[0]')}
     if node.op is ScanOp.AFFINE:
-        reads['c'] = Memlet(f'{coef_connector(chain)}[{SCAN_INDEX}]')
-    writes = {'na': Memlet(f'{acc}[0]'), 'y': Memlet(f'{out_connector(chain)}[{SCAN_INDEX}]')}
+        reads['c'] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
+    writes = {'na': Memlet(f'{acc}[0]'), 'y': Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
     loop = counted_loop(f'scan_{chain}', SCAN_INDEX, *bounds)
     chain_blocks(loop, [tasklet_state(nsdfg, f'step_{chain}', code, reads, writes)])
     return loop
@@ -919,7 +919,7 @@ def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopReg
         return classes
     seed = seed_state(nsdfg, 0, acc, 'first', CLASS_INDEX)
     first = tasklet_state(nsdfg, 'first', 'y = a', {'a': Memlet(f'{acc}[0]')},
-                          {'y': Memlet(f'{OUTPUT_CONNECTOR_NAME}[{CLASS_INDEX}]')})
+                          {'y': Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))})
     rest = position_loop(nsdfg, node, 0, acc, (f'{CLASS_INDEX} + {stride}', n, stride))
     chain_blocks(classes, [seed, first, rest])
     return classes

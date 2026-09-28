@@ -51,7 +51,7 @@ from typing import Callable, Optional, Tuple
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
-from dace.libraries.standard.pure_components import chain, counted_loop, operand_array, tasklet_state
+from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -214,16 +214,19 @@ class ExpandArgReducePure(ExpandTransformation):
         nsdfg = dace.SDFG(f'{node.label}_pure')
         for conn, edge in edges.items():
             operand_array(nsdfg, conn, edge, parent_sdfg)
+        if '_out_val' not in edges:  # an unwired connector would become a nested SDFG output with no edge
+            node.remove_out_connector('_out_val')
         nsdfg.add_scalar('best_val', nsdfg.arrays['_in'].dtype, transient=True)
         nsdfg.add_scalar('best_idx', nsdfg.arrays['_out_idx'].dtype, transient=True)
         read = TRANSFORM_PY[node.transform]
         best = {'v': Memlet('best_val[0]'), 'i': Memlet('best_idx[0]')}
-        seed = tasklet_state(nsdfg, 'seed', f"v = {read.format('x')}\ni = 0", {'x': Memlet('_in[0]')}, best)
+        seed = tasklet_state(nsdfg, 'seed', f"v = {read.format('x')}\ni = 0", {'x': Memlet(element(nsdfg, '_in', '0'))},
+                             best)
         # A strict comparison keeps the FIRST extreme element, as the sequential source does.
         step_code = (f"c = {read.format('x')}\nif c {_OP_CPP[node.op]} v:\n    nv = c\n    ni = {SCAN_INDEX}\n"
                      f"else:\n    nv = v\n    ni = i")
         step = tasklet_state(nsdfg, 'step', step_code, {
-            'x': Memlet(f'_in[{SCAN_INDEX}]'),
+            'x': Memlet(element(nsdfg, '_in', SCAN_INDEX)),
             **best
         }, {
             'nv': Memlet('best_val[0]'),
