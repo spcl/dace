@@ -804,3 +804,57 @@ def test_a_small_map_kept_on_the_host_computes_what_numpy_computes():
         acc[agg[i]] += w[i]
         want += acc[:4]
     np.testing.assert_allclose(out, want)
+
+
+def kernel_with_a_one_iteration_inner_map() -> dace.SDFG:
+    """A map whose body is a single-iteration map writing and reading the length-1 local ``acc``."""
+    sdfg = dace.SDFG('kernel_with_a_one_iteration_inner_map')
+    sdfg.add_array('A', [256], dace.float64)
+    sdfg.add_array('B', [256], dace.float64)
+    sdfg.add_array('acc', [1], dace.float64, transient=True)
+    state = sdfg.add_state('kernel')
+    outer_entry, outer_exit = state.add_map('device', {'i': '0:256'})
+    inner_entry, inner_exit = state.add_map('once', {'k': '0:1'})
+    double = state.add_tasklet('double', {'inp': None}, {'out': None}, 'out = inp * 2.0')
+    acc = state.add_access('acc')
+    bump = state.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
+    state.add_memlet_path(state.add_read('A'),
+                          outer_entry,
+                          inner_entry,
+                          double,
+                          dst_conn='inp',
+                          memlet=dace.Memlet('A[i]'))
+    state.add_edge(double, 'out', acc, None, dace.Memlet('acc[0]'))
+    state.add_edge(acc, None, bump, 'inp', dace.Memlet('acc[0]'))
+    state.add_memlet_path(bump,
+                          inner_exit,
+                          outer_exit,
+                          state.add_write('B'),
+                          src_conn='out',
+                          memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_length_one_local_of_a_one_iteration_map_in_a_kernel_is_a_register():
+    """Extended scalarized this after dropping the trivial map; here it only has to live in the kernel."""
+    sdfg = kernel_with_a_one_iteration_inner_map()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.arrays['acc'].storage == dtypes.StorageType.Register
+    state = next(state for state in sdfg.states() if state.label == "kernel")
+    kernels = [
+        n.map.label for n in state.nodes()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+    ]
+    assert kernels == ['device'], kernels
+
+
+@pytest.mark.gpu
+def test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes():
+    sdfg = kernel_with_a_one_iteration_inner_map()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    A = np.random.default_rng(3).random(256)
+    B = np.zeros(256)
+    sdfg(A=A, B=B)
+    np.testing.assert_allclose(B, A * 2.0 + 1.0)
