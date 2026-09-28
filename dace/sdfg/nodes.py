@@ -19,7 +19,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_expr_type
+from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
 
@@ -561,25 +561,6 @@ class Tasklet(CodeNode):
             return self.label
 
 
-@make_properties
-class RTLTasklet(Tasklet):
-    """ A specialized tasklet, which is a functional computation procedure
-        that can only access external data specified using connectors.
-
-        This tasklet is specialized for tasklets implemented in System Verilog
-        in that it adds support for adding metadata about the IP cores in use.
-    """
-    # TODO to be replaced when enums have embedded properties
-    ip_cores = DictProperty(key_type=str, value_type=dict, desc="A set of IP cores used by the tasklet.")
-
-    @property
-    def __jsontype__(self):
-        return 'Tasklet'
-
-    def add_ip_core(self, module_name, name, vendor, version, params):
-        self.ip_cores[module_name] = {'name': name, 'vendor': vendor, 'version': version, 'params': params}
-
-
 # ------------------------------------------------------------------------------
 
 
@@ -886,7 +867,7 @@ class MapEntry(EntryNode):
         # Add map params
         known = {**symbols, **result}
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], known), infer_expr_type(rng[1], known))
+            result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
 
         return result
 
@@ -1068,6 +1049,13 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
     def __init__(self,
                  label,
                  params,
@@ -1195,7 +1183,7 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        result = set(self._consume.num_pes.free_symbols)
+        result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
         return result - dyn_inputs
@@ -1203,7 +1191,7 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes, symbols=symbols)
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
