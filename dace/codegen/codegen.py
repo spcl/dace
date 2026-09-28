@@ -369,6 +369,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
+        from dace.transformation.passes.gpu_shared_memory import PrivatizeKernelSharedMemory
         # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
         inline_host_nested_sdfgs(sdfg, validate=False)
         infer_types.infer_connector_types(sdfg)
@@ -400,6 +401,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         # byte-identical.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
             Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+        # Renames shared containers, so it must precede the inlining that writes data names into tasklet code.
+        PrivatizeKernelSharedMemory().apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # A nested SDFG surviving inlining (e.g. a library expansion) must not share a data name with a
         # differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.

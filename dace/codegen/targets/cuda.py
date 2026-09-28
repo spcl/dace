@@ -1977,6 +1977,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = getattr(scope_entry, '_cuda_dynamic_shared_memory', 0)
+        total_smem_size = getattr(scope_entry, '_cuda_static_shared_memory', 0) + dynsmem_size
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
@@ -2028,12 +2029,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     return;
                 }}''', cfg, state_id, scope_entry)
 
-        # Beyond the limit, devices only grant dynamic shared memory to kernels that opt in
+        # Beyond the limit on static plus dynamic bytes, devices only grant dynamic shared memory to kernels that opt in
         limit = common.gpu_max_static_shared_memory()
-        if (dynsmem_size > limit) != False:
+        if (total_smem_size > limit) != False:
             request = f'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY({kernel_name}, "{kernel_name}", {_topy(dynsmem_size)});'
-            if symbolic.issymbolic(dynsmem_size):
-                request = f'if (({_topy(dynsmem_size)}) > {limit}) {{\n{request}\n}}'
+            if symbolic.issymbolic(total_smem_size):
+                request = f'if (({_topy(total_smem_size)}) > {limit}) {{\n{request}\n}}'
             self._localcode.write(request, cfg, state_id, scope_entry)
 
         self._localcode.write(
