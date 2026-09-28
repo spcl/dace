@@ -2797,12 +2797,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
-                                          callsite_stream: CodeIOStream) -> str:
-        if name not in node.location:
-            return 0
-        callsite_stream.write(f'if ({location_condition(name, index_expr, node.location[name])}) {{')
-        return 1
+    def open_location_guards(self, node: nodes.Tasklet, callsite_stream: CodeIOStream) -> int:
+        """Open an ``if`` per ``Tasklet.location`` entry naming threads, warps or blocks; returns how many."""
+        guards = [(name, index_expr) for name, index_expr in location_index_exprs(self._block_dims)
+                  if name in node.location]
+        for name, index_expr in guards:
+            callsite_stream.write(f'if ({location_condition(name, index_expr, node.location[name])}) {{')
+        return len(guards)
 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -2810,9 +2811,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if self._in_device_code:
             # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
             # add condition
-            for name, index_expr in location_index_exprs(self._block_dims):
-                generated_preamble_scopes += self._generate_condition_from_location(name, index_expr, node,
-                                                                                    callsite_stream)
+            generated_preamble_scopes += self.open_location_guards(node, callsite_stream)
 
         # Call standard tasklet generation
         old_codegen = self._cpu_codegen.calling_codegen
