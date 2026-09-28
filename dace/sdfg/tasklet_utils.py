@@ -67,6 +67,38 @@ class TaskletType(Enum):
     UNKNOWN = "unknown"  # the classifier could not match a shape (unknown function call, unfamiliar pattern, etc.); callers fall back via ``ttype == TaskletType.UNKNOWN``.
 
 
+def add_abort_guard(state: dace.SDFGState,
+                    name: str,
+                    condition: str,
+                    inputs: typing.Optional[Dict[str, typing.Any]] = None) -> dace.nodes.Tasklet:
+    """Add a Python tasklet ``if <condition>: abort()`` to ``state``, marked side-effecting.
+
+    Every runtime precondition guard is built here, so all of them share one shape: C and C++
+    print ``abort()`` as ``std::abort()`` / ``abort()``, and a Python rendering raises.
+
+    :param state: The state to add the guard to.
+    :param name: The tasklet's label.
+    :param condition: Python expression over symbols and ``inputs`` that is true when the
+                      precondition is violated.
+    :param inputs: Input connectors the condition reads, if any.
+    :returns: The guard tasklet; ``side_effects`` keeps dead-code elimination from pruning it.
+    """
+    guard = state.add_tasklet(name, inputs or {}, {}, abort_guard_code(condition), language=dace.dtypes.Language.Python)
+    guard.side_effects = True
+    return guard
+
+
+def abort_guard_code(condition: str) -> str:
+    """The body :func:`add_abort_guard` gives a guard on ``condition``, normalized as stored."""
+    return CodeBlock(f'if {condition}:\n    abort()').as_string
+
+
+def is_abort_guard(node: dace.nodes.Node) -> bool:
+    """Whether ``node`` is a guard tasklet built by :func:`add_abort_guard`."""
+    return (isinstance(node, dace.nodes.Tasklet) and node.language == dace.dtypes.Language.Python
+            and 'abort()' in node.code.as_string)
+
+
 def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
     """
     Replaces exact token matches in a code string using a replacement dictionary.
@@ -184,7 +216,7 @@ def tasklet_assigns_name(tasklet: dace.nodes.Tasklet, name: str) -> bool:
     """Report whether ``tasklet``'s body assigns to ``name``.
 
     A tasklet body is not necessarily a single assignment -- it can hold several statements, or
-    none at all (a C++ guard tasklet is ``if (s > 0) {{ std::abort(); }}``) -- so this reads the
+    none at all (a guard tasklet is ``if s > 0: abort()``) -- so this reads the
     statements rather than splitting the source on ``" = "``.
 
     :param tasklet: The tasklet whose body to inspect.

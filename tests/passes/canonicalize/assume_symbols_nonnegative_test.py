@@ -61,7 +61,7 @@ def _axpy_sdfg():
 def _trap_tasklets(sdfg):
     return [
         n for st in sdfg.all_states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and 'std::abort' in n.code.as_string
+        if isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string
     ]
 
 
@@ -313,7 +313,7 @@ def test_tracked_assumption_out_of_scope_skipped():
     assert insert_assumption_guards(sdfg) == 1
     conds = [t.code.as_string for t in _trap_tasklets(sdfg)]
     assert all('Q' not in c for c in conds)
-    assert conds == ['if ((N < 0)) { std::abort(); }'], conds
+    assert conds == ['if (N < 0):\n    abort()'], conds
 
 
 def test_back_compat_aliases():

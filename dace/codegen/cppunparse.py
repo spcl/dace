@@ -1542,6 +1542,7 @@ class CPPUnparser:
     # C++ through a tasklet body here and through a memlet subset there, and a name qualified by
     # only one of the two builds in one place and fails in the other.
     _renamed_funcs = {
+        'detect_all_positive': 'dace::detect_all_positive',
         're': 'dace::math::re',
         'im': 'dace::math::im',
         **cpf_lowering.RUNTIME_QUALIFIED_MATH,
@@ -1562,6 +1563,10 @@ class CPPUnparser:
                 return
             if t.func.id in self._renamed_funcs:
                 self.emit_call(self._renamed_funcs[t.func.id], t.args)
+                return
+            if t.func.id == 'abort' and not t.args:
+                # C has no ``std::`` namespace; both spellings are declared by the standard headers.
+                self.write('abort()' if cpf_lowering.standalone_c() else 'std::abort()')
                 return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()

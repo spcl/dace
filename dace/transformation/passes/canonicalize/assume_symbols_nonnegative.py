@@ -23,7 +23,7 @@ discipline as the scatter no-conflict guard
   as a trap on its negation.
 
 This pass makes the whole contract explicit and *checked*. It prepends a new
-start state whose single side-effecting tasklet calls ``std::abort()`` when
+start state whose single side-effecting tasklet calls ``abort()`` when
 any guarded condition is violated. Only **signed** integer symbols are guarded
 for nonnegativity (an unsigned symbol is nonnegative by construction, so
 ``x < 0`` is a tautology the guard would waste a comparison on). A tracked
@@ -42,7 +42,7 @@ import sympy
 
 from dace import SDFG, dtypes, symbolic
 from dace.sdfg import SDFGState, nodes
-from dace.codegen.common import sym2cpp
+from dace.sdfg import tasklet_utils as tutil
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
@@ -202,7 +202,7 @@ def is_assumption_guard_block(block) -> bool:
     """True if ``block`` is the runtime assumption-guard state emitted by
     :func:`insert_assumption_guards` (label ``_assume_nonneg_syms``).
 
-    Its ``std::abort`` tasklets are infrastructure -- they read only symbols
+    Its ``abort()`` guard tasklets are infrastructure -- they read only symbols
     and touch no data -- so structural counts that verify a "tile-only descent"
     exclude them exactly as they already exclude the ``tile_runtime`` divisibility
     trip guards. Exposed so tests / audits recognize the guard without importing
@@ -288,25 +288,19 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     return ``1`` if emitted or repositioned, else ``None``.
 
     Every assumption from :func:`collect_assumptions` becomes its OWN
-    side-effecting ``std::abort`` tasklet (``if (!assumption) trap()``) in a
+    side-effecting guard tasklet (``if not assumption: abort()``) in a
     single new start state -- one tasklet per assumption so a fault points at the
     exact violated relation, all in one state so the guard is a single dominating
-    block. ``sym2cpp`` prints the negation of a sympy relational directly
+    block. ``symstr`` prints the negation of a sympy relational directly
     (``Not(K < N)`` -> ``(K >= N)``, ``Not(s >= 0)`` -> ``(s < 0)``).
     """
     # Dedup on the emitted TRAP CODE, not on the guard state's label: re-canonicalizing an
     # already-canonicalized SDFG (the vectorizer canonicalizes at its own entry) fuses the guard
     # state into its successor, so the label is gone and a label check re-emits every trap -- they
     # accumulate one full copy per run. The code string is the assumption, so this is exact.
-    guards = {
-        node.code.as_string
-        for state in sdfg.states()
-        for node in state.nodes() if isinstance(node, nodes.Tasklet) and 'std::abort' in node.code.as_string
-    }
-    checks = [
-        c for c in (f'if ({sym2cpp(sympy.Not(a))}) {{ std::abort(); }}' for a in collect_assumptions(sdfg))
-        if c not in guards
-    ]
+    guards = {node.code.as_string for state in sdfg.states() for node in state.nodes() if tutil.is_abort_guard(node)}
+    conditions = [symbolic.symstr(sympy.Not(a)) for a in collect_assumptions(sdfg)]
+    checks = [c for c in conditions if tutil.abort_guard_code(c) not in guards]
     if not checks:
         if not lead_with_assumption_guard(sdfg):
             return None
@@ -320,18 +314,9 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     # start, leaving the guard a disconnected source that dominator analyses
     # KeyError on. Running last -- nothing reshapes the start after -- is safe.
     guard_state = sdfg.add_state_before(sdfg.start_block, GUARD_STATE_LABEL, is_start_block=True)
-    for i, code in enumerate(checks):
-        guard = guard_state.add_tasklet(
-            f'check_assumption_{i}',
-            {},
-            {},
-            code,
-            language=dtypes.Language.CPP,
-        )
-        # ``std::abort()`` is a real side effect with no data output, so
-        # DeadDataflowElimination would otherwise prune this tasklet -- and with
-        # it the guard -- as dead. Mark it side-effecting so simplify keeps it.
-        guard.side_effects = True
+    for i, condition in enumerate(checks):
+        # Side-effecting, so DeadDataflowElimination keeps the output-less guard.
+        tutil.add_abort_guard(guard_state, f'check_assumption_{i}', condition)
         # ``ordered_side_effects`` is left at its default (ordered): the trap has to run BEFORE the
         # computation it guards, and it is only a separate block that keeps it there.
         # ``StateFusionExtended`` refuses to fuse a state carrying an ordered side effect -- the

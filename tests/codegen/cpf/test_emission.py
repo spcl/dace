@@ -847,9 +847,8 @@ def assumption_guard_sdfg(name: str) -> dace.SDFG:
 
     The guard is inserted by the pass rather than written here, because the exact spelling is the
     thing under test: ``insert_assumption_guards`` traps a violated assumption with
-    ``if ((N < 0)) {{ std::abort(); }}`` and then DEDUPS its own guards by searching tasklet bodies
-    for the literal ``std::abort``, so the spelling cannot be changed at the source. A hand-written
-    trap would keep passing after the pass moved on.
+    the Python tasklet ``if (N < 0): abort()``, which the C++ printer spells ``std::abort()``. A
+    hand-written trap would keep passing after the pass moved on.
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array('a', [N], dace.float64)
@@ -868,9 +867,8 @@ def assumption_guard_sdfg(name: str) -> dace.SDFG:
 def test_the_assumption_guard_renders_in_both_dialects(language):
     """Canonicalization's trap is a body no printer sees, and each dialect has to spell it.
 
-    The guard tasklet is emitted verbatim, so ``std::abort`` reaches the text without passing
-    through the expression printers and without being a ``dace::`` name -- neither lowering lane
-    would see it. C++ therefore needs ``<cstdlib>`` in the preamble, which nothing else pulls in,
+    The guard's ``abort()`` reaches the text as ``std::abort`` without being a ``dace::`` name --
+    neither lowering lane would see it. C++ therefore needs ``<cstdlib>`` in the preamble, which nothing else pulls in,
     and C needs the name itself rewritten: ``std::`` is not a namespace there, it is a syntax
     error. Both legs are built by their own driver in an empty directory, which is what turns a
     missing declaration into a failure rather than an inherited include path.
@@ -878,7 +876,7 @@ def test_the_assumption_guard_renders_in_both_dialects(language):
     sdfg = assumption_guard_sdfg(f'cpf_guard_{"cpp" if language == "c++" else "c"}')
     guards = [
         node.code.as_string for state in sdfg.states() for node in state.nodes()
-        if isinstance(node, dace.sdfg.nodes.Tasklet) and 'std::abort' in node.code.as_string
+        if isinstance(node, dace.sdfg.nodes.Tasklet) and 'abort()' in node.code.as_string
     ]
     assert guards, 'the pass inserted no guard, so this test would assert nothing'
 

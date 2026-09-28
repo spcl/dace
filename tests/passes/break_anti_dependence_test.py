@@ -7,6 +7,7 @@ import os
 import numpy as np
 
 import dace
+from dace.codegen import cppunparse
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -122,10 +123,10 @@ def test_break_anti_dependence_symbolic_positive_offset():
                 guards.append(n)
     assert len(guards) == 1, [g.label for g in guards]
     g = guards[0]
-    assert g.code.language == dace.dtypes.Language.CPP
+    assert g.code.language == dace.dtypes.Language.Python
     assert not g.in_connectors and not g.out_connectors
     # The guard's expression should contain the offset symbol.
-    assert 'inc' in g.code.as_string and 'std::abort' in g.code.as_string
+    assert 'inc' in g.code.as_string and 'abort()' in g.code.as_string
 
     # Numerical correctness (with inc=1, equivalent to the constant-offset case s121).
     rng = np.random.default_rng(0)
@@ -158,7 +159,7 @@ def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
 
     guards = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and 'std::abort' in (n.code.as_string or '')
+        if isinstance(n, nodes.Tasklet) and 'abort()' in (n.code.as_string or '')
     ]
     assert len(guards) >= 1, 'the positive-offset guard must survive full canonicalize'
     assert all(g.side_effects for g in guards), 'guard must be side-effecting so DCE keeps it'
@@ -278,13 +279,13 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     ]
     assert len(array_guards) == 1, [g.label for g in array_guards]
     g = array_guards[0]
-    assert g.code.language == dace.dtypes.Language.CPP
+    assert g.code.language == dace.dtypes.Language.Python
     assert len(g.in_connectors) == 1 and not g.out_connectors
-    assert 'idx' in g.code.as_string and 'std::abort' in g.code.as_string
+    assert 'idx' in g.code.as_string and 'abort()' in g.code.as_string
     # PARALLEL, not a serial scan: the guard sits right in front of the loop the snapshot exists
     # to parallelize, so it delegates to the omp/simd min-reduction in dace/runtime/include/dace/
     # detect.h instead of aborting on the first violation inside a loop of its own.
-    assert 'dace::detect_all_positive' in g.code.as_string
+    assert 'dace::detect_all_positive' in cppunparse.py2cpp(g.code.as_string)
     assert 'for (' not in g.code.as_string, f'guard grew a serial loop back: {g.code.as_string!r}'
 
     # Numerical correctness with a permutation that satisfies idx[i] > 0

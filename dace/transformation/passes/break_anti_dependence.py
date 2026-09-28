@@ -58,8 +58,9 @@ from typing import Any, Dict, Optional, Set
 from dace.ordered import OrderedSet
 import sympy
 
-from dace import data, dtypes, properties, subsets, symbolic, Memlet
+from dace import data, properties, subsets, symbolic, Memlet
 from dace.sdfg import SDFG, nodes
+from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -882,17 +883,8 @@ class BreakAntiDependence(ppl.Pass):
         desc = sdfg.arrays[arr_name]
         n_str = symbolic.symstr(desc.shape[0])
         conn = f'__arr_{arr_name}'
-        code = f'if (!dace::detect_all_positive({conn}, ({n_str}))) {{ std::abort(); }}'
-        tlet = pre.add_tasklet(
-            name=f'_break_antidep_array_guard_{arr_name}',
-            inputs={conn: None},
-            outputs={},
-            code=code,
-            language=dtypes.Language.CPP,
-        )
-        # No output connector, so mark side-effecting to survive dead-code
-        # elimination (mirrors :meth:`_emit_positive_guard`).
-        tlet.side_effects = True
+        tlet = tutil.add_abort_guard(pre, f'_break_antidep_array_guard_{arr_name}',
+                                     f'not detect_all_positive({conn}, ({n_str}))', {conn: None})
         pre.add_edge(pre.add_read(arr_name), None, tlet, conn, Memlet.from_array(arr_name, desc))
 
     def _emit_positive_guard(self, pre, expr) -> None:
@@ -900,7 +892,7 @@ class BreakAntiDependence(ppl.Pass):
 
         The tasklet has zero connectors and is allowed to read free SDFG
         symbols by name (per the SDFG convention "init / symbol-only tasklets
-        may have no src connectors"). Trips ``std::abort`` on violation so
+        may have no src connectors"). Trips ``abort()`` on violation so
         the failure is loud at runtime and does not corrupt downstream output.
 
         The soundness condition for the snapshot rename is ``offset >= 0`` (a
@@ -911,27 +903,11 @@ class BreakAntiDependence(ppl.Pass):
         it is a defensive backstop.
         """
         expr_str = symbolic.symstr(expr)
-        # Not `assert(...)`: NDEBUG compiles it out. `std::abort()` is standard and faults at any
-        # optimization level; SIGABRT also reads as deliberate, unlike a trap's misleading SIGILL.
-        code = f'if (!(({expr_str}) >= 0)) {{ std::abort(); }}'
-        # Tasklet with no input/output connectors. The CPU codegen still emits
-        # its body; the symbols referenced in the code are resolved against
-        # the enclosing scope.
-        guard = pre.add_tasklet(
-            # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED,
-            # so the same guard would get a different tasklet label, different emitted C symbols
-            # and a different build hash on every run. crc32 is a stable digest of the same text.
-            name=f'_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xfffffff:x}',
-            inputs={},
-            outputs={},
-            code=code,
-            language=dtypes.Language.CPP,
-        )
-        # Carry no edges -- the tasklet is purely a side-effect node. Mark it
-        # side-effecting so dead-code elimination cannot prune the connector-less
-        # guard (which would silently restore the unsound assume-nonneg behaviour).
-        guard.side_effects = True
-        return guard
+        # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the
+        # same guard would get a different tasklet label, emitted C symbols and build hash per run.
+        # Side-effecting, so dead-code elimination cannot prune the connector-less guard.
+        return tutil.add_abort_guard(pre, f'_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xfffffff:x}',
+                                     f'not (({expr_str}) >= 0)')
 
     def _snapshot_window(self, loop: LoopRegion, name: str, sdfg: SDFG, read_subsets) -> Optional[Memlet]:
         """The copy memlet for ``name -> snap`` restricted to the elements the
@@ -986,7 +962,7 @@ class BreakAntiDependence(ppl.Pass):
         * ``guards``        -- symbolic expressions (each asserted ``> 0``).
         * ``array_guards``  -- array names (each element asserted ``> 0``).
 
-        Both guard kinds emit a side-effect ``std::abort`` tasklet into the
+        Both guard kinds emit a side-effect ``abort()`` tasklet into the
         snapshot pre-state.
 
         Redirection is PER EDGE and restricted to strict read-ahead reads

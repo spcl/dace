@@ -5,7 +5,7 @@ Permissive ``LoopToMap`` lifts an indirect write ``out[idx[i]] = ...`` into a pa
 scatter Map *assuming* ``idx`` is a permutation (duplicates -> write-write races). This
 pass checks that contract at runtime with an opaque ``ScatterConflictCheck`` libnode (tag each
 written slot with its writer, then verify the tags -> host ``int64`` count); an interstate edge
-binds the count to a symbol, and a trap tasklet ``std::abort()``s if it is positive.
+binds the count to a symbol, and a trap tasklet ``abort()``s if it is positive.
 
 - Opaque libnode -> the tile vectorizer never looks inside it, so the guard leaves the
   scatter Map it guards fully vectorizable. Only Maps are tiled; the guard is a libnode +
@@ -26,6 +26,7 @@ import dace
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
+from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -62,7 +63,7 @@ class GuardScatterConflicts(ppl.Pass):
 
     :param idx_names: Names of integer arrays whose values must be a permutation
         (no duplicates) at runtime. The pass emits, for each name, a tag-and-verify
-        duplicate scan that calls ``std::abort()`` on violation. Emission point is the
+        duplicate scan that calls ``abort()`` on violation. Emission point is the
         earliest CFG state where the array is fully defined: the SDFG's entry if the
         array has no internal writes; the topologically-latest state with an
         in-degree-positive AccessNode of the array otherwise.
@@ -229,7 +230,7 @@ def insert_scatter_guard(sdfg: SDFG,
         resolved and added here. Normally the root SDFG.
     :param idx_name: The integer array whose runtime values must be all distinct.
     :param emit_trap: When ``True`` (default), the chain ends in a state whose
-        tasklet calls ``std::abort()`` if the duplicate count is positive.
+        tasklet calls ``abort()`` if the duplicate count is positive.
         When ``False``, the trap state is omitted and the duplicate-count
         symbol is returned for the caller to thread into its own runtime
         check (e.g. a ``ConditionalBlock`` selecting between a parallel and
@@ -321,7 +322,7 @@ def build_guard_states(
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
     ``int64`` host collision count, with a domain-sized tag array wired in when derivable.
     ``trap`` (emitted iff ``emit_trap``) reads the flag via the ``trap_sym`` interstate
-    binding and ``std::abort()``s if it is positive. The check OR-reduces rather than
+    binding and ``abort()``s if it is positive. The check OR-reduces rather than
     counting, so the flag says THAT a duplicate exists, not how many.
 
     Without ``index_slice`` the scan covers ``idx_name[0 : shape[0]]`` (the whole 1-D array).
@@ -382,10 +383,7 @@ def build_guard_states(
     trap_state: Optional[SDFGState] = None
     if emit_trap:
         trap_state = region.add_state(f"_scatter_guard_trap_{idx_name}")
-        trap_tasklet = trap_state.add_tasklet(f"check_assumption_{idx_name}", {}, {},
-                                              f"if ({trap_sym} > 0) {{ std::abort(); }}",
-                                              language=dtypes.Language.CPP)
-        trap_tasklet.side_effects = True
+        tutil.add_abort_guard(trap_state, f"check_assumption_{idx_name}", f"{trap_sym} > 0")
 
     return check_state, trap_state, count_name, trap_sym
 
