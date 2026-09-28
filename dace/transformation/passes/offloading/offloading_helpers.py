@@ -230,10 +230,11 @@ def is_unoffloadable(data_name: str, sdfg: SDFG) -> bool:
 
 
 def is_array(data_name: str, sdfg: SDFG) -> bool:
-    """A buffer with a location of its own: not a view (placed with its container) and not a container kind."""
-    assert data_name in sdfg.arrays
+    """A buffer with a location of its own: not a view (placed with its container), not a container kind, and
+    not a constant (declared on both sides)."""
     desc = sdfg.arrays[data_name]
-    return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg))
+    return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg)
+            and data_name not in sdfg.constants)
 
 
 def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes.Node) -> Optional[nodes.MapEntry]:

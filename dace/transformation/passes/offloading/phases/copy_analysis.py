@@ -153,9 +153,11 @@ class CopyAnalysis:
             if isinstance(neighbor, nodes.AccessNode):
                 return helpers.get_data_used_by_access_nodes(sdfg, state, neighbor, downstream=is_out_edge)
             return OrderedSet()
-        # A structure or container array has no single location to decide, and a Stream is a queue with
-        # its own device-side protocol that the code generator allocates where its pusher runs.
-        if helpers.is_unoffloadable(name, sdfg) or isinstance(sdfg.arrays[name], data.Stream):
+        # A structure or container array has no single location to decide, a Stream is a queue with its own
+        # device-side protocol that the code generator allocates where its pusher runs, and a constant is
+        # declared on both sides.
+        if (helpers.is_unoffloadable(name, sdfg) or isinstance(sdfg.arrays[name], data.Stream)
+                or name in sdfg.constants):
             return OrderedSet()
         raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) on edge {edge}: {edge.data}")
 

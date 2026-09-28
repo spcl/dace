@@ -112,11 +112,6 @@ class CopyInsertion:
 
     def rename_in_state(self, state: SDFGState, rename_dict: Dict[str, str]) -> None:
         self.stage_views_with_their_origin(state, rename_dict)
-        self.rename_accesses(state, rename_dict)
-
-    @staticmethod
-    def rename_accesses(state: SDFGState, rename_dict: Dict[str, str]) -> None:
-        """Point every access node and memlet of ``state`` naming a key of ``rename_dict`` at its value."""
         for access in state.data_nodes():
             if access.data in rename_dict:
                 access.data = rename_dict[access.data]

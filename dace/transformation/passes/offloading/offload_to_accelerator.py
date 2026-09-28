@@ -15,7 +15,7 @@ from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_ma
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
-from dace.transformation.passes.offloading.phases.device_tables import fill_device_tables
+from dace.transformation.passes.offloading.phases.constant_tables import fold_constant_tables
 from dace.transformation.passes.offloading.phases.host_level_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
@@ -101,8 +101,8 @@ class OffloadToAccelerator(ppl.Pass):
         put in device memory."""
         # An early return leaves before the end, so its copy-backs need a state of their own on its path.
         entries = helpers.separate_early_returns(sdfg)
-        # Before the placement: a table filled on the device is one kernels read, not one to copy down.
-        fill_device_tables(sdfg)
+        # Before the placement: a table filled with literals is a constant every kernel reads, not one to copy.
+        fold_constant_tables(sdfg)
         analysis, IR, wrapped = self.place(sdfg, host_map_entries)
         insertion = CopyInsertion(sdfg, analysis.scopes)
         insertion.apply(IR)
