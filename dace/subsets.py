@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import List, Optional, Sequence, Set, Union
+from typing import List, Optional, Sequence, Set, Tuple, Union
 import warnings
 from dace.config import Config
 
@@ -318,6 +318,15 @@ def symbolic_range_tuple(value):
     if len(value) not in (3, 4):
         raise ValueError('Expected 3-tuple or 4-tuple')
     return tuple(tuple_to_symexpr(v) for v in value)
+
+
+def equalize_range_entry(
+    bounds: Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType]
+) -> Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType]:
+    """``symbolic.equalize_symbol`` on one range entry: a ``(begin, end, step)`` tuple or a single index."""
+    if isinstance(bounds, tuple):
+        return tuple(symbolic.equalize_symbol(entry) for entry in bounds)
+    return symbolic.equalize_symbol(bounds)
 
 
 @dace.serialize.serializable
@@ -846,11 +855,7 @@ class Range(Subset):
             # bound of this subset to one of ``other``, and the two can carry different mints of one
             # name -- a map parameter's and a string-parsed memlet's. SymPy compares assumptions, so
             # ``i + (M - i - 1)`` keeps both atoms instead of folding to ``M - 1``.
-            return Range([
-                tuple(symbolic.equalize_symbol(entry)
-                      for entry in bounds) if isinstance(bounds, tuple) else symbolic.equalize_symbol(bounds)
-                for bounds in new_subset
-            ])
+            return Range(list(map(equalize_range_entry, new_subset)))
         else:
             raise NotImplementedError
 

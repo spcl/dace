@@ -23,6 +23,18 @@ from collections import defaultdict
 from itertools import chain
 
 
+def store_is_superseded(sdfg: SDFG, graph: SDFGState, access: nodes.AccessNode, name: str, subset: subsets.Subset,
+                        map_exit: nodes.MapExit) -> bool:
+    """Whether a sink of ``name`` downstream of ``access`` is written where the store through ``map_exit`` lands."""
+    outer_subset = propagate_subset([Memlet(data=name, subset=subset)], sdfg.arrays[name], map_exit.map.params,
+                                    map_exit.map.range).subset
+    downstream = sdutil.find_downstream_nodes(access, graph)
+    return any(edge.src in downstream and not edge.data.is_empty() and edge.data.get_dst_subset(edge, graph) is not None
+               and subsets.intersects(edge.data.get_dst_subset(edge, graph), outer_subset) is not False
+               for sink in graph.data_nodes() if sink.data == name and graph.out_degree(sink) == 0
+               for edge in graph.in_edges(sink))
+
+
 @make_properties
 class SubgraphFusion(transformation.SubgraphTransformation):
     """
@@ -1269,16 +1281,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if acc in intermediate_sinks[dname]:
                         # Skip a store the downstream chain overwrites: it would leave the fused
                         # MapExit and that chain writing the same slot unordered.
-                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
-                                                        global_map_exit.map.params, global_map_exit.map.range).subset
-                        downstream = sdutil.find_downstream_nodes(acc, graph)
-                        superseded = any(
-                            ie.src in downstream and not ie.data.is_empty()
-                            and ie.data.get_dst_subset(ie, graph) is not None
-                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
-                            for ds in graph.data_nodes() if ds.data == dname and graph.out_degree(ds) == 0
-                            for ie in graph.in_edges(ds))
-                        if not superseded:
+                        if not store_is_superseded(sdfg, graph, acc, dname, in_subset, global_map_exit):
                             if not onode:
                                 onode = graph.add_access(dname)
                             graph.add_memlet_path(acc,
