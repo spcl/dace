@@ -216,10 +216,10 @@ def test_late_declares_loop_counter_in_for_init(require_experimental):
     sdfg = accumulate.to_sdfg(simplify=True)
     eager, late = readable_code(sdfg, 'eager'), readable_code(sdfg, 'late')
 
-    assert 'int64_t k;' not in eager, eager
-    assert 'for (int64_t k = 0;' in eager, eager
-    assert 'int64_t k;' not in late, late
-    assert 'for (int64_t k = 0;' in late, late
+    assert 'int k;' not in eager, eager
+    assert 'for (int k = 0;' in eager, eager
+    assert 'int k;' not in late, late
+    assert 'for (int k = 0;' in late, late
 
 
 def test_counter_used_after_loop_stays_hoisted(require_experimental):
@@ -274,8 +274,8 @@ def test_legacy_loop_counter_honors_late():
              set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=placement):
             return generated_code(accumulate.to_sdfg(simplify=True))
 
-    assert 'int64_t k;' in legacy('eager')
-    assert 'for (int64_t k = 0;' in legacy('late')
+    assert 'int k;' in legacy('eager')
+    assert 'for (int k = 0;' in legacy('late')
 
 
 if __name__ == '__main__':

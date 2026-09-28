@@ -124,14 +124,14 @@ def test_loop_decl_style_hoisted_on_a_sequential_map(implementation):
         code = generate_sdfg(sequential_map_sdfg(), implementation, loop_decl_style='hoisted')
     assert any(line.startswith('for (;') for line in loop_lines(code)), loop_lines(code)
     # The declaration moved ahead of the loop (emitted lines carry trailing ////__DACE debug comments).
-    assert any(stripped.startswith('auto i = 0;')
+    assert any(stripped.startswith('int i = 0;')
                for stripped in (l.strip() for l in code.splitlines())), 'hoisted declaration not emitted'
 
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
 def test_loop_decl_style_for_init_is_the_default(implementation):
     lines = loop_lines(generate_sdfg(sequential_map_sdfg(), implementation))
-    assert any(line.startswith('for (auto i = ') for line in lines), lines
+    assert any(line.startswith('for (int i = ') for line in lines), lines
     assert not any(line.startswith('for (;') for line in lines), lines
 
 

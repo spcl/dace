@@ -723,24 +723,22 @@ required:
                                     this guards against. ``inline_constexpr`` reproduces today's output.
                             loop_index_type:
                                 type: str
-                                default: auto
+                                default: inferred
                                 title: Map-loop induction variable type
                                 description: >
                                     Applies to: legacy AND experimental_readable (both emit map loops
                                     through the same emitter in cpu.py).
 
-                                    The declared type of a map loop's induction variable. ``auto`` (the
-                                    default) deduces it from the lower bound -- for the usual ``0`` that
+                                    The declared type of a map loop's induction variable. ``inferred``
+                                    (the default, as on upstream main) spells each parameter's inferred
+                                    type, e.g. ``int64_t`` for ``0:N`` over a 64-bit ``N``. ``auto``
+                                    deduces it from the lower bound -- for the usual ``0`` that
                                     makes it ``int``, i.e. 32-bit index math. ``int64`` emits
                                     ``int64_t`` and ``int32`` emits ``int32_t`` explicitly (the
                                     exact-width ``<cstdint>`` types, in scope via ``dace/dace.h``).
 
-                                    NOTE the ``auto`` default is 32-bit index math for the usual lower
-                                    bound of ``0``, so a map over ``0:N`` with N above 2**31 WRAPS. That
-                                    is an argument for defaulting to ``int64``, but this key reaches the
-                                    SHARED map-loop emitter, so changing its default would change legacy
-                                    output for every user, and a wider counter is not free (see below).
-                                    It stays ``auto`` until a sweep says otherwise.
+                                    ``auto`` is 32-bit index math for the usual lower bound of ``0``, so a
+                                    map over ``0:N`` with N above 2**31 WRAPS; ``inferred`` does not.
 
                                     Widening the induction variable can let TBAA disprove aliasing so a
                                     store sinks out of the loop, and it changes the no-wrap facts SCEV
@@ -748,8 +746,7 @@ required:
                                     register pressure and, on a 32-bit-safe loop, pure cost. The sign is
                                     not fixed; sweep it. This is DISTINCT from ``index_ctype``, which
                                     types the generated helper bodies, not the loop variable; if the two
-                                    disagree the loop index converts at the call. ``auto`` reproduces
-                                    today's output byte-for-byte, so legacy is unaffected by default.
+                                    disagree the loop index converts at the call.
                             loop_bound_cmp:
                                 type: str
                                 default: lt

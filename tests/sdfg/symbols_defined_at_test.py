@@ -446,6 +446,19 @@ def test_an_error_leaves_no_state_behind():
     assert SymbolResolver()._per_state == {}
 
 
+def test_declared_symbol_types_win_over_descriptor_instances():
+    """A shape given as a string builds its symbols with the default dtype; the SDFG's declaration decides."""
+    sdfg = dace.SDFG("declared_symbol_types")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", shape=("N", ), dtype=dace.float64)
+    state = sdfg.add_state()
+    me, _ = state.add_map("m", {"i": "0:N"})
+
+    assert state.sdfg_symbols()["N"] == dace.int64
+    assert state.symbols_defined_at(me)["N"] == dace.int64
+    assert SymbolResolver().defined_at(state, me)["N"] == dace.int64
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

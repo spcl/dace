@@ -218,11 +218,11 @@ def test_parallel_map_unchanged_by_flag(implementation):
 
 def test_parallel_map_keeps_canonical_loop():
     """Even under ptr_increment, the OpenMP map keeps its ``#pragma omp parallel for`` + canonical
-    ``for (auto i = 0; ...)`` indexed loop and grows no walking pointers."""
+    ``for (int i = 0; ...)`` indexed loop and grows no walking pointers."""
     code = generate(lambda n: elementwise_sdfg(n, dace.ScheduleType.CPU_Multicore), 'par_canon', EXPERIMENTAL,
                     'ptr_increment')
     assert '#pragma omp parallel for' in code
-    assert 'for (auto i = 0; i < N; i += 1)' in code
+    assert 'for (int i = 0; i < N; i += 1)' in code
     assert '__walk_' not in code
 
 

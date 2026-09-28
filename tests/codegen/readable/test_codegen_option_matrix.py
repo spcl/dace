@@ -314,7 +314,7 @@ def test_loop_bound_cmp_le_drops_the_plus_one() -> None:
     default = cpp_text('nv_loop_bound_cmp')
     arm = cpp_text('nv_loop_bound_cmp', ('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp'), 'le')
     assert default != arm
-    assert any(line.strip().startswith('for (auto i = 0; i <= ') for line in arm.splitlines())
+    assert any(line.strip().startswith('for (int i = 0; i <= ') for line in arm.splitlines())
 
 
 def test_loop_access_form_ptr_increment_walks_the_sequential_maps() -> None:

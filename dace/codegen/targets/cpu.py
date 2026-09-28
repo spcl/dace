@@ -80,13 +80,8 @@ def register_align_attribute(desc: data.Data) -> str:
 #: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
 #: bound (for the usual ``0`` that is ``int``); the others state the width outright, as exact-width
 #: ``<cstdint>`` types -- ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not
-#: state the width the key names.
-LOOP_INDEX_CTYPES = {'auto': 'auto', 'int64': 'int64_t', 'int32': 'int32_t'}
-
-
-def loop_index_ctype() -> str:
-    """Declared type of a map loop's induction variable, per ``codegen_params.loop_index_type``."""
-    return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
+#: state the width the key names. ``inferred`` has no single spelling: each parameter gets its own.
+LOOP_INDEX_CTYPES = {'auto': 'auto', 'int64': 'int64_t', 'int32': 'int32_t', 'inferred': 'auto'}
 
 
 def standalone_integer_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
@@ -2855,14 +2850,18 @@ class CPUCodeGen(TargetCodeGenerator):
     def map_loop_ctypes(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> List[str]:
         """The declared type of each induction variable of ``node``, per ``codegen_params.loop_index_type``.
 
-        CPF writes no ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
+        ``inferred`` spells each parameter's resolved type (``auto`` where none resolves). CPF writes no
+        ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
 
-        :raises NotImplementedError: if a parameter's range resolves to no integer type.
+        :raises NotImplementedError: if CPF finds a parameter whose range resolves to no integer type.
         """
-        configured = loop_index_ctype()
-        if configured != 'auto' or not cpf_lowering.standalone():
-            return [configured] * len(node.map.params)
+        setting = Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')
+        standalone = cpf_lowering.standalone()
+        if setting in ('int32', 'int64') or (setting == 'auto' and not standalone):
+            return [LOOP_INDEX_CTYPES[setting]] * len(node.map.params)
         resolved = node.new_symbols(sdfg, state, scope_analysis.defined_at(self._frame.symbol_scopes, state, node))
+        if not standalone:
+            return [resolved[p].ctype if resolved.get(p) is not None else 'auto' for p in node.map.params]
         ctypes = []
         for param in node.map.params:
             dtype = resolved.get(param)
@@ -4028,16 +4027,19 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
+        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
             "{num_pes}, {condition}"
-            "[&](int {pe_index}, {element_or_chunk}) {{".format(
+            "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
                 cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,
                 num_pes=cpp.sym2cpp(node.consume.num_pes),
+                pe_type=pe_type.ctype if pe_type is not None else 'int',
                 pe_index=node.consume.pe_index,
             ),
             cfg,

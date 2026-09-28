@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, DefaultDict, Dict, Set, Tuple
 
+import numpy as np
+
 import dace
 from dace import data as dt
 from dace import dtypes
@@ -30,37 +32,44 @@ from dace.transformation.transformation import explicit_cf_compatible
 CPP_SUBSCRIPT_RE = re.compile(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]')
 
 
-def _is_dace_typecast(node: ast.Call) -> bool:
-    """True iff ``node`` is ``dace.<typeclass>(x)`` (a single-arg dtype cast)."""
-    return (isinstance(node.func, ast.Attribute) and astutils.rname(node.func.value) == 'dace'
-            and node.func.attr in dtypes.TYPECLASS_STRINGS and len(node.args) == 1 and not node.keywords)
+def _is_signed_integer(dtype: dtypes.typeclass) -> bool:
+    return isinstance(dtype, dtypes.typeclass) and np.issubdtype(dtype.type, np.signedinteger)
 
 
-def _is_integer_typecast(node: ast.Call) -> bool:
-    """True iff ``node`` is ``dace.<integer typeclass>(x)`` (e.g. ``dace.int64(k)``)."""
-    if not _is_dace_typecast(node):
+def is_lossless_integer_cast(node: ast.Call, symbols: Dict[str, dtypes.typeclass]) -> bool:
+    """
+    Returns True if the given call is a ``dace.<signed integer type>(name)`` cast that widens (or keeps) a signed
+    integer. Such a cast does not change the value of its argument, and the Python frontend inserts one on the
+    operand narrower than the result of a binary operation (e.g., ``dace.int64(i) - j`` for an ``int32`` symbol ``i``
+    and an ``int64`` scalar ``j``), where C's usual arithmetic conversions would widen the operand identically.
+
+    :param node: The call node to test.
+    :param symbols: A mapping from names (symbols and tasklet connectors) to their data types.
+    :return: True if the cast does not change the value of its argument.
+    :note: Dropping the cast can still change the result of the enclosing expression if another operand is not
+           already as wide (e.g., ``dace.int64(i) * dace.int64(j)`` for ``int32`` ``i`` and ``j``), so
+           :class:`AttributedCallDetector` accepts at most one widening cast per expression.
+    """
+    if not (isinstance(node.func, ast.Attribute) and astutils.rname(node.func.value) == 'dace'):
         return False
-    try:
-        return getattr(dace, node.func.attr) in dtypes.INTEGER_TYPES
-    except Exception:  # pragma: no cover -- defensive
+    if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Name):
         return False
-
-
-def is_safe_whole_statement_int_cast(value: ast.AST) -> bool:
-    """True iff ``value`` is a whole-statement integer typecast on a non-constant
-    argument (``dace.int64(inc)`` as the ENTIRE tasklet RHS). Only this form is
-    safe to promote: the typecast survives to the interstate assignment as a
-    symbolic ``int64(inc)`` (a C++ truncating cast). A cast nested inside a larger
-    expression (``k + dace.int64(inc)``) is NOT admitted, and a constant cast
-    (``dace.int64(2)``) folds through the separate constant path."""
-    return isinstance(value, ast.Call) and _is_integer_typecast(value) and not astutils.is_constant(value.args[0])
+    target = getattr(dtypes, node.func.attr, None)
+    source = symbols.get(node.args[0].id)
+    return (_is_signed_integer(target) and _is_signed_integer(source) and source.bytes <= target.bytes)
 
 
 class AttributedCallDetector(ast.NodeVisitor):
     """Detects calls to functions that are attributes."""
 
-    def __init__(self):
+    def __init__(self, symbols: Dict[str, dtypes.typeclass]):
+        """
+        :param symbols: A mapping from names (symbols and tasklet connectors) to their data types, used to identify
+                        casts that can be dropped (see :func:`is_lossless_integer_cast`).
+        """
         self.detected = False
+        self.symbols = symbols
+        self.widening_casts = 0
 
     def visit_Call(self, node: ast.Call) -> Any:
         if isinstance(node.func, ast.Attribute):
@@ -68,6 +77,13 @@ class AttributedCallDetector(ast.NodeVisitor):
             if (len(node.args) == 1 and astutils.is_constant(node.args[0])
                     and astutils.rname(node.func.value) == 'dace'):
                 return self.generic_visit(node)
+            # Special case: widening a signed integer name (e.g., dace.int64(i) for an int32 symbol i). Only one
+            # widening cast is allowed, so that the remaining operands already carry the wider type.
+            if is_lossless_integer_cast(node, self.symbols):
+                if self.symbols[node.args[0].id].bytes < getattr(dtypes, node.func.attr).bytes:
+                    self.widening_casts += 1
+                if self.widening_casts <= 1:
+                    return self.generic_visit(node)
 
             self.detected = True
             return
@@ -76,19 +92,15 @@ class AttributedCallDetector(ast.NodeVisitor):
 
 class RemoveConstantAttributes(ast.NodeTransformer):
     """
-    Removes calls to functions that are attributes, if they point to a constant value for a cast.
-
-    A non-constant integer typecast (``dace.int64(inc)``) is KEPT unevaluated: it
-    survives as a symbolic ``int64(inc)`` typecast that renders as a C++ truncating
-    cast, rather than being unwrapped (dropped).
+    Removes calls to functions that are attributes, if they point to a constant value for a cast, and drops lossless
+    integer casts of names (see :func:`is_lossless_integer_cast`).
     """
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
-            if _is_integer_typecast(node) and not astutils.is_constant(node.args[0]):
-                self.generic_visit(node)
-                return node
+            if len(node.args) == 1 and isinstance(node.args[0], ast.Name):
+                return node.args[0]
             val = astutils.evalnode(node, {'dace': dace})
             return astutils.create_constant(val, node)
         return self.generic_visit(node)
@@ -322,15 +334,19 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # Ensure that the candidate is not assigned through
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
-                        # symbolic module -- EXCEPT a whole-statement integer
-                        # typecast (``s = dace.int64(inc)``), which survives as a
-                        # symbolic ``int64(inc)`` truncating cast.
-                        if not is_safe_whole_statement_int_cast(cb.code[0].value):
-                            detector = AttributedCallDetector()
-                            detector.visit(cb.code[0].value)
-                            if detector.detected:
-                                candidates.remove(candidate)
-                                continue
+                        # symbolic module.
+                        tasklet_types = {
+                            **sdfg.symbols,
+                            **{
+                                e.dst_conn: sdfg.arrays[e.data.data].dtype
+                                for e in state.in_edges(edge.src)
+                            }
+                        }
+                        detector = AttributedCallDetector(tasklet_types)
+                        detector.visit(cb.code[0].value)
+                        if detector.detected:
+                            candidates.remove(candidate)
+                            continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()

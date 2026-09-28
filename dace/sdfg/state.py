@@ -1507,9 +1507,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 def sdfg_scope_symbols(sdfg) -> Dict[str, dtypes.typeclass]:
     """Symbols visible at ``sdfg`` scope: its own symbols, array extents, and interstate edges."""
     symbols = collections.OrderedDict(sdfg.symbols)
+    # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries.
+    # ``s.name``, not ``str(s)``: printing a symbol runs sympy's printer for a string it holds.
     for desc in sdfg.arrays.values():
-        # ``s.name``, not ``str(s)``: printing a symbol runs sympy's printer for a string it holds.
-        symbols.update([(s.name, s.dtype) for s in desc.free_symbols])
+        for s in desc.free_symbols:
+            symbols.setdefault(s.name, s.dtype)
     try:
         for e in sdfg.predecessor_state_transitions(sdfg.start_state):
             symbols.update(e.data.new_symbols(sdfg, symbols))

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``compiler.cpu.codegen_params.loop_index_type`` applied to a CFG ``LoopRegion`` counter.
 
-``loop_index_type`` already types a MAP induction variable (via ``cpu.loop_index_ctype``); this suite
+``loop_index_type`` already types a MAP induction variable (via ``CPUCodeGen.map_loop_ctypes``); this suite
 covers the sibling case the knob previously ignored: the loop counter of a sequential ``LoopRegion``,
 which is a real SDFG symbol declared ahead of its loop by ``emit_interstate_variable_declaration``.
 ``auto`` (the default) must leave that declaration byte-identical to the pre-knob emitter; ``int32`` /
