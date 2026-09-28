@@ -39,9 +39,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
 
     def __init__(self):
         # Local imports: avoid circular import in ``dace.transformation`` package init.
-        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (AddThreadBlockMaps,
-                                                                                             ExpandLibraryNodes,
-                                                                                             ReinferConnectorTypes)
+        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+            AddThreadBlockMaps, ExpandLibraryNodes, ReinferConnectorTypes, SynchronizeStreamUnawareGPUCallbacks)
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
@@ -55,6 +54,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     inner-map outer-loop symbol into host-side cudaMalloc sizes.
         #   * DemoteKernelInternalArraysToScalars before ReinferConnectorTypes -- it resets the
         #     connectors that re-inference then re-derives as scalar references.
+        #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
         strategy = AutoSingleStreamGPUScheduler(
             synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
@@ -67,6 +67,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             ExpandLibraryNodes(),
             strategy,
             GPUStreamWiring(strategy),
+            SynchronizeStreamUnawareGPUCallbacks(),
             LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
             DemoteKernelInternalArraysToScalars(),

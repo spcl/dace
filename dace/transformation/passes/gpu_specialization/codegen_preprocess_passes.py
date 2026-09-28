@@ -1,9 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
 members so codegen-preprocess ordering is declarative and testable."""
-from typing import Any, Dict, Optional
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
 
-from dace import SDFG, dtypes, nodes, properties
+from dace import SDFG, SDFGState, dtypes, nodes, properties
+from dace.codegen import common
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -124,3 +127,69 @@ class ReinferConnectorTypes(ppl.Pass):
                       if before.get(key, missing) is not after.get(key, missing)
                       and before.get(key, missing) != after.get(key, missing))
         return changed or None
+
+
+#: Label of the device-wide fence placed after a stream-unaware host callback.
+DEVICE_SYNC_TASKLET_LABEL = 'gpu_callback_device_synchronization'
+
+
+def is_host_callback(node: nodes.Node) -> bool:
+    """A ``dace.callback`` invocation: a side-effecting tasklet that is not one of the pipeline's own syncs."""
+    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
+    return (isinstance(node, nodes.Tasklet) and node.side_effects is True and not is_pipeline_sync_tasklet(node)
+            and node.label != DEVICE_SYNC_TASKLET_LABEL)
+
+
+def stream_unaware_gpu_callbacks(sdfg: SDFG) -> List[Tuple[SDFGState, nodes.Tasklet]]:
+    """Host callbacks touching GPU memory without naming the stream, and not fenced yet."""
+    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import STREAM_CONNECTOR
+    found = []
+    for cursdfg in sdfg.all_sdfgs_recursive():
+        for state in cursdfg.states():
+            for node in state.nodes():
+                if not is_host_callback(node) or STREAM_CONNECTOR in node.code.as_string:
+                    continue
+                if is_devicelevel_gpu(cursdfg, state, node):
+                    continue
+                touches_gpu = any(not e.data.is_empty()
+                                  and cursdfg.arrays[e.data.data].storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+                                  for e in state.all_edges(node))
+                fenced = any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))
+                if touches_gpu and not fenced:
+                    found.append((state, node))
+    return found
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
+    """Fence host callbacks that touch GPU memory without being stream-aware.
+
+    Such a callback issues its device work on a stream the SDFG does not know, so the asynchronous
+    work scheduled around it on ``gpu_streams`` is unordered against it. A device-wide synchronization
+    after the callback orders it against every stream. A callback naming the stream is left alone.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import dependency_edge
+        targets = stream_unaware_gpu_callbacks(sdfg)
+        backend = common.get_gpu_backend()
+        for state, node in targets:
+            warnings.warn(
+                f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so a full device '
+                'synchronization is emitted after it. Add a "dace.current_stream" argument to the callback '
+                'and use it (e.g. cupy ExternalStream) to keep the work asynchronous.', UserWarning)
+            fence = state.add_tasklet(DEVICE_SYNC_TASKLET_LABEL, {}, {},
+                                      f'DACE_GPU_CHECK({backend}DeviceSynchronize());',
+                                      language=dtypes.Language.CPP,
+                                      side_effects=True)
+            for succ in list(state.successors(node)):
+                state.add_edge(fence, None, succ, None, dependency_edge())
+            state.add_edge(node, None, fence, None, dependency_edge())
+        return len(targets) or None
