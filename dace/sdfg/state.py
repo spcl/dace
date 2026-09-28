@@ -2655,21 +2655,55 @@ class SymbolResolver:
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it, and may yet come to depend on the inter-state edges that lead to it. Its expensive
-    part, the walk over the data descriptors, is genuinely per SDFG and is reused as such.
+    part, the walk over the data descriptors, is genuinely per SDFG and is reused as such. The
+    answers are valid while the SDFG does not change; make a new resolver after changing it.
     """
+
+    __slots__ = ('_per_sdfg', '_per_state', 'scope_tables')
 
     def __init__(self) -> None:
         self._per_sdfg: Dict['SDFG', Dict[str, dtypes.typeclass]] = {}
         self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
+        self.scope_tables: Dict['SDFGState', Dict[Optional[nd.EntryNode], Dict[str, dtypes.typeclass]]] = {}
 
-    def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
+    def state_symbols(self, state: 'SDFGState') -> Dict[str, dtypes.typeclass]:
+        """``state.symbols_defined_at_state()``, computed once per state. Read-only to the caller."""
         state_symbols = self._per_state.get(state)
         if state_symbols is None:
             sdfg_symbols = self._per_sdfg.get(state.sdfg)
             if sdfg_symbols is None:
                 sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
             state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
-        return state.symbols_defined_at(node, state_symbols=state_symbols)
+        return state_symbols
+
+    def scopes(self, state: 'SDFGState') -> Dict[Optional[nd.EntryNode], Dict[str, dtypes.typeclass]]:
+        """
+        The symbols defined at each scope of ``state``, keyed by scope entry (``None`` for the top level),
+        built once per state, outer to inner, so ``new_symbols`` runs once per scope. Read-only to the caller.
+        """
+        tables = self.scope_tables.get(state)
+        if tables is None:
+            tables = self.scope_tables[state] = {None: self.state_symbols(state)}
+            children = state.scope_children()
+            stack: List[Optional[nd.EntryNode]] = [None]
+            while stack:
+                parent = stack.pop()
+                for node in children[parent]:
+                    if isinstance(node, nd.EntryNode):
+                        symbols = collections.OrderedDict(tables[parent])
+                        symbols.update(node.new_symbols(state.sdfg, state, symbols))
+                        tables[node] = symbols
+                        stack.append(node)
+        return tables
+
+    def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
+        """``state.symbols_defined_at(node)`` from the tables of :meth:`scopes`, as a fresh dictionary."""
+        if node is None:
+            return collections.OrderedDict()
+        table = self.scopes(state).get(state.entry_node(node))
+        if table is None:  # A scope added after the state was tabulated.
+            return state.symbols_defined_at(node, state_symbols=self.state_symbols(state))
+        return collections.OrderedDict(table)
 
 
 @make_properties
