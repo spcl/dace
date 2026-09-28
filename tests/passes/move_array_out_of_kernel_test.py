@@ -693,5 +693,42 @@ def test_a_nest_giving_the_kernel_parameter_its_own_meaning_is_refused():
         lift(sdfg)
 
 
+def test_a_transient_shared_by_two_kernels_is_refused():
+    """One allocation used by two kernels has no single per-iteration slicing."""
+    sdfg = kernel_with_internal_transient()
+    second = sdfg.add_state_after(sdfg.start_state, 'again')
+    me, mx = second.add_map('kernel2', dict(i='0:128'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    produce = second.add_tasklet('produce', {}, {'o': None}, 'o = 2.0')
+    second.add_edge(me, None, produce, None, dace.Memlet())
+    buf = second.add_access('buf')
+    second.add_edge(produce, 'o', buf, None, dace.Memlet('buf[1]'))
+    second.add_edge(buf, None, mx, None, dace.Memlet())
+    sdfg.validate()
+
+    with pytest.raises(NotImplementedError, match='shared by the kernels'):
+        MoveArrayOutOfKernel().apply_pass(sdfg, {})
+
+
+def test_control_flow_reading_a_per_thread_buffer_is_refused():
+    """Written inside a thread-block map of its own SDFG, the buffer has no one element for an interstate edge."""
+    sdfg = kernel_with_interstate_buffer_read()
+    body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    fill = body.start_block
+    fill.remove_nodes_from(list(fill.nodes()))
+    me, mx = fill.add_map('lanes', dict(k='0:NZ'), schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+    write = fill.add_tasklet('write', {}, {'__out': None}, '__out = k')
+    order = fill.add_access('order')
+    fill.add_edge(me, None, write, None, dace.Memlet())
+    fill.add_edge(write, '__out', order, None, dace.Memlet('order[k]'))
+    fill.add_edge(order, None, mx, None, dace.Memlet())
+    sdfg.validate()
+
+    sut = MoveArrayOutOfKernel()
+    sut.register_demotion_max_elements = 0
+    with pytest.warns(UserWarning, match='will be lifted'):
+        with pytest.raises(NotImplementedError, match='varies per GPU thread'):
+            sut.apply_pass(sdfg, {})
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
