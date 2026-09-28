@@ -74,6 +74,9 @@ def is_host_map(state: SDFGState,
     # A kernel cannot issue a callback, so this is a requirement and not gated on ``auto``.
     if sdfg is not None and helpers.scope_holds_callback(state, entry, scope_children, sdfg, callback_names):
         return True
+    # Nor a host-issued library call: the map around it launches it from the host.
+    if any(helpers.holds_device_wide_libnode(node) for node in helpers.scope_nodes(state, entry)):
+        return True
     if not auto:
         return False
     return only_launches(scope_children.get(entry, ()))

@@ -16,6 +16,7 @@ from dace.transformation.passes.offloading.offloading_ir_node import OffloadingI
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
 from dace.transformation.passes.offloading.phases.device_tables import fill_device_tables
+from dace.transformation.passes.offloading.phases.host_level_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
     single_element_copies_into_map)
@@ -83,22 +84,29 @@ class OffloadToAccelerator(ppl.Pass):
         :return: every container left in a GPU storage, qualified by its SDFG's id, or None if there is none.
         """
         require_structured_control_flow(sdfg, 'OffloadToAccelerator')
-        # An early return leaves before the end, so its copy-backs need a state of their own on its path.
-        entries = helpers.separate_early_returns(sdfg)
-
         host_map_entries = host_maps(sdfg, self._host_maps)
         if self.verbose and host_map_entries:
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
         pinned = maps_pinned_by_host_loops(sdfg) if self.pin_host_loop_maps else OrderedSet()
         assign_schedules(sdfg, host_map_entries, pinned)
 
+        placed_on_gpu = self.offload_level(sdfg, host_map_entries)
+        helpers.register_kernel_local_transients(sdfg, placed_on_gpu)
+        helpers.refuse_by_value_scalars_the_device_writes(sdfg)
+        # A Pipeline reads the result as "did anything change": nothing on the device is None.
+        return helpers.device_resident(sdfg) or None
+
+    def offload_level(self, sdfg: SDFG, host_map_entries: OrderedSet) -> OrderedSet[str]:
+        """Place and copy the data of one host level, then of every nested SDFG at it; return the transients
+        put in device memory."""
+        # An early return leaves before the end, so its copy-backs need a state of their own on its path.
+        entries = helpers.separate_early_returns(sdfg)
         # Before the placement: a table filled on the device is one kernels read, not one to copy down.
         fill_device_tables(sdfg)
-        analysis, IR, wrapped = self.place(sdfg)
+        analysis, IR, wrapped = self.place(sdfg, host_map_entries)
         insertion = CopyInsertion(sdfg, analysis.scopes)
         insertion.apply(IR)
         helpers.remove_empty_return_entries(entries)
-
         if wrapped:
             ppl.Pipeline([
                 FullMapFusion(strict_dataflow=True,
@@ -107,24 +115,26 @@ class OffloadToAccelerator(ppl.Pass):
             ]).apply_pass(sdfg, {})
         single_element_copies_into_map(sdfg)
 
-        helpers.register_kernel_local_transients(sdfg, insertion.placed_on_gpu)
-        helpers.refuse_by_value_scalars_the_device_writes(sdfg)
-        # A Pipeline reads the result as "did anything change": nothing on the device is None.
-        return helpers.device_resident(sdfg) or None
+        placed_on_gpu = OrderedSet(insertion.placed_on_gpu)
+        for state in sdfg.states():
+            for node in list(host_level_nested_sdfgs(state, host_map_entries)):
+                prepare_body(sdfg, state, node)
+                placed_on_gpu |= self.offload_level(node.sdfg, host_map_entries)
+        return placed_on_gpu
 
-    def place(self, sdfg: SDFG) -> Tuple[CopyAnalysis, OffloadingIRNode, bool]:
+    def place(self, sdfg: SDFG, host_map_entries: OrderedSet) -> Tuple[CopyAnalysis, OffloadingIRNode, bool]:
         """Analyze, wrap hybrid states and re-type single elements to a fixpoint; also say if anything was wrapped."""
         converted: OrderedSet[str] = OrderedSet()
         wrapped = False
         for _ in range(self.max_iterations):
-            analysis = CopyAnalysis(sdfg, helpers.get_sdfg_scope_dict(sdfg))
+            analysis = CopyAnalysis(sdfg, helpers.get_sdfg_scope_dict(sdfg), host_map_entries)
             IR = analysis.build_ir()
             changed = change_single_element_containers(sdfg, converted)
             converted |= changed
             if self.verbose and analysis.hybrid_states:
                 print(f"hybrid states: {[state.label for state in analysis.hybrid_states]}")
             for state in analysis.hybrid_states:
-                make_size1_map_wrappers(sdfg, state)
+                make_size1_map_wrappers(sdfg, state, host_map_entries)
             if not analysis.hybrid_states and not changed:
                 if self.verbose:
                     print(f"offloading IR:\n{IR}")

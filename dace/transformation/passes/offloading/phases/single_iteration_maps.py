@@ -13,14 +13,16 @@ from dace.sdfg.state import SDFGState
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
-def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState) -> None:
-    """Wrap every top-level partition of ``state`` between its kernels that touches an array in a size-1 map."""
+def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[nodes.MapEntry]) -> None:
+    """Wrap every top-level partition of ``state`` between its device work that touches an array in a size-1 map.
+
+    Kernels, host maps and nested SDFGs launching kernels bound the partitions, and so does a callback, which
+    only the host can run.
+    """
     top_level = state.scope_children()[None]
-    kernels = OrderedSet(node for node in top_level
-                         if isinstance(node, (nodes.LibraryNode, nodes.MapEntry)) and helpers.has_GPU_schedule(node))
-    kernels |= OrderedSet(state.exit_node(node) for node in kernels if isinstance(node, nodes.MapEntry))
-    # A callback can only run on the host, so it bounds a partition the way a kernel does.
-    partition_nodes = kernels | OrderedSet(node for node in top_level if helpers.is_callback_tasklet(node, sdfg))
+    boundary = OrderedSet(node for node in top_level if helpers.is_device_work(node) or node in host_maps)
+    boundary |= OrderedSet(state.exit_node(node) for node in boundary if isinstance(node, nodes.MapEntry))
+    partition_nodes = boundary | OrderedSet(node for node in top_level if helpers.is_callback_tasklet(node, sdfg))
 
     for partition in subgraphs_after_removing(state, partition_nodes):
         if not any(isinstance(node, nodes.AccessNode) and not helpers.is_scalar(node.data, sdfg) for node in partition):

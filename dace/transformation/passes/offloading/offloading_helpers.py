@@ -123,11 +123,41 @@ def sdfg_holds_callback(sdfg: SDFG) -> bool:
 
 
 def sdfg_holds_gpu_schedule(sdfg: SDFG) -> bool:
-    """Any map or library node anywhere in ``sdfg`` that the schedule phase put on the device."""
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, (nodes.MapEntry, nodes.MapExit, nodes.LibraryNode)) and has_GPU_schedule(node):
-            return True
-    return False
+    """Any map or library node anywhere in ``sdfg`` scheduled on the device."""
+    return any(
+        isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(node)
+        for node, _ in sdfg.all_nodes_recursive())
+
+
+def is_device_work(node: nodes.Node) -> bool:
+    """A map or library node scheduled on the device, or a nested SDFG holding one."""
+    if isinstance(node, nodes.NestedSDFG):
+        return sdfg_holds_gpu_schedule(node.sdfg)
+    return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(node)
+
+
+def scope_nodes(state: SDFGState, entry: nodes.MapEntry) -> List[nodes.Node]:
+    return state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
+
+
+#: Expansions of a library node that emit code for inside a kernel; any other chosen expansion is a call
+#: only host code can issue (a cub device reduce, a vendor BLAS call).
+IN_KERNEL_IMPLEMENTATIONS = frozenset({'pure', 'pure-seq', 'CUDA (block)', 'CUDA (block allreduce)'})
+
+
+def is_device_wide_libnode(node: nodes.Node) -> bool:
+    """A library node with a chosen expansion that host code issues, so no kernel can contain it."""
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode  # Avoid import loop
+    from dace.libraries.standard.nodes.fill import FillLibraryNode  # Avoid import loop
+
+    return (isinstance(node, nodes.LibraryNode) and not isinstance(node, (CopyLibraryNode, FillLibraryNode))
+            and node.implementation is not None and node.implementation not in IN_KERNEL_IMPLEMENTATIONS)
+
+
+def holds_device_wide_libnode(node: nodes.Node) -> bool:
+    if isinstance(node, nodes.NestedSDFG):
+        return any(is_device_wide_libnode(inner) for inner, _ in node.sdfg.all_nodes_recursive())
+    return is_device_wide_libnode(node)
 
 
 def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:

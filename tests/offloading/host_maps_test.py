@@ -4,6 +4,7 @@
 Structural tests: they assert which schedule each map came out with, so they do not need a GPU.
 The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
 """
+import numpy as np
 import pytest
 
 import dace
@@ -312,3 +313,37 @@ def test_a_loop_whose_map_shares_nothing_with_host_code_keeps_it_a_kernel():
                             external_edges=True)
 
     assert list(maps_pinned_by_host_loops(sdfg)) == []
+
+
+def zekinh_inputs(nb: int = 3, nlev: int = 4, nproma: int = 5) -> dict:
+    rng = np.random.default_rng(0)
+    return {
+        'e_bln': rng.random((nb, 3, nproma)),
+        'edge_idx': rng.integers(0, nproma, (nb, nproma, 3)).astype(np.int32),
+        'edge_blk': rng.integers(0, nb, (nb, nproma, 3)).astype(np.int32),
+        'z_kin_hor_e': rng.random((nb, nlev, nproma)),
+        'z_ekinh': np.zeros((nb, nlev, nproma)),
+    }
+
+
+def test_a_named_host_map_hands_its_kernels_device_memory():
+    """The body of ``jb`` is a nested SDFG: its arrays take the storage of what they bind, the device twins."""
+    sdfg = zekinh_sdfg()
+    sdfg.apply_gpu_transformations(host_maps=[outer_map_label(sdfg)], simplify=False)
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    bound = [name for name, desc in nested.sdfg.arrays.items() if not desc.transient]
+    assert bound and all(nested.sdfg.arrays[name].storage == dace.StorageType.GPU_Global for name in bound)
+
+
+@pytest.mark.gpu
+def test_a_named_host_map_computes_what_numpy_computes():
+    sdfg = zekinh_sdfg()
+    sdfg.apply_gpu_transformations(host_maps=[outer_map_label(sdfg)])
+    args = zekinh_inputs()
+    nb, nlev, nproma = args['z_ekinh'].shape
+    sdfg(**args, NB=nb, NLEV=nlev, NPROMA=nproma)
+    blk, idx = args['edge_blk'], args['edge_idx']
+    levels = np.arange(nlev)[None, :, None]
+    want = sum(args['e_bln'][:, None, k, :] *
+               args['z_kin_hor_e'][blk[:, :, k][:, None, :], levels, idx[:, :, k][:, None, :]] for k in range(3))
+    np.testing.assert_allclose(args['z_ekinh'], want)

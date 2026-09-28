@@ -17,13 +17,18 @@ Locations = Tuple[OrderedSet[str], OrderedSet[str]]
 
 
 class CopyAnalysis:
-    """One analysis of ``sdfg``; ``hybrid_states`` collects the states that touch an array from both sides."""
+    """One analysis of ``sdfg``; ``hybrid_states`` collects the states that touch an array from both sides.
 
-    __slots__ = ('sdfg', 'scopes', 'hybrid_states')
+    A map of ``host_maps`` launches rather than computes: its body decides where the data it reaches goes.
+    """
 
-    def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]) -> None:
+    __slots__ = ('sdfg', 'scopes', 'host_maps', 'hybrid_states')
+
+    def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]],
+                 host_maps: OrderedSet[nodes.MapEntry]) -> None:
         self.sdfg = sdfg
         self.scopes = scopes
+        self.host_maps = host_maps
         self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
 
     def build_ir(self) -> OffloadingIRNode:
@@ -166,22 +171,36 @@ class CopyAnalysis:
 
     def locations_of_map(self, state: SDFGState, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
                          cpu_set: OrderedSet[str], is_gpu: bool) -> None:
-        """Add what ``map_entry``'s scope accesses: on the device if it or an enclosing map is a kernel."""
+        """Add what ``map_entry``'s scope accesses: on the device if it or an enclosing map is a kernel.
+
+        A host map is transparent: what its body leaves unclaimed goes to the device, the side of its kernels.
+        """
         is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES
+        launcher = not is_gpu and map_entry in self.host_maps and any(
+            helpers.is_device_work(node) for node in helpers.scope_nodes(state, map_entry))
         boundary = (helpers.get_data_used_by_access_nodes(self.sdfg, state, map_entry, downstream=False)
                     | helpers.get_data_used_by_access_nodes(
                         self.sdfg, state, state.exit_node(map_entry), downstream=True))
-        (gpu_set if is_gpu else cpu_set).update(boundary)
+        if not launcher:
+            (gpu_set if is_gpu else cpu_set).update(boundary)
 
         for node in [n for n, parent in self.scopes[state].items() if parent is map_entry]:
             if isinstance(node, nodes.MapEntry):
                 self.locations_of_map(state, node, gpu_set, cpu_set, is_gpu)
-                continue
-            for name in self.arrays_used_in_scope(state, node, map_entry):
-                if name in gpu_set and not is_gpu:
-                    raise RuntimeError(f"{name} is used on the device and on the host inside map {map_entry}")
-                if is_gpu or name not in gpu_set:
-                    (gpu_set if is_gpu else cpu_set).add(name)
+            elif launcher and isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                self.add_host_level_node(state, node, gpu_set, cpu_set)
+            else:
+                self.add_scope_node(state, node, map_entry, gpu_set, cpu_set, is_gpu)
+        if launcher:
+            gpu_set |= boundary - cpu_set
+
+    def add_scope_node(self, state: SDFGState, node: nodes.Node, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
+                       cpu_set: OrderedSet[str], is_gpu: bool) -> None:
+        for name in self.arrays_used_in_scope(state, node, map_entry):
+            if name in gpu_set and not is_gpu:
+                raise RuntimeError(f"{name} is used on the device and on the host inside map {map_entry}")
+            if is_gpu or name not in gpu_set:
+                (gpu_set if is_gpu else cpu_set).add(name)
 
     def arrays_used_in_scope(self, state: SDFGState, node: nodes.Node, map_entry: nodes.MapEntry) -> OrderedSet[str]:
         """What ``node``, inside ``map_entry``'s scope, accesses beyond the scope boundary already counted."""
@@ -193,6 +212,39 @@ class CopyAnalysis:
             return OrderedSet()
         raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} inside map {map_entry}")
 
+    def add_host_level_node(self, state: SDFGState, node: nodes.Node, gpu_set: OrderedSet[str],
+                            cpu_set: OrderedSet[str]) -> None:
+        """A library node at a host level goes where its schedule runs; a nested SDFG where its body wants its
+        bound arrays."""
+        if isinstance(node, nodes.LibraryNode):
+            on_gpu = helpers.has_GPU_schedule(node)
+            (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
+            return
+        inner_gpu, inner_cpu = CopyAnalysis(node.sdfg, helpers.get_sdfg_scope_dict(node.sdfg),
+                                            self.host_maps).locations_of_sdfg()
+        for edge in state.all_edges(node):
+            connector = edge.dst_conn if edge.dst is node else edge.src_conn
+            if edge.data.is_empty() or not helpers.is_array(edge.data.data, self.sdfg):
+                continue
+            if connector in inner_gpu:
+                gpu_set.add(edge.data.data)
+            elif connector in inner_cpu:
+                cpu_set.add(edge.data.data)
+
+    def locations_of_sdfg(self) -> Locations:
+        """Where every state, interstate edge and loop or branch condition of the SDFG wants each array."""
+        gpu_set: OrderedSet[str] = OrderedSet()
+        cpu_set: OrderedSet[str] = OrderedSet()
+        for state in self.sdfg.states():
+            state_gpu, state_cpu = self.locations_of_state(state)
+            gpu_set |= state_gpu
+            cpu_set |= state_cpu
+        for edge in self.sdfg.all_interstate_edges():
+            cpu_set |= OrderedSet(edge.data.used_arrays(self.sdfg.arrays))
+        for region in self.sdfg.all_control_flow_regions():
+            cpu_set |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
+        return gpu_set, cpu_set
+
     def locations_of_state(self, state: SDFGState) -> Locations:
         """Where the top-level nodes of ``state`` want each array; a hybrid state is recorded and put on the device."""
         gpu_set: OrderedSet[str] = OrderedSet()
@@ -200,16 +252,10 @@ class CopyAnalysis:
         for node in state.scope_children()[None]:
             if isinstance(node, nodes.MapEntry):
                 self.locations_of_map(state, node, gpu_set, cpu_set, False)
-            elif isinstance(node, nodes.LibraryNode):
-                on_gpu = helpers.has_GPU_schedule(node)
-                (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
+            elif isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                self.add_host_level_node(state, node, gpu_set, cpu_set)
             elif isinstance(node, nodes.Tasklet):  # outside every map, so on the host
                 cpu_set |= self.arrays_used_by_node(state, node)
-            elif isinstance(node, nodes.NestedSDFG):
-                # Its data is on the side its contents put it: one with no device schedule runs on the host
-                # whole, and classifying it by the state around it would wrap one scan step into a kernel.
-                on_gpu = helpers.sdfg_holds_gpu_schedule(node.sdfg)
-                (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
             elif not isinstance(node, (nodes.MapExit, nodes.AccessNode)):
                 raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} in state {state}.")
 
