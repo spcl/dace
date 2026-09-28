@@ -161,11 +161,8 @@ def test_unused_array_does_not_leak_shape_symbol():
     without = _build_with_optional_unused_array(False)
     with_unused = _build_with_optional_unused_array(True)
 
-    # The unused array's shape symbol must not be treated as a used argument.
     assert 'x_shape' not in without.used_symbols(all_symbols=False)
     assert 'x_shape' not in with_unused.used_symbols(all_symbols=False)
-
-    # Declaring the unused array must not perturb the signature at all.
     assert 'x_shape' not in with_unused.arglist()
     assert list(without.arglist().keys()) == list(with_unused.arglist().keys())
     assert without.signature_arglist() == with_unused.signature_arglist()

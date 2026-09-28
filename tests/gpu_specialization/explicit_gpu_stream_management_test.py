@@ -11,7 +11,8 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
-from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import InsertExplicitGPUGlobalMemoryCopies
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name)
 
@@ -86,40 +87,35 @@ def test_extended():
 
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
-    # ``compiler.cuda.max_concurrent_streams`` defaults to -1 -- the default stream alone -- so a
-    # test about TWO streams has to ask for them, over the WHOLE body: codegen reads the setting
-    # again and asserts one stream against an SDFG carrying two if the compile falls outside.
-    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
-        gpu_stream_pipeline.apply_pass(sdfg, {})
+    gpu_stream_pipeline.apply_pass(sdfg, {})
 
-        state = sdfg.states()[0]
+    state = sdfg.states()[0]
 
-        syncs = _sync_tasklets(state)
-        # Per-state syncs are fused into a single tasklet that synchronizes
-        # every stream the state needs to wait on, with one
-        # ``__stream_<id>`` ``gpuStream_t`` connector per stream id (the
-        # offset into the ``gpu_streams`` array).
-        assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}"
-        sync = syncs[0]
-        assert sync.side_effects is True
-        assert state.out_degree(sync) == 0
-        assert len(sync.in_connectors) == 2
-        for conn_name, conn_type in sync.in_connectors.items():
-            assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
-            assert conn_type == dace.dtypes.gpuStream_t
+    syncs = _sync_tasklets(state)
+    # Per-state syncs are fused into a single tasklet that synchronizes
+    # every stream the state needs to wait on, with one
+    # ``__stream_<id>`` ``gpuStream_t`` connector per stream id (the
+    # offset into the ``gpu_streams`` array).
+    assert len(syncs) == 1, f"Expected one fused sync tasklet (two streams); got {len(syncs)}"
+    sync = syncs[0]
+    assert sync.side_effects is True
+    assert state.out_degree(sync) == 0
+    assert len(sync.in_connectors) == 2
+    for conn_name, conn_type in sync.in_connectors.items():
+        assert conn_name.startswith(f"{STREAM_CONNECTOR}_"), conn_name
+        assert conn_type == dace.dtypes.gpuStream_t
 
-        # Memcpy tasklets emitted by the non-library GPU transformation still
-        # need a stream connector (the library-node expansion handles its own
-        # during codegen).
-        memcopy_tasklets = [
-            n for n in state.nodes()
-            if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
-        ]
-        for tasklet in memcopy_tasklets:
-            assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
-                                                     " and one for the copy source/destination.")
+    # Memcpy tasklets emitted by the non-library GPU transformation still
+    # need a stream connector (the library-node expansion handles its own
+    # during codegen).
+    memcopy_tasklets = [
+        n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
+    ]
+    for tasklet in memcopy_tasklets:
+        assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
+                                                 " and one for the copy source/destination.")
 
-        sdfg.compile()
+    sdfg.compile()
 
 
 @pytest.mark.gpu
@@ -218,7 +214,7 @@ def test_three_kernels_dependent_and_independent():
         sdfg.apply_gpu_transformations()
         sdfg.apply_transformations_repeated(StateFusionExtended)
         # Step 1: materialize explicit GPU memory copies so we can inspect the SDFG at that point.
-        Pipeline([InsertExplicitGPUGlobalMemoryCopies()]).apply_pass(sdfg, {})
+        Pipeline([MoveArrayOutOfKernel(), InsertExplicitCopies()]).apply_pass(sdfg, {})
 
         # Step 2: run the remaining stream-specialization passes.
         strategy = NaiveGPUStreamScheduler()
@@ -341,14 +337,14 @@ def test_single_copy_library_node():
     assert state.out_degree(syncs[0]) == 0
 
 
-def test_single_memset_library_node():
+def test_single_fill_library_node():
     """Single FillLibraryNode over a GPU buffer in one state."""
-    sdfg = dace.SDFG("single_memset_node")
+    sdfg = dace.SDFG("single_fill_node")
     sdfg.add_array("B", [128], dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state("memset_state")
+    state = sdfg.add_state("fill_state")
 
     b = state.add_access("B")
-    ms = FillLibraryNode(name="memset_B")
+    ms = FillLibraryNode(name="fill_B")
     state.add_node(ms)
     state.add_edge(ms, FillLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
@@ -536,7 +532,7 @@ def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
     b = state.add_write('B')
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    cp = state.add_tasklet('copy_A_to_B', {in_conn}, {out_conn},
+    cp = state.add_tasklet('copy_A_to_B', {in_conn: None}, {out_conn: None},
                            f'cudaMemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), '
                            'cudaMemcpyDeviceToDevice, __dace_current_stream);',
                            language=dace.Language.CPP)

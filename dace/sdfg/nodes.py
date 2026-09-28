@@ -60,8 +60,8 @@ class Node(object):
     gpu_stream_id = Property(dtype=int,
                              default=None,
                              allow_none=True,
-                             desc="GPU stream assignment from the experimental-codegen stream "
-                             "scheduler. None when unassigned. Persisted across save/load.")
+                             desc="GPU stream this node is scheduled on. Only meaningful for the nodes that "
+                             "can run on a GPU -- a MapEntry, a Tasklet or a LibraryNode. None when unassigned.")
     specialization_hint = Property(dtype=str,
                                    default=None,
                                    allow_none=True,
@@ -1013,7 +1013,7 @@ class MapEntry(EntryNode):
 
             free_symbols |= e.data.used_symbols(all_symbols, e)
 
-        # Update with the symbols needed by the map
+        # The map's own ranges name symbols too, and nothing else in the scope has to mention them.
         free_symbols |= self.free_symbols
 
         # Do not consider SDFG constants as symbols

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 import dace
 import numpy as np
 import pytest
@@ -359,36 +359,9 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
-@pytest.mark.parametrize('simplify', [None, False, True])
-def test_gpu_callback_without_stream_warns(simplify):
-    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn,
-    # and every component touching its data must be moved off the async streams onto the null stream.
-    # Without simplification the feeding and draining copies sit in states of their own, so the pin
-    # has to reach across states -- `simplify` is pinned here rather than left to the config so that
-    # both shapes are covered on every CI axis.
-    @dace_inhibitor
-    def cb_no_stream(arr):
-        arr *= 2
+def stream_unaware_callback_code(nested: bool, simplify: Optional[bool]) -> list:
+    """Generated code of a program handing a GPU array to a callback that ignores the stream."""
 
-    @dace.program
-    def gpucallback(A: dace.float64[20]):
-        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
-        tmp[:] = A
-        cb_no_stream(tmp)
-        A[:] = tmp
-
-    with pytest.warns(match="Automatically creating callback"):
-        sdfg = gpucallback.to_sdfg(simplify=simplify)
-    with pytest.warns(UserWarning, match="not stream-aware"):
-        code = sdfg.generate_code()
-
-    for obj in code:
-        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
-
-
-def test_gpu_callback_in_nested_sdfg_without_stream_warns():
-    # Same as above, but the callback sits in a nested SDFG where the array goes by its connector
-    # name: the pin has to follow the data out of the nested SDFG to reach the copies around it.
     @dace_inhibitor
     def cb_no_stream(arr):
         arr *= 2
@@ -401,19 +374,60 @@ def test_gpu_callback_in_nested_sdfg_without_stream_warns():
     def gpucallback(A: dace.float64[20]):
         tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
         tmp[:] = A
+        cb_no_stream(tmp)
+        A[:] = tmp
+
+    @dace.program
+    def gpucallback_nested(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
         for _ in range(2):
             callee(tmp)
         A[:] = tmp
 
     with pytest.warns(match="Automatically creating callback"):
-        sdfg = gpucallback.to_sdfg(simplify=False)
-    assert any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
-
+        sdfg = (gpucallback_nested if nested else gpucallback).to_sdfg(simplify=simplify)
+    assert nested == any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
     with pytest.warns(UserWarning, match="not stream-aware"):
-        code = sdfg.generate_code()
+        return sdfg.generate_code()
 
-    for obj in code:
+
+@pytest.mark.old_gpu_codegen_only
+@pytest.mark.parametrize('simplify', [None, False, True])
+def test_gpu_callback_without_stream_warns(simplify):
+    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn,
+    # and every component touching its data must be moved off the async streams onto the null stream.
+    # Without simplification the feeding and draining copies sit in states of their own, so the pin
+    # has to reach across states -- `simplify` is pinned here rather than left to the config so that
+    # both shapes are covered on every CI axis.
+    for obj in stream_unaware_callback_code(nested=False, simplify=simplify):
         assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
+
+
+@pytest.mark.old_gpu_codegen_only
+def test_gpu_callback_in_nested_sdfg_without_stream_warns():
+    # Same as above, but the callback sits in a nested SDFG where the array goes by its connector
+    # name: the pin has to follow the data out of the nested SDFG to reach the copies around it.
+    for obj in stream_unaware_callback_code(nested=True, simplify=False):
+        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
+
+
+def device_sync_follows_callback(code: list) -> bool:
+    text = ''.join(obj.clean_code for obj in code)
+    call = re.search(r'\bcb_no_stream\(', text)
+    return call is not None and re.search(r'DeviceSynchronize\(\)', text[call.end():]) is not None
+
+
+@pytest.mark.new_gpu_codegen_only
+@pytest.mark.parametrize('simplify', [None, False, True])
+def test_gpu_callback_without_stream_is_fenced(simplify):
+    # The experimental codegen keeps its streams, so the callback is ordered by a device-wide sync after it.
+    assert device_sync_follows_callback(stream_unaware_callback_code(nested=False, simplify=simplify))
+
+
+@pytest.mark.new_gpu_codegen_only
+def test_gpu_callback_in_nested_sdfg_without_stream_is_fenced():
+    assert device_sync_follows_callback(stream_unaware_callback_code(nested=True, simplify=False))
 
 
 def test_bad_closure():

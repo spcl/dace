@@ -250,6 +250,16 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
 
+def unselected_cuda_target() -> str:
+    """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
+    so instantiating both would register duplicate dispatchers."""
+    cuda_impl = config.Config.get('compiler', 'cuda', 'implementation')
+    if cuda_impl not in ('legacy', 'experimental'):
+        raise ValueError(f"Invalid compiler.cuda.implementation: {cuda_impl!r}. "
+                         "Please select one of 'legacy' or 'experimental'.")
+    return 'experimental_cuda' if cuda_impl == 'legacy' else 'cuda'
+
+
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -379,10 +389,13 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         # kernel outputs are widened back to length-1 arrays because a by-value Scalar cannot live
         # in device memory.
         from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
-                                                                              PromoteGPUScalarsToArrays)
+        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+            InferDefaultSchedulesAndStorages)
+        from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
         ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
-        Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
+        promote_gpu_scalars = PromoteScalarOutputsToArrays()
+        promote_gpu_scalars.gpu = True
+        Pipeline([InferDefaultSchedulesAndStorages(), promote_gpu_scalars]).apply_pass(sdfg, {})
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND. Runs
@@ -449,18 +462,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {'cpu': default_target(frame, sdfg)}
 
-    # Only the CUDA generator selected via compiler.cuda.implementation may be instantiated -- both
-    # share GPU schedule types, so instantiating both raises a duplicate-dispatcher error.
-    cuda_impl = config.Config.get('compiler', 'cuda', 'implementation')
-    if cuda_impl not in ('legacy', 'experimental'):
-        raise ValueError(f"Invalid compiler.cuda.implementation: {cuda_impl!r}. "
-                         "Please select one of 'legacy' or 'experimental'.")
-    disabled_cuda_target = 'experimental_cuda' if cuda_impl == 'legacy' else 'cuda'
+    disabled_cuda_target = unselected_cuda_target()
 
     targets.update({
         v['name']: k(frame, sdfg)
-        for k, v in TargetCodeGenerator.extensions().items()
-        if v['name'] not in targets and v['name'] != disabled_cuda_target
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in (*targets, disabled_cuda_target)
     })
 
     _get_codegen_targets(sdfg, frame)

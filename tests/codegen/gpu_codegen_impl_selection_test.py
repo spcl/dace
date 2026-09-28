@@ -23,7 +23,7 @@ def _build_gpu_sdfg():
     rd = state.add_read('A')
     wr = state.add_write('B')
     me, mx = state.add_map('m', dict(i='0:16'), schedule=dace.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet('double', {'inp'}, {'out'}, 'out = inp * 2.0')
+    tasklet = state.add_tasklet('double', {'inp': None}, {'out': None}, 'out = inp * 2.0')
     state.add_memlet_path(rd, me, tasklet, dst_conn='inp', memlet=dace.Memlet('A[i]'))
     state.add_memlet_path(tasklet, mx, wr, src_conn='out', memlet=dace.Memlet('B[i]'))
     sdfg.validate()

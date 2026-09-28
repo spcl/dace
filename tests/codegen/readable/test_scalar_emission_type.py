@@ -43,8 +43,9 @@ def test_scalar_keeps_gpu_kernel_output_as_length1_array():
     device memory."""
     from dace.transformation.pass_pipeline import Pipeline
     from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-    from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
-                                                                          PromoteGPUScalarsToArrays)
+    from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+        InferDefaultSchedulesAndStorages)
+    from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
     sdfg = dace.SDFG('gpu_out')
     sdfg.add_array('A', [8], dace.float64)
     sdfg.add_array('acc', [1], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
@@ -58,7 +59,9 @@ def test_scalar_keeps_gpu_kernel_output_as_length1_array():
 
     ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays['acc'], dace.data.Scalar), 'scalarization should first make it a Scalar'
-    Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
+    promote = PromoteScalarOutputsToArrays()
+    promote.gpu = True
+    Pipeline([InferDefaultSchedulesAndStorages(), promote]).apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'GPU kernel output must be widened back to an Array'
     assert tuple(int(s) for s in sdfg.arrays['acc'].shape) == (1, )
 

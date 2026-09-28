@@ -108,7 +108,7 @@ def written_scalar_return_sdfg(name: str) -> dace.SDFG:
 def test_written_scalar_return_is_promoted_to_an_out_parameter():
     """A written ``Scalar`` return is widened to a length-1 array, so the caller can read it.
 
-    This is the same rewrite ``PromoteGPUScalarsToArrays`` performs for device memory; CPF reaches
+    This is the same rewrite ``PromoteScalarOutputsToArrays(gpu)`` performs for device memory; CPF reaches
     it through ``PromoteScalarOutputsToArrays``, which the GPU pass now wraps.
     """
     sdfg = written_scalar_return_sdfg('cpf_ret_promoted')

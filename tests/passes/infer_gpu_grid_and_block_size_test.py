@@ -17,7 +17,7 @@ def _kernel_with_nested_threadblock(user_block_size, tb_extent: int) -> tuple:
     dev_me, dev_mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
     dev_me.map.gpu_block_size = list(user_block_size)
     tb_me, tb_mx = state.add_map('tb', dict(j=f'0:{tb_extent}'), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
-    t = state.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    t = state.add_tasklet('w', {}, {'o': None}, 'o = 1.0')
     a = state.add_write('A')
 
     tb_mx.add_scope_connectors('A')
@@ -57,6 +57,31 @@ def test_infer_block_size_non_3d_user_size_matching_no_conflict():
     dims = InferGPUGridAndBlockSize().apply_pass(sdfg, set())
     _grid, block = dims[dev]
     assert [int(b) for b in block] == [64, 1, 1], block
+
+
+def test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols():
+    """A thread-block map in a nested SDFG sized by the nested ``M`` (bound to 32 by the node) gives a
+    block of 32: the launch is sized on the host, where ``M`` does not exist."""
+    inner = dace.SDFG('inner')
+    inner.add_symbol('M', dace.int64)
+    inner.add_array('a', [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('s', is_start_block=True)
+    inner_state.add_mapped_tasklet('tb', {'j': '0:M'}, {},
+                                   'o = 1.0', {'o': dace.Memlet('a[j]')},
+                                   schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock,
+                                   external_edges=True)
+
+    sdfg = dace.SDFG('infer_block_nested')
+    sdfg.add_array('A', [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    dev_me, dev_mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a': None}, symbol_mapping={'M': 32})
+    state.add_nedge(dev_me, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, dev_mx, state.add_write('A'), src_conn='a', memlet=dace.Memlet('A[0:64]'))
+    sdfg.validate()
+
+    _grid, block = InferGPUGridAndBlockSize().apply_pass(sdfg, set())[dev_me]
+    assert [int(b) for b in block] == [32, 1, 1], block
 
 
 if __name__ == '__main__':

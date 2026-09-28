@@ -10,8 +10,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_access_summary,
-                                                                           descriptor_is_written)
+from dace.transformation.passes.length_one_array_scalar_conversion import descriptor_is_written
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 
@@ -74,7 +73,6 @@ def test_a_signature_scalar_reached_only_by_an_ordering_edge_is_left_by_value():
     state.add_edge(tasklet, 'o', state.add_access('b'), None, dace.Memlet('b[1]'))
 
     assert not descriptor_is_written(sdfg, 'alpha')
-    assert 'alpha' not in descriptor_access_summary(sdfg)[1]
     assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) is None
     assert isinstance(sdfg.arrays['alpha'], dace.data.Scalar)
     assert 'double alpha' in sdfg.signature()

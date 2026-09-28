@@ -27,9 +27,7 @@ class CUDA:
     cmake_link_flags = []
     cmake_files = []
 
-    # ``cudacommon.cuh`` rather than ``cuda_runtime.h``: it is the one place the two runtimes are
-    # reconciled, so it names the right backend header and is parseable by a host compiler.
-    headers = {'frame': ['dace/cuda/cudacommon.cuh']}
+    headers = []
     state_fields = []
     init_code = ""
     finalize_code = ""

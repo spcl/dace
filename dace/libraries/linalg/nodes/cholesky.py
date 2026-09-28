@@ -30,6 +30,14 @@ GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
 SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
 
 
+def input_edges(state, node, connector: str) -> list:
+    return [e for e in state.in_edges(node) if e.dst_conn == connector]
+
+
+def output_edges(state, node, connector: str) -> list:
+    return [e for e in state.out_edges(node) if e.src_conn == connector]
+
+
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
@@ -40,11 +48,6 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
-    # cuSolverDn writes the LAPACK info code via a device pointer, so ``_info``
-    # must stay on the GPU. We additionally allocate ``_info_host`` on the CPU
-    # and connect an implicit edge ``_info -> _info_host`` so the new GPU
-    # pipeline's InsertExplicitGPUGlobalMemoryCopies lowers it to an explicit
-    # D2H copy -- the host then has a readable status code.
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
     if implementation in GPU_SOLVERS:
         info_host_arr = sdfg.add_array('_info_host', [1],
@@ -94,8 +97,6 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
 
-    info = state.add_access('_info')
-
     state.add_memlet_path(binout1, potrf_node, dst_conn="_xin", memlet=Memlet.from_array(*binout_arr))
     state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
     state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
@@ -105,19 +106,6 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         state.add_nedge(info, info_host, Memlet.from_array(*info_host_arr))
 
     return sdfg
-
-
-@dace.library.expansion
-class ExpandCholeskyPure(ExpandTransformation):
-    """
-    Naive backend-agnostic expansion of LAPACK POTRF.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise NotImplementedError
 
 
 @dace.library.expansion
@@ -238,7 +226,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         # installed, which lands back on the CPU library this exists to avoid.
         actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
         if self.implementation is None:
-            in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
+            in_edges = input_edges(state, self, "_a")
             if in_edges:
                 outer = state.memlet_path(in_edges[0])[0].src
                 if isinstance(outer, dace.sdfg.nodes.AccessNode):
@@ -252,14 +240,12 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        # Filter on the data connector -- the GPU stream pipeline may attach
-        # a separate ``stream`` in-edge to GPU library nodes which is not part
-        # of the data flow and must not be counted here.
-        in_edges = [e for e in state.in_edges(self) if e.dst_conn == "_a"]
+        # Filter on the data connector: the GPU stream pipeline attaches a non-dataflow in-edge.
+        in_edges = input_edges(state, self, "_a")
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = [e for e in state.out_edges(self) if e.src_conn == "_b"]
+        out_edges = output_edges(state, self, "_b")
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data

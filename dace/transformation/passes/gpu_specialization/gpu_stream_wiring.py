@@ -10,11 +10,11 @@ from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import GPUStreamSchedulingStrategy
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (collect_stream_assignments,
-                                                                               is_stream_wiring_applied)
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (allocate_stream_array,
-                                                                                   wire_stream_connectors)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
+                                                                                 allocate_stream_array,
+                                                                                 wire_stream_connectors)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
+                                                                               persisted_stream_assignments)
 
 
 @transformation.explicit_cf_compatible
@@ -45,7 +45,7 @@ class GPUStreamWiring(ppl.Pass):
                              f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}').")
         if is_stream_wiring_applied(sdfg):
             return None
-        assignments = collect_stream_assignments(sdfg)
+        assignments = persisted_stream_assignments(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1
 
         allocate_stream_array(sdfg, num_streams)

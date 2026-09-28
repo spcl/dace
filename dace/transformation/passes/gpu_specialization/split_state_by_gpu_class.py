@@ -8,7 +8,7 @@ WCCs lift into a new predecessor state; CPU suffixes are left trailing.
 
 The "after" lift reuses :func:`dace.transformation.helpers.state_fission` (which only lifts into a
 *predecessor*): lifting the GPU middle out leaves the original state holding just the downstream CPU
-suffix. Genuinely interleaved patterns (``GPU -> CPU -> GPU``, cycles, ``_Kind.MIXED`` interior nodes
+suffix. Genuinely interleaved patterns (``GPU -> CPU -> GPU``, cycles, ``NodeKind.MIXED`` interior nodes
 like a mixed NestedSDFG) are refused and fall through to the naive strategy.
 """
 from typing import Dict, List, Optional, Set, Tuple
@@ -19,18 +19,42 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_node, _fold_kinds, _Kind)
+from ordered_set import OrderedSet
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                weakly_connected_node_sets)
 
+#: A mixed WCC as ``(cpu_prefix, gpu_middle, cpu_suffix)``.
+Chain = Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]
 
-def _wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> _Kind:
-    """Fold ``_classify_node`` over ``wcc``'s nodes to get the component-level kind."""
-    return _fold_kinds(_classify_node(n, sdfg, state) for n in wcc)
+#: The class sequences a mixed WCC may have, with the band index of each chain part (-1 for none).
+CHAIN_SHAPES = {
+    (NodeKind.CPU, NodeKind.GPU): (0, 1, -1),
+    (NodeKind.GPU, NodeKind.CPU): (-1, 0, 1),
+    (NodeKind.CPU, NodeKind.GPU, NodeKind.CPU): (0, 1, 2),
+}
 
 
-def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
-                 state: SDFGState) -> Optional[Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]]:
+def wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> NodeKind:
+    return fold_kinds(classify_node(n, sdfg, state) for n in wcc)
+
+
+def group_into_bands(order: List[nodes.Node], kinds: Dict[nodes.Node, NodeKind]) -> List[list]:
+    """Group consecutive same-class nodes into ``[kind, nodes]`` bands. A NEUTRAL node joins the current
+    band; a NEUTRAL-only band takes the class of the next classed node."""
+    bands: List[list] = []
+    for n in order:
+        k = kinds[n]
+        if bands and (k in (NodeKind.NEUTRAL, bands[-1][0]) or bands[-1][0] == NodeKind.NEUTRAL):
+            if bands[-1][0] == NodeKind.NEUTRAL:
+                bands[-1][0] = k
+            bands[-1][1].append(n)
+        else:
+            bands.append([k, [n]])
+    return bands
+
+
+def chain_bands(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> Optional[Chain]:
     """Topologically partition a mixed WCC into ``(cpu_prefix, gpu_middle, cpu_suffix)``.
 
     Returns ``None`` when the WCC contains a ``MIXED`` interior node, is purely one class, or its
@@ -38,48 +62,22 @@ def _chain_bands(wcc: Set[nodes.Node], sdfg: SDFG,
     (AccessNodes / MapExits) attach to the adjacent band and get duplicated at the cut by
     :func:`state_fission`.
     """
-    kinds: Dict[nodes.Node, _Kind] = {n: _classify_node(n, sdfg, state) for n in wcc}
-    if any(k == _Kind.MIXED for k in kinds.values()):
+    kinds: Dict[nodes.Node, NodeKind] = {n: classify_node(n, sdfg, state) for n in wcc}
+    if NodeKind.MIXED in kinds.values():
         return None
-    if not any(k == _Kind.CPU for k in kinds.values()) or not any(k == _Kind.GPU for k in kinds.values()):
-        return None
-
-    # Roots = WCC nodes with no in-edges within the WCC.
     roots = [n for n in wcc if all(e.src not in wcc for e in state.in_edges(n))]
-    subgraph = SubgraphView(state, list(wcc))
-    order = list(dfs_topological_sort(subgraph, sources=roots))
+    order = list(dfs_topological_sort(SubgraphView(state, list(wcc)), sources=roots))
+    bands = [b for b in group_into_bands(order, kinds) if b[0] != NodeKind.NEUTRAL]
+    shape = CHAIN_SHAPES.get(tuple(b[0] for b in bands))
+    if shape is None:
+        return None
+    return tuple(bands[i][1] if i >= 0 else [] for i in shape)
 
-    # Group consecutive same-class nodes into bands. NEUTRAL attaches to the current band; a
-    # non-neutral node that disagrees either promotes a not-yet-classed NEUTRAL band or opens a
-    # new band.
-    bands: List[List] = []  # each entry: [kind, [nodes]]
-    for n in order:
-        k = kinds[n]
-        if k == _Kind.NEUTRAL:
-            if bands:
-                bands[-1][1].append(n)
-            else:
-                bands.append([_Kind.NEUTRAL, [n]])
-            continue
-        if not bands:
-            bands.append([k, [n]])
-            continue
-        if bands[-1][0] == _Kind.NEUTRAL:
-            bands[-1][0] = k
-            bands[-1][1].append(n)
-        elif bands[-1][0] == k:
-            bands[-1][1].append(n)
-        else:
-            bands.append([k, [n]])
 
-    non_neutral_kinds = [b[0] for b in bands if b[0] != _Kind.NEUTRAL]
-    if non_neutral_kinds == [_Kind.CPU, _Kind.GPU]:
-        return bands[0][1], bands[1][1], []
-    if non_neutral_kinds == [_Kind.GPU, _Kind.CPU]:
-        return [], bands[0][1], bands[1][1]
-    if non_neutral_kinds == [_Kind.CPU, _Kind.GPU, _Kind.CPU]:
-        return bands[0][1], bands[1][1], bands[2][1]
-    return None
+def lift(state: SDFGState, to_lift: OrderedSet, label: str) -> None:
+    # ``allow_isolated_nodes=False``: isolated nodes go with the lifted part rather than stay behind.
+    if to_lift:
+        state_fission(SubgraphView(state, list(to_lift)), label=label, allow_isolated_nodes=False)
 
 
 @transformation.explicit_cf_compatible
@@ -102,71 +100,38 @@ class SplitStateByGPUClass(ppl.Pass):
         # consumers carry ``gpu_stream_id``), so a second split would corrupt the wired structure.
         if is_stream_wiring_applied(sdfg):
             return None
-        # Only split root-level ``SDFGState`` blocks. Other top-level kinds (``LoopRegion``,
-        # ``ConditionalBlock``, inner ``NestedSDFG`` output) are opaque: ``state_fission`` works on
-        # dataflow nodes, and the scheduler classifies these blocks as a whole, so their GPU/CPU
-        # boundary is handled at their parent iedges rather than by lifting inner subgraphs.
-        states_split = 0
-        for block in list(sdfg.nodes()):
-            if not isinstance(block, SDFGState):
-                continue
-            if self._split_one_state(block, sdfg):
-                states_split += 1
+        # Only root-level states: ``state_fission`` works on dataflow, and the scheduler classifies
+        # loops, conditionals and nested SDFGs as a whole.
+        states_split = sum(1 for block in list(sdfg.nodes())
+                           if isinstance(block, SDFGState) and self.split_one_state(block, sdfg))
         return {'states_split': states_split} if states_split else None
 
     @staticmethod
-    def _split_one_state(state: SDFGState, sdfg: SDFG) -> bool:
-        wccs = weakly_connected_node_sets(state)
-        if not wccs:
+    def split_one_state(state: SDFGState, sdfg: SDFG) -> bool:
+        # Order as fission sees it: pure WCCs first, then the chain parts.
+        cpu_wccs, prefixes = OrderedSet(), OrderedSet()
+        gpu_wccs, middles = OrderedSet(), OrderedSet()
+        has_suffix = False
+        for wcc in weakly_connected_node_sets(state):
+            kind = wcc_kind(wcc, sdfg, state)
+            if kind == NodeKind.MIXED:
+                # Every mixed WCC must decompose as [CPU?, GPU, CPU?]; otherwise refuse this state.
+                chain = chain_bands(wcc, sdfg, state)
+                if chain is None:
+                    return False
+                prefixes.update(chain[0])
+                middles.update(chain[1])
+                has_suffix = has_suffix or bool(chain[2])
+            elif kind == NodeKind.CPU:
+                cpu_wccs.update(wcc)
+            elif kind == NodeKind.GPU:
+                gpu_wccs.update(wcc)
+        before, gpu = cpu_wccs | prefixes, gpu_wccs | middles
+        # Nothing to split without GPU work, or without CPU work around it.
+        if not gpu or not (before or has_suffix):
             return False
-
-        kinds = [_wcc_kind(wcc, sdfg, state) for wcc in wccs]
-
-        cpu_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.CPU]
-        gpu_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.GPU]
-        mixed_wccs = [w for w, k in zip(wccs, kinds) if k == _Kind.MIXED]
-
-        # Every mixed WCC must decompose as [CPU?, GPU, CPU?]; otherwise refuse this state.
-        chains: List[Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]] = []
-        for wcc in mixed_wccs:
-            bands = _chain_bands(wcc, sdfg, state)
-            if bands is None:
-                return False
-            chains.append(bands)
-
-        # "Lift to before" set: pure-CPU WCCs + chain prefixes.
-        before_nodes: Set[nodes.Node] = set()
-        for wcc in cpu_wccs:
-            before_nodes.update(wcc)
-        for prefix, _middle, _suffix in chains:
-            before_nodes.update(prefix)
-
-        # No GPU work at all: nothing to schedule.
-        if not gpu_wccs and not any(middle for _p, middle, _s in chains):
-            return False
-        # No CPU work to move (no pure CPU WCCs, no chain prefix/suffix): already pure-GPU + NEUTRAL.
-        has_suffix = any(suffix for _p, _m, suffix in chains)
-        if not before_nodes and not has_suffix:
-            return False
-
-        # First fission: lift everything that lands before the GPU work. ``allow_isolated_nodes=False``
-        # because ``state_fission`` otherwise leaves isolated nodes behind; we want them in the prefix.
-        if before_nodes:
-            state_fission(SubgraphView(state, list(before_nodes)),
-                          label=f"{state.label}_cpu_before",
-                          allow_isolated_nodes=False)
-
-        # Second fission: when a chain has a CPU suffix, lift the GPU work (pure-GPU WCCs + each
-        # chain's GPU middle) out so the suffix is left behind as the trailing state.
+        lift(state, before, f"{state.label}_cpu_before")
+        # With a CPU suffix, lifting the GPU work leaves the suffix behind as the trailing state.
         if has_suffix:
-            gpu_to_lift: Set[nodes.Node] = set()
-            for wcc in gpu_wccs:
-                gpu_to_lift.update(wcc)
-            for _prefix, middle, _suffix in chains:
-                gpu_to_lift.update(middle)
-            if gpu_to_lift:
-                state_fission(SubgraphView(state, list(gpu_to_lift)),
-                              label=f"{state.label}_gpu_middle",
-                              allow_isolated_nodes=False)
-
+            lift(state, gpu, f"{state.label}_gpu_middle")
         return True

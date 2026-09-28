@@ -1,104 +1,85 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-
-from typing import Optional
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Lowering of nested ``GPU_Device`` maps into a single kernel guarded by bound checks."""
 import copy
-import sympy
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
-from dace import SDFG, properties, symbolic
-from dace.sdfg import utils as sdutil
+from dace import SDFG, dtypes, properties, subsets, symbolic
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.nodes import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import enclosing_map_chain
-from dace.ordered import OrderedSet
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
+from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from ordered_set import OrderedSet
+
+GPU_DEVICE = dace.dtypes.ScheduleType.GPU_Device
+
+InnerMap = Tuple[SDFGState, nodes.MapEntry]
 
 
-def bound_facets(bound):
-    """A range bound's ``(main, overapproximation)`` pair; a plain expression is its own."""
-    if isinstance(bound, symbolic.SymExpr):
-        return bound.expr, bound.approx
-    return bound, bound
+def is_gpu_device_map(node: nodes.Node) -> bool:
+    return isinstance(node, nodes.MapEntry) and node.map.schedule == GPU_DEVICE
 
 
-def combine_bound(op, lhs, rhs):
-    """``op`` over two range bounds, applied to each facet separately.
-
-    ``sympy.Min`` / ``sympy.Max`` cannot sympify a :class:`~dace.symbolic.SymExpr` -- a bound
-    carrying a separate overapproximation, which any non-trivial subset produces -- and reducing one
-    to its main expression to get past that would silently drop the very bound the pair exists to
-    carry. Combining facet by facet keeps both; ``SymExpr`` collapses back to a plain expression
-    when the two agree.
-    """
-    lhs_main, lhs_approx = bound_facets(lhs)
-    rhs_main, rhs_approx = bound_facets(rhs)
-    return symbolic.SymExpr(op(lhs_main, rhs_main).simplify(), op(lhs_approx, rhs_approx).simplify())
+def gpu_device_depth(state: SDFGState, node: nodes.Node) -> int:
+    """Number of ``GPU_Device`` scopes enclosing ``node`` within ``state``, not across NestedSDFGs."""
+    depth = 0
+    scope = state.entry_node(node)
+    while scope is not None:
+        depth += is_gpu_device_map(scope)
+        scope = state.entry_node(scope)
+    return depth
 
 
-def translate_bound_to_scope(bound: symbolic.SymbolicType, from_sdfg: SDFG, to_sdfg: SDFG) -> symbolic.SymbolicType:
-    """Rewrite a bound from ``from_sdfg``'s symbols into ``to_sdfg``'s by applying each enclosing
-    ``NestedSDFG.symbol_mapping`` outward. ``from_sdfg`` is ``to_sdfg`` or a nested descendant."""
-    cur_sdfg = from_sdfg
-    while cur_sdfg is not to_sdfg and cur_sdfg.parent_nsdfg_node is not None:
-        repl = {
-            symbolic.pystr_to_symbolic(name): value
-            for name, value in cur_sdfg.parent_nsdfg_node.symbol_mapping.items()
-        }
-        if repl and isinstance(bound, symbolic.SymExpr):
-            bound = symbolic.SymExpr(bound.expr.subs(repl, simultaneous=True), bound.approx.subs(repl,
-                                                                                                 simultaneous=True))
-        elif repl and isinstance(bound, sympy.Basic):
-            bound = bound.subs(repl, simultaneous=True)
-        cur_sdfg = cur_sdfg.parent_sdfg
-    return bound
+def scan_nested_level(
+        frontier: OrderedSet[nodes.NestedSDFG]) -> Tuple[OrderedSet[InnerMap], OrderedSet[nodes.NestedSDFG]]:
+    """Outermost ``GPU_Device`` maps in the states of ``frontier``, and the NestedSDFGs one level deeper."""
+    found: OrderedSet[InnerMap] = OrderedSet()
+    deeper: OrderedSet[nodes.NestedSDFG] = OrderedSet()
+    for nested_state in (st for nsdfg_node in frontier for st in nsdfg_node.sdfg.all_states()):
+        for node in nested_state.nodes():
+            if is_gpu_device_map(node) and gpu_device_depth(nested_state, node) == 0:
+                found.add((nested_state, node))
+            elif isinstance(node, nodes.NestedSDFG):
+                deeper.add(node)
+    return found, deeper
 
 
-def bounds_outside_launch_scope(hoisted_range, kernel_params):
-    """The symbols in ``hoisted_range`` that the kernel launch cannot see.
-
-    A hoisted bound becomes part of the outer map's range, and that range is evaluated on the HOST
-    to size the grid. A parameter of the kernel itself is bound per block, so naming one here emits
-    a launch expression referencing an identifier that does not exist there -- a C++ error pointing
-    at generated code, several steps from the pass that wrote it.
-    """
-    named = OrderedSet()
-    for bound in hoisted_range[0][:2]:
-        for facet in bound_facets(bound):
-            named |= OrderedSet(str(sym) for sym in symbolic.pystr_to_symbolic(facet).free_symbols)
-    return OrderedSet(sym for sym in named if sym in kernel_params)
+def bound_check(map_entry: nodes.MapEntry) -> str:
+    """Condition selecting exactly the iterations ``map_entry``'s range owns, step included."""
+    terms = []
+    for param, (begin, end, step) in zip(map_entry.map.params, map_entry.map.range):
+        terms.append(f'({param} >= {begin} and {param} <= {end})')
+        if step != 1:
+            terms.append(f'(({param} - {begin}) % {step} == 0)')
+    return ' and '.join(terms) if terms else 'True'
 
 
-def rename_params_shadowing_kernel(next_level_maps, kernel_params: OrderedSet) -> None:
-    """Rename inner params that repeat a kernel param (flattening would declare them twice); siblings share names."""
-    inner_params = OrderedSet(p for _, inner_map in next_level_maps for p in inner_map.map.params)
-    taken = kernel_params | inner_params
-    for map_state, _ in next_level_maps:
-        taken |= OrderedSet(map_state.sdfg.symbols.keys()) | OrderedSet(map_state.sdfg.arrays.keys())
-    fresh = {}
-    for param in inner_params:
-        if param in kernel_params:
-            fresh[param] = dace.utils.find_new_name(param, taken)
-            taken.add(fresh[param])
-    for map_state, inner_map in next_level_maps:
-        repl = {p: fresh[p] for p in inner_map.map.params if p in fresh}
-        if not repl:
-            continue
-        # The range is evaluated in the enclosing scope, where the old name still means the kernel param.
-        outer_range = copy.deepcopy(inner_map.map.range)
-        symbolic.safe_replace(repl, map_state.scope_subgraph(inner_map).replace_dict)
-        inner_map.map.params = [fresh.get(p, p) for p in inner_map.map.params]
-        inner_map.map.range = outer_range
+def nested_sdfg_chain(inner: SDFG, outer: SDFG) -> List[SDFG]:
+    """SDFGs from ``inner`` up to, but excluding, its ancestor ``outer``, innermost first."""
+    chain = []
+    while inner is not outer:
+        chain.append(inner)
+        inner = inner.parent_sdfg
+    return chain
+
+
+def hoist_range(rng: subsets.Range, chain: List[SDFG]) -> subsets.Range:
+    """``rng`` rewritten outward through every ``symbol_mapping`` on ``chain``, each applied simultaneously."""
+    hoisted = copy.deepcopy(rng)
+    for sdfg in chain:
+        symbolic.safe_replace(sdfg.parent_nsdfg_node.symbol_mapping, hoisted.replace)
+    return hoisted
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NestedGPUDeviceMapLowering(ppl.Pass):
-    """
-    Lowers nested ``GPU_Device`` maps (a ``GPU_Device`` map whose body contains further
-    ``GPU_Device`` maps): the outer map is range-expanded to absorb the inner maps' params
-    and each inner body is wrapped in an if-bound-check NSDFG, realizing the nesting through
-    the codegen's special support for nested GPU Device maps.
+    """Lower nested ``GPU_Device`` maps into one kernel whose body is bound-checked.
+
+    A ``GPU_Device`` map whose body holds further ``GPU_Device`` maps has no direct hardware
+    meaning. The outer map absorbs the inner maps' parameters -- their ranges merged into one
+    bounding box -- and each inner body becomes a nested SDFG guarded by the condition selecting
+    the iterations that body actually owns.
     """
 
     CATEGORY: str = 'Simplification'
@@ -107,315 +88,176 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         return ppl.Modifies.Nodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # Adding new nested maps means adding new nodes
-        return modified & (ppl.Modifies.Nodes)
+        return bool(modified & ppl.Modifies.Nodes)
 
-    def _rm_map(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
+    def move_map_to_if(self, state: SDFGState, map_entry: nodes.MapEntry) -> None:
+        """Replace a map scope with a bound-checked nested SDFG holding its body."""
         map_exit = state.exit_node(map_entry)
-        map_inner_nodes = OrderedSet(state.all_nodes_between(map_entry, map_exit))
-        map_inner_edges = state.all_edges(*map_inner_nodes)
-        for e in map_inner_edges:
-            state.remove_edge(e)
-        for n in map_inner_nodes:
-            state.remove_node(n)
+        # The map's own params are defined by the map, so the scope symbol table cannot list them.
+        defined = state.symbols_defined_at(map_entry)
+        defined.update(map_entry.new_symbols(state.sdfg, state, defined))
+        body = list(state.all_nodes_between(map_entry, map_exit))
+        nsdfg_node = helpers.nest_state_subgraph(state.sdfg,
+                                                 state,
+                                                 StateSubgraphView(state, body),
+                                                 name=f'if_of_nested_{map_entry.label}',
+                                                 full_data=True)
+        inner = nsdfg_node.sdfg
+        for sym, sym_type in defined.items():
+            if sym not in inner.symbols:
+                inner.add_symbol(sym, sym_type)
+            if sym not in nsdfg_node.symbol_mapping:
+                nsdfg_node.symbol_mapping[sym] = sym
 
-        for e in state.in_edges(map_entry):
-            state.remove_edge(e)
-        for e in state.out_edges(map_exit):
-            state.remove_edge(e)
+        body_state = inner.nodes()[0]
+        guard = ConditionalBlock(f'bound_check_{map_entry.label}', sdfg=inner, parent=inner)
+        branch = ControlFlowRegion(f'body_{map_entry.label}', sdfg=inner, parent=guard)
+        inner.remove_node(body_state)
+        branch.add_node(body_state, is_start_block=True)
+        guard.add_branch(condition=CodeBlock(bound_check(map_entry)), branch=branch)
+        inner.add_node(guard, is_start_block=True)
 
-        state.remove_node(map_entry)
-        state.remove_node(map_exit)
-
-    def _move_map_to_if(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
-        map_exit = state.exit_node(map_entry)
-        map_inner_nodes = OrderedSet(state.all_nodes_between(map_entry, map_exit))
-        map_inner_edges = state.all_edges(*map_inner_nodes)
-        map_in_edges = state.in_edges(map_entry)
-        map_out_edges = state.out_edges(map_exit)
-        inputs = OrderedSet(ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None)
-        outputs = OrderedSet(oe.data.data for oe in state.out_edges(state.exit_node(map_entry))
-                             if oe.data.data is not None)
-
-        inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
-
-        if_bound_check = ConditionalBlock(label=f"bound_check_{map_entry.label}", sdfg=inner_sdfg, parent=inner_sdfg)
-        inner_sdfg.add_node(if_bound_check)
-
-        if_body = ControlFlowRegion(label=f"body_{map_entry.label}", sdfg=inner_sdfg, parent=if_bound_check)
-
-        bound_check = " and ".join(
-            [f"({p} >= {b} and {p} <= {e})" for p, (b, e, s) in zip(map_entry.map.params, map_entry.map.range)])
-        if_bound_check.add_branch(
-            condition=CodeBlock(bound_check),
-            branch=if_body,
-        )
-        assert if_bound_check in inner_sdfg.nodes()
-        assert if_body in if_bound_check.nodes()
-
-        if_body_state = if_body.add_state(f"state_{map_entry.label}", is_start_block=True)
-        assert if_body_state in if_body.nodes()
-        assert if_body_state in inner_sdfg.all_states()
-
-        # inout nodes can be written inside kernels (not inside nsdfg). ``inputs``/``outputs``
-        # hold data names (strings), so key off ``n.data`` -- not the AccessNode itself.
-        for n in map_inner_nodes:
-            if isinstance(n, dace.nodes.AccessNode) and state.sdfg.arrays[n.data].transient is False:
-                if n.data not in inputs and state.out_degree(n) > 0:
-                    inputs.add(n.data)
-                if n.data not in outputs and state.in_degree(n) > 0:
-                    outputs.add(n.data)
-
-        nsdfg = state.add_nested_sdfg(
-            sdfg=inner_sdfg,
-            inputs=inputs,
-            outputs=outputs,
-        )
-
-        for ie in map_in_edges:
-            if ie.data.data is not None:
-                state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
-                               dace.memlet.Memlet.from_array(ie.data.data, state.sdfg.arrays[ie.data.data]))
-            else:
-                state.add_edge(ie.src, None, nsdfg, None, dace.memlet.Memlet(None))
-        for oe in map_out_edges:
-            if oe.data.data is not None:
-                state.add_edge(nsdfg, oe.data.data, oe.dst, oe.dst_conn,
-                               dace.memlet.Memlet.from_array(oe.data.data, state.sdfg.arrays[oe.data.data]))
-            else:
-                state.add_edge(nsdfg, None, oe.dst, None, dace.memlet.Memlet(None))
-
-        for data_name in inputs.union(outputs):
-            if data_name not in inner_sdfg.arrays:
-                copydesc = copy.deepcopy(state.sdfg.arrays[data_name])
-                copydesc.transient = False
-                inner_sdfg.add_datadesc(data_name, copydesc)
-
-        # A transient the map body allocates for itself crosses no map edge, so neither ``inputs``
-        # nor ``outputs`` names it -- and the clone below still copies its access nodes, leaving the
-        # inner SDFG referencing data it does not hold (polybench symm's fused product scalar).
-        for node in map_inner_nodes:
-            if isinstance(node, dace.nodes.AccessNode) and node.data not in inner_sdfg.arrays:
-                inner_sdfg.add_datadesc(node.data, copy.deepcopy(state.sdfg.arrays[node.data]))
-
-        for sym, symtype in state.symbols_defined_at(map_entry).items():
-            if sym not in inner_sdfg.symbols:
-                inner_sdfg.add_symbol(sym, symtype)
-            if sym not in nsdfg.symbol_mapping:
-                nsdfg.symbol_mapping[sym] = sym
-
-        # The inner map's iteration params (``__i``, ``__j``) are referenced by the if-bound-check,
-        # but ``symbols_defined_at`` may miss them (stale scope cache after the in-place
-        # ``map.params``/``map.range`` mutation). Thread them explicitly for a complete symbol_mapping.
-        for sym in map_entry.map.params:
-            if sym not in inner_sdfg.symbols:
-                inner_sdfg.add_symbol(sym, dace.dtypes.int32)
-            if sym not in nsdfg.symbol_mapping:
-                nsdfg.symbol_mapping[sym] = sym
-
-        # Copy over nodes (and generate accesses when needed)
-        # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
-        # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
-        # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
-        memo = {}
-        node_map = {n: copy.deepcopy(n, memo) for n in map_inner_nodes}
-        for v in node_map.values():
-            if_body_state.add_node(v)
-        for e in map_inner_edges:
-            if e.src in node_map and e.dst in node_map:
-                if_body_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, copy.deepcopy(e.data))
-            elif e.src in node_map and e.dst not in node_map:
-                # Src was the map entry
-                if e.data.data is not None:
-                    if_body_state.add_edge(node_map[e.src], e.src_conn, if_body_state.add_access(e.data.data), None,
-                                           copy.deepcopy(e.data))
-            elif e.dst in node_map and e.src not in node_map:
-                # Dst was the map exit
-                if e.data.data is not None:
-                    if_body_state.add_edge(if_body_state.add_access(e.data.data), None, node_map[e.dst], e.dst_conn,
-                                           copy.deepcopy(e.data))
-            else:
-                assert False
-
-        self._rm_map(state, map_entry)
-
+        self.dissolve_map_scope(state, map_entry, map_exit)
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
         state.sdfg.reset_cfg_list()
 
-    def _move_dev_maps_in_sdfg_to_ifs(self, sdfg: SDFG):
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                    self._move_map_to_if(state, node)
+    def dissolve_map_scope(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> None:
+        """Remove a map scope, reconnecting its contents to the scope's outer neighbors along memlet paths.
 
-    def _get_next_level_maps(self, state: SDFGState, gpu_dev_map: dace.nodes.MapEntry):
-        # If inside same nsdfg, then it means no parent
-        gpu_maps_between = {
-            (state, n)
-            for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map))
-            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-        }
-
-        if len(gpu_maps_between) == 0:
-            all_nsdfgs = {
-                n
-                for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map))
-                if isinstance(n, dace.nodes.NestedSDFG)
-            }
-
-            # Descend one NSDFG level at a time until the next level of map candidates is found.
-            def collect_map_candidates_and_new_nsdfg(all_nsdfgs):
-                new_all_nsdfgs = set()
-                next_level_map_candidates = set()
-                for nsdfg in all_nsdfgs:
-                    for state in nsdfg.sdfg.all_states():
-                        for node in state.nodes():
-                            if (isinstance(node, dace.nodes.MapEntry)
-                                    and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
-                                next_level_map_candidates.add((state, node))
-                        new_all_nsdfgs = new_all_nsdfgs.union(
-                            {n
-                             for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)})
-                return new_all_nsdfgs, next_level_map_candidates
-
-            # Descend NSDFG levels until a level yields map candidates or there are no deeper NSDFGs.
-            while True:
-                all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
-                if next_level_map_candidates or not all_nsdfgs:
-                    break
-
-            next_level_maps = {(state, m)
-                               for (state, m) in next_level_map_candidates
-                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 0}
-            return next_level_maps
-        else:
-            next_level_maps = {(state, m)
-                               for (state, m) in gpu_maps_between
-                               if len(enclosing_map_chain(state, m, dace.dtypes.ScheduleType.GPU_Device)) == 1}
-            return next_level_maps
-
-    def _apply(self, sdfg: SDFG) -> int:
-        num_applied = 0
-        for state in sdfg.all_states():
-            parentless_device_maps: OrderedSet[dace.nodes.MapEntry] = OrderedSet()
-            for node in state.nodes():
-                if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-                        and state.scope_dict()[node] is None):
-                    parentless_device_maps.add(node)
-
-            for gpu_dev_map in parentless_device_maps:
-                next_level_maps = self._get_next_level_maps(state, gpu_dev_map)
-                rename_params_shadowing_kernel(next_level_maps, OrderedSet(gpu_dev_map.map.params))
-
-                nested_map_params_and_ranges = dict()
-                # Collect all the ranges to build the union of the ranges later
-                for map_state, nested_gpu_map in next_level_maps:
-                    if not self._no_further_nested_gpu_dev_maps(map_state, nested_gpu_map):
-                        raise NotImplementedError(
-                            "Multiple levels of nestedness in GPU Device Maps are not supported by the pass")
-
-                    for p, range in zip(nested_gpu_map.map.params, nested_gpu_map.map.range):
-                        if p not in nested_map_params_and_ranges:
-                            nested_map_params_and_ranges[p] = list()
-                        # Inner bounds use the nested SDFG's symbols; map them to the kernel map's SDFG.
-                        translated_range = tuple(
-                            translate_bound_to_scope(bound, map_state.sdfg, sdfg) for bound in range)
-                        nested_map_params_and_ranges[p].append(translated_range)
-
-                # Build the union of the collected ranges
-                new_ranges_to_add = {p: dace.subsets.Range([(0, 0, 1)]) for p in nested_map_params_and_ranges}
-                for p, ranges in nested_map_params_and_ranges.items():
-                    for map_range in ranges:
-                        old_b, old_e, old_s = map_range
-                        assert isinstance(new_ranges_to_add[p], dace.subsets.Range)
-                        assert len(new_ranges_to_add[p]) == 1
-                        cur_b, cur_e, cur_s = new_ranges_to_add[p][0]
-                        new_ranges_to_add[p] = dace.subsets.Range([
-                            (combine_bound(sympy.Min, old_b, cur_b), combine_bound(sympy.Max, old_e, cur_e), 1),
-                        ])
-
-                # Append the new dimensions
-                new_range_list = list(gpu_dev_map.map.range)
-                kernel_params = OrderedSet(gpu_dev_map.map.params)
-                for k, v in new_ranges_to_add.items():
-                    unavailable = bounds_outside_launch_scope(v, kernel_params)
-                    if unavailable:
-                        raise NotImplementedError(
-                            f"Cannot flatten the GPU map nesting under '{gpu_dev_map.map.label}': the union of "
-                            f"the inner ranges for '{k}' is {v}, which names {list(unavailable)} -- a parameter "
-                            "of the kernel itself, so the grid cannot be sized from it on the host. The inner "
-                            "map's range has to be expressible in symbols defined outside the kernel.")
-                    gpu_dev_map.map.params.append(k)
-                    assert len(v) == 1
-                    (b, e, s) = v[0]
-                    new_range_list.append((b, e, s))
-                gpu_dev_map.map.range = dace.subsets.Range(new_range_list)
-
-                # Thread the newly added outer-map params up through every NSDFG between the outer
-                # ``GPU_Device`` map and each inner kernel state; otherwise validation fires
-                # ``Missing symbols on nested SDFG: ['__i', '__j']``.
-                new_symbol_names = list(new_ranges_to_add.keys())
-                for map_state, _inner_gpu_map in next_level_maps:
-                    cur_sdfg = map_state.sdfg
-                    while cur_sdfg.parent_nsdfg_node is not None and cur_sdfg is not sdfg:
-                        nsdfg_node = cur_sdfg.parent_nsdfg_node
-                        for sym in new_symbol_names:
-                            if sym not in cur_sdfg.symbols:
-                                cur_sdfg.add_symbol(sym, dace.dtypes.int32)
-                            if sym not in nsdfg_node.symbol_mapping:
-                                nsdfg_node.symbol_mapping[sym] = sym
-                        cur_sdfg = cur_sdfg.parent_sdfg
-
-                for map_state, inner_gpu_map in next_level_maps:
-                    self._move_map_to_if(map_state, inner_gpu_map)
-                    num_applied += 1
-
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    num_applied += self._apply(node.sdfg)
-
-        return num_applied
-
-    def _no_further_nested_gpu_dev_maps(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
-        nodes = set(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-        for node in nodes:
-            if isinstance(node, dace.nodes.NestedSDFG):
-                nodes = nodes.union({n for n, g in node.sdfg.all_nodes_recursive()})
-        return not any({
-            n
-            for n in nodes
-            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-        })
-
-    def _assert_no_nested_gpu_device_maps(self, sdfg: SDFG):
-        for state in sdfg.all_states():
-            parentless_device_maps = OrderedSet()
-            for node in state.nodes():
-                if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-                        and state.scope_dict()[node] is None):
-                    parentless_device_maps.add(node)
-
-            for gpu_dev_map in parentless_device_maps:
-                assert self._no_further_nested_gpu_dev_maps(
-                    state, gpu_dev_map
-                ), f"There are nested GPU Device maps left after applying the pass (implementation error of the pass)"
-
-    def apply_pass(
-        self,
-        sdfg: SDFG,
-        _,
-    ) -> Optional[int]:
-        """Lower every nested ``GPU_Device`` map, repeating until a fixed point.
-
-        :returns: Total number of inner ``GPU_Device`` maps lowered, or ``None`` if none matched.
+        :param state: State holding the map.
+        :param map_entry: Entry of the scope to remove.
+        :param map_exit: Matching exit.
         """
-        total_applied = 0
-        num_applied = self._apply(sdfg)
-        while num_applied > 0:
-            total_applied += num_applied
-            num_applied = self._apply(sdfg)
-        sdfg.validate()
-        self._assert_no_nested_gpu_device_maps(sdfg)
+        enclosing = state.entry_node(map_entry)
+        for edge in state.out_edges(map_entry):
+            if edge.data.is_empty():
+                # An ordering edge has no memlet path; re-anchor it on the enclosing scope.
+                if enclosing is not None:
+                    state.add_edge(enclosing, None, edge.dst, None, dace.Memlet())
+                continue
+            path = state.memlet_path(edge)
+            outer = path[path.index(edge) - 1]
+            state.add_edge(outer.src, outer.src_conn, edge.dst, edge.dst_conn, edge.data)
+        for edge in state.in_edges(map_exit):
+            path = state.memlet_path(edge)
+            index = path.index(edge)
+            if len(path) > index + 1:
+                state.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
+        state.remove_nodes_from([map_entry, map_exit])
 
-        return total_applied or None
+    def next_level_maps(self, state: SDFGState, gpu_dev_map: nodes.MapEntry) -> OrderedSet[InnerMap]:
+        """``GPU_Device`` maps directly in ``gpu_dev_map``'s scope, else in the nearest NestedSDFGs below it."""
+        scope = list(state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map)))
+        direct = OrderedSet((state, n) for n in scope if is_gpu_device_map(n) and gpu_device_depth(state, n) == 1)
+        if direct:
+            return direct
+        frontier = OrderedSet(n for n in scope if isinstance(n, nodes.NestedSDFG))
+        while frontier:
+            found, frontier = scan_nested_level(frontier)
+            if found:
+                return found
+        return OrderedSet()
+
+    def top_level_kernels(self, state: SDFGState) -> List[nodes.MapEntry]:
+        return [node for node in state.nodes() if is_gpu_device_map(node) and state.entry_node(node) is None]
+
+    def hoisted_ranges(self, state: SDFGState, kernel: nodes.MapEntry,
+                       inner_maps: OrderedSet[InnerMap]) -> List[subsets.Range]:
+        """Each inner map's range in the kernel SDFG's symbols; refuses a bound the host cannot evaluate."""
+        host_symbols = OrderedSet(state.symbols_defined_at_state()) | OrderedSet(state.sdfg.constants)
+        hoisted = []
+        for map_state, inner_map in inner_maps:
+            rng = hoist_range(inner_map.map.range, nested_sdfg_chain(map_state.sdfg, state.sdfg))
+            unavailable = sorted(str(s) for s in rng.free_symbols if str(s) not in host_symbols)
+            if unavailable:
+                raise NotImplementedError(f'Cannot absorb {inner_map.map.label} into {kernel.map.label}: its '
+                                          f'range {rng} names {unavailable}, undefined where the grid is sized')
+            hoisted.append(rng)
+        return hoisted
+
+    def fresh_param_names(self, state: SDFGState, kernel: nodes.MapEntry,
+                          inner_maps: OrderedSet[InnerMap]) -> Dict[str, str]:
+        """New names for inner params clashing with a kernel param or a symbol on the way down; siblings share."""
+        scope_sdfgs = OrderedSet(sdfg for s, _ in inner_maps for sdfg in nested_sdfg_chain(s.sdfg, state.sdfg))
+        scope_sdfgs.add(state.sdfg)
+        inner_params = OrderedSet(p for _, m in inner_maps for p in m.map.params)
+        clashing = OrderedSet(kernel.map.params).union(*(sdfg.symbols for sdfg in scope_sdfgs))
+        taken = clashing.union(inner_params, *(sdfg.arrays for sdfg in scope_sdfgs))
+        fresh: Dict[str, str] = {}
+        for param in inner_params & clashing:
+            fresh[param] = dace.utils.find_new_name(param, taken)
+            taken.add(fresh[param])
+        return fresh
+
+    def rename_params(self, inner_maps: OrderedSet[InnerMap], fresh: Dict[str, str]) -> None:
+        for map_state, inner_map in inner_maps:
+            repl = {p: fresh[p] for p in inner_map.map.params if p in fresh}
+            if not repl:
+                continue
+            # The range is evaluated outside the scope, where the old names keep their meaning.
+            outer_range = copy.deepcopy(inner_map.map.range)
+            symbolic.safe_replace(repl, map_state.scope_subgraph(inner_map).replace_dict)
+            inner_map.map.params = [fresh.get(p, p) for p in inner_map.map.params]
+            inner_map.map.range = outer_range
+
+    def absorb(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
+        """Absorb one kernel's next level of nested ``GPU_Device`` maps into it."""
+        inner_maps = self.next_level_maps(state, kernel)
+        if not inner_maps:
+            return 0
+        if any(self.next_level_maps(s, m) for s, m in inner_maps):
+            raise NotImplementedError('Multiple levels of nestedness in GPU Device Maps are not supported')
+        hoisted = self.hoisted_ranges(state, kernel, inner_maps)
+        self.rename_params(inner_maps, self.fresh_param_names(state, kernel, inner_maps))
+
+        # Bounding box over the siblings sharing a param; each body's guard drops what it does not own.
+        ranges: Dict[str, subsets.Range] = {}
+        param_types: Dict[str, dtypes.typeclass] = {}
+        for (map_state, inner_map), rng in zip(inner_maps, hoisted):
+            param_types.update(inner_map.new_symbols(map_state.sdfg, map_state, {}))
+            for dim, param in enumerate(inner_map.map.params):
+                one = subsets.Range([rng[dim]])
+                ranges[param] = one if param not in ranges else subsets.union(ranges[param], one)
+                if ranges[param] is None:
+                    raise NotImplementedError(f'Cannot bound the union of the ranges of {param}')
+
+        kernel.map.params.extend(ranges)
+        kernel.map.range = subsets.Range(list(kernel.map.range) + [merged[0] for merged in ranges.values()])
+
+        # The absorbed params are resolved at the kernel, so every NestedSDFG on the way down binds them.
+        for map_state, _ in inner_maps:
+            for sdfg in nested_sdfg_chain(map_state.sdfg, state.sdfg):
+                for param in ranges:
+                    if param not in sdfg.symbols:
+                        sdfg.add_symbol(param, param_types[param])
+                    sdfg.parent_nsdfg_node.symbol_mapping.setdefault(param, param)
+
+        for map_state, inner_map in inner_maps:
+            self.move_map_to_if(map_state, inner_map)
+        return len(inner_maps)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Lower every nested ``GPU_Device`` map in the hierarchy.
+
+        :param sdfg: SDFG to lower, modified in place.
+        :param pipeline_results: Unused.
+        :returns: How many maps were lowered, or ``None`` if none were.
+        :raises ValueError: A nested ``GPU_Device`` map survived the lowering.
+        """
+        lowered = 0
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                # Absorbing one level can expose the next, so each kernel is drained before moving on.
+                for kernel in self.top_level_kernels(state):
+                    applied = self.absorb(state, kernel)
+                    while applied:
+                        lowered += applied
+                        applied = self.absorb(state, kernel)
+
+        sdfg.validate()
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for kernel in self.top_level_kernels(state):
+                    if self.next_level_maps(state, kernel):
+                        raise ValueError(f'Nested GPU_Device maps remain under {kernel} after lowering')
+        return lowered or None

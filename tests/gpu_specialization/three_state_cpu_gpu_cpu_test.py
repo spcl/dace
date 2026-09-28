@@ -49,7 +49,7 @@ def _build_simple_three_state_sdfg() -> dace.SDFG:
     kt = inner_st.add_tasklet('mul2', {'_a': dace.float32}, {'_b': dace.float32}, '_b = _a * 2.0')
     inner_st.add_memlet_path(inner_st.add_read('a_in'), me, kt, dst_conn='_a', memlet=dace.Memlet('a_in[i]'))
     inner_st.add_memlet_path(kt, mx, inner_st.add_write('b_out'), src_conn='_b', memlet=dace.Memlet('b_out[i]'))
-    nsdfg_node = gpu_mid.add_nested_sdfg(inner, {'a_in'}, {'b_out'}, {})
+    nsdfg_node = gpu_mid.add_nested_sdfg(inner, {'a_in': None}, {'b_out': None}, {})
     gpu_mid.add_edge(gpu_mid.add_read('A'), None, nsdfg_node, 'a_in', dace.Memlet('A[0:16]'))
     gpu_mid.add_edge(nsdfg_node, 'b_out', gpu_mid.add_write('B'), None, dace.Memlet('B[0:16]'))
 
@@ -100,7 +100,7 @@ def _build_failed_validation_shape() -> dace.SDFG:
     in_t = inner_st.add_tasklet('mul2', {'_a': dace.float32}, {'_b': dace.float32}, '_b = _a * 2.0')
     inner_st.add_edge(inner_st.add_read('a_lane'), None, in_t, '_a', dace.Memlet('a_lane[0]'))
     inner_st.add_edge(in_t, '_b', inner_st.add_write('b_lane'), None, dace.Memlet('b_lane[0]'))
-    nsdfg_node = gpu_state.add_nested_sdfg(inner, {'a_lane'}, {'b_lane'}, {})
+    nsdfg_node = gpu_state.add_nested_sdfg(inner, {'a_lane': None}, {'b_lane': None}, {})
 
     # Wire the memlet path: A -> Device map -> ThreadBlock map -> NSDFG -> ThreadBlock map -> Device map -> B.
     gpu_state.add_memlet_path(a_read,

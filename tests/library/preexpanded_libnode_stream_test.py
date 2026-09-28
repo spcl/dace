@@ -7,7 +7,7 @@ import dace
 from dace.codegen import common
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import AutoSingleStreamGPUScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR, has_stream_connector,
                                                                                is_already_lowered_gpu_runtime_call)
 
@@ -83,7 +83,7 @@ def test_naive_strategy_emits_state_end_sync_for_pre_expanded_tasklets():
 def test_monolithic_strategy_accepts_pre_expanded_sdfg():
     """Monolithic strategy accepts a pre-expanded SDFG (host-level copy tasklets pass the validator)."""
     sdfg = _build_h2d_d2h_pre_expanded_sdfg()
-    GPUStreamPipeline(scheduling_strategy=MonolithicSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler(monolithic=True)).apply_pass(sdfg, {})
 
     syncs = _sync_tasklets(sdfg)
     assert len(syncs) == 1, (f"Monolithic on the H2D+D2H state should emit exactly one host-boundary sync; "

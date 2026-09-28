@@ -183,8 +183,14 @@ def test_nested_device_map():
                           memlet=dace.Memlet('A[i, j]'))
 
     code = _cuda_code(sdfg)
-    assert _declaration(code, 'i') == 'int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);'
-    assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
+    if dace.config.Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+        # The experimental codegen lowers the nested device map into one two-dimensional kernel map first
+        assert _declaration(code, 'b_i') == 'int64_t b_i = static_cast<int64_t>(blockIdx.y);'
+        assert _declaration(code, 'i') == 'int64_t i = (threadIdx.y + b_i);'
+        assert _declaration(code, 'j') == 'int64_t j = (threadIdx.x + b_j);'
+    else:
+        assert _declaration(code, 'i') == 'int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);'
+        assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
 
 
 def test_nested_sdfg_receives_wide_index():

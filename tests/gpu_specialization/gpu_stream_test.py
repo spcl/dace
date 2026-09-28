@@ -40,6 +40,14 @@ def _all_sync_tasklets(state):
     ]
 
 
+@dace.program
+def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
+    for i in dace.map[0:128:1]:
+        B[i] = A[i]
+    for i in dace.map[0:128:1]:
+        D[i] = C[i]
+
+
 @pytest.mark.gpu
 def test_basic():
     """Single connected component: one stream, one sync tasklet with one gpu_streams in-edge."""
@@ -70,13 +78,6 @@ def test_extended():
     """Two independent components on two streams, fused into one sync tasklet
     per state with one ``__stream_<id>`` connector per stream id."""
 
-    @dace.program
-    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
-        for i in dace.map[0:128:1]:
-            B[i] = A[i]
-        for i in dace.map[0:128:1]:
-            D[i] = C[i]
-
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
     # ``compiler.cuda.max_concurrent_streams`` defaults to -1 -- the default stream alone -- so a
@@ -100,7 +101,7 @@ def test_extended():
 
     copy_libnodes = [n for n in state.nodes() if type(n).__name__ == 'CopyLibraryNode']
     assert copy_libnodes, ("Expected at least one CopyLibraryNode after gpu_transformations + "
-                           "InsertExplicitGPUGlobalMemoryCopies.")
+                           "MoveArrayOutOfKernel / InsertExplicitCopies.")
     from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import STREAM_CONNECTOR
     for cn in copy_libnodes:
         assert STREAM_CONNECTOR in cn.in_connectors, (
@@ -109,3 +110,14 @@ def test_extended():
         assert len(stream_edges_cn) == 1, (f"CopyLibraryNode '{cn.label}' must have exactly one "
                                            f"gpu_streams in-edge, got {len(stream_edges_cn)}.")
         assert stream_edges_cn[0].dst_conn == STREAM_CONNECTOR
+
+
+@pytest.mark.gpu
+def test_stream_count_read_at_apply():
+    """A strategy built before ``set_temporary`` still honors the stream count active at apply time."""
+    sdfg = independent_copies.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=1):
+        gpu_stream_pipeline.apply_pass(sdfg, {})
+    stream_ids = {n.gpu_stream_id for n in sdfg.states()[0].nodes() if n.gpu_stream_id is not None}
+    assert stream_ids == {0}, f"One concurrent stream allowed, got stream ids {stream_ids}."

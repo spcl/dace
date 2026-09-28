@@ -31,7 +31,7 @@ def _generated_code(sdfg: dace.SDFG) -> str:
 def _add_kernel(state: dace.SDFGState, label: str, scalar, dst: str) -> None:
     """A GPU_Device map multiplying ``gA`` by the host scalar ``scalar``, writing ``dst``."""
     entry, exit_node = state.add_map(label, dict(i='0:16'), schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet(f'{label}_mul', {'a', 'sc'}, {'o'}, 'o = a * sc')
+    tasklet = state.add_tasklet(f'{label}_mul', {'a': None, 'sc': None}, {'o': None}, 'o = a * sc')
     state.add_memlet_path(state.add_read('gA'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('gA[i]'))
     state.add_memlet_path(scalar, entry, tasklet, dst_conn='sc', memlet=dace.Memlet('s[0]'))
     state.add_memlet_path(tasklet, exit_node, state.add_write(dst), src_conn='o', memlet=dace.Memlet(f'{dst}[i]'))
@@ -65,7 +65,7 @@ def _host_upload_sdfg(name: str) -> dace.SDFG:
     device = state.add_access('gA')
     state.add_nedge(state.add_read('h'), device, dace.Memlet('h[0:16]'))
     entry, exit_node = state.add_map('k', dict(i='0:16'), schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet('double', {'a'}, {'o'}, 'o = a * 2.0')
+    tasklet = state.add_tasklet('double', {'a': None}, {'o': None}, 'o = a * 2.0')
     state.add_memlet_path(device, entry, tasklet, dst_conn='a', memlet=dace.Memlet('gA[i]'))
     state.add_memlet_path(tasklet, exit_node, state.add_write('gB'), src_conn='o', memlet=dace.Memlet('gB[i]'))
     sdfg.validate()
@@ -88,7 +88,7 @@ def _host_consumer_sdfg(name: str) -> dace.SDFG:
     state = sdfg.add_state('host_read')
     copied = state.add_access('copied')
     state.add_nedge(state.add_read('gA'), copied, dace.Memlet('gA[0] -> [0]'))
-    tasklet = state.add_tasklet('scale_on_host', {'sc'}, {'o'}, 'o = sc * 3.0')
+    tasklet = state.add_tasklet('scale_on_host', {'sc': None}, {'o': None}, 'o = sc * 3.0')
     scalar = state.add_access('s')
     state.add_edge(copied, None, tasklet, 'sc', dace.Memlet('copied[0]'))
     state.add_edge(tasklet, 'o', scalar, None, dace.Memlet('s[0]'))

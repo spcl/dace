@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared utilities for the GPU-specialization passes: canonical stream names,
-node/connector predicates (single source of truth so passes don't reimplement
-scope walks), and the stream-wiring idempotency signal."""
-from typing import Dict, List, Optional, Set
+"""Shared utilities for the GPU-specialization passes: stream names, node and connector
+predicates, and the stream-wiring idempotency signal."""
+from typing import Dict, List, Optional
+
+from ordered_set import OrderedSet
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.scope import is_in_scope
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
-# Stream in-connector name, imported from the libnode layer so producers and
-# the scheduler cannot drift. Named after the legacy ambient-stream symbol so
-# the same expanded IR is valid under both the legacy codegen (which declares
-# it) and the experimental codegen (whose type-based prelude binds it).
+# Imported from the libnode layer so producers and the scheduler cannot drift. Named after the
+# legacy ambient-stream symbol, so the expanded IR is valid under either codegen.
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
 
@@ -19,69 +19,23 @@ def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
 
 
-def dependency_edge():
-    """Return a fresh empty ``Memlet`` used as a control-dependency edge."""
-    from dace.memlet import Memlet
-    return Memlet()
-
-
-def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
-    """``True`` iff ``name`` is written across a GPU-scheduled map's ``MapExit`` -- i.e. a kernel output.
-
-    Single source of truth for the "is a kernel output" test: ``PromoteGPUScalarsToArrays`` uses it to
-    promote a scalar, and ``DemoteKernelInternalArraysToScalars`` uses it (negated) to leave genuine
-    kernel outputs alone.
-    """
-    for state in sdfg.states():
-        for node in state.nodes():
-            if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                continue
-            for in_edge in state.in_edges(node):
-                src = in_edge.src
-                if not isinstance(src, nodes.ExitNode):
-                    continue
-                entry = state.entry_node(src)
-                if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                    return True
-    return False
-
-
 def is_stream_wiring_applied(sdfg: SDFG) -> bool:
-    """True iff stream-wiring already produced the ``gpu_streams`` array. Only the *wiring* step is
-    single-shot; scheduling is persisted per node via ``Node.gpu_stream_id`` and survives
-    serialisation. Used by :class:`GPUStreamWiring` to skip re-wiring.
-    """
+    """Whether wiring already produced the ``gpu_streams`` array. Only wiring is single-shot;
+    scheduling persists per node in ``Node.gpu_stream_id``."""
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
-def collect_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
-    """Every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy, keyed by node."""
-    return {
-        n: n.gpu_stream_id
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for state in nsdfg.states()
-        for n in state.nodes() if n.gpu_stream_id is not None
-    }
+def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
+    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` enclosing ``node``.
 
-
-def enclosing_map_chain(state: SDFGState,
-                        node: nodes.Node,
-                        schedule: Optional[dtypes.ScheduleType] = None) -> List[nodes.MapEntry]:
-    """Outermost-first chain of ``MapEntry`` nodes enclosing ``node`` (empty when none).
-
-    ``schedule`` keeps only the maps carrying it; ``None`` keeps every enclosing map, which is what
-    a caller wiring an edge INTO ``node`` needs -- an edge from a global node into a scoped one is
-    not a graph the scope traversal can walk.
-
-    Invalidates the state's ``scope_dict`` cache first: earlier pipeline passes can mutate topology
-    in ways that leave the cache stale.
+    The ``scope_dict`` cache is invalidated first: earlier passes may have left it stale.
     """
     state._clear_scopedict_cache()
     sdict = state.scope_dict()
     chain: List[nodes.MapEntry] = []
     scope = sdict.get(node)
     while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and (schedule is None or scope.map.schedule == schedule):
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == schedule:
             chain.append(scope)
         scope = sdict.get(scope)
     chain.reverse()
@@ -96,30 +50,28 @@ def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
 
 
 def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
-    """True iff ``sub_sdfg`` is (transitively) the body of a GPU_Device map.
+    """Whether ``sub_sdfg`` is, transitively, the body of a GPU_Device map."""
+    return is_in_scope(sub_sdfg.parent_sdfg, sub_sdfg.parent, sub_sdfg.parent_nsdfg_node,
+                       [dtypes.ScheduleType.GPU_Device])
 
-    Walks ``parent_nsdfg_node`` / ``parent_sdfg`` directly, so the result is robust against stale
-    ``scope_dict`` caches.
+
+def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
+    """Whether ``node`` is, or is enclosed by, a map with one of ``schedules``, across nested SDFGs."""
+    if isinstance(node, nodes.MapEntry) and node.map.schedule in schedules:
+        return True
+    return is_in_scope(state.sdfg, state, node, schedules)
+
+
+def weakly_connected_node_sets(graph) -> List[OrderedSet]:
+    """Weakly-connected components of ``graph``'s dataflow, in state node order.
+
+    ``networkx`` yields plain sets in hash order, so both the components and their contents are
+    re-sorted by node insertion index -- callers schedule off this and must not vary per run.
     """
-    cur = sub_sdfg
-    while cur.parent_nsdfg_node is not None:
-        if innermost_enclosing_map(cur.parent, cur.parent_nsdfg_node, dtypes.ScheduleType.GPU_Device) is not None:
-            return True
-        cur = cur.parent_sdfg
-    return False
-
-
-def weakly_connected_node_sets(graph) -> List[Set[nodes.Node]]:
-    """Weakly-connected components of ``graph``'s dataflow, as node sets.
-
-    Single source of truth for the WCC partition used by both the stream scheduler and the
-    state-splitter, via ``OrderedDiGraph.nx``."""
-    from dace import graphlib
-    return [set(c) for c in graphlib.weakly_connected_components(graph.nx)]
-
-
-#: Storages a GPU runtime call touches (GPU_Global, GPU_Shared, CPU_Pinned); a frozenset for fast lookups.
-GPU_ACCESSIBLE_STORAGES = frozenset(dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
+    import networkx as nx
+    order = {node: index for index, node in enumerate(graph.nodes())}
+    components = [sorted(c, key=order.__getitem__) for c in nx.weakly_connected_components(graph.nx)]
+    return [OrderedSet(c) for c in sorted(components, key=lambda c: order[c[0]])]
 
 
 def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
@@ -128,19 +80,13 @@ def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state) in GPU_ACCESSIBLE_STORAGES
-                or node.dst_storage(state) in GPU_ACCESSIBLE_STORAGES)
+        return (node.src_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+                or node.dst_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
     if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
-            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in GPU_ACCESSIBLE_STORAGES:
+            if e.data and e.data.data and sdfg.arrays[e.data.data].storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES:
                 return True
     return False
-
-
-def touches_gpu_memory(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
-    """True iff a non-empty memlet on any edge of ``node`` accesses GPU-accessible storage."""
-    return any(not e.data.is_empty() and sdfg.arrays[e.data.data].storage in GPU_ACCESSIBLE_STORAGES
-               for e in state.all_edges(node))
 
 
 def is_gpu_kernel_launcher(node) -> bool:
@@ -149,24 +95,16 @@ def is_gpu_kernel_launcher(node) -> bool:
 
 
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes that *take* a GPU stream: kernel ``MapEntry``, GPU Copy/Fill libnode, or a
-    lowered runtime-call Tasklet.
-
-    AccessNodes are excluded (memory references, not stream consumers); use
-    :func:`is_gpu_relevant_node` for the broader "involves GPU work" question.
-    """
+    """Nodes that *take* a GPU stream: a kernel ``MapEntry``, a GPU Copy/Fill libnode, or a lowered
+    runtime-call Tasklet. AccessNodes are memory references, not consumers."""
     return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_fill_libnode(node, sdfg, state)
             or is_already_lowered_gpu_runtime_call(node))
 
 
 def is_already_lowered_gpu_runtime_call(node) -> bool:
-    """True for a Tasklet that issues a stream-bound GPU runtime call.
-
-    Detected either by a ``gpuStream_t`` in-connector (cuBLAS / cuSolver expansions that wire one)
-    or by a :data:`STREAM_CONNECTOR` reference in the body (Copy/Fill libnode expansions, which
-    carry no connector and rely on the scheduler binding it post-expansion). Pipeline-emitted sync
-    tasklets are excluded -- they are not consumers in the WCC sense.
-    """
+    """A Tasklet issuing a stream-bound GPU runtime call, detected by a ``gpuStream_t``
+    in-connector or a :data:`STREAM_CONNECTOR` reference in its body. Pipeline sync tasklets are
+    excluded -- they are not consumers in the WCC sense."""
     if not isinstance(node, nodes.Tasklet):
         return False
     if is_pipeline_sync_tasklet(node):
@@ -176,34 +114,17 @@ def is_already_lowered_gpu_runtime_call(node) -> bool:
     return STREAM_CONNECTOR in node.code.as_string
 
 
-DEVICE_SYNC_TASKLET_LABEL = "gpu_callback_device_synchronization"
-
-SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization", DEVICE_SYNC_TASKLET_LABEL)
+SYNC_TASKLET_LABELS = ("gpu_streams_synchronization", "gpu_stream_synchronization")
 
 
 def is_pipeline_sync_tasklet(node) -> bool:
-    """True iff ``node`` is a sync tasklet emitted by the stream pipeline (identified by its canonical
-    label). Excluded from consumer re-detection despite its ``gpuStream_t`` connector.
-    """
+    """A sync tasklet emitted by the stream pipeline, identified by its canonical label."""
     return isinstance(node, nodes.Tasklet) and node.label in SYNC_TASKLET_LABELS
 
 
-def is_host_callback_tasklet(node) -> bool:
-    """True for a Tasklet that calls back into host code, i.e. a ``dace.callback`` invocation.
-
-    ``side_effects`` is set explicitly only by the frontend's callback lowering and by the stream
-    pipeline's own sync tasklets; the latter carry a canonical label and are excluded here. A
-    callback dereferences a host function pointer and can therefore never run on the device.
-    """
-    return isinstance(node, nodes.Tasklet) and node.side_effects is True and not is_pipeline_sync_tasklet(node)
-
-
 def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """True for nodes implying the enclosing component/SDFG involves GPU work.
-
-    The union of stream consumers and AccessNodes for ``GPU_Global`` arrays. Only stream consumers
-    get a stream connector wired; AccessNodes have none to bind.
-    """
+    """Nodes implying the enclosing component involves GPU work: the stream consumers plus the
+    AccessNodes of ``GPU_Global`` arrays."""
     if is_gpu_stream_consumer(node, sdfg, state):
         return True
     if isinstance(node, nodes.AccessNode):
@@ -212,31 +133,29 @@ def is_gpu_relevant_node(node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def has_stream_connector(node) -> bool:
-    """True if ``node`` carries any in-connector typed ``gpuStream_t``.
-
-    Type-based, so it accepts whatever name the libnode expansion chose.
-    """
+    """Whether ``node`` carries an in-connector typed ``gpuStream_t``, whatever its name."""
     return any(t is not None and t == dtypes.gpuStream_t for t in node.in_connectors.values())
 
 
 def add_gpu_stream_connector(node, conn_name: str, *, single_stream: bool):
-    """Add a GPU-stream input connector with the right dtype.
-
-    ``single_stream=True`` types it as a scalar ``gpuStream_t`` (consumer takes one stream value);
-    ``False`` types it as ``pointer(gpuStream_t)`` (consumer receives the full ``gpu_streams`` array
-    and indexes it by id).
-    """
+    """Add a GPU-stream input connector: a scalar ``gpuStream_t`` under ``single_stream``, else a
+    pointer to the whole ``gpu_streams`` array, which the consumer indexes by id."""
     dtype = dtypes.gpuStream_t if single_stream else dtypes.pointer(dtypes.gpuStream_t)
     node.add_in_connector(conn_name, dtype)
 
 
 def find_inner_gpu_consumers(sdfg: SDFG):
-    """Yield ``(node, sdfg, state)`` for every GPU stream consumer reachable inside ``sdfg``, recursing
-    into nested SDFGs. Used by the stream-wiring passes to enumerate kernels and library nodes that
-    need a stream bound.
-    """
+    """Yield ``(node, sdfg, state)`` for every GPU stream consumer in ``sdfg`` and its nested SDFGs."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for node in state.nodes():
                 if is_gpu_stream_consumer(node, nsdfg, state):
                     yield node, nsdfg, state
+
+
+def persisted_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+    """Every ``Node.gpu_stream_id`` set across the hierarchy; the per-node property is the durable record."""
+    return {
+        n: n.gpu_stream_id
+        for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
+    }

@@ -1,12 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import ctypes
 import functools
 import warnings
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from dace import graphlib as nx
 import sympy
 from io import StringIO
+from ordered_set import OrderedSet
 
 import dace
 from dace import data as dt, Memlet
@@ -22,7 +24,6 @@ from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_c
                                       synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
 from dace.codegen.targets.cpu import (collect_gpu_block_reductions, register_gpu_block_reduction,
                                       drain_gpu_block_reduction)
-from dace.codegen.targets import gpu_chiplets
 from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -92,7 +93,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._block_dims = None
         self._grid_dims = None
         # Number of chiplets the grid of the kernel being generated is distributed over
-        # (1 when the distribution does not apply, see ``dace.codegen.targets.gpu_chiplets``)
+        # (1 when the distribution does not apply, see ``chiplet_count``)
         self._kernel_chiplet_count = 1
         # Number of thread-blocks of the first grid dimension every chiplet owns (same module)
         self._kernel_chiplet_chunk = 1
@@ -128,6 +129,8 @@ class CUDACodeGen(TargetCodeGenerator):
 
         # Positions at which to deallocate memory pool arrays
         self.pool_release: Dict[Tuple[SDFG, str], Tuple[SDFGState, Set[nodes.Node]]] = {}
+        # Every pooled array released early, which the end of its lifetime must not free again
+        self.pool_released_early: Set[Tuple[SDFG, str]] = OrderedSet()
         self.has_pool = False
 
         # Register dispatchers
@@ -204,10 +207,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
         # Place the shared memory of every kernel in static or dynamic shared memory. Dynamic shared memory is a flat
         # buffer per kernel, which every function of the file refers to through one declaration.
-        shared_memory_plans = gpu_shared_memory.plan_gpu_shared_memory(sdfg)
-        if any(plan.levels for plan in shared_memory_plans.values()):
-            self._globalcode.write(f'extern __shared__ __align__({gpu_shared_memory.DYNAMIC_SHARED_MEMORY_ALIGNMENT}) '
-                                   f'uint8_t {_DYNAMIC_SHARED_MEMORY_SYMBOL}[];\n')
+        self._globalcode.write(plan_shared_memory(sdfg))
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         for e, state in list(sdfg.all_edges_recursive()):
@@ -301,274 +301,17 @@ class CUDACodeGen(TargetCodeGenerator):
         ``backendFreeAsync`` should be called to release it.
 
         :param top_sdfg: The top-level SDFG to traverse.
-        :raises ValueError: If the backend does not support memory pools.
         """
-        # Find release points for every array in every SDFG
-        reachability = access_nodes = None
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            # Skip SDFGs without memory pool hints
-            pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
-            if not pooled:
-                continue
+        if compute_pool_release(top_sdfg, self.pool_release, tag_default_stream):
             self.has_pool = True
-
-            # Keep only global arrays
-            pooled = filter(
-                lambda aname: sdfg.arrays[aname].lifetime in
-                (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
-                 External), pooled)
-
-            # Lazily compute reachability and access nodes
-            if reachability is None:
-                reachability = ap.StateReachability().apply_pass(top_sdfg, {})
-                access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
-
-            reachable = reachability[sdfg.cfg_id]
-            access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.states():
-                # Find all data descriptors that will no longer be used after this state
-                last_state_arrays: Set[str] = set(
-                    s for s in access_sets
-                    if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
-
-                anodes = list(state.data_nodes())
-                for aname in last_state_arrays:
-                    # Find out if there is a common descendant access node.
-                    # If not, release at end of state
-                    ans = [an for an in anodes if an.data == aname]
-                    terminator = None
-                    for an1 in ans:
-                        if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1):
-                            terminator = an1
-                            break
-
-                    # Enforce a cuda_stream field so that the state-wide deallocation would work
-                    if not hasattr(an1, '_cuda_stream'):
-                        an1._cuda_stream = 'nullptr'
-
-                    # If access node was found, find the point where all its reads are complete
-                    terminators = set()
-                    if terminator is not None:
-                        parent = state.entry_node(terminator)
-                        # If within a scope, once all memlet paths going out of that scope are complete,
-                        # it is time to release the memory
-                        if parent is not None:
-                            # Just to be safe, release at end of state (e.g., if misused in Sequential map)
-                            terminators = set()
-                        else:
-                            # Otherwise, find common descendant (or end of state) following the ends of
-                            # all memlet paths (e.g., (a)->...->[tasklet]-->...->(b))
-                            for e in state.out_edges(terminator):
-                                if isinstance(e.dst, nodes.EntryNode):
-                                    terminators.add(state.exit_node(e.dst))
-                                else:
-                                    terminators.add(e.dst)
-                            # After all outgoing memlets of all the terminators have been processed, memory
-                            # will be released
-
-                    self.pool_release[(sdfg, aname)] = (state, terminators)
-
-            # If there is unfreed pooled memory, free at the end of the SDFG
-            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
-            if unfreed:
-                # Find or make single sink node
-                sinks = sdfg.sink_nodes()
-                if len(sinks) == 1:
-                    sink = sinks[0]
-                elif len(sinks) > 1:
-                    sink = sdfg.add_state()
-                    for s in sinks:
-                        sdfg.add_edge(s, sink)
-                else:  # len(sinks) == 0:
-                    raise ValueError('End state not found when trying to free pooled memory')
-
-                # Add sink as terminator state
-                for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+        self.pool_released_early = OrderedSet(self.pool_release)
 
     # Generate final code
     def get_generated_codeobjects(self):
-        fileheader = CodeIOStream()
-
-        self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
-
-        initcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            if 'cuda' in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
-        initcode.write(self._initcode.getvalue())
-
-        exitcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            if 'cuda' in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
-        exitcode.write(self._exitcode.getvalue())
-
-        if self.backend == 'cuda':
-            backend_header = 'cuda_runtime.h'
-        elif self.backend == 'hip':
-            backend_header = 'hip/hip_runtime.h'
-        else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
-
-        params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
-        if params_comma:
-            params_comma = ', ' + params_comma
-
-        pool_header = ''
-        if self.has_pool:
-            poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
-            pool_header = """
-    {backend}MemPool_t mempool;
-    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
-    uint64_t threshold = {poolcfg_threshold};
-    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
-""".format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
-
-        self._codeobject.code = """
-#include <{backend_header}>
-#include <dace/dace.h>
-
-{file_header}
-
-DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
-DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
-DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
-
-{other_globalcode}
-
-int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
-    int count;
-
-    // Check that we are able to run {backend} code
-    if ({backend}GetDeviceCount(&count) != {backend}Success)
-    {{
-        printf("ERROR: GPU drivers are not configured or {backend}-capable device "
-               "not found\\n");
-        return 1;
-    }}
-    if (count == 0)
-    {{
-        printf("ERROR: No {backend}-capable devices found\\n");
-        return 2;
-    }}
-
-    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
-    // every library handle share it. Which physical GPU is the process's business: the visible-
-    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
-    // fixed at codegen time cannot do that -- every rank shares one build.
-    const int __dace_device = 0;
-    if ({backend}SetDevice(__dace_device) != {backend}Success)
-    {{
-        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
-        return 4;
-    }}
-
-    __dace_gpu_drain_error(__state);
-
-    // Initialize {backend} before we run the application
-    float *dev_X;
-    DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
-    DACE_GPU_CHECK({backend}Free(dev_X));
-
-    __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
-
-    // After the context exists: DACE_GPU_CHECK records into it.
-    {pool_header}
-
-    // Create {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
-        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
-    }}
-
-    {initcode}
-
-    return 0;
-}}
-
-int __dace_exit_cuda({sdfg_state_name} *__state) {{
-    {exitcode}
-
-    // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>({backend}DeviceSynchronize());
-
-    // Destroy {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
-    }}
-
-    delete __state->gpu_context;
-    return __err;
-}}
-
-// Discard a pending error left by another GPU user in this process, so the next checked call does
-// not report it as its own. Sticky errors survive this and are reported normally.
-// Must not touch __state->gpu_context: init calls this before the context exists.
-void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
-    (void)__state;
-    gpuError_t __pre_existing = {backend}GetLastError();
-    if (__pre_existing != (gpuError_t)0) {{
-        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
-               "discarded: %s (%d). It was not caused by this SDFG.\\n",
-               gpuGetErrorString(__pre_existing), __pre_existing);
-    }}
-}}
-
-// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
-int __dace_gpu_last_error({sdfg_state_name} *__state) {{
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
-    __state->gpu_context->lasterror = (gpuError_t)0;
-    return __err;
-}}
-
-bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
-{{
-    if (streamid < 0 || streamid >= {nstreams})
-        return false;
-
-    __state->gpu_context->streams[streamid] = stream;
-
-    return true;
-}}
-
-void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
-{{
-    for (int i = 0; i < {nstreams}; ++i)
-        __state->gpu_context->streams[i] = stream;
-}}
-
-{localcode}
-""".format(params=params_comma,
-           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           initcode=initcode.getvalue(),
-           exitcode=exitcode.getvalue(),
-           other_globalcode=self._globalcode.getvalue(),
-           localcode=self._localcode.getvalue(),
-           file_header=fileheader.getvalue(),
-           nstreams=max(1, self._cuda_streams),
-           nevents=max(1, self._cuda_events),
-           backend=self.backend,
-           backend_header=backend_header,
-           pool_header=pool_header,
-           sdfg=self._global_sdfg)
-
+        self._codeobject.code = gpu_runtime_code(self._frame, self._global_sdfg, 'cuda', self.backend, self.has_pool,
+                                                 self._initcode, self._exitcode, self._globalcode.getvalue(),
+                                                 self._localcode.getvalue(), max(1, self._cuda_streams),
+                                                 max(1, self._cuda_events))
         return [self._codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
@@ -605,47 +348,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 
     @staticmethod
     def cmake_options():
-        options = []
-
-        # Override CUDA toolkit
-        if Config.get('compiler', 'cuda', 'path'):
-            options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
-                Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
-
-        # Get CUDA architectures from configuration
-        backend = common.get_gpu_backend()
-        if backend == 'cuda':
-
-            # Empty keeps CMake's ``native``, which resolves the local GPU. It is filled in from
-            # compiler.cuda.cuda_arch, or, on a host with no GPU for native to find, from what the
-            # toolkit can still build -- see native_compiler.cuda_architectures.
-            from dace.codegen import native_compiler
-            if cuda_arch := native_compiler.cuda_architectures():
-                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
-
-            # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
-            # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
-            flags = ' '.join([Config.get('compiler', 'cuda', 'args')] +
-                             [f'-Xcompiler={flag}' for flag in forwarded_host_args()])
-            options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
-
-        if backend == 'hip':
-
-            if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
-                # HIP architecture was given.
-                hip_arch = hip_arch.split(',')
-                hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
-                options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
-
-            # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
-            flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
-            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
-
-        # Unconditional, like the CPU target's CMAKE_CXX_COMPILER: nvcc otherwise falls back to its
-        # own default host compiler, and host and device objects then disagree on the ABI.
-        options.append('-DCUDA_HOST_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
-
-        return options
+        return gpu_cmake_options()
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -689,15 +392,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
     def _reset_shared(self, dataname: str, nodedesc: dt.Data, cfg: ControlFlowRegion, state_id: int,
                       node: nodes.AccessNode, stream: Union[CodeIOStream, StringIO]) -> None:
         """Emits the zero-initialization of a shared memory container by the threads of a block."""
-        arrsize = nodedesc.total_size
-        if symbolic.issymbolic(arrsize):
-            raise NotImplementedError(f'Zero-initializing shared memory container "{dataname}" requires a constant '
-                                      f'size (got {arrsize})')
-        code = 'dace::ResetShared<{type}, {block_size}, {elements}, 1, false>::Reset({ptr});\n'.format(
-            type=nodedesc.dtype.ctype,
-            block_size=', '.join(_topy(self._block_dims)),
-            ptr=dataname,
-            elements=sym2cpp(arrsize))
+        code = reset_shared_code(dataname, nodedesc, self._block_dims)
         if isinstance(stream, CodeIOStream):
             stream.write(code, cfg, state_id, node)
         else:
@@ -903,7 +598,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
-                if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
+                if (sdfg, node.data) not in self.pool_released_early:  # If pooled, freed somewhere else
                     cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                     callsite_stream.write(
                         f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
@@ -1062,27 +757,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         return max_streams, max_events
 
     def _default_stream_unaware_gpu_callbacks(self, top_sdfg: SDFG):
-        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream."""
-        for sd in top_sdfg.all_sdfgs_recursive():
-            for state in sd.states():
-                for node in list(state.nodes()):
-                    if not (isinstance(node, nodes.Tasklet) and node.side_effects):
-                        continue
-                    if is_devicelevel_gpu(sd, state, node):
-                        continue
-                    if not any(
-                            e.data.data in sd.arrays and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
-                            for e in state.all_edges(node)):
-                        continue
-                    if '__dace_current_stream' in node.code.as_string:  # stream-aware: leave as is
-                        continue
-                    warnings.warn(
-                        f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
-                        'movement is forced onto the default stream. This is only correct if the callback uses '
-                        'the default stream; for any other stream, add a "dace.current_stream" argument to the '
-                        'callback and use it (e.g. cupy ExternalStream).', UserWarning)
-                    for n in nx.weakly_connected_component(state.nx, node):
-                        n._cuda_stream = 'nullptr'
+        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream.
+
+        Such a callback issues its GPU work on the null stream, which does not synchronize with DaCe's
+        non-blocking streams, so everything touching the callback's GPU data is moved there too. The pin
+        follows the data across states and nested SDFGs, not just the callback's own state.
+        """
+        seeds = stream_unaware_gpu_callback_data(top_sdfg)
+        if seeds:
+            pin_data_to_null_stream(top_sdfg, propagate_data_across_nested_sdfgs(seeds))
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
@@ -1765,13 +1448,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Get parameters of subgraph
         kernel_args = self._arglists[scope_entry]
 
-        # Handle dynamic map inputs
-        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            if e.data is None:
-                raise Exception("Dynamic map input's memlet can't be None")
-            data_name = e.data.data
-            data_desc = state.sdfg.arrays[data_name]
-            kernel_args[data_name] = data_desc
+        kernel_args.update(dynamic_map_input_args(state, scope_entry))
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []
@@ -1901,26 +1578,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         node = dfg_scope.source_nodes()[0]
 
-        # Set maxnreg and launch bounds
-        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
-        if node.gpu_maxnreg == 0:
-            maxnreg_str = ''
-            gpu_min_warps_per_eu = ''
-            if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
-                gpu_min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
-            # Set kernel launch bounds
-            if node.gpu_launch_bounds == "-1":
-                launch_bounds = ''
-            elif node.gpu_launch_bounds == "0":
-                if any(symbolic.issymbolic(b) for b in block_dims):
-                    launch_bounds = ''
-                else:
-                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))}{gpu_min_warps_per_eu})'
-            else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{gpu_min_warps_per_eu})'
-        else:
-            maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
-            launch_bounds = ''
+        maxnreg_str, launch_bounds = kernel_launch_qualifiers(node, block_dims)
 
         # Write kernel prototype
         self._localcode.write(
@@ -1977,7 +1635,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = getattr(scope_entry, '_cuda_dynamic_shared_memory', 0)
-        total_smem_size = getattr(scope_entry, '_cuda_static_shared_memory', 0) + dynsmem_size
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
@@ -2029,13 +1686,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     return;
                 }}''', cfg, state_id, scope_entry)
 
-        # Beyond the limit on static plus dynamic bytes, devices only grant dynamic shared memory to kernels that opt in
-        limit = common.gpu_max_static_shared_memory()
-        if (total_smem_size > limit) != False:
-            request = f'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY({kernel_name}, "{kernel_name}", {_topy(dynsmem_size)});'
-            if symbolic.issymbolic(total_smem_size):
-                request = f'if (({_topy(total_smem_size)}) > {limit}) {{\n{request}\n}}'
-            self._localcode.write(request, cfg, state_id, scope_entry)
+        self._localcode.write(dynamic_shared_memory_request(kernel_name, scope_entry), cfg, state_id, scope_entry)
 
         self._localcode.write(
             '''
@@ -2103,25 +1754,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
 
-    def get_tb_maps_recursive(self, subgraph):
-        res = []
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    tbmaps = self.get_tb_maps_recursive(state)
-                    for map, sym_map in tbmaps:
-                        for k in sym_map.values():
-                            for kk, vv in node.symbol_mapping.items():
-                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
-                        res.append((map, sym_map))
-            elif isinstance(node, nodes.MapEntry) and node.schedule in (
-                    dtypes.ScheduleType.GPU_Device,
-                    dtypes.ScheduleType.GPU_ThreadBlock,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-            ):
-                res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
-        return res
-
     def get_kernel_dimensions(self, dfg_scope):
         """
         Determines a GPU kernel's grid/block dimensions from map scopes.
@@ -2155,7 +1787,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Obtain thread-block maps from nested SDFGs
         subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        sub_maps = self.get_tb_maps_recursive(subgraph)
+        sub_maps = gpu_scope_maps_recursive(subgraph)
 
         # Introduce extra grid dimensions based on device sub-maps
         extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
@@ -2211,31 +1843,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # No thread-block maps
         if len(tb_maps_sym_map) == 0:
             if block_size is None:
-                if has_dtbmap:
-                    block_size = list(gpu_helpers.dynamic_map_block_dims())
-                else:
-                    def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
-                    warnings.warn(
-                        f'No `gpu_block_size` property specified on map "{kernelmap_entry.map.label}". '
-                        f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {def_bsize}. '
-                        'You can either specify the block size to use with the gpu_block_size property, '
-                        'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
-                        'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
-
-                    if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
-                        raise NotImplementedError('max dynamic block size unimplemented')
-                    else:
-                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
-
-                    block_ndim = max(1, sum(1 if b != 1 else 0 for b in block_size))
-                    grid_ndim = max(1, sum(1 if g != 1 else 0 for g in grid_size))
-                    if block_ndim > grid_ndim:
-                        linearized_remainder = prod(block_size[grid_ndim:])
-                        block_size = block_size[:grid_ndim] + [1] * (3 - grid_ndim)
-                        block_size[grid_ndim - 1] *= linearized_remainder
-                        warnings.warn(f'Default block size has more dimensions ({block_ndim}) than kernel dimensions '
-                                      f'({grid_ndim}) in map "{kernelmap_entry.map.label}". Linearizing block '
-                                      f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
+                block_size = default_block_size(kernelmap_entry, grid_size, has_dtbmap)
 
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
@@ -2246,20 +1854,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Find all thread-block maps to determine overall block size
             detected_block_sizes = [block_size] if block_size is not None else []
             for tbmap, sym_map in tb_maps_sym_map:
-                tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
-
-                # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-                # The partial trailing thread-block is emitted as an if-condition
-                # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-                # Linearize (flatten) rest of dimensions to third
-                if len(tbsize) > 3:
-                    tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
-                    del tbsize[3:]
-
-                # Extend to 3 dimensions if necessary
-                tbsize = tbsize + [1] * (3 - len(tbsize))
+                tbsize = thread_block_extent(tbmap, sym_map)
 
                 if len(detected_block_sizes) == 0:
                     block_size = tbsize
@@ -2328,11 +1923,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
         # Distribute the thread-blocks of the first grid dimension over the chiplets of the GPU
-        self._kernel_chiplet_count = gpu_chiplets.chiplet_count(kernelmap_entry, self.backend, is_persistent,
-                                                                has_dtbmap, extra_grid_dims)
-        if self._kernel_chiplet_count > 1:
-            grid_size, self._kernel_chiplet_chunk = gpu_chiplets.distribute_grid_over_chiplets(
-                kernelmap_entry.map.label, grid_size, self._kernel_chiplet_count)
+        self._kernel_chiplet_count = chiplet_count(kernelmap_entry, self.backend, is_persistent, has_dtbmap,
+                                                   extra_grid_dims)
+        grid_size, self._kernel_chiplet_chunk = distribute_over_chiplets(kernelmap_entry, grid_size,
+                                                                         self._kernel_chiplet_count)
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
@@ -2353,12 +1947,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         for dim in range(len(node.map.range) - 1):
             kernel_stream.write('{', cfg, state_id, node)
 
-        # Generate all index arguments for kernel grid
-        krange = subsets.Range(kernel_map.range[::-1])
-        kdims = krange.size()
-        dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
-        bidx = krange.coord_at(dsym)
-
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
             if e.data is not None and e.data.data == e.dst_conn:
@@ -2378,49 +1966,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         chiplet_count = self._kernel_chiplet_count
         chiplet_chunk = self._kernel_chiplet_chunk
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
-            # First three dimensions are evaluated directly
-            for i in range(min(len(krange), 3)):
-                varname = kernel_map.params[-i - 1]
-                index_type = index_types[varname]
-
-                if chiplet_count > 1 and i == 0:
-                    block_expr = gpu_chiplets.permuted_block_index(chiplet_count, _topy(chiplet_chunk),
-                                                                   _widen_register('blockIdx.x', index_type))
-                else:
-                    # If we defaulted to a fixed number of threads per block, offset by thread ID
-                    block_expr = _widen_register('blockIdx.%s' % _named_idx(min(i, 2)), index_type)
-                if not has_tbmap or has_dtbmap:
-                    block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
-
-                # Delinearize third dimension if necessary
-                if i == 2 and len(krange) > 3:
-                    block_expr = f'({block_expr} / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
-
-                expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-
-                kernel_stream.write(f'{index_type.ctype} {varname} = {expr};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_type.ctype)
-
-            # Delinearize beyond the third dimension
-            if len(krange) > 3:
-                for i in range(3, len(krange)):
-                    varname = kernel_map.params[-i - 1]
-                    index_type = index_types[varname]
-
-                    block_expr = _widen_register('blockIdx.z', index_type)
-                    if not has_tbmap or has_dtbmap:
-                        block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
-
-                    # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '((%s / (%s)) %% (%s))' % (
-                        block_expr,
-                        _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
-                        _topy(kdims[i]),
-                    )
-
-                    expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write(f'{index_type.ctype} {varname} = {expr};', cfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_type.ctype)
+            for varname, expr in kernel_index_definitions(kernel_map, block_dims, not has_tbmap or has_dtbmap,
+                                                          chiplet_count, chiplet_chunk, index_types):
+                kernel_stream.write(f'{index_types[varname].ctype} {varname} = {expr};', cfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_types[varname].ctype)
 
         # Dispatch internal code
         assert not self._in_device_code
@@ -2455,31 +2004,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
         if ((not has_tbmap or has_dtbmap) and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
-            dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
-            minels = krange.min_element()
-            maxels = krange.max_element()
-            for i, (v, minel, maxel) in enumerate(zip(kernel_map.params[::-1], minels, maxels)):
-                condition = ''
-
-                # Optimize conditions if they are always true
-                if i >= 3 or (dsym[i] >= minel) != True:
-                    condition += '%s >= %s' % (v, _topy(minel))
-                # The grid of the distributed dimension is padded to a multiple of the number of
-                # chiplets, so its trailing blocks always have to be masked out
-                if (i >= 3 or (chiplet_count > 1 and i == 0) or
-                    ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], self._block_dims[i]))
-                        or (self._block_dims[i] > maxel) == True):
-                    if len(condition) > 0:
-                        condition += ' && '
-                    condition += '%s < %s' % (v, _topy(maxel + 1))
-                if len(condition) > 0:
-                    self._kernel_grid_conditions.append(f'if ({condition}) {{')
-                    if not has_dtbmap:
-                        kernel_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
-                else:
-                    self._kernel_grid_conditions.append('{')
-                    if not has_dtbmap:
-                        kernel_stream.write('{', cfg, state_id, scope_entry)
+            for condition in kernel_grid_conditions(kernel_map, self._block_dims, chiplet_count):
+                block_open = f'if ({condition}) {{' if condition else '{'
+                self._kernel_grid_conditions.append(block_open)
+                if not has_dtbmap:
+                    kernel_stream.write(block_open, cfg, state_id, scope_entry)
 
         # The conditions above are only generated when no inner thread-block map handles them. The padding
         # of the distributed dimension is introduced at grid level, so its condition is needed either way.
@@ -2488,8 +2017,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         emit_chiplet_condition = (chiplet_count > 1 and has_tbmap and not has_dtbmap
                                   and node.map.schedule != dtypes.ScheduleType.GPU_Persistent)
         if emit_chiplet_condition:
-            condition = gpu_chiplets.trailing_block_condition(kernel_map.params[-1], _topy(krange.max_element()[0] + 1))
-            kernel_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+            kernel_stream.write(f'if ({chiplet_padding_condition(kernel_map)}) {{', cfg, state_id, scope_entry)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
@@ -3167,53 +2695,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-    def _get_thread_id(self) -> str:
-        result = 'threadIdx.x'
-        if self._block_dims[1] != 1:
-            result += f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
-        if self._block_dims[2] != 1:
-            result += f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
-        return result
-
-    def _get_warp_id(self) -> str:
-        return f'(({self._get_thread_id()}) / warpSize)'
-
-    def _get_block_id(self) -> str:
-        result = 'blockIdx.x'
-        if self._block_dims[1] != 1:
-            result += f' + gridDim.x * blockIdx.y'
-        if self._block_dims[2] != 1:
-            result += f' + gridDim.x * gridDim.y * blockIdx.z'
-        return result
-
-    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
-                                          callsite_stream: CodeIOStream) -> str:
-        if name not in node.location:
-            return 0
-
-        location: Union[int, str, subsets.Range] = node.location[name]
-        if isinstance(location, str) and ':' in location:
-            location = subsets.Range.from_string(location)
-        elif symbolic.issymbolic(location):
-            location = sym2cpp(location)
-
-        if isinstance(location, subsets.Range):
-            # Range of indices
-            if len(location) != 1:
-                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
-            begin, end, stride = location[0]
-            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
-            cond = ''
-            cond += f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
-            if stride != 1:
-                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
-
-            callsite_stream.write(f'if ({cond}) {{')
-        else:
-            # Single-element
-            callsite_stream.write(f'if (({index_expr}) == {location}) {{')
-
-        return 1
+    def open_location_guards(self, node: nodes.Tasklet, callsite_stream: CodeIOStream) -> int:
+        """Open an ``if`` per ``Tasklet.location`` entry naming threads, warps or blocks; returns how many."""
+        guards = [(name, index_expr) for name, index_expr in location_index_exprs(self._block_dims)
+                  if name in node.location]
+        for name, index_expr in guards:
+            callsite_stream.write(f'if ({location_condition(name, index_expr, node.location[name])}) {{')
+        return len(guards)
 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -3221,12 +2709,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if self._in_device_code:
             # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
             # add condition
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
-                                                                                node, callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
-                                                                                callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
-                                                                                callsite_stream)
+            generated_preamble_scopes += self.open_location_guards(node, callsite_stream)
 
         # Call standard tasklet generation
         old_codegen = self._cpu_codegen.calling_codegen
@@ -3328,3 +2811,745 @@ def _get_const_params(dfg_scope):
     state = dfg_scope.graph
     scope_entry = dfg_scope.source_nodes()[0]
     return sdutil.get_constant_data(scope_entry, state)
+
+
+def stream_unaware_gpu_callbacks(top_sdfg: SDFG) -> List[Tuple[SDFGState, nodes.Tasklet, OrderedSet]]:
+    """Host callbacks that touch ``GPU_Global`` data without naming ``__dace_current_stream``, with that data."""
+    found = []
+    for sd in top_sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not (isinstance(node, nodes.Tasklet) and node.side_effects) or is_devicelevel_gpu(sd, state, node):
+                    continue
+                touched = OrderedSet(
+                    e.data.data for e in state.all_edges(node)
+                    if not e.data.is_empty() and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global)
+                if touched and '__dace_current_stream' not in node.code.as_string:
+                    found.append((state, node, touched))
+    return found
+
+
+def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
+    """Warn about every stream-unaware GPU-touching callback and return the GPU arrays it touches."""
+    seeds: List[Tuple[SDFG, str]] = []
+    for state, node, touched in stream_unaware_gpu_callbacks(top_sdfg):
+        warnings.warn(
+            f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
+            'movement is forced onto the default stream. This is only correct if the callback uses '
+            'the default stream; for any other stream, add a "dace.current_stream" argument to the '
+            'callback and use it (e.g. cupy ExternalStream).', UserWarning)
+        seeds.extend((state.sdfg, name) for name in touched)
+    return seeds
+
+
+def outer_names(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
+    """The names ``sd``'s array ``name`` goes by in the SDFG enclosing ``sd``."""
+    nsdfg_node = sd.parent_nsdfg_node
+    if nsdfg_node is None:
+        return []
+    return [(sd.parent_sdfg, e.data.data) for e in sd.parent.all_edges(nsdfg_node)
+            if not e.data.is_empty() and name in (e.dst_conn, e.src_conn)]
+
+
+def inner_names(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
+    """The names ``sd``'s array ``name`` goes by inside the nested SDFGs it is handed to."""
+    found: List[Tuple[SDFG, str]] = []
+    for state in sd.states():
+        for nsdfg in (n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)):
+            for e in state.all_edges(nsdfg):
+                conn = e.dst_conn if e.dst is nsdfg else e.src_conn
+                if not e.data.is_empty() and e.data.data == name and conn is not None:
+                    found.append((nsdfg.sdfg, conn))
+    return found
+
+
+def propagate_data_across_nested_sdfgs(seeds: List[Tuple[SDFG, str]]) -> Dict[SDFG, OrderedSet]:
+    """Close the seed arrays over nested-SDFG connectors: one buffer has a name on either side."""
+    tracked: Dict[SDFG, OrderedSet] = {}
+    worklist = collections.deque(seeds)
+    while worklist:
+        sd, name = worklist.popleft()
+        names = tracked.setdefault(sd, OrderedSet())
+        if name not in names:
+            names.add(name)
+            worklist.extend(outer_names(sd, name) + inner_names(sd, name))
+    return tracked
+
+
+def node_touches_data(state: SDFGState, node: nodes.Node, names: OrderedSet) -> bool:
+    if isinstance(node, nodes.AccessNode) and node.data in names:
+        return True
+    return any(not e.data.is_empty() and e.data.data in names for e in state.all_edges(node))
+
+
+def pin_data_to_null_stream(top_sdfg: SDFG, tracked: Dict[SDFG, OrderedSet]) -> None:
+    """Move every weakly connected component touching a tracked array, nested SDFGs whole, onto the null stream."""
+    for sd, names in tracked.items():
+        for state in sd.states():
+            component_of = {n: i for i, comp in enumerate(nx.weakly_connected_components(state.nx)) for n in comp}
+            pinned = OrderedSet(component_of[n] for n in state.nodes() if node_touches_data(state, n, names))
+            for node in (n for n in state.nodes() if component_of[n] in pinned):
+                node._cuda_stream = 'nullptr'
+                if isinstance(node, nodes.NestedSDFG):
+                    # Inner stream numbering starts from the node's own stream.
+                    for inner, _ in node.sdfg.all_nodes_recursive():
+                        inner._cuda_stream = 'nullptr'
+
+
+#: How a GPU runtime source creates and destroys its non-blocking streams, unless told otherwise.
+DEFAULT_STREAM_CREATE = ('DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], '
+                         '{backend}StreamNonBlocking))')
+DEFAULT_STREAM_DESTROY = 'DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]))'
+
+
+def gpu_runtime_code(frame,
+                     sdfg: SDFG,
+                     target: str,
+                     backend: str,
+                     has_pool: bool,
+                     own_initcode: CodeIOStream,
+                     own_exitcode: CodeIOStream,
+                     globalcode: str,
+                     localcode: str,
+                     nstreams: int,
+                     nevents: int,
+                     stream_create: Optional[str] = None,
+                     stream_destroy: Optional[str] = None) -> str:
+    """The GPU runtime translation unit of a CUDA target: device selection, context, streams, events, error
+    handling and the target's ``__dace_init_<target>``/``__dace_exit_<target>`` pair around its code."""
+    fileheader = CodeIOStream()
+
+    frame.generate_fileheader(sdfg, fileheader, 'cuda')
+
+    initcode = CodeIOStream()
+    for sd in sdfg.all_sdfgs_recursive():
+        if None in sd.init_code:
+            initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
+        if 'cuda' in sd.init_code:
+            initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
+    initcode.write(own_initcode.getvalue())
+
+    exitcode = CodeIOStream()
+    for sd in sdfg.all_sdfgs_recursive():
+        if None in sd.exit_code:
+            exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+        if 'cuda' in sd.exit_code:
+            exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
+    exitcode.write(own_exitcode.getvalue())
+
+    if backend == 'cuda':
+        backend_header = 'cuda_runtime.h'
+    elif backend == 'hip':
+        backend_header = 'hip/hip_runtime.h'
+    else:
+        raise NameError('GPU backend "%s" not recognized' % backend)
+
+    params_comma = sdfg.init_signature(free_symbols=frame.free_symbols(sdfg))
+    if params_comma:
+        params_comma = ', ' + params_comma
+
+    pool_header = ''
+    if has_pool:
+        poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
+        pool_header = """
+    {backend}MemPool_t mempool;
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
+    uint64_t threshold = {poolcfg_threshold};
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
+""".format(backend=backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
+
+    return """
+#include <{backend_header}>
+#include <dace/dace.h>
+
+{file_header}
+
+DACE_EXPORTED int __dace_init_{target}({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_{target}({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
+
+{other_globalcode}
+
+int __dace_init_{target}({sdfg_state_name} *__state{params}) {{
+    int count;
+
+    // Check that we are able to run {backend} code
+    if ({backend}GetDeviceCount(&count) != {backend}Success)
+    {{
+        printf("ERROR: GPU drivers are not configured or {backend}-capable device "
+               "not found\\n");
+        return 1;
+    }}
+    if (count == 0)
+    {{
+        printf("ERROR: No {backend}-capable devices found\\n");
+        return 2;
+    }}
+
+    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
+    // every library handle share it. Which physical GPU is the process's business: the visible-
+    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
+    // fixed at codegen time cannot do that -- every rank shares one build.
+    const int __dace_device = 0;
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
+        return 4;
+    }}
+
+    __dace_gpu_drain_error(__state);
+
+    // Initialize {backend} before we run the application
+    float *dev_X;
+    DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
+    DACE_GPU_CHECK({backend}Free(dev_X));
+
+    __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    // After the context exists: DACE_GPU_CHECK records into it.
+    {pool_header}
+
+    // Create {backend} streams and events
+    for(int i = 0; i < {nstreams}; ++i) {{
+        {stream_create};
+        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
+    }}
+    for(int i = 0; i < {nevents}; ++i) {{
+        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
+    }}
+
+    {initcode}
+
+    return 0;
+}}
+
+int __dace_exit_{target}({sdfg_state_name} *__state) {{
+    {exitcode}
+
+    // Synchronize and check for CUDA errors
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    if (__err == 0)
+        __err = static_cast<int>({backend}DeviceSynchronize());
+
+    // Destroy {backend} streams and events
+    for(int i = 0; i < {nstreams}; ++i) {{
+        {stream_destroy};
+    }}
+    for(int i = 0; i < {nevents}; ++i) {{
+        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
+    }}
+
+    delete __state->gpu_context;
+    return __err;
+}}
+
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
+}}
+
+// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
+int __dace_gpu_last_error({sdfg_state_name} *__state) {{
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    __state->gpu_context->lasterror = (gpuError_t)0;
+    return __err;
+}}
+
+bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
+{{
+    if (streamid < 0 || streamid >= {nstreams})
+        return false;
+
+    __state->gpu_context->streams[streamid] = stream;
+
+    return true;
+}}
+
+void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
+{{
+    for (int i = 0; i < {nstreams}; ++i)
+        __state->gpu_context->streams[i] = stream;
+}}
+
+{localcode}
+""".format(params=params_comma,
+           sdfg_state_name=mangle_dace_state_struct_name(sdfg),
+           initcode=initcode.getvalue(),
+           exitcode=exitcode.getvalue(),
+           other_globalcode=globalcode,
+           localcode=localcode,
+           file_header=fileheader.getvalue(),
+           nstreams=nstreams,
+           nevents=nevents,
+           backend=backend,
+           backend_header=backend_header,
+           pool_header=pool_header,
+           target=target,
+           stream_create=stream_create or DEFAULT_STREAM_CREATE.format(backend=backend),
+           stream_destroy=stream_destroy or DEFAULT_STREAM_DESTROY.format(backend=backend))
+
+
+def gpu_cmake_options() -> List[str]:
+    """CMake options of a CUDA target: toolkit path, architectures, device and host compiler flags."""
+    options = []
+
+    # Override CUDA toolkit
+    if Config.get('compiler', 'cuda', 'path'):
+        options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
+            Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
+
+    # Get CUDA architectures from configuration
+    backend = common.get_gpu_backend()
+    if backend == 'cuda':
+
+        # Empty keeps CMake's ``native``, which resolves the local GPU. It is filled in from
+        # compiler.cuda.cuda_arch, or, on a host with no GPU for native to find, from what the
+        # toolkit can still build -- see native_compiler.cuda_architectures.
+        from dace.codegen import native_compiler
+        if cuda_arch := native_compiler.cuda_architectures():
+            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
+
+        # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
+        # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
+        flags = ' '.join([Config.get('compiler', 'cuda', 'args')] +
+                         [f'-Xcompiler={flag}' for flag in forwarded_host_args()])
+        options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
+
+    if backend == 'hip':
+
+        if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
+            # HIP architecture was given.
+            hip_arch = hip_arch.split(',')
+            hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
+            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
+
+        # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
+        flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
+        options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
+
+    # Unconditional, like the CPU target's CMAKE_CXX_COMPILER: nvcc otherwise falls back to its
+    # own default host compiler, and host and device objects then disagree on the ABI.
+    options.append('-DCUDA_HOST_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
+    return options
+
+
+def tag_default_stream(node: nodes.AccessNode) -> None:
+    # A stream field lets the state-wide deallocation of a pooled array work
+    if not hasattr(node, '_cuda_stream'):
+        node._cuda_stream = 'nullptr'
+
+
+def compute_pool_release(top_sdfg: SDFG, pool_release: Dict, tag: Optional[Callable] = None) -> bool:
+    """Record in ``pool_release`` where each pooled array is last used and released, as
+    ``(sdfg, name) -> (state, terminator nodes)``; an empty terminator set means the end of the state.
+
+    :param tag: called with the access node a release follows, if given.
+    :returns: whether any SDFG in the hierarchy has pooled arrays.
+    """
+    has_pool = False
+    reachability = access_nodes = None
+    for sdfg in top_sdfg.all_sdfgs_recursive():
+        pooled = pooled_transients(sdfg)
+        if not pooled:
+            continue
+        has_pool = True
+        # Only a program-long array is released early: a persistent one lives on across calls, and an external
+        # one is not ours to free
+        pooled = OrderedSet(a for a in pooled if sdfg.arrays[a].lifetime == dtypes.AllocationLifetime.Global)
+        if reachability is None:
+            reachability = ap.StateReachability().apply_pass(top_sdfg, {})
+            access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
+        record_pool_releases(sdfg, pooled, reachability[sdfg.cfg_id], access_nodes[sdfg.cfg_id], pool_release, tag)
+    return has_pool
+
+
+def record_pool_releases(sdfg: SDFG, pooled: OrderedSet, reachable: Dict, access_sets: Dict, pool_release: Dict,
+                         tag: Optional[Callable]) -> None:
+    """Release every array of ``pooled`` after the last state that accesses it, or else at the end of ``sdfg``."""
+    for state in sdfg.states():
+        # Arrays no reachable later state accesses are released in this one
+        last_state_arrays = OrderedSet(
+            s for s in access_sets
+            if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
+        for aname in last_state_arrays:
+            pool_release[(sdfg, aname)] = release_point(state, aname, tag)
+    unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in pool_release)
+    if unfreed:
+        sink = single_sink_state(sdfg)
+        for arr in unfreed:
+            pool_release[(sdfg, arr)] = (sink, OrderedSet())
+
+
+def pooled_transients(sdfg: SDFG) -> OrderedSet:
+    return OrderedSet(aname for aname, arr in sdfg.arrays.items()
+                      if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
+
+
+def release_point(state: SDFGState, aname: str, tag: Optional[Callable] = None) -> Tuple[SDFGState, OrderedSet]:
+    """Where a pooled array last used in ``state`` is released: after the nodes reading the access node that
+    every other access of it reaches, or, without one or inside a scope, at the end of the state."""
+    ans = [an for an in state.data_nodes() if an.data == aname]
+    terminator = next((an1 for an1 in ans if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1)),
+                      None)
+    if tag is not None and ans:
+        tag(terminator if terminator is not None else ans[-1])
+    if terminator is None or state.entry_node(terminator) is not None:
+        return state, OrderedSet()
+    return state, OrderedSet(
+        state.exit_node(e.dst) if isinstance(e.dst, nodes.EntryNode) else e.dst for e in state.out_edges(terminator))
+
+
+def single_sink_state(sdfg: SDFG) -> SDFGState:
+    """The one sink state of ``sdfg``, joining several sinks into a new one."""
+    sinks = sdfg.sink_nodes()
+    if not sinks:
+        raise ValueError('End state not found when trying to free pooled memory')
+    if len(sinks) == 1:
+        return sinks[0]
+    sink = sdfg.add_state()
+    for s in sinks:
+        sdfg.add_edge(s, sink)
+    return sink
+
+
+def flat_thread_id(block_dims) -> str:
+    result = 'threadIdx.x'
+    if block_dims[1] != 1:
+        result += f' + ({sym2cpp(block_dims[0])}) * threadIdx.y'
+    if block_dims[2] != 1:
+        result += f' + ({sym2cpp(block_dims[0] * block_dims[1])}) * threadIdx.z'
+    return result
+
+
+def flat_block_id(block_dims) -> str:
+    result = 'blockIdx.x'
+    if block_dims[1] != 1:
+        result += ' + gridDim.x * blockIdx.y'
+    if block_dims[2] != 1:
+        result += ' + gridDim.x * gridDim.y * blockIdx.z'
+    return result
+
+
+def location_index_exprs(block_dims) -> List[Tuple[str, str]]:
+    """The ``Tasklet.location`` keys a GPU tasklet honors, with the flat index each one selects on."""
+    return [('gpu_thread', flat_thread_id(block_dims)), ('gpu_warp', f'(({flat_thread_id(block_dims)}) / warpSize)'),
+            ('gpu_block', flat_block_id(block_dims))]
+
+
+def location_condition(name: str, index_expr: str, location: Union[int, str, subsets.Range]) -> str:
+    """Condition selecting the threads, warps or blocks a ``Tasklet.location`` entry names."""
+    if isinstance(location, str) and ':' in location:
+        location = subsets.Range.from_string(location)
+    elif symbolic.issymbolic(location):
+        location = sym2cpp(location)
+    if not isinstance(location, subsets.Range):
+        return f'({index_expr}) == {location}'
+    if len(location) != 1:
+        raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
+    begin, end, stride = location[0]
+    rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
+    cond = f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
+    if stride != 1:
+        cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
+    return cond
+
+
+def kernel_launch_qualifiers(node: nodes.MapEntry, block_dims) -> Tuple[str, str]:
+    """The ``__maxnreg__`` and ``__launch_bounds__`` qualifiers of a kernel; a register cap excludes bounds."""
+    assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+    if node.gpu_maxnreg != 0:
+        return f'__maxnreg__({node.gpu_maxnreg})', ''
+    min_warps = ''
+    if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
+        min_warps = f',{node.gpu_min_warps_per_eu}'
+    if node.gpu_launch_bounds == "-1":
+        return '', ''
+    if node.gpu_launch_bounds != "0":
+        return '', f'__launch_bounds__({node.gpu_launch_bounds}{min_warps})'
+    if any(symbolic.issymbolic(b) for b in block_dims):
+        return '', ''
+    return '', f'__launch_bounds__({_topy(prod(block_dims))}{min_warps})'
+
+
+def dynamic_map_input_args(state: SDFGState, scope_entry: nodes.MapEntry) -> Dict[str, dt.Data]:
+    """Data a kernel reads through its map's dynamic-range connectors; a stream handle travels separately."""
+    arrays = state.sdfg.arrays
+    return {
+        e.data.data: arrays[e.data.data]
+        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if arrays[e.data.data].dtype != dtypes.gpuStream_t
+    }
+
+
+def plan_shared_memory(sdfg: SDFG) -> str:
+    """Places the shared memory of every kernel of ``sdfg`` and returns the declaration of the dynamic shared memory
+    that the flat buffers of the plan refer to, or nothing if no kernel uses dynamic shared memory."""
+    if not any(plan.levels for plan in gpu_shared_memory.plan_gpu_shared_memory(sdfg).values()):
+        return ''
+    return (f'extern __shared__ __align__({gpu_shared_memory.DYNAMIC_SHARED_MEMORY_ALIGNMENT}) '
+            f'uint8_t {_DYNAMIC_SHARED_MEMORY_SYMBOL}[];\n')
+
+
+def reset_shared_code(dataname: str, nodedesc: dt.Data, block_dims: List) -> str:
+    """The zero-initialization of a shared memory container by the threads of a block."""
+    arrsize = nodedesc.total_size
+    if symbolic.issymbolic(arrsize):
+        raise NotImplementedError(f'Zero-initializing shared memory container "{dataname}" requires a constant '
+                                  f'size (got {arrsize})')
+    return 'dace::ResetShared<{type}, {block_size}, {elements}, 1, false>::Reset({ptr});\n'.format(
+        type=nodedesc.dtype.ctype, block_size=', '.join(_topy(block_dims)), ptr=dataname, elements=sym2cpp(arrsize))
+
+
+def dynamic_shared_memory_request(kernel_name: str, kernel_entry: nodes.MapEntry) -> str:
+    """
+    Beyond the limit on static plus dynamic bytes, devices only grant dynamic shared memory to kernels that opt in;
+    the opt-in of the kernel planned by ``gpu_shared_memory.PlanSharedMemory``, if any.
+    """
+    limit = common.gpu_max_static_shared_memory()
+    dynsmem_size = getattr(kernel_entry, '_cuda_dynamic_shared_memory', 0)
+    total_size = getattr(kernel_entry, '_cuda_static_shared_memory', 0) + dynsmem_size
+    if (total_size > limit) == False:
+        return ''
+    request = f'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY({kernel_name}, "{kernel_name}", {_topy(dynsmem_size)});'
+    if symbolic.issymbolic(total_size):
+        request = f'if (({_topy(total_size)}) > {limit}) {{\n{request}\n}}'
+    return request
+
+
+def gpu_scope_maps_recursive(subgraph) -> List[Tuple[nodes.Map, Dict]]:
+    """``GPU_Device`` and thread-block maps in ``subgraph`` and the nested SDFGs within it, each with the
+    substitution that expresses its range in the outermost SDFG's symbols."""
+    res = []
+    for node in subgraph.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            for state in node.sdfg.states():
+                for map, sym_map in gpu_scope_maps_recursive(state):
+                    for k in sym_map.values():
+                        for kk, vv in node.symbol_mapping.items():
+                            sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
+                    res.append((map, sym_map))
+        elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                dtypes.ScheduleType.GPU_Device,
+                dtypes.ScheduleType.GPU_ThreadBlock,
+                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+        ):
+            res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
+    return res
+
+
+def thread_block_extent(tbmap: nodes.Map, sym_map: Dict) -> List:
+    """A thread-block map's size in three dimensions, overapproximated (``min(N,(i+1)*32)-i*32`` is 32), so a
+    partial trailing block becomes a guard rather than a smaller block."""
+    tbsize = [symbolic.overapproximate(s.subs(list(sym_map.items()))) for s in tbmap.range.size()[::-1]]
+    # Linearize (flatten) rest of dimensions to third
+    if len(tbsize) > 3:
+        tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
+        del tbsize[3:]
+    return tbsize + [1] * (3 - len(tbsize))
+
+
+def detected_chiplet_count(backend: str) -> int:
+    """
+    Returns the number of chiplets of the GPU of this machine, or 1 if it cannot be determined.
+
+    Called when the ``compiler.cuda.chiplet_number`` configuration entry is left at its default of 0,
+    which means that the number of chiplets has not been configured by the user. A detected number is
+    written back to that entry, so that the rest of the process sees the number the code is generated
+    for. Only the HIP backend is queried, chiplets being a feature of AMD GPUs, and a failure to
+    determine the number leaves the entry alone and disables the distribution.
+    """
+    if backend != 'hip':
+        return 1
+    chiplets = common.get_gpu_chiplet_count()
+    if chiplets is None:
+        return 1
+    Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
+    return chiplets
+
+
+def chiplet_count(kernelmap_entry: nodes.MapEntry, backend: str, is_persistent: bool, has_dtbmap: bool,
+                  extra_grid_dims: List[symbolic.SymbolicType]) -> int:
+    """
+    Returns the number of chiplets (XCDs on AMD GPUs) the grid of the given kernel is distributed over,
+    or 1 if the distribution does not apply to it.
+
+    The distribution pads the first grid dimension to a multiple of the number of chiplets and permutes
+    it within itself, leaving the second and third grid dimensions untouched. It therefore applies to
+    kernels of any dimensionality, and only steps aside for kernels whose block indices are not
+    generated by ``kernel_index_definitions`` alone. Kernels whose map has the
+    ``allow_chiplet_threadblock_distribution`` property set to False are left alone as well.
+
+    The number of chiplets comes from the ``compiler.cuda.chiplet_number`` configuration entry, whose
+    default of 0 means that it is detected automatically (see ``detected_chiplet_count``).
+
+    :param kernelmap_entry: Entry node of the kernel map.
+    :param backend: The GPU backend the code is generated for.
+    :param is_persistent: Whether the kernel uses a persistent grid.
+    :param has_dtbmap: Whether the kernel contains a dynamic thread-block map.
+    :param extra_grid_dims: Grid dimensions contributed by nested device maps, if any.
+    """
+    chiplets = int(Config.get('compiler', 'cuda', 'chiplet_number'))
+    if chiplets < 0:
+        raise ValueError(f'Invalid number of chiplets ({chiplets}) configured. Modify the '
+                         '`compiler.cuda.chiplet_number` configuration entry to a positive number, or to 0 '
+                         'to detect the number of chiplets of the GPU automatically.')
+
+    # A kernel that opts out of the distribution is left alone without any diagnostics, and without
+    # querying the GPU for the number of its chiplets
+    if not kernelmap_entry.map.allow_chiplet_threadblock_distribution:
+        return 1
+    if chiplets == 0:
+        chiplets = detected_chiplet_count(backend)
+    if chiplets == 1:
+        return 1
+
+    if backend != 'hip':
+        warnings.warn(f'`compiler.cuda.chiplet_number` is set to {chiplets}, but the "{backend}" backend '
+                      'targets GPUs without chiplets. Distributing the grid over chiplets relies on the '
+                      'round-robin thread-block scheduling of multi-chiplet AMD GPUs.')
+    skip_reason = None
+    if is_persistent:
+        skip_reason = 'it uses a persistent grid'
+    elif has_dtbmap:
+        skip_reason = 'it contains a dynamic thread-block map'
+    elif extra_grid_dims:
+        skip_reason = 'it contains nested device maps'
+    if skip_reason is not None:
+        warnings.warn(f'Not distributing the grid of kernel "{kernelmap_entry.map.label}" over {chiplets} '
+                      f'chiplets because {skip_reason}.')
+        return 1
+    return chiplets
+
+
+def distribute_over_chiplets(kernelmap_entry: nodes.MapEntry, grid_size: List, chiplets: int) -> Tuple[List, int]:
+    """
+    Pads the first grid dimension for ``chiplets`` chiplets, returning the new grid and the number of blocks of
+    that dimension every chiplet owns (1 and the grid unchanged without a distribution).
+
+    The hardware dispatches thread-block ``f`` to chiplet ``f % chiplets`` in a round-robin fashion, and the
+    flattened block index is ``blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y``.
+    Padding ``gridDim.x`` to a multiple of the number of chiplets makes the two trailing terms vanish modulo that
+    number, so the chiplet of a block is ``blockIdx.x % chiplets`` regardless of ``blockIdx.y`` and
+    ``blockIdx.z``, which the distribution therefore leaves untouched. Each chiplet receives a contiguous chunk of
+    ``ceil(grid_size[0] / chiplets)`` blocks of the first dimension (see ``kernel_index_definitions``), together
+    with the whole of the other dimensions.
+    """
+    if chiplets <= 1:
+        return grid_size, 1
+    chunk = symbolic.int_ceil(grid_size[0], chiplets)
+    padded = [chunk * chiplets] + grid_size[1:]
+    if Config.get_bool('debugprint'):
+        print(f'Distributing the grid of kernel "{kernelmap_entry.map.label}" over {chiplets} chiplets, adjusting '
+              f'its size from {grid_size} to {padded}.')
+    return padded, chunk
+
+
+def default_block_size(kernelmap_entry: nodes.MapEntry, grid_size: List, has_dtbmap: bool) -> List:
+    """The block size of a kernel without thread-block maps and without ``gpu_block_size``: the configured
+    dynamic or default block size, the latter linearized onto the dimensions the grid has."""
+    if has_dtbmap:
+        return list(gpu_helpers.dynamic_map_block_dims())
+
+    def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
+    warnings.warn(f'No `gpu_block_size` property specified on map "{kernelmap_entry.map.label}". '
+                  f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {def_bsize}. '
+                  'You can either specify the block size to use with the gpu_block_size property, '
+                  'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
+                  'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+    if def_bsize == 'max':
+        raise NotImplementedError('max dynamic block size unimplemented')
+    block_size = [int(b) for b in def_bsize.split(',')]
+
+    block_ndim = max(1, sum(1 if b != 1 else 0 for b in block_size))
+    grid_ndim = max(1, sum(1 if g != 1 else 0 for g in grid_size))
+    if block_ndim > grid_ndim:
+        linearized_remainder = prod(block_size[grid_ndim:])
+        block_size = block_size[:grid_ndim] + [1] * (3 - grid_ndim)
+        block_size[grid_ndim - 1] *= linearized_remainder
+        warnings.warn(f'Default block size has more dimensions ({block_ndim}) than kernel dimensions '
+                      f'({grid_ndim}) in map "{kernelmap_entry.map.label}". Linearizing block '
+                      f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
+    return block_size
+
+
+def kernel_block_index(i: int, block_dims: List, per_thread: bool, chiplets: int, chunk,
+                       index_type: dtypes.typeclass) -> str:
+    """The block (and, ``per_thread``, thread) index a kernel map's dimension ``i < 3`` is computed from."""
+    if chiplets > 1 and i == 0:
+        # Contiguous partitioning: the chiplet of a block is ``blockIdx.x % chiplets`` and its slot within that
+        # chiplet is ``blockIdx.x / chiplets``, so chiplet k owns the blocks [k * chunk .. (k + 1) * chunk - 1]
+        bidx_x = _widen_register('blockIdx.x', index_type)
+        block_expr = '((%s %% %d) * %s + %s / %d)' % (bidx_x, chiplets, _topy(chunk), bidx_x, chiplets)
+    else:
+        block_expr = _widen_register('blockIdx.%s' % _named_idx(min(i, 2)), index_type)
+    # A fixed number of threads per block, without a thread-block map, offsets by the thread index
+    if per_thread:
+        block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+    return block_expr
+
+
+def kernel_index_definitions(kernel_map: nodes.Map, block_dims: List, per_thread: bool, chiplets: int, chunk,
+                             index_types: Dict[str, dtypes.typeclass]) -> List[Tuple[str, str]]:
+    """``(parameter, expression)`` for every parameter of a kernel map, from the block and thread indices.
+
+    :param per_thread: The kernel has no thread-block map, so every thread handles one iteration.
+    """
+    krange = subsets.Range(kernel_map.range[::-1])
+    kdims = krange.size()
+    dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
+    bidx = krange.coord_at(dsym)
+    result = []
+    # First three dimensions are evaluated directly
+    for i in range(min(len(krange), 3)):
+        block_expr = kernel_block_index(i, block_dims, per_thread, chiplets, chunk,
+                                        index_types[kernel_map.params[-i - 1]])
+        # Delinearize third dimension if necessary
+        if i == 2 and len(krange) > 3:
+            block_expr = f'({block_expr} / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
+        result.append((kernel_map.params[-i - 1], _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)))
+    # Delinearize beyond the third dimension: true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
+    for i in range(3, len(krange)):
+        block_expr = _widen_register('blockIdx.z', index_types[kernel_map.params[-i - 1]])
+        if per_thread:
+            block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
+        block_expr = '((%s / (%s)) %% (%s))' % (block_expr, _topy(functools.reduce(sympy.Mul, kdims[i + 1:],
+                                                                                   1)), _topy(kdims[i]))
+        result.append((kernel_map.params[-i - 1], _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)))
+    return result
+
+
+def kernel_grid_conditions(kernel_map: nodes.Map, block_dims: List, chiplets: int) -> List[str]:
+    """One condition per parameter (empty if always true) that masks the out-of-range threads of the trailing
+    blocks of a kernel without a thread-block map, e.g. ``i >= 0 && i < N``."""
+    krange = subsets.Range(kernel_map.range[::-1])
+    dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
+    dsym_end = [d + bs - 1 for d, bs in zip(dsym, block_dims)]
+    conditions = []
+    for i, (v, minel, maxel) in enumerate(zip(kernel_map.params[::-1], krange.min_element(), krange.max_element())):
+        terms = []
+        # Optimize conditions if they are always true
+        if i >= 3 or (dsym[i] >= minel) != True:
+            terms.append('%s >= %s' % (v, _topy(minel)))
+        # The grid of the distributed dimension is padded to a multiple of the number of chiplets, so its
+        # trailing blocks always have to be masked out
+        if (i >= 3 or (chiplets > 1 and i == 0)
+                or ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], block_dims[i]))
+                or (block_dims[i] > maxel) == True):
+            terms.append('%s < %s' % (v, _topy(maxel + 1)))
+        conditions.append(' && '.join(terms))
+    return conditions
+
+
+def chiplet_padding_condition(kernel_map: nodes.Map) -> str:
+    """Masks the blocks the chiplet padding adds beyond the first dimension of a kernel with a thread-block map."""
+    return '%s < %s' % (kernel_map.params[-1], _topy(subsets.Range(kernel_map.range[::-1]).max_element()[0] + 1))

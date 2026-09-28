@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 import warnings
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
+from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from dace.ordered import OrderedSet
+from ordered_set import OrderedSet
 
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
@@ -40,11 +41,10 @@ class DefaultSharedMemorySync(ppl.Pass):
     instead); nested TB maps sync only at the outermost TB exit.
     """
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _):
         """Insert ``__syncthreads()`` barriers so shared-memory writes are visible to subsequent reads.
 
         :param sdfg: SDFG to insert barriers into (modified in place).
-        :returns: Number of barrier tasklets inserted, or ``None`` if none were needed.
         """
 
         # Collect TB MapExits and collaborative shared-memory writes.
@@ -57,10 +57,8 @@ class DefaultSharedMemorySync(ppl.Pass):
                 collaborative_smem_copies[node] = parent_state
 
         sync_requiring_exits = self.identify_synchronization_tb_exits(tb_map_exits)
-        inserted = self.insert_synchronization_after_nodes(sync_requiring_exits)
-        inserted += self.insert_synchronization_after_nodes(collaborative_smem_copies)
-
-        return inserted or None
+        self.insert_synchronization_after_nodes(sync_requiring_exits)
+        self.insert_synchronization_after_nodes(collaborative_smem_copies)
 
     def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
         """Whether ``node`` is a collaborative shared-memory write: written
@@ -80,8 +78,8 @@ class DefaultSharedMemorySync(ppl.Pass):
             return False
 
         # Collaborative only if within a kernel (GPU_Device) but not within a GPU_ThreadBlock map.
-        if (not helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device])
-                or helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
+        if (not is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_Device])
+                or is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
             return False
 
         return True
@@ -125,55 +123,14 @@ class DefaultSharedMemorySync(ppl.Pass):
             ``has_parent_tb_map`` is True if another TB map sits between the enclosing
             GPU_Device map and this one.
         """
-        writes_to_shared_memory = False
-        race_cond_danger = False
-        has_parent_tb_map = False
-
-        # Direct write at the TB MapExit.
-        for edge in state.out_edges(map_exit):
-            is_smem: bool = (isinstance(edge.dst, AccessNode)
-                             and edge.dst.desc(state).storage == dtypes.StorageType.GPU_Shared)
-            if is_smem and not edge.data.is_empty():
-                writes_to_shared_memory = True
-                break
-
-        # Writes inside the scope, plus nested SDFGs to analyze below.
-        nested_sdfgs: OrderedSet[NestedSDFG] = OrderedSet()
-
-        for node in state.all_nodes_between(map_entry, map_exit):
-            if not writes_to_shared_memory and is_shared_memory_write(node, state):
-                writes_to_shared_memory = True
-            elif isinstance(node, NestedSDFG):
-                nested_sdfgs.add(node)
-
-        # Recurse into nested SDFGs for writes and LoopRegion race hazards.
-        for nsdfg in nested_sdfgs:
-            subs_sdfg = nsdfg.sdfg
-            if not writes_to_shared_memory:
-                writes_to_shared_memory = self.sdfg_writes_to_smem(subs_sdfg)
-
-            if not race_cond_danger:
-                race_cond_danger = self.writes_to_smem_inside_loopregion(subs_sdfg)
-
-        # Sequential inner maps writing shared memory are a race hazard.
-        if not race_cond_danger:
-            race_cond_danger = any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
+        writes_to_shared_memory = self.map_writes_to_smem(map_entry, state)
+        nested_sdfgs = [n.sdfg for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, NestedSDFG)]
+        # Loop regions in nested SDFGs and sequential inner maps writing shared memory are race hazards.
+        race_cond_danger = (any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs)
+                            or any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
                                    and self.map_writes_to_smem(inner_scope, inner_state)
-                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry))
-
-        # Is this TB map nested within another TB map (before the GPU_Device map)?
-        parent = helpers.get_parent_map(state, map_entry)
-
-        while parent:
-            parent_map, parent_state = parent
-            if parent_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                has_parent_tb_map = True
-                break
-            if parent_map.map.schedule == dtypes.ScheduleType.GPU_Device:
-                break
-            parent = helpers.get_parent_map(parent_state, parent_map)
-
-        return writes_to_shared_memory, race_cond_danger, has_parent_tb_map
+                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)))
+        return writes_to_shared_memory, race_cond_danger, nested_in_threadblock_map(state, map_entry)
 
     def writes_to_smem_inside_loopregion(self, sdfg: SDFG) -> bool:
         """True if the SDFG writes shared memory inside a LoopRegion
@@ -221,17 +178,13 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         return False
 
-    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]) -> int:
-        """Insert a ``__syncthreads()`` tasklet after each given node.
-
-        :returns: Number of barrier tasklets inserted.
-        """
-        inserted = 0
+    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
+        """Insert a ``__syncthreads()`` tasklet after each given node."""
         for node, state in nodes.items():
 
             sync_tasklet = state.add_tasklet(name="sync_threads",
-                                             inputs=set(),
-                                             outputs=set(),
+                                             inputs=OrderedSet(),
+                                             outputs=OrderedSet(),
                                              code="__syncthreads();\n",
                                              language=dtypes.Language.CPP)
 
@@ -239,6 +192,16 @@ class DefaultSharedMemorySync(ppl.Pass):
                 state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
 
             state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
-            inserted += 1
 
-        return inserted
+
+def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:
+    """Whether another ``GPU_ThreadBlock`` map sits between the enclosing kernel and ``map_entry``."""
+    parent = helpers.get_parent_map(state, map_entry)
+    while parent:
+        parent_map, parent_state = parent
+        if parent_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            return True
+        if parent_map.map.schedule == dtypes.ScheduleType.GPU_Device:
+            return False
+        parent = helpers.get_parent_map(parent_state, parent_map)
+    return False

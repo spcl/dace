@@ -249,13 +249,6 @@ def get_gpu_backend() -> str:
     if backend and backend != 'auto':
         return backend
 
-    return _probing_for_gpu_backend()
-
-
-@lru_cache(maxsize=None, typed=True)
-def _probing_for_gpu_backend() -> str:
-    # Probe the system for the GPU backend. Called by ``get_gpu_backend()`` when
-    # the backend is unset, not directly; the cached result never changes.
     def _try_execute(cmd: str) -> bool:
         # The output is never read: an unread pipe leaks its file and can block a chatty process.
         completed = subprocess.run(cmd.split(' '), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, shell=True)
@@ -291,19 +284,12 @@ def _probing_for_gpu_backend() -> str:
                        'to either "cuda" or "hip".')
 
 
+@lru_cache()
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
     """
     backend = get_gpu_backend()
-    return _look_for_runtime_file(backend)
-
-
-@lru_cache(maxsize=None, typed=True)
-def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
-    # Locate a GPU backend's runtime. Called indirectly by ``get_gpu_runtime()``,
-    # not directly.
-
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
         if os.name == 'nt' and not libpath:  # Windows-based search

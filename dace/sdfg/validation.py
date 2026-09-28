@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from dace.memlet import Memlet
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
+    from dace.sdfg import nodes as nd
     from dace.sdfg.state import ControlFlowRegion
 
 ###########################################
@@ -487,6 +488,14 @@ def past_upper_bound(memo: Dict[Tuple[str, Any, Any], bool], maxel: Any, extent:
         verdict = ((maxel + offset) >= extent) == True
         memo[key] = verdict
     return verdict
+
+
+def may_end_a_memlet_path(node: 'nd.Node') -> bool:
+    """A data memlet path ends at a data node, or at a tasklet without connectors (a synchronization)."""
+    from dace.sdfg import nodes as nd  # Avoid import loop
+    if isinstance(node, nd.AccessNode):
+        return True
+    return isinstance(node, nd.Tasklet) and not node.in_connectors and not node.out_connectors
 
 
 def validate_state(state: 'dace.sdfg.SDFGState',
@@ -1047,25 +1056,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(dst) contains scope(src), then dst must be a data node,
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
-            if not isinstance(dst_node, nd.AccessNode):
-                # It is also possible that edge leads to a tasklet that has no incoming or outgoing memlet
-                # since the check is to be performed for all edges leading to the dst_node, it is sufficient
-                # to check for the memlets of outgoing edges
-                if e.data.is_empty():
-                    if isinstance(dst_node, nd.ExitNode):
-                        pass
-                    if isinstance(dst_node, nd.Tasklet) and all(
-                        {oe.data.is_empty()
-                         for oe in state.out_edges(dst_node)}):
-                        pass
-                else:
-                    raise InvalidSDFGEdgeError(
-                        f"Memlet creates an invalid path (sink node {dst_node}"
-                        " should be a data node)",
-                        sdfg,
-                        state_id,
-                        eid,
-                        cfg=cfg)
+            # An empty memlet may lead anywhere; a data memlet ends at data or at a connectorless sync tasklet
+            if not e.data.is_empty() and not may_end_a_memlet_path(dst_node):
+                raise InvalidSDFGEdgeError(
+                    f"Memlet creates an invalid path (sink node {dst_node}"
+                    " should be a data node)",
+                    sdfg,
+                    state_id,
+                    eid,
+                    cfg=cfg)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid, cfg=cfg)

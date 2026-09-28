@@ -14,16 +14,16 @@ rewrite rules:
 import dace
 import pytest
 
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (_classify_state_top_level, _Kind)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_state_top_level, NodeKind)
 from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import SplitStateByGPUClass
 
 
 def _state_kinds(sdfg):
-    return [_classify_state_top_level(s) for s in sdfg.states()]
+    return [classify_state_top_level(s) for s in sdfg.states()]
 
 
 def _state_kinds_in_topological_order(sdfg):
-    return [_classify_state_top_level(s) for s in dace.sdfg.utils.dfs_topological_sort(sdfg)]
+    return [classify_state_top_level(s) for s in dace.sdfg.utils.dfs_topological_sort(sdfg)]
 
 
 def _cpu_init_then_gpu_kernel():
@@ -177,34 +177,34 @@ def _pure_cpu_state():
 
 def test_cpu_prefix_chain_splits_into_two_states():
     sdfg = _cpu_init_then_gpu_kernel()
-    assert _state_kinds(sdfg) == [_Kind.MIXED]
+    assert _state_kinds(sdfg) == [NodeKind.MIXED]
     SplitStateByGPUClass().apply_pass(sdfg, {})
     kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [_Kind.CPU, _Kind.GPU], f"Expected [CPU, GPU], got {kinds}"
+    assert kinds == [NodeKind.CPU, NodeKind.GPU], f"Expected [CPU, GPU], got {kinds}"
 
 
 def test_cpu_suffix_chain_splits_into_two_states():
     sdfg = _gpu_kernel_then_cpu_finalize()
-    assert _state_kinds(sdfg) == [_Kind.MIXED]
+    assert _state_kinds(sdfg) == [NodeKind.MIXED]
     SplitStateByGPUClass().apply_pass(sdfg, {})
     kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [_Kind.GPU, _Kind.CPU], f"Expected [GPU, CPU], got {kinds}"
+    assert kinds == [NodeKind.GPU, NodeKind.CPU], f"Expected [GPU, CPU], got {kinds}"
 
 
 def test_cpu_prefix_and_suffix_chain_splits_into_three_states():
     sdfg = _cpu_init_gpu_kernel_cpu_finalize()
-    assert _state_kinds(sdfg) == [_Kind.MIXED]
+    assert _state_kinds(sdfg) == [NodeKind.MIXED]
     SplitStateByGPUClass().apply_pass(sdfg, {})
     kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [_Kind.CPU, _Kind.GPU, _Kind.CPU], f"Expected [CPU, GPU, CPU], got {kinds}"
+    assert kinds == [NodeKind.CPU, NodeKind.GPU, NodeKind.CPU], f"Expected [CPU, GPU, CPU], got {kinds}"
 
 
 def test_independent_cpu_and_gpu_wccs_split_into_two_states():
     sdfg = _independent_cpu_and_gpu_wccs()
-    assert _state_kinds(sdfg) == [_Kind.MIXED]
+    assert _state_kinds(sdfg) == [NodeKind.MIXED]
     SplitStateByGPUClass().apply_pass(sdfg, {})
     kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [_Kind.CPU, _Kind.GPU], f"Expected [CPU, GPU], got {kinds}"
+    assert kinds == [NodeKind.CPU, NodeKind.GPU], f"Expected [CPU, GPU], got {kinds}"
 
 
 def test_pure_gpu_state_is_unchanged():

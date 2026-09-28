@@ -6,18 +6,9 @@ from typing import Iterator, Tuple
 from dace import Config
 from dace.codegen import common
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, nodes
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 from dace.sdfg.state import SDFGState
-
-# CUDA/HIP launch grids and blocks always have three dimensions (x, y, z).
-CUDA_GRID_DIMS = 3
-
-
-def get_cuda_dim(idx):
-    """ Converts 0 to x, 1 to y, 2 to z, or raises an exception. """
-    if idx < 0 or idx >= CUDA_GRID_DIMS:
-        raise ValueError(f'idx must be in 0..{CUDA_GRID_DIMS - 1}, got {idx}')
-    return ('x', 'y', 'z')[idx]
 
 
 def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[Tuple[nodes.AccessNode, nodes.Node]]:
@@ -48,3 +39,21 @@ def generate_sync_debug_call() -> str:
     backend: str = common.get_gpu_backend()
     return (f"DACE_GPU_CHECK({backend}GetLastError());\n"
             f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
+
+
+def assigned_stream_expr(node: nodes.Node) -> str:
+    """The expression of the GPU stream the stream pipeline assigned to ``node``.
+
+    :raises ValueError: If the node was never assigned a stream.
+    """
+    if node.gpu_stream_id is None:
+        raise ValueError(f"No GPU stream assigned to node {node}. Check whether the node is relevant for GPU "
+                         "stream assignment and, if it is, why the GPU stream pipeline assigned none.")
+    return common.gpu_stream_expr(node.gpu_stream_id)
+
+
+def num_gpu_streams(sdfg: SDFG) -> int:
+    """The length of the ``gpu_streams`` array: the descriptor, not the largest stream id, which depends on
+    the graph shape and changes when the pipeline is re-applied."""
+    stream_array = get_gpu_stream_array_name()
+    return int(sdfg.arrays[stream_array].shape[0]) if stream_array in sdfg.arrays else 0
