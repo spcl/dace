@@ -438,6 +438,59 @@ def test_an_inner_param_shadowing_a_nested_symbol_is_renamed():
     sdfg.validate()
 
 
+def test_a_transient_local_to_the_inner_body_moves_with_it():
+    """A scalar the inner body allocates for itself crosses no map edge but must still be declared."""
+    sdfg = build_inner_kernel_with_range('0:32')
+    inner = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    inner.add_scalar('tmp', dace.float64, transient=True, storage=dace.dtypes.StorageType.Register)
+    body = inner.start_block
+    write = next(n for n in body.nodes() if isinstance(n, dace.nodes.Tasklet))
+    exit_edge = body.out_edges(write)[0]
+    copy = body.add_tasklet('copy', {'_in': dace.float64}, {'_out': dace.float64}, '_out = _in')
+    tmp = body.add_access('tmp')
+    body.add_edge(write, '_a', tmp, None, dace.Memlet('tmp[0]'))
+    body.add_edge(tmp, None, copy, '_in', dace.Memlet('tmp[0]'))
+    body.add_edge(copy, '_out', exit_edge.dst, exit_edge.dst_conn, exit_edge.data)
+    body.remove_edge(exit_edge)
+    sdfg.validate()
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    holder = next(sub for sub in sdfg.all_sdfgs_recursive() for state in sub.states() for n in state.nodes()
+                  if isinstance(n, dace.nodes.AccessNode) and n.data == 'tmp')
+    assert 'tmp' in holder.arrays and holder.arrays['tmp'].transient
+    sdfg.validate()
+
+
+def test_a_sequential_map_below_the_kernel_is_not_absorbed():
+    """Only ``GPU_Device`` maps are flattened; absorbing a sequential one would parallelize it."""
+    sdfg = build_inner_kernel_with_range('0:32')
+    inner_map = next(n for sub in sdfg.all_sdfgs_recursive() if sub is not sdfg for state in sub.states()
+                     for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    inner_map.map.schedule = dace.dtypes.ScheduleType.Sequential
+
+    assert NestedGPUDeviceMapLowering().apply_pass(sdfg, {}) is None
+    assert kernel_entry(sdfg).map.params == ['__k']
+    assert inner_map.map.schedule == dace.dtypes.ScheduleType.Sequential
+
+
+def test_sibling_bounds_carrying_an_overapproximation_are_unioned():
+    """A ``SymExpr`` bound (main plus overapproximation) must not break the sibling union."""
+    sdfg = build_outer_with_two_sibling_inner_gpu_kernels()
+    first = next(n for sub in sdfg.all_sdfgs_recursive() if sub is not sdfg for state in sub.states()
+                 for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    rng = list(first.map.range)
+    rng[0] = (0, dace.symbolic.SymExpr('J', 'J + 1'), 1)
+    first.map.range = dace.subsets.Range(rng)
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    begin, end, _ = absorbed_range(sdfg, '__j')
+    assert begin == 0
+    assert dace.symbolic.pystr_to_symbolic('J + 1') in (end, getattr(end, 'approx', None)), end
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
