@@ -40,7 +40,7 @@ import signal
 # RECEIVING SIGCHLD and otherwise waits in ``select()`` forever -- a configure that looks stuck but
 # is a lost wakeup. This module drives every case as a subprocess, and srun execs it directly, so
 # module scope is where the unblock has to happen; ``pthread_sigmask`` is per-thread and this runs
-# before any pool exists. Mirrors canon_perf_jobs/corpus_perf_job.py, which hit the same thing.
+# before any pool exists.
 if hasattr(signal, 'pthread_sigmask'):
     signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
 

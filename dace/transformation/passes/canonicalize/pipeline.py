@@ -562,15 +562,14 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 
 
 # Per-target knob presets; explicit knob args to ``canonicalize(..., target=...)`` override them.
-# Per-target asymmetries cite their A/B test in ``tests/ab_perf/``.
 #
 # ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
-#   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win) -- test_for_1133_ab.py.
+#   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win).
 # ``peel_limit``: 4 lifts every peelable TSVC boundary-conflict kernel; higher adds cost only.
 # ``break_anti_dependence``: snapshot-rename read-ahead anti-deps. On ``A[i] = A[i+1] + B[i]``
-#   CPU off wins 1.16x, GPU on wins 82.6x (test_canon_knobs_ab.py). ON for both: the CPU loss is
+#   CPU off wins 1.16x, GPU on wins 82.6x. ON for both: the CPU loss is
 #   the trivial-kernel worst case.
-# ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU (test_scatter_ab.py).
+# ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
 # ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
 #   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
 # ``reconstruct_wavefront_nest``: rebuild seidel_2d's Map+Loop body for ``WavefrontSkew``. Off:

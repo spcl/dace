@@ -127,8 +127,7 @@ def median_report(samples: Dict[str, Dict[str, List[float]]]) -> str:
 
 
 def write_markdown_table(samples: Dict[str, Dict[str, List[float]]], path: str, reps: int) -> None:
-    """Write the median-per-phase comparison as a markdown table, for the SLURM job's
-    saved artifact (see submit_cloudsc_backend.sh / run_cloudsc_backend.sh)."""
+    """Write the median-per-phase comparison as a markdown table."""
     have_rustworkx = 'rustworkx' in samples
     lines = [
         f'# Graph backend benchmark: CloudSC (median over {reps} repetitions)',
