@@ -141,10 +141,11 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
                     continue
                 # The symbol's OWN dtype: the arrays it reads carry it, and every consumer already
                 # reads the symbol at the type it was declared with.
-                sdutil.demote_symbol_to_scalar(sd, name, sd.symbols[name], None)
+                sdutil.demote_symbol_to_scalar(sd, name, sd.symbols[name], None, free_symbols=free_syms)
                 demoted += 1
                 structural_stale = True
-                free_syms = None
+                # ``free_syms`` stays valid: the demoted symbol was defined inside ``sd``, so it was
+                # never free, and replacing its reads by a scalar frees no other candidate.
         return demoted or None
 
     def report(self, pass_retval: int) -> str:

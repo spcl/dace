@@ -219,7 +219,8 @@ class WidenAccesses(ppl.Pass):
                               sub: subsets.Subset,
                               iter_vars: tuple[str, ...],
                               inner_sdfg: SDFG | None = None,
-                              state: SDFGState | None = None) -> subsets.Range | None:
+                              state: SDFGState | None = None,
+                              sym_defs: dict[str, Any] | None = None) -> subsets.Range | None:
         # Widen LINEAR/AFFINE/REPLICATE/MODULAR single-element dims of a subset.
         widths = lane_widths(self.widths, iter_vars)
         K = len(iter_vars)
@@ -233,7 +234,11 @@ class WidenAccesses(ppl.Pass):
         per_dim_kinds = None
         if inner_sdfg is not None:
             try:
-                record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
+                record = classify_tile_access(sub,
+                                              iter_vars=iter_vars,
+                                              inner_sdfg=inner_sdfg,
+                                              state=state,
+                                              sym_defs=sym_defs)
                 per_dim_kinds = record.per_dim_kind
             except Exception:  # noqa: BLE001
                 per_dim_kinds = None
@@ -289,18 +294,22 @@ class WidenAccesses(ppl.Pass):
         return step
 
     def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str, iter_vars: tuple[str, ...]) -> bool:
-        # Widen single-element memlets on edges incident to a non-transient AN.
+        # Widen single-element memlets on edges incident to a non-transient AN. One symbol-definition scan
+        # per body: widening keeps each subset's first element, the only part of a memlet the scan reads.
         changed = False
+        scan_cache: dict[int, Any] = {}
+        state_defs: dict[int, dict[str, Any]] = {}
         for inner_state in inner_sdfg.states():
             for edge in inner_state.edges():
                 if edge.data is None or edge.data.data != name:
                     continue
                 edge_changed = False
-                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg, state=inner_state)
+                defs = _state_defs(inner_sdfg, inner_state, state_defs, scan_cache)
+                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg, inner_state, defs)
                 if new_sub is not None:
                     edge.data.subset = new_sub
                     edge_changed = True
-                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg, state=inner_state)
+                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg, inner_state, defs)
                 if new_other is not None:
                     edge.data.other_subset = new_other
                     edge_changed = True
