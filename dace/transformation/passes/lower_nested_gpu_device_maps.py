@@ -30,6 +30,20 @@ def gpu_device_depth(state: SDFGState, node: nodes.Node) -> int:
     return depth
 
 
+def scan_nested_level(
+        frontier: OrderedSet[nodes.NestedSDFG]) -> Tuple[OrderedSet[InnerMap], OrderedSet[nodes.NestedSDFG]]:
+    """Outermost ``GPU_Device`` maps in the states of ``frontier``, and the NestedSDFGs one level deeper."""
+    found: OrderedSet[InnerMap] = OrderedSet()
+    deeper: OrderedSet[nodes.NestedSDFG] = OrderedSet()
+    for nested_state in (st for nsdfg_node in frontier for st in nsdfg_node.sdfg.all_states()):
+        for node in nested_state.nodes():
+            if is_gpu_device_map(node) and gpu_device_depth(nested_state, node) == 0:
+                found.add((nested_state, node))
+            elif isinstance(node, nodes.NestedSDFG):
+                deeper.add(node)
+    return found, deeper
+
+
 def bound_check(map_entry: nodes.MapEntry) -> str:
     """Condition selecting exactly the iterations ``map_entry``'s range owns, step included."""
     terms = []
@@ -134,24 +148,14 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     def next_level_maps(self, state: SDFGState, gpu_dev_map: nodes.MapEntry) -> OrderedSet[InnerMap]:
         """``GPU_Device`` maps directly in ``gpu_dev_map``'s scope, else in the nearest NestedSDFGs below it."""
         scope = list(state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map)))
-        direct = OrderedSet((state, n) for n in scope if is_gpu_device_map(n))
+        direct = OrderedSet((state, n) for n in scope if is_gpu_device_map(n) and gpu_device_depth(state, n) == 1)
         if direct:
-            return OrderedSet((s, m) for s, m in direct if gpu_device_depth(s, m) == 1)
-
+            return direct
         frontier = OrderedSet(n for n in scope if isinstance(n, nodes.NestedSDFG))
         while frontier:
-            found: OrderedSet[InnerMap] = OrderedSet()
-            deeper: OrderedSet[nodes.NestedSDFG] = OrderedSet()
-            for nsdfg_node in frontier:
-                for nested_state in nsdfg_node.sdfg.all_states():
-                    for node in nested_state.nodes():
-                        if is_gpu_device_map(node):
-                            found.add((nested_state, node))
-                        elif isinstance(node, nodes.NestedSDFG):
-                            deeper.add(node)
+            found, frontier = scan_nested_level(frontier)
             if found:
-                return OrderedSet((s, m) for s, m in found if gpu_device_depth(s, m) == 0)
-            frontier = deeper
+                return found
         return OrderedSet()
 
     def top_level_kernels(self, state: SDFGState) -> List[nodes.MapEntry]:
