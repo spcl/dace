@@ -715,6 +715,10 @@ class EnumProperty(Property):
                 return None
             if isinstance(s, dtype):
                 return s
+            if isinstance(s, dict) and issubclass(dtype, dace.attr_enum.ExtensibleAttributeEnum):
+                # An instance of a template member, stored with its attributes
+                self._undefined_val = None
+                return dtype.from_json(s)
             try:
                 self._undefined_val = None
                 return dtype[s]
@@ -729,10 +733,13 @@ class EnumProperty(Property):
         self._undefined_val = None
 
         def g(obj):
-            if self._undefined_val is None:
-                return dace.serialize.to_json(obj)
-            else:
+            if self._undefined_val is not None:
                 return self._undefined_val
+            if isinstance(obj, dace.attr_enum.ExtensibleAttributeEnum) and obj._is_template:
+                # The property knows its enumeration, so an uninstantiated template is stored as its name, like any
+                # other member (and as before the member became a template)
+                return obj._name_
+            return dace.serialize.to_json(obj)
 
         self._to_json = g
         self._to_string = g

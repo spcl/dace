@@ -213,14 +213,15 @@ def test_persistent_map():
 @pytest.mark.parametrize('step', [1, 2])
 def test_dynamic_map(step: int):
     code = _cuda_code(_spmv(step), dynamic_map_block_size='64,1,1')
-    assert '__shared__ dace::DynamicMap<true, 64, 32, int64_t>::shared_type dace_dyn_map_shared;' in code
+    # The scheduling state (two arrays of 32 * 32 indices per warp) fits in static shared memory
+    assert '__shared__ int64_t __dace_dynmap_state[4096];' in code
     assert 'int64_t __dace_dynmap_begin = 0, __dace_dynmap_end = 0;' in code
     assert 'dace::DynamicMap<true, 64, 32, int64_t>::schedule(' in code
     if step != 1:
         assert re.search(r'int64_t j = \w+ \+ 2 \* j_idx;', code)
 
 
-def test_dynamic_map_default_types_are_unchanged():
+def test_dynamic_map_default_types():
 
     @dace.program
     def spmv32(A_row: dace.uint32[M + 1], A_col: dace.uint32[M], A_val: dace.float32[M], x: dace.float32[M],
@@ -235,16 +236,9 @@ def test_dynamic_map_default_types_are_unchanged():
         if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Sequential:
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
-    assert '__shared__ dace::DynamicMap<true, 128>::shared_type dace_dyn_map_shared;' in code
+    assert '__shared__ int __dace_dynmap_state[8192];' in code
     assert 'unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;' in code
-
-
-def test_dynamic_map_fine_grained_schedule_too_large_for_shared_memory():
-    """With 64-bit indices and 128 threads, the fine-grained schedule would need 64 KiB of static shared memory."""
-    with pytest.warns(UserWarning, match='coarse-grained schedule'):
-        code = _cuda_code(_spmv(), dynamic_map_block_size='128,1,1')
-    assert '__shared__ dace::DynamicMap<false, 128, 32, int64_t>::shared_type dace_dyn_map_shared;' in code
-    assert 'dace::DynamicMap<false, 128, 32, int64_t>::schedule(' in code
+    assert 'dace::DynamicMap<true, 128>::schedule(' in code
 
 
 def test_chiplet_distribution():
@@ -305,7 +299,7 @@ def test_persistent_indices_beyond_32_bits():
 @pytest.mark.gpu
 @pytest.mark.parametrize('fine_grained,block_size', [(True, 64), (True, 128), (False, 128)])
 def test_dynamic_map_with_64bit_row_pointers(fine_grained: bool, block_size: int):
-    """With a block size of 128, the fine-grained schedule does not fit in shared memory and falls back."""
+    """With a block size of 128, the fine-grained scheduling state is placed in dynamic shared memory."""
     rng = np.random.default_rng(42)
     height, width = 256, 256
     row_lengths = rng.integers(0, 257, size=height)
@@ -336,8 +330,7 @@ if __name__ == '__main__':
     test_persistent_map()
     test_dynamic_map(1)
     test_dynamic_map(2)
-    test_dynamic_map_default_types_are_unchanged()
-    test_dynamic_map_fine_grained_schedule_too_large_for_shared_memory()
+    test_dynamic_map_default_types()
     test_chiplet_distribution()
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
