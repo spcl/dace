@@ -10,11 +10,11 @@ from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import GPUStreamSchedulingStrategy
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
+                                                                                 allocate_stream_array,
+                                                                                 wire_stream_connectors)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                persisted_stream_assignments)
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (allocate_stream_array,
-                                                                                   wire_stream_connectors)
 
 
 @transformation.explicit_cf_compatible

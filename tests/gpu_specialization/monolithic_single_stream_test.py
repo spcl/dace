@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Asserts ``MonolithicSingleStreamGPUScheduler`` places every kernel on one stream with syncs only at
+"""Asserts the monolithic mode of ``AutoSingleStreamGPUScheduler`` places every kernel on one stream with syncs only at
 host-transfer boundaries, and rejects CPU-only programs."""
 import dace
 import numpy as np
@@ -7,7 +7,7 @@ import pytest
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import MonolithicSingleStreamGPUScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import AutoSingleStreamGPUScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
 
 N = dace.symbol('N')
@@ -44,7 +44,7 @@ def _build_gpu_sdfg(program, *, monolithic: bool):
     """to_sdfg -> auto_optimize for GPU -> run the requested stream pipeline."""
     sdfg = program.to_sdfg()
     sdfg = auto_optimize(sdfg, dace.dtypes.DeviceType.GPU)
-    strategy = MonolithicSingleStreamGPUScheduler() if monolithic else None
+    strategy = AutoSingleStreamGPUScheduler(monolithic=True) if monolithic else None
     GPUStreamPipeline(scheduling_strategy=strategy).apply_pass(sdfg, {})
     return sdfg
 
@@ -104,5 +104,5 @@ def test_monolithic_strategy_rejects_cpu_only_program():
             C[i] = A[i] + B[i]
 
     sdfg = add_cpu.to_sdfg()  # CPU only, no GPU transformations.
-    with pytest.raises(ValueError, match="MonolithicSingleStreamGPUScheduler requires every"):
-        GPUStreamPipeline(scheduling_strategy=MonolithicSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    with pytest.raises(ValueError, match="monolithic single-stream mode requires every"):
+        GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler(monolithic=True)).apply_pass(sdfg, {})
