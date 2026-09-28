@@ -160,7 +160,7 @@ def test_a_loop_body_sees_the_iterator_and_the_map_parameter():
 def test_a_dynamic_range_binds_its_connector_inside_the_map_only():
     sdfg, state, entry, tasklet = dynamic_map_range()
     result = SymbolScopes().apply_pass(sdfg, {})
-    assert {'i', 'bound'} <= result.defined_at(state, tasklet).keys()
+    assert {'i', 'bound', 'N', 'M'} <= result.defined_at(state, tasklet).keys()
     assert not {'i', 'bound'} & result.defined_at(state, entry).keys(), 'an entry sees only its outer scope'
     assert isinstance(result.defined_at(state, tasklet)['N'], dtypes.typeclass)
 
@@ -207,7 +207,7 @@ def test_a_resolver_tabulates_only_the_states_it_is_asked_about():
 
 
 def test_a_scope_added_after_tabulation_is_still_answered():
-    sdfg, state, _, _ = dynamic_map_range()
+    state = dynamic_map_range()[1]
     sut = SymbolResolver()
     sut.scopes(state)
     entry, exit_node = state.add_map('late', {'k': '0:N'})
@@ -219,7 +219,7 @@ def test_a_scope_added_after_tabulation_is_still_answered():
 
 
 def test_the_answer_is_a_copy_the_caller_may_extend():
-    sdfg, state, _, tasklet = dynamic_map_range()
+    state, tasklet = dynamic_map_range()[1::2]
     sut = SymbolResolver()
     sut.defined_at(state, tasklet)['extra'] = dace.int32
     assert 'extra' not in sut.defined_at(state, tasklet)
