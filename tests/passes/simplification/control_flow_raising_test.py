@@ -389,6 +389,31 @@ def test_an_irreducible_cycle_beside_a_dead_cycle_is_lifted_without_the_dead_blo
     assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
 
 
+@pytest.mark.parametrize('value, expected', [(3.0, 1.0), (1.0, 0.0)])
+def test_a_branch_that_jumps_straight_to_the_merge_keeps_its_assignments(value, expected):
+    sdfg = dace.SDFG('empty_branch_assignment')
+    sdfg.add_array('x', [1], dace.float64)
+    sdfg.add_array('y', [1], dace.float64)
+    sdfg.add_symbol('t', dace.float64)
+    first = sdfg.add_state(is_start_block=True)
+    merge = sdfg.add_state()
+    other = sdfg.add_state()
+    sdfg.add_edge(first, merge, dace.InterstateEdge(condition='x[0] > 2', assignments={'t': '1.0'}))
+    sdfg.add_edge(first, other, dace.InterstateEdge(condition='x[0] <= 2', assignments={'t': '0.0'}))
+    sdfg.add_edge(other, merge, dace.InterstateEdge())
+    write = merge.add_tasklet('write', {}, {'o'}, 'o = t')
+    merge.add_edge(write, 'o', merge.add_write('y'), None, dace.Memlet('y[0]'))
+
+    ControlFlowRaising().apply_pass(sdfg, {})
+
+    conditional = next(b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
+    assignments = [e.data.assignments for _, branch in conditional.branches for e in branch.all_interstate_edges()]
+    assert {'t': '1.0'} in assignments and {'t': '0.0'} in assignments
+    y = np.zeros(1)
+    sdfg(x=np.array([value]), y=y)
+    assert y[0] == expected
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
