@@ -3310,19 +3310,24 @@ def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
     return seeds
 
 
-def connector_neighbors(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
-    """The names ``sd``'s array ``name`` goes by in the enclosing SDFG and in the nested SDFGs it is handed to."""
-    found: List[Tuple[SDFG, str]] = []
+def outer_names(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
+    """The names ``sd``'s array ``name`` goes by in the SDFG enclosing ``sd``."""
     nsdfg_node = sd.parent_nsdfg_node
-    if nsdfg_node is not None:
-        found.extend((sd.parent_sdfg, e.data.data) for e in sd.parent.all_edges(nsdfg_node)
-                     if not e.data.is_empty() and name in (e.dst_conn, e.src_conn))
+    if nsdfg_node is None:
+        return []
+    return [(sd.parent_sdfg, e.data.data) for e in sd.parent.all_edges(nsdfg_node)
+            if not e.data.is_empty() and name in (e.dst_conn, e.src_conn)]
+
+
+def inner_names(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
+    """The names ``sd``'s array ``name`` goes by inside the nested SDFGs it is handed to."""
+    found: List[Tuple[SDFG, str]] = []
     for state in sd.states():
         for nsdfg in (n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)):
-            found.extend((nsdfg.sdfg, e.dst_conn) for e in state.in_edges(nsdfg)
-                         if not e.data.is_empty() and e.data.data == name and e.dst_conn is not None)
-            found.extend((nsdfg.sdfg, e.src_conn) for e in state.out_edges(nsdfg)
-                         if not e.data.is_empty() and e.data.data == name and e.src_conn is not None)
+            for e in state.all_edges(nsdfg):
+                conn = e.dst_conn if e.dst is nsdfg else e.src_conn
+                if not e.data.is_empty() and e.data.data == name and conn is not None:
+                    found.append((nsdfg.sdfg, conn))
     return found
 
 
@@ -3335,7 +3340,7 @@ def propagate_data_across_nested_sdfgs(seeds: List[Tuple[SDFG, str]]) -> Dict[SD
         names = tracked.setdefault(sd, OrderedSet())
         if name not in names:
             names.add(name)
-            worklist.extend(connector_neighbors(sd, name))
+            worklist.extend(outer_names(sd, name) + inner_names(sd, name))
     return tracked
 
 
