@@ -9,16 +9,6 @@ from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 
-# CUDA/HIP launch grids and blocks always have three dimensions (x, y, z).
-CUDA_GRID_DIMS = 3
-
-
-def get_cuda_dim(idx):
-    """ Converts 0 to x, 1 to y, 2 to z, or raises an exception. """
-    if idx < 0 or idx >= CUDA_GRID_DIMS:
-        raise ValueError(f'idx must be in 0..{CUDA_GRID_DIMS - 1}, got {idx}')
-    return ('x', 'y', 'z')[idx]
-
 
 def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[Tuple[nodes.AccessNode, nodes.Node]]:
     """Yield ``(access node, producer)`` per host value ``consumer`` reads that a GPU copy wrote.

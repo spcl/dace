@@ -11,7 +11,7 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
+from dace.codegen.targets.cuda import _named_idx, kernel_launch_qualifiers
 from dace.transformation.dataflow.add_threadblock_map import product
 
 
@@ -33,7 +33,7 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
     for dim in range(dimensions):
         var_name = scope_map.params[-dim - 1]  # reversed
         if dim < 3:
-            expr = f"{axis}.{get_cuda_dim(dim)}"
+            expr = f"{axis}.{_named_idx(dim)}"
             if dim == 2 and dimensions > 3:
                 tail = product(dim_sizes[3:])
                 expr = f"({expr} / ({sym2cpp(tail)}))"
@@ -127,20 +127,10 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
         block_dims = self._current_kernel_spec.block_dims
         node = dfg_scope.source_nodes()[0]
 
-        # Conditionally add __launch_bounds__ for block size optimization.
-        min_warps_per_eu = ''
-        if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
-            min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
-        launch_bounds = ''
-        if node.gpu_launch_bounds != '-1':
-            if node.gpu_launch_bounds == "0":
-                if not any(symbolic.issymbolic(b) for b in block_dims):
-                    launch_bounds = f'__launch_bounds__({product(block_dims)}{min_warps_per_eu})'
-            else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{min_warps_per_eu})'
+        maxnreg, launch_bounds = kernel_launch_qualifiers(node, block_dims)
 
-        callsite_stream.write(f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ', cfg,
-                              state_id, node)
+        callsite_stream.write(f'__global__ void {maxnreg} {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ',
+                              cfg, state_id, node)
 
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
@@ -398,7 +388,7 @@ def flat_thread_index_expr(block_dims) -> str:
         if dim_size == 1:
             continue
         stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
-        terms.append(" * ".join(stride + [f"threadIdx.{get_cuda_dim(i)}"]))
+        terms.append(" * ".join(stride + [f"threadIdx.{_named_idx(i)}"]))
     joined = " + ".join(terms)
     return f"({joined})" if len(terms) > 1 else joined
 
