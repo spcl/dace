@@ -28,6 +28,7 @@ import sympy
 
 import dace
 from dace import properties, symbolic
+from dace.sdfg.state import ControlFlowRegion
 from dace.config import Config
 from dace.dtypes import DeviceType
 from dace.ordered import OrderedSet
@@ -236,7 +237,7 @@ def expand_nested_sdfg_inputs_to_fixpoint(sdfg: dace.SDFG) -> int:
     applied = 0
     resume = 0
     while True:
-        regions = list(sdfg.all_control_flow_regions(recursive=True))
+        regions = control_flow_regions(sdfg)
         match = None
         for region_index in range(resume, len(regions)):
             region = regions[region_index]
@@ -279,6 +280,14 @@ def expand_nested_sdfg_inputs_to_fixpoint(sdfg: dace.SDFG) -> int:
             refused.discard(stale)
 
 
+def control_flow_regions(sdfg: dace.SDFG) -> list[ControlFlowRegion]:
+    """Every control-flow region under ``sdfg`` in preorder. A root SDFG's ``cfg_list`` already holds
+    exactly that list (adding and removing blocks keeps it current), so no walk is needed."""
+    if sdfg.parent_nsdfg_node is None:
+        return list(sdfg.cfg_list)
+    return list(sdfg.all_control_flow_regions(recursive=True))
+
+
 def in_map_body(sdfg: dace.SDFG, cache: dict[dace.SDFG, bool]) -> bool:
     """Whether ``sdfg`` is nested, at any depth, inside a map scope.
 
@@ -317,7 +326,7 @@ def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
     applied = 0
     resume = 0
     while True:
-        regions = list(sdfg.all_control_flow_regions(recursive=True))
+        regions = control_flow_regions(sdfg)
         match = None
         for region_index in range(resume, len(regions)):
             region = regions[region_index]

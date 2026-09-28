@@ -386,8 +386,10 @@ class InsertTileLoadStore(ppl.Pass):
 
     def _stage_reads_in_state(self, inner_state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
                               mask_name: Optional[str]) -> int:
-        # Phase 1: stage every global READ in ``inner_state``.
+        # Phase 1: stage every global READ in ``inner_state``. One symbol-definition map for the phase,
+        # taken before any read is rerouted through a tile.
         staged = 0
+        sym_defs = build_symbol_definition_map(inner_sdfg, inner_state)
         for an in [n for n in inner_state.nodes() if isinstance(n, AccessNode)]:
             desc = inner_sdfg.arrays.get(an.data)
             if desc is None or desc.transient:
@@ -408,7 +410,11 @@ class InsertTileLoadStore(ppl.Pass):
                       if src_data == an.data else an_side_subset(pre_stage_out_edges[0], an, inner_sdfg, inner_state))
             if subset is None:
                 continue
-            record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+            record = classify_tile_access(subset,
+                                          iter_vars=iter_vars,
+                                          inner_sdfg=inner_sdfg,
+                                          state=inner_state,
+                                          sym_defs=sym_defs)
             if not record.per_dim_kind:
                 continue
             refuse_linearized_multi_var_dim(record, an.data, subset, iter_vars)
@@ -558,8 +564,9 @@ class InsertTileLoadStore(ppl.Pass):
 
     def _stage_writes_in_state(self, inner_state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...],
                                mask_name: Optional[str]) -> int:
-        # Phase 2: stage every global WRITE in ``inner_state``.
+        # Phase 2: stage every global WRITE in ``inner_state``, on one symbol-definition map for the phase.
         staged = 0
+        sym_defs = build_symbol_definition_map(inner_sdfg, inner_state)
         for an in [n for n in inner_state.nodes() if isinstance(n, AccessNode)]:
             desc = inner_sdfg.arrays.get(an.data)
             if desc is None or desc.transient:
@@ -588,19 +595,29 @@ class InsertTileLoadStore(ppl.Pass):
             except Exception:  # noqa: BLE001
                 continue
             for w_edges in write_groups.values():
-                staged += self.stage_write_group(inner_state, inner_sdfg, an, w_edges, iter_vars, mask_name)
+                staged += self.stage_write_group(inner_state, inner_sdfg, an, w_edges, iter_vars, mask_name, sym_defs)
         return staged
 
-    def stage_write_group(self, inner_state: SDFGState, inner_sdfg: SDFG, an: AccessNode,
-                          w_edges: List[MultiConnectorEdge], iter_vars: Tuple[str,
-                                                                              ...], mask_name: Optional[str]) -> int:
+    def stage_write_group(self,
+                          inner_state: SDFGState,
+                          inner_sdfg: SDFG,
+                          an: AccessNode,
+                          w_edges: List[MultiConnectorEdge],
+                          iter_vars: Tuple[str, ...],
+                          mask_name: Optional[str],
+                          sym_defs: Optional[Dict[str, Any]] = None) -> int:
         """Stage the writes into ``an`` that share one AN-side subset through one TileStore.
 
+        :param sym_defs: The state's symbol-definition map when the caller already built it.
         :return: 1 if a TileStore was staged, 0 if the group stays a direct write.
         """
         desc = inner_sdfg.arrays[an.data]
         wsubset = an_side_subset(w_edges[0], an, inner_sdfg, inner_state)
-        wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+        wrecord = classify_tile_access(wsubset,
+                                       iter_vars=iter_vars,
+                                       inner_sdfg=inner_sdfg,
+                                       state=inner_state,
+                                       sym_defs=sym_defs)
         if not wrecord.per_dim_kind:
             return 0
         refuse_linearized_multi_var_dim(wrecord, an.data, wsubset, iter_vars)

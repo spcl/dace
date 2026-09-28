@@ -3060,7 +3060,10 @@ def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str, structura
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                             symbol_str: str,
                             default_type: Optional['dace.dtypes.typeclass'] = None,
-                            in_scalar_name: Optional[str] = None) -> None:
+                            in_scalar_name: Optional[str] = None,
+                            free_symbols: Optional[Set[str]] = None) -> None:
+    # ``free_symbols``: ``sdfg.free_symbols`` when the caller already holds it; see
+    # :func:`symbol_demotes_to_transient_scalar`.
     # Avoid import loop: both modules import dace.sdfg.utils at module scope.
     import dace.sdfg.construction_utils as cutil
     import dace.sdfg.tasklet_utils as tutil
@@ -3077,7 +3080,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
 
     # If top-level and in free symbols
     # Or not top-level and in symbol mapping need to make it non transient
-    is_transient = symbol_demotes_to_transient_scalar(sdfg, symbol_str)
+    is_transient = symbol_demotes_to_transient_scalar(sdfg, symbol_str, free_symbols=free_symbols)
 
     if is_transient is False:
         if in_scalar_name is None:
