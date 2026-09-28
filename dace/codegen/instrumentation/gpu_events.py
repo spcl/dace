@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Union
-from dace import config, dtypes, registry
+from typing import Iterable, Optional, Union
+from dace import config, dtypes, registry, subsets
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen import common
@@ -131,7 +131,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                                 'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = self._get_gpu_stream(state, node)
+            stream = gpu_stream_of(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
@@ -141,7 +141,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(cfg, state, entry_node)
-            stream = self._get_gpu_stream(state, node)
+            stream = gpu_stream_of(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(s).__name__, s.label), cfg, state, entry_node), cfg,
                                state_id, node)
@@ -155,7 +155,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = self._get_gpu_stream(state, node)
+            stream = gpu_stream_of(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
@@ -167,54 +167,40 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'e' + self._idstr(cfg, state, node)
-            stream = self._get_gpu_stream(state, node)
+            stream = gpu_stream_of(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(node).__name__, node.label), cfg, state, node), cfg,
                                state_id, node)
 
-    def _get_gpu_stream(self, state: SDFGState, node: nodes.Node) -> int:
-        """
-        Return the GPU stream ID assigned to a given node.
 
-        - In the CUDACodeGen, the stream ID is stored as the private attribute
-          ``_cuda_stream`` on the node.
-        - In the ExperimentalCUDACodeGen, streams are explicitly assigned to tasklets
-          and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For
-          other node types, no reliable stream assignment is available.
+def point_index(subset: subsets.Subset) -> Optional[int]:
+    """The index a one-dimensional single-point subset names (``gpu_streams[i]`` parses to a ``Range``)."""
+    if subset.dims() != 1 or subset.num_elements() != 1:
+        return None
+    return int(subset.min_element()[0])
 
-        :param state: The state containing the node.
-        :param node: The node for which to query the GPU stream.
-        :return: The assigned GPU stream ID, or ``-1`` if none could be determined.
-        """
-        if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
-            return getattr(node, '_cuda_stream', -1)  # Legacy codegen attaches this dynamically
 
-        def _stream_from_in_edges(target: nodes.Node) -> int:
-            for in_edge in state.in_edges(target):
-                src = in_edge.src
-                if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t
-                        and not in_edge.data.is_empty()):
-                    return int(in_edge.data.subset)
-            return -1
+def stream_slot(state: SDFGState, edges: Iterable, far_end: str) -> int:
+    """The ``gpu_streams`` slot the first data edge to/from a stream access node names, else ``-1``."""
+    for edge in edges:
+        other = edge.src if far_end == 'src' else edge.dst
+        if (isinstance(other, nodes.AccessNode) and other.desc(state).dtype == dtypes.gpuStream_t
+                and not edge.data.is_empty() and point_index(edge.data.subset) is not None):
+            return point_index(edge.data.subset)
+    return -1
 
-        stream = _stream_from_in_edges(node)
 
-        # MapExit's out-edge to gpu_streams carries an empty dependency memlet
-        # (see ``stream_lowering_helpers._build_chain``). Resolve via the matching
-        # MapEntry, which has the real ``gpu_streams[i]`` in-edge.
-        if stream == -1 and isinstance(node, nodes.MapExit):
-            entry = state.entry_node(node)
-            if entry is not None:
-                stream = _stream_from_in_edges(entry)
+def gpu_stream_of(state: SDFGState, node: nodes.Node) -> int:
+    """The GPU stream a node runs on, or ``-1`` (recorded on the default stream).
 
-        # Defensive out-edge fallback for non-Exit nodes only (Exit nodes' stream
-        # out-edges are always empty by construction).
-        if stream == -1 and not isinstance(node, nodes.ExitNode):
-            for out_edge in state.out_edges(node):
-                dst = out_edge.dst
-                if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t
-                        and not out_edge.data.is_empty()):
-                    stream = int(out_edge.data.subset)
-                    break
-
-        return stream
+    The legacy codegen stores it as ``_cuda_stream`` on the node; the experimental one wires the node to
+    a ``gpu_streams[i]`` access node. A map exit's stream edge is an empty dependency, so its entry is asked.
+    """
+    if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
+        return getattr(node, '_cuda_stream', -1)  # Legacy codegen attaches this dynamically
+    stream = stream_slot(state, state.in_edges(node), 'src')
+    if stream == -1 and isinstance(node, nodes.MapExit) and state.entry_node(node) is not None:
+        stream = stream_slot(state, state.in_edges(state.entry_node(node)), 'src')
+    if stream == -1 and not isinstance(node, nodes.ExitNode):
+        stream = stream_slot(state, state.out_edges(node), 'dst')
+    return stream
