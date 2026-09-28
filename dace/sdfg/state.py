@@ -1647,7 +1647,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries
         for desc in sdfg.arrays.values():
             for s in desc.free_symbols:
-                symbols.setdefault(str(s), s.dtype)
+                symbols.setdefault(s.name, s.dtype)
 
         return symbols
 
@@ -2075,11 +2075,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if len(inputs) == 0:
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
+        # Every edge below propagates through this one scope: resolve its symbols once
+        symbols = SymbolResolver()
+
         if external_edges:
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2110,7 +2113,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))

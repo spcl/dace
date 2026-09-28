@@ -79,6 +79,15 @@ def test_num_elements():
     assert dace.data.Array(dace.float64, [N, 3]).num_elements() == 3 * N
 
 
+def test_total_size_in_bytes():
+    padded = dace.data.Array(dace.float64, [4, 10], strides=[12, 1], start_offset=3, total_size=63)
+    assert padded.total_size_in_bytes == 63 * 8
+    assert dace.data.Scalar(dace.int32).total_size_in_bytes == 4
+
+    N = dace.symbol('N')
+    assert dace.data.Array(dace.float32, [N, 3]).total_size_in_bytes == 12 * N
+
+
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
@@ -86,3 +95,4 @@ if __name__ == '__main__':
     test_numpy_integral_shape_program()
     test_strides_alignment_symbolic_uses_int_ceil()
     test_num_elements()
+    test_total_size_in_bytes()
