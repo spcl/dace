@@ -75,6 +75,18 @@ def test_tiled_map_keeps_default_type():
     assert len(headers) == 2 and all(h.startswith('for (int ') for h in headers), headers
 
 
+def test_specialized_symbol_bound_keeps_its_type():
+    """Specializing a symbol makes it a constant, which a range bound then names (auto-optimization also drops the
+    symbol itself). After a serialization round trip, the symbol instance in the bound carries the default type, so
+    the constant's declared type has to decide."""
+    sdfg = _map_sdfg('map_param_type_specialized', dace.int64, 0, 'N - 1')
+    sdfg.specialize({'N': 2**33})
+    sdfg.remove_symbol('N')
+    sdfg = dace.SDFG.from_json(sdfg.to_json())
+    headers = _loop_headers(sdfg)
+    assert headers and all(h.startswith('for (int64_t i = 0;') for h in headers), headers
+
+
 def test_dynamic_map_range_declares_connector_type():
     sdfg = dace.SDFG('map_param_type_dynamic_range')
     sdfg.add_array('A', [10], dace.int64)
@@ -185,6 +197,7 @@ if __name__ == '__main__':
     test_negative_start_with_out_of_range_literal_stays_signed()
     test_integer_function_bound_keeps_argument_type()
     test_tiled_map_keeps_default_type()
+    test_specialized_symbol_bound_keeps_its_type()
     test_dynamic_map_range_declares_connector_type()
     test_64bit_iteration_does_not_overflow()
     test_frontend_declares_map_parameter_with_its_range_type()
