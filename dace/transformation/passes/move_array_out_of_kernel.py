@@ -2,7 +2,9 @@
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
 import ast
 import copy
+import logging
 import warnings
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
@@ -11,6 +13,7 @@ from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbo
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import is_devicelevel_gpu, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -18,6 +21,8 @@ from ordered_set import OrderedSet
 
 # Deliberately NOT ``dtypes.GPU_SCHEDULES``: that also includes dynamic/persistent thread-block
 # schedules this pass does not lift.
+logger = logging.getLogger(__name__)
+
 GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock)
 
 #: A map scope together with the state holding it.
@@ -116,6 +121,8 @@ def assigns_symbol(sdfg: SDFG, name: str) -> bool:
 class SubscriptPrefixer(ast.NodeTransformer):
     """Prepend fixed leading index expressions to every subscript of one array name."""
 
+    __slots__ = ('array_name', 'prefix', 'changed')
+
     def __init__(self, array_name: str, prefix: List[str]):
         self.array_name = array_name
         self.prefix = [ast.parse(expr, mode='eval').body for expr in prefix]
@@ -149,6 +156,45 @@ def sdfg_chain(inner: SDFG, outer: SDFG) -> List[SDFG]:
     while chain[-1] is not outer:
         chain.append(chain[-1].parent_sdfg)
     return chain
+
+
+def binding_conflict(hierarchy: List[SDFG], needed: OrderedSet) -> Optional[Tuple[SDFG, str]]:
+    """A nest between the kernel and the owner that means something else by one of ``needed``, if any."""
+    for sdfg in reversed(hierarchy[:-1]):
+        nsdfg_node = sdfg.parent_nsdfg_node
+        defined = sdfg.parent.symbols_defined_at(nsdfg_node)
+        for name in needed:
+            bound = nsdfg_node.symbol_mapping.get(name)
+            if name in defined and ((bound is not None and str(bound) != name) or
+                                    (bound is None and assigns_symbol(sdfg, name))):
+                return sdfg, name
+    return None
+
+
+def bind_symbols(hierarchy: List[SDFG], needed: OrderedSet) -> None:
+    """Bind each of ``needed`` by name into every nest from the kernel's SDFG down to the owner."""
+    for sdfg in reversed(hierarchy[:-1]):
+        nsdfg_node = sdfg.parent_nsdfg_node
+        defined = sdfg.parent.symbols_defined_at(nsdfg_node)
+        # A name missing here is defined further down, by a map inside this SDFG.
+        for name in (n for n in needed if n in defined):
+            if name not in sdfg.symbols:
+                sdfg.add_symbol(name, defined[name])
+            nsdfg_node.symbol_mapping[name] = name
+
+
+@dataclass(slots=True)
+class LiftPlan:
+    """What lifting one transient rewrites, computed before anything changes."""
+    name: str
+    owner: SDFG
+    desc: dt.Array
+    levels: List[Scope]
+    accesses: List[Tuple[nodes.AccessNode, SDFGState]]
+    prefixes: List[Tuple[MultiConnectorEdge, List[Tuple]]]
+    shape_info: Tuple
+    hierarchy: List[SDFG]
+    needed: OrderedSet
 
 
 @properties.make_properties
@@ -185,11 +231,15 @@ class MoveArrayOutOfKernel(ppl.Pass):
         for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(sdfg):
             if is_register_demotable(desc, self.register_demotion_max_elements) and not has_wcr_incoming(sdfg, name):
                 desc.storage = dtypes.StorageType.Register
-            else:
-                warnings.warn(f"Transient array '{name}' with storage type GPU_Global detected inside kernel "
-                              f"{kernel}. GPU_Global memory cannot be allocated within GPU kernels; the array "
-                              f"will be lifted outside the kernel as a non-transient GPU_Global array.")
-                self.move_array(name, owner, kernel, kernel_state)
+                handled += 1
+                continue
+            plan = self.plan_lift(name, owner, kernel_state)
+            if plan is None:
+                continue
+            warnings.warn(f"Transient array '{name}' with storage type GPU_Global detected inside kernel "
+                          f"{kernel}. GPU_Global memory cannot be allocated within GPU kernels; the array "
+                          f"will be lifted outside the kernel as a non-transient GPU_Global array.")
+            self.move_array(plan, kernel, kernel_state)
             handled += 1
         self.fail_on_in_kernel_global_global(sdfg)
         return handled or None
@@ -246,31 +296,43 @@ class MoveArrayOutOfKernel(ppl.Pass):
             raise ValueError("Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" +
                              "\n".join(offenders))
 
-    def move_array(self, name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
-        """Give ``owner``'s transient ``name`` one slice per kernel iteration and allocate it outside the kernel."""
+    def plan_lift(self, name: str, owner: SDFG, kernel_state: SDFGState) -> Optional['LiftPlan']:
+        """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
         accesses = [(node, state) for state in owner.all_states() for node in state.data_nodes() if node.data == name]
         levels = self.slice_levels(name, accesses)
+        prefixes = [(edge, lift_prefix(levels, state, edge.src)) for state in owner.all_states()
+                    for edge in state.edges() if self.touches(edge, name)]
         desc = owner.arrays[name]
-        new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(
-            desc, [entry for entry, _ in reversed(levels)])
-
+        shape_info = self.get_new_shape_info(desc, [entry for entry, _ in reversed(levels)])
+        needed = free_symbol_names(bound for _, prefix in prefixes for rng in prefix for bound in rng)
+        needed |= free_symbol_names(shape_info[0][:len(shape_info[0]) - len(desc.shape)])
         hierarchy = sdfg_chain(owner, kernel_state.sdfg)
-        name = self.free_name(name, hierarchy)
-        needed = self.prefix_accesses(owner, name, levels)
-        needed |= free_symbol_names(new_shape[:len(new_shape) - len(desc.shape)])
-        desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
+        conflict = binding_conflict(hierarchy, needed)
+        if conflict is not None:
+            logger.debug("Not lifting '%s': %s gives '%s' its own meaning", name, conflict[0].name, conflict[1])
+            return None
+        return LiftPlan(name, owner, desc, levels, accesses, prefixes, shape_info, hierarchy, needed)
 
-        if len(hierarchy) == 1:
-            self.carry_out_of_kernel(name, desc, levels, accesses, kernel, kernel_state)
+    def move_array(self, plan: 'LiftPlan', kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
+        """Give the planned transient one slice per kernel iteration and allocate it outside the kernel."""
+        name = self.free_name(plan.name, plan.hierarchy)
+        for edge, prefix in plan.prefixes:
+            self.prefix_memlet(edge, name, prefix)
+        new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
+        plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
+
+        if len(plan.hierarchy) == 1:
+            self.carry_out_of_kernel(name, plan.desc, plan.levels, plan.accesses, kernel, kernel_state)
             return
         # Control flow runs outside the owner's own maps, so only levels above the owner give it an index.
         point = None
-        if all(state.sdfg is not owner for _, state in levels):
-            point = [symbolic.symstr(begin) for begin, _, _ in lift_prefix(levels, accesses[0][1], accesses[0][0])]
-        self.prefix_control_flow(owner, name, point)
-        self.bind_symbols(hierarchy, needed)
-        desc.transient = False
-        self.lift_array_through_nested_sdfgs(name, kernel, hierarchy)
+        if all(state.sdfg is not plan.owner for _, state in plan.levels):
+            node, state = plan.accesses[0]
+            point = [symbolic.symstr(begin) for begin, _, _ in lift_prefix(plan.levels, state, node)]
+        self.prefix_control_flow(plan.owner, name, point)
+        bind_symbols(plan.hierarchy, plan.needed)
+        plan.desc.transient = False
+        self.lift_array_through_nested_sdfgs(name, kernel, plan.hierarchy)
 
     @staticmethod
     def free_name(name: str, hierarchy: List[SDFG]) -> str:
@@ -282,17 +344,6 @@ class MoveArrayOutOfKernel(ppl.Pass):
         new_name = utils.find_new_name(name, taken | OrderedSet(owner.arrays) | OrderedSet(owner.symbols))
         owner.replace(name, new_name)
         return new_name
-
-    def prefix_accesses(self, owner: SDFG, name: str, levels: List[Scope]) -> OrderedSet:
-        """Prefix every memlet of ``name`` in ``owner`` with its slice; returns the symbols the prefixes name."""
-        needed = OrderedSet()
-        for state in owner.all_states():
-            for edge in state.edges():
-                if self.touches(edge, name):
-                    prefix = lift_prefix(levels, state, edge.src)
-                    needed |= free_symbol_names(bound for rng in prefix for bound in rng)
-                    self.prefix_memlet(edge, name, prefix)
-        return needed
 
     @staticmethod
     def touches(edge, name: str) -> bool:
@@ -346,23 +397,6 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 cfg.update_statement = block(cfg.update_statement)
             elif isinstance(cfg, ConditionalBlock):
                 cfg.branches[:] = [(block(cond), branch) for cond, branch in cfg.branches]
-
-    @staticmethod
-    def bind_symbols(hierarchy: List[SDFG], needed: OrderedSet) -> None:
-        """Bind each of ``needed`` by name into every nested SDFG from the kernel's down to the owner."""
-        for sdfg in reversed(hierarchy[:-1]):
-            nsdfg_node = sdfg.parent_nsdfg_node
-            defined = sdfg.parent.symbols_defined_at(nsdfg_node)
-            for name in needed:
-                if name not in defined:
-                    continue  # Defined further down, by a map inside this SDFG.
-                bound = nsdfg_node.symbol_mapping.get(name)
-                if (bound is not None and str(bound) != name) or (bound is None and assigns_symbol(sdfg, name)):
-                    raise NotImplementedError(f"Cannot index the lifted array by '{name}' inside {sdfg.name}, "
-                                              "which gives the name its own meaning")
-                if name not in sdfg.symbols:
-                    sdfg.add_symbol(name, defined[name])
-                nsdfg_node.symbol_mapping[name] = name
 
     def carry_out_of_kernel(self, name: str, desc: dt.Array, levels: List[Scope], accesses: List[Tuple[nodes.AccessNode,
                                                                                                        SDFGState]],

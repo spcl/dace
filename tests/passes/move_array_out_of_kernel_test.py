@@ -2,6 +2,7 @@
 """Tests for :class:`MoveArrayOutOfKernel`."""
 import ast
 import re
+import warnings
 
 import numpy as np
 import pytest
@@ -676,8 +677,8 @@ def test_a_transient_inside_a_loop_of_the_nested_body_is_lifted():
     sdfg.validate()
 
 
-def test_a_nest_giving_the_kernel_parameter_its_own_meaning_is_refused():
-    """Inside a loop over ``w`` the lifted index ``w`` would name the loop counter, not the kernel's slice."""
+def test_a_nest_giving_the_kernel_parameter_its_own_meaning_keeps_its_transient():
+    """Inside a loop over ``w`` the lifted index would name the loop counter, so the transient is left in place."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     loop = LoopRegion('again', 'w < 1', 'w', 'w = 0', 'w = w + 1')
@@ -689,8 +690,16 @@ def test_a_nest_giving_the_kernel_parameter_its_own_meaning_is_refused():
     body.add_node(loop, is_start_block=True)
     sdfg.validate()
 
-    with pytest.raises(NotImplementedError, match="'w'"):
-        lift(sdfg)
+    sut = MoveArrayOutOfKernel()
+    sut.register_demotion_max_elements = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert sut.apply_pass(sdfg, {}) is None
+
+    assert 'tmp' not in sdfg.arrays
+    assert tuple(body.arrays['tmp'].shape) == (NZ, ) and body.arrays['tmp'].transient
+    nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    assert 'tmp' not in nest.out_connectors and 'w' not in nest.symbol_mapping
 
 
 def test_a_transient_shared_by_two_kernels_is_refused():
