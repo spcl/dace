@@ -109,8 +109,6 @@ class PredicateMaskedReduction(ppl.Pass):
                         if match is not None:
                             self._apply_one(sd, block, *match)
                             applied += 1
-        if applied:
-            sdfg.reset_cfg_list()
         return applied or None
 
     def _match(

@@ -372,18 +372,21 @@ def tile_body_nsdfgs(sdfg: dace.SDFG,
 
     A tile-tagged body is the single NestedSDFG of a vectorizable map with at least ``len(widths)``
     params. The ``__scalar_tail`` and ``__tile_k1_tail`` postambles do not run the K-D tile chain
-    and are skipped.
+    and are skipped. Every map is gated on the graph as passed in, before the caller rewrites any
+    body, so all gates share one symbol-definition scan.
 
     :param sdfg: The SDFG to walk, recursively.
     :param widths: Per-dim tile widths, innermost-last.
     """
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                        TILE_K1_TAIL_MARKER)
+    scan_cache: dict[int, Any] = {}
+    selected = []
     for node, parent in sdfg.all_nodes_recursive():
         if not isinstance(node, dace.nodes.MapEntry) or not isinstance(parent, SDFGState):
             continue
         try:
-            if not is_vectorizable_map(parent, node, len(widths)):
+            if not is_vectorizable_map(parent, node, len(widths), scan_cache=scan_cache):
                 continue
         except (StopIteration, ValueError):
             continue
@@ -397,7 +400,8 @@ def tile_body_nsdfgs(sdfg: dace.SDFG,
             continue
         nsdfgs = [n for n in scope_nodes if isinstance(n, dace.nodes.NestedSDFG)]
         if len(nsdfgs) == 1:
-            yield parent, nsdfgs[0], node
+            selected.append((parent, nsdfgs[0], node))
+    yield from selected
 
 
 def is_foreign_language_tasklet(node: dace.nodes.Node) -> bool:

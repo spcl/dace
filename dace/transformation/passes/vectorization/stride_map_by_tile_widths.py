@@ -98,18 +98,17 @@ class StrideMapByTileWidths(ppl.Pass):
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
         rewritten = 0
-        # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
-        # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
-        # rewrite fires, so no candidate is ever gated on a stale scan.
+        # Shared across every map: the gate's whole-SDFG body scan is what makes a per-map selection
+        # loop quadratic, and ``_stride_one`` changes only a map range, which the scan never reads.
         scan_cache: dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
+            if specs is not None and n not in specs:
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: keep step 1
                 continue
-            if specs is not None and n not in specs:
+            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
                 continue
             # ``__tile_k1_tail`` maps = K=1 widths=(1,): stride stays 1 (a per-element single-lane loop).
             if n.map.label.endswith(TILE_K1_TAIL_MARKER):
@@ -120,7 +119,6 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             if self._stride_one(n, map_widths):
                 rewritten += 1
-            scan_cache.clear()  # ``_stride_one`` rewrote the map; every cached body scan is stale
         K = len(self.widths)
         assert_invariant(no_memlet_dim_mismatch(sdfg), "StrideMapByTileWidths",
                          "memlet subset and other_subset have matching dimensionality")

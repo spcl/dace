@@ -160,36 +160,27 @@ class GenerateTileIterationMask(ppl.Pass):
         specs: dict[MapEntry, TileDimSpec] | None = None
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
-        attached = 0
-        # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
-        # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
-        # mask is attached, so no candidate is ever gated on a stale scan.
+        # Select every map first, on the unmutated graph, so all gates share one symbol-definition
+        # scan; masks are attached afterwards.
         scan_cache: dict[int, Any] = {}
-        resolver = scopes.ScopedSymbolResolver()
+        selected: list[tuple[dace.SDFGState, MapEntry, TileDimSpec]] = []
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
-                continue
-            if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
-                continue
-            # ``__tile_k1_tail`` postamble: K=1 widths=(1,), runs element by
-            # element. Every iteration is in bounds by construction -- no mask.
-            if n.map.label.endswith(TILE_K1_TAIL_MARKER):
-                continue
             if specs is not None and n not in specs:
                 continue
-            # The all-main interior region of a ``masked_tail`` split is fully
-            # in bounds on every tiled dim -- skip the mask so the descent / emit
-            # lower it with ``has_mask=False`` (the fast path).
-            if n.map.label.endswith(TILE_MAIN_MARKER):
+            # No mask for the scalar_postamble tail, the ``__tile_k1_tail`` postamble (K=1 widths=(1,),
+            # in bounds element by element) or the all-main interior of a ``masked_tail`` split (in
+            # bounds on every tiled dim, lowered with ``has_mask=False``).
+            if n.map.label.endswith((SCALAR_TAIL_MARKER, TILE_K1_TAIL_MARKER, TILE_MAIN_MARKER)):
                 continue
-            spec = specs[n] if specs is not None and n in specs else self._spec_for(g, n)
-            if spec is None:
+            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
                 continue
-            if self._attach_mask(resolver, g.sdfg, g, n, spec):
-                attached += 1
-            scan_cache.clear()  # ``_attach_mask`` rewrote the body; every cached body scan is stale
+            spec = specs[n] if specs is not None else self._spec_for(g, n)
+            if spec is not None:
+                selected.append((g, n, spec))
+        resolver = scopes.ScopedSymbolResolver()
+        attached = sum(1 for g, n, spec in selected if self._attach_mask(resolver, g.sdfg, g, n, spec))
         assert_invariant(no_memlet_dim_mismatch(sdfg), "GenerateTileIterationMask",
                          "memlet subset and other_subset have matching dimensionality")
         assert_invariant(tile_mask_gen_dominates_consumers(sdfg), "GenerateTileIterationMask",
