@@ -457,39 +457,56 @@ def test_symbol_array_mix_2(parallel):
     assert sdfg.apply_transformations(LoopToMap) == 0
 
 
-_CN = dace.symbol('_CN')
-
-
-@dace.program
-def _carried_symbol_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
-    im = _CN - 1
-    for i in range(_CN):
-        a[i] = b[i] + b[im]
-        im = i
-
-
-@dace.program
-def _peeled_affine_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
-    a[0] = b[0] + b[_CN - 1]  # wrapping first iteration, peeled off
-    for i in range(1, _CN):
-        a[i] = b[i] + b[i - 1]  # induction substituted -> affine
-
-
-def _only_loop(sdfg: dace.SDFG) -> LoopRegion:
+def only_loop(sdfg: dace.SDFG) -> LoopRegion:
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
 
 
-def test_loop2map_rejects_unpeeled_carried_symbol():
-    """``im = N-1; a[i] = b[i] + b[im]; im = i`` (TSVC s291): ``im`` is read before it is
-    reassigned, so it is loop-carried and LoopToMap must refuse."""
-    sdfg = _carried_symbol_loop.to_sdfg(simplify=True)
-    assert not LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
+def test_loop2map_rejects_symbol_read_in_dataflow_before_assignment():
+    """TSVC s291: ``im`` is read in ``b[im]`` before the body reassigns it, so it is loop-carried."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def carried(a: dace.float64[N], b: dace.float64[N]):
+        im = N - 1
+        for i in range(N):
+            a[i] = b[i] + b[im]
+            im = i
+
+    sdfg = carried.to_sdfg(simplify=True)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
 
 
 def test_loop2map_accepts_peeled_affine_form():
     """Peeled and induction-substituted, ``a[i] = b[i] + b[i-1]`` is affine and still accepted."""
-    sdfg = _peeled_affine_loop.to_sdfg(simplify=True)
-    assert LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
+    N = dace.symbol('N')
+
+    @dace.program
+    def peeled(a: dace.float64[N], b: dace.float64[N]):
+        a[0] = b[0] + b[N - 1]
+        for i in range(1, N):
+            a[i] = b[i] + b[i - 1]
+
+    sdfg = peeled.to_sdfg(simplify=True)
+    assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
+
+
+def test_loop2map_accepts_symbol_assigned_on_every_branch_before_read():
+    """``k`` is assigned on both arms before ``b[k]`` reads it, so it is iteration-local."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def both_arms(a: dace.float64[N], b: dace.float64[N], c: dace.int64[N]):
+        for i in range(N):
+            if c[i] > 0:
+                k = i
+            else:
+                k = N - 1 - i
+            a[i] = b[k]
+
+    sdfg = both_arms.to_sdfg(simplify=True)
+    loop = only_loop(sdfg)
+    assert 'k' in {sym for e in loop.all_interstate_edges() for sym in e.data.assignments}
+    assert LoopToMap.can_be_applied_to(sdfg, loop=loop)
 
 
 @pytest.mark.parametrize('overwrite', (False, True))
