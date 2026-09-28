@@ -4,11 +4,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import dtypes, data
+from dace import data, dtypes, subsets, symbolic
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg.state import ControlFlowRegion, ReturnBlock
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.sdfg.utils import get_last_view_node
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace import utils
 
 
@@ -157,6 +158,70 @@ def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:
     return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
 
 
+def host_name(name: str) -> str:
+    """Host twin of ``name``; a ``__return`` twin is a buffer, so it leaves the reserved namespace."""
+    if name.startswith("__return"):
+        return f"buffer__return{name[8:]}_host"
+    return f"{name}_host"
+
+
+def gpu_name(name: str) -> str:
+    """Device twin of ``name``; see :func:`host_name`."""
+    if name.startswith("__return"):
+        return f"buffer__return{name[8:]}_gpu"
+    return f"{name}_gpu"
+
+
+def twin_name(sdfg: SDFG, name: str) -> str:
+    """The name of ``name``'s copy on the side it does not live on."""
+    return host_name(name) if is_array_stored_on_GPU(sdfg, name) else gpu_name(name)
+
+
+def read_anywhere(sdfg: SDFG, name: str) -> bool:
+    """Anything reads ``name``: an access node with an out-edge, or an interstate edge naming it."""
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            if any(node.data == name and state.out_degree(node) > 0 for node in state.data_nodes()):
+                return True
+        if any(name in edge.data.used_arrays(nested.arrays) for edge in nested.all_interstate_edges()):
+            return True
+    return False
+
+
+def written_in_full(sdfg: SDFG, name: str) -> bool:
+    """One write to ``name`` provably touches every element of its descriptor.
+
+    A covering subset is not enough: an indirect write carries the whole array as its subset while
+    its volume counts what it writes, so both must match the descriptor.
+    """
+    desc = sdfg.arrays[name]
+    whole = subsets.Range.from_array(desc)
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            for edge in state.in_edges(node):
+                memlet = edge.data
+                if memlet.is_empty() or memlet.dynamic or memlet.wcr is not None:
+                    continue
+                written = memlet.get_dst_subset(edge, state)
+                if written is not None and written.covers(whole) and symbolic.equal(
+                        memlet.volume, desc.total_size, is_length=False):
+                    return True
+    return False
+
+
+def overwritten_before_any_read(sdfg: SDFG) -> OrderedSet[str]:
+    """Host-resident signature arrays nothing reads and one write covers: staging them down is dead work."""
+    dead: OrderedSet[str] = OrderedSet()
+    for name, desc in sdfg.arrays.items():
+        if desc.transient or not is_array(name, sdfg) or is_array_stored_on_GPU(sdfg, name):
+            continue
+        if not read_anywhere(sdfg, name) and written_in_full(sdfg, name):
+            dead.add(name)
+    return dead
+
+
 def containers_written(sdfg: SDFG) -> OrderedSet:
     """Every container this SDFG writes, read off the graph rather than off the placement IR.
 
@@ -219,6 +284,56 @@ def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes
     return None
 
 
+def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
+    """Every descriptor a GPU-scheduled scope writes whose value has to outlive that scope.
+
+    Either through the scope's exit, or by an access node inside a kernel that is also accessed
+    outside it or under another kernel: a size-1 wrapper can pull a tasklet and the node it writes
+    into one kernel, leaving nothing at the exit.
+    """
+    through_the_exit: OrderedSet[str] = OrderedSet()
+    written_inside: OrderedSet[str] = OrderedSet()
+    kernels_per_data: Dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
+    for state in sdfg.states():
+        scopes = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and has_GPU_schedule(node):
+                through_the_exit |= get_data_used_by_outgoing_access_nodes(sdfg,
+                                                                           state,
+                                                                           node,
+                                                                           include_scalars=True,
+                                                                           ordering=False,
+                                                                           through_copies=False)
+            if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
+                continue
+            kernel = enclosing_kernel(scopes, node)
+            kernels_per_data.setdefault(node.data, OrderedSet()).add(kernel)
+            if kernel is not None and state.in_degree(node) > 0:
+                written_inside.add(node.data)
+    return through_the_exit | OrderedSet(name for name in written_inside if len(kernels_per_data[name]) > 1)
+
+
+def device_resident(sdfg: SDFG) -> OrderedSet[str]:
+    """Every container left in a GPU storage, qualified by the id of the SDFG that holds it."""
+    placed: OrderedSet[str] = OrderedSet()
+    for nested in sdfg.all_sdfgs_recursive():
+        for name, desc in nested.arrays.items():
+            if desc.storage in GPU_RESIDENT_STORAGES:
+                placed.add(f'{nested.cfg_id}.{name}')
+    return placed
+
+
+def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
+    """Raise if a Scalar a kernel writes would reach that kernel by value, which discards the write."""
+    offenders = [
+        name for name in data_written_by_device_code(sdfg)
+        if is_scalar(name, sdfg) and sdfg.arrays[name].storage != dtypes.StorageType.GPU_Global
+    ]
+    if offenders:
+        raise ValueError(f'device code writes {offenders}, still Scalars in host storage; a kernel takes those '
+                         'by value, so the write would be lost')
+
+
 def register_kernel_local_transients(sdfg: SDFG) -> None:
     """Storage for a transient every access of which is inside one kernel: a register.
 
@@ -230,8 +345,6 @@ def register_kernel_local_transients(sdfg: SDFG) -> None:
     it trips the code generator's own consistency check, which fires as a bare AssertionError naming
     nothing. The transformation this pass replaced made the same descriptors registers.
     """
-    from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-
     for nested in sdfg.all_sdfgs_recursive():
         local: OrderedSet = OrderedSet()
         escapes: OrderedSet = OrderedSet()
@@ -395,7 +508,14 @@ def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
 def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
                                            state: SDFGState,
                                            node: nodes.Node,
-                                           include_scalars: bool = False) -> OrderedSet[str]:
+                                           include_scalars: bool = False,
+                                           ordering: bool = True,
+                                           through_copies: bool = True) -> OrderedSet[str]:
+    """Data of the access nodes downstream of ``node``.
+
+    Placement follows empty memlets (``ordering``) and container-to-container copies
+    (``through_copies``); a write analysis must not, since neither is a write by ``node``.
+    """
 
     def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet:
         if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
@@ -421,10 +541,13 @@ def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
             elif include_scalars and is_scalar(data_name, sdfg):
                 arrays.add(data_name)
 
+            if not through_copies and not is_view(data_name, sdfg):
+                return arrays
+
         # check if more access nodes DOWNstream
-        for n in get_children(state, node):
-            if isinstance(n, nodes.AccessNode):
-                arrays |= recursion(n, visited_set)
+        for edge in state.out_edges(node):
+            if isinstance(edge.dst, nodes.AccessNode) and (ordering or not edge.data.is_empty()):
+                arrays |= recursion(edge.dst, visited_set)
 
         return arrays
 

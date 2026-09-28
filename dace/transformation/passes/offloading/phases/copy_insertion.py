@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from ordered_set import OrderedSet
 
@@ -28,13 +28,21 @@ class CopyInsertionPhase():
         # Both read before the phase rewrites anything: renaming moves the writes onto the staged
         # twins, and the transient correction below rewrites the very storage that says where a
         # container's home is.
-        self.written = helpers.containers_written(sdfg)
-        self.home_on_gpu = OrderedSet(name for name in sdfg.arrays if helpers.is_array_stored_on_GPU(sdfg, name))
+        self.no_copy_in_needed = helpers.overwritten_before_any_read(sdfg)
+        # Directions each container is already copied in at one program point, keyed (block, side).
+        self.placed: Dict[Tuple[ControlFlowBlock, str], Dict[str, OrderedSet[bool]]] = {}
+        # Fills of containers neither side writes, by direction: placed once, at the program's entry.
+        self.entry_fills: Dict[bool, OrderedSet[str]] = {True: OrderedSet(), False: OrderedSet()}
 
         self.correct_transient_storage_locations(sdfg, IR)
         self.correct_view_storage_locations(sdfg)
         self.insert_copy_names_in_SDFG(sdfg, IR)
+        # After renaming: a write on the side a container does not live on now names its twin.
+        self.written = helpers.containers_written(sdfg)
         self.eval_IR(sdfg, IR)
+        for to_gpu, names in self.entry_fills.items():
+            if names:
+                self.create_interstate_copy(sdfg, None, sdfg.start_block, names, to_gpu=to_gpu)
         # Last: only now does every container carry the storage the placement gave it, so only now
         # can an alias be pointed at the same side as the container it aliases.
         self.match_view_storage_to_origin(sdfg)
@@ -122,37 +130,18 @@ class CopyInsertionPhase():
     ### A -> A_gpu or A -> A_host ###
     #################################
 
-    ### Renaming Conventions ###
-    def _get_host_name(self, name: str) -> str:
-        if name.startswith("__return"):
-            return f"buffer__return{name[8:]}_host"
-        return f"{name}_host"
-
-    def _get_gpu_name(self, name: str) -> str:
-        # startswith, not equality: a program returning several values names them __return_0,
-        # __return_1, ... and "<name>_gpu" still STARTS with __return, which the runtime refuses as a
-        # transient ('Used the special array name "__return_0_gpu" as transient'). The buffer_ prefix
-        # is what moves the twin out of the reserved namespace, so it has to cover every __return.
-        if name.startswith("__return"):
-            return f"buffer__return{name[8:]}_gpu"
-        return f"{name}_gpu"
-
-    ###
-
     def insert_copy_names_in_SDFG(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         # make a rename dict for each IR node, then rename all such arrays in the IR.block
         def _insert_copy_names_in_node(node: OffloadingIRNode):
             rename_dict = {}
+            # By side, not by one storage name: after a CPU auto_optimize a host array is CPU_Heap.
             for name in node.gpu_set:
-                assert name in sdfg.arrays
-                if sdfg.arrays[name].storage == dtypes.StorageType.Default:  # starts on CPU, but this access is on GPU
-                    rename_dict[name] = self._get_gpu_name(name)
+                if not helpers.is_array_stored_on_GPU(sdfg, name):  # starts on CPU, but this access is on GPU
+                    rename_dict[name] = helpers.gpu_name(name)
 
             for name in node.cpu_set:
-                assert name in sdfg.arrays
-                if sdfg.arrays[
-                        name].storage == dtypes.StorageType.GPU_Global:  # starts on GPU, but this access is on CPU
-                    rename_dict[name] = self._get_host_name(name)
+                if helpers.is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
+                    rename_dict[name] = helpers.host_name(name)
 
             self.insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
 
@@ -186,8 +175,8 @@ class CopyInsertionPhase():
             # the copy insertion itself, so there is nothing to look up yet. The storage set here is
             # a starting value in any case -- ``match_view_storage_to_origin`` reads it back off the
             # container once every placement is final.
-            to_gpu = rename_dict[origin] == self._get_gpu_name(origin)
-            twin = self._get_gpu_name(name) if to_gpu else self._get_host_name(name)
+            to_gpu = rename_dict[origin] == helpers.gpu_name(origin)
+            twin = helpers.gpu_name(name) if to_gpu else helpers.host_name(name)
             if twin not in sdfg.arrays:
                 desc = sdfg.arrays[name]
                 sdfg.add_view(twin,
@@ -261,8 +250,8 @@ class CopyInsertionPhase():
                 -> copies are handled later, hence here the arrays are renamed iff they begin on GPU
                 """
                 for name in relevant_edge_arrays:
-                    if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global:
-                        edge.data.replace(name, self._get_host_name(name))
+                    if helpers.is_array_stored_on_GPU(sdfg, name):
+                        edge.data.replace(name, helpers.host_name(name))
 
         # An EDGE node decides for its edges only, not for the block they reach.
         if interstate_only:
@@ -299,10 +288,7 @@ class CopyInsertionPhase():
                         print(f"Phase 6: LOOP GPU copy for {gpu_copies} at end of interation of loop {node.debug_name}")
 
                     for tail in tails:
-                        if tail.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
-                        else:
-                            self.create_interstate_copy(sdfg, tail.block, None, gpu_copies, to_gpu=True)
+                        self.place_copy(sdfg, self.block_after(tail), None, gpu_copies, to_gpu=True)
 
                 cpu_copies = bottom.gpu_set & top.cpu_set
                 if cpu_copies:
@@ -310,10 +296,7 @@ class CopyInsertionPhase():
                         print(f"Phase 6: LOOP CPU copy for {cpu_copies} at end of iteration of loop {node.debug_name}")
 
                     for tail in tails:
-                        if tail.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
-                        else:
-                            self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
+                        self.place_copy(sdfg, self.block_after(tail), None, cpu_copies, to_gpu=False)
 
                 # copies added at end of loop state, within loop -> modify IR of LOOP_CLOSE to represent that
                 node.gpu_set = (node.gpu_set | gpu_copies) - cpu_copies
@@ -326,12 +309,10 @@ class CopyInsertionPhase():
                         f"This pass does not support copies within a single state. State {node.debug_name} uses arrays {node.cpu_set & node.gpu_set} on both cpu and gpu."
                     )
 
-                # edge case: if this condition is true, both blocks are None, can't insert
-                if node.type == OffloadingIRNode.CLOSE and next.type == OffloadingIRNode.CLOSE:
-                    self.insert_copies(sdfg, node, next, node.open.block, None)
-
-                elif next.type == OffloadingIRNode.EDGE:  # then I want the copy AFTER the node, not before
-                    self.insert_copies(sdfg, node, next, node.block, None)
+                # Before an interstate edge, or between two CLOSEs, there is no next block: copy after the node.
+                if next.type == OffloadingIRNode.EDGE or (node.type == OffloadingIRNode.CLOSE
+                                                          and next.type == OffloadingIRNode.CLOSE):
+                    self.insert_copies(sdfg, node, next, self.block_after(node), None)
 
                 else:  # the usual: copies between node -> next
                     self.insert_copies(sdfg, node, next, node.block, next.block)
@@ -342,27 +323,50 @@ class CopyInsertionPhase():
     ### Insert New Copy States into SDFG ###
     ########################################
 
+    def block_after(self, node: OffloadingIRNode) -> ControlFlowBlock:
+        """The block a copy after ``node`` follows: a CLOSE node has none, so the region it closes."""
+        return node.open.block if node.type == OffloadingIRNode.CLOSE else node.block
+
     def insert_copies(self, sdfg: SDFG, node: OffloadingIRNode, next: OffloadingIRNode, node_block: ControlFlowBlock,
                       next_block: ControlFlowBlock) -> None:
-        gpu_copies = node.cpu_set & next.gpu_set
+        gpu_copies = OrderedSet(name for name in node.cpu_set & next.gpu_set if name not in self.no_copy_in_needed)
         if gpu_copies:
             if self.verbose:
                 print(f"Phase 6: GPU copy for {gpu_copies} between {node.debug_name} and {next.debug_name}")
-            self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
+            self.place_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
 
         cpu_copies = node.gpu_set & next.cpu_set
         if cpu_copies:
             if self.verbose:
                 print(f"Phase 6: CPU copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
-            self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
+            self.place_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
+
+    def place_copy(self, sdfg: SDFG, before: Optional[ControlFlowBlock], after: Optional[ControlFlowBlock],
+                   array_names: OrderedSet, to_gpu: bool) -> None:
+        """Copy ``array_names`` between ``before`` and ``after``, once per program point and direction.
+
+        A copy toward a container's home only carries writes of its twin, so it is dropped when nothing
+        writes the twin. A container neither side writes keeps its entry value, so its twin is filled
+        once at the program's entry instead of wherever the IR moves it.
+        """
+        array_names = OrderedSet(
+            name for name in array_names
+            if helpers.is_array_stored_on_GPU(sdfg, name) != to_gpu or helpers.twin_name(sdfg, name) in self.written)
+        constant = OrderedSet(name for name in array_names
+                              if name not in self.written and helpers.twin_name(sdfg, name) not in self.written)
+        self.entry_fills[to_gpu] |= constant
+        point = (after, 'before') if after is not None else (before, 'after')
+        directions = self.placed.setdefault(point, {})
+        fresh = OrderedSet(name for name in array_names
+                           if name not in constant and directions.get(name) != OrderedSet([to_gpu]))
+        for name in fresh:
+            directions.setdefault(name, OrderedSet()).add(to_gpu)
+        if fresh:
+            self.create_interstate_copy(sdfg, before, after, fresh, to_gpu=to_gpu)
 
     def create_interstate_copy(self, sdfg: SDFG, state1: ControlFlowBlock, state2: ControlFlowBlock,
                                array_names: OrderedSet, to_gpu: bool) -> None:
         assert state1 is not None or state2 is not None, "invalid: both states are None"
-
-        array_names = OrderedSet(name for name in array_names if not self.copy_is_redundant(name, to_gpu))
-        if not array_names:
-            return
 
         # 1) insert new state
         copy_state: SDFGState
@@ -392,17 +396,17 @@ class CopyInsertionPhase():
 
             if helpers.is_array_stored_on_GPU(sdfg, name):  # original array is on GPU
                 if not to_gpu:  # copy goes to CPU: A -> A_host
-                    copy_map[name] = self._get_host_name(name)
+                    copy_map[name] = helpers.host_name(name)
 
                 else:  # copy goes to GPU: A_host -> A
-                    copy_map[self._get_host_name(name)] = name
+                    copy_map[helpers.host_name(name)] = name
 
             else:  # original array is on CPU
                 if to_gpu:  # copy goes to GPU: A -> A_gpu
-                    copy_map[name] = self._get_gpu_name(name)
+                    copy_map[name] = helpers.gpu_name(name)
 
                 else:  # copy goes to CPU: A_gpu -> A
-                    copy_map[self._get_gpu_name(name)] = name
+                    copy_map[helpers.gpu_name(name)] = name
 
         # 3) build all the copies inside the new state
         for old_name, new_name in copy_map.items():
@@ -414,7 +418,11 @@ class CopyInsertionPhase():
                     sdfg, old_name, new_name
                 )  # in some cases, e.g. loops, a copy-from can be registered before its copy-to, leading to an unknown "old_name"
 
-            # b) add (Access Node -> Access Node) to state
+            # b) a view has no storage: each side re-derives it from its container, whose copy is here
+            if helpers.is_view(old_name, sdfg) or helpers.is_view(new_name, sdfg):
+                continue
+
+            # c) add (Access Node -> Access Node) to state
             copy_in = copy_state.add_access(old_name)
             copy_out = copy_state.add_access(new_name)
 
@@ -430,23 +438,6 @@ class CopyInsertionPhase():
             )
 
             copy_state.add_edge(copy_in, None, copy_out, None, copy_memlet)
-
-    def copy_is_redundant(self, name: str, to_gpu: bool) -> bool:
-        """A copy back into the container's own home carries nothing new when nothing wrote it.
-
-        The container never moves -- the placement stages a twin on the other side and points the
-        accesses there -- so the home copy is only stale once something has written the twin. For a
-        container the SDFG never writes it never goes stale, and restoring it copies bytes that are
-        already in place. Not merely wasted: the copy WRITES the container, which validation refuses
-        as soon as this SDFG is nested and the container reaches it through an input connector only
-        ("Data descriptor A is written to, but only given to nested SDFG as an input connector"),
-        the graph ``GPUTransformMap`` builds around a map that reads one array and writes another.
-
-        Only the direction that restores the home is dropped. Filling the twin is what makes the
-        other side readable at all, so it stands whether or not anything writes it.
-        """
-        restores_the_home = (name in self.home_on_gpu) == to_gpu
-        return restores_the_home and name not in self.written
 
     def _register_new_copy_transient(self, sdfg: SDFG, unknown_name: str, known_name: str):
         assert known_name in sdfg.arrays

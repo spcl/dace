@@ -5,7 +5,7 @@ from ordered_set import OrderedSet
 from dace import dtypes
 from typing import Optional
 
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
@@ -28,7 +28,7 @@ class SingleElementValuePhase():
         all_len1arrays: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
                                                      if helpers.is_length1_array(data_name, sdfg))
 
-        gpu_written = self.get_gpu_written_data(sdfg)
+        gpu_written = helpers.data_written_by_device_code(sdfg)
 
         to_len1_arrays = all_scalars & gpu_written - self.exceptions  # don't apply double - shouldn't be an issue for arrays
         to_scalars = all_len1arrays - gpu_written - self.exceptions  # but is an issue for non-transient scalars, because they add a copy state that still has the original
@@ -56,15 +56,3 @@ class SingleElementValuePhase():
             ).apply_pass(sdfg, {})
 
         return to_scalars | to_len1_arrays
-
-    def get_gpu_written_data(self, sdfg: SDFG) -> OrderedSet:
-        gpu_written = OrderedSet()
-        for state in sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and helpers.has_GPU_schedule(node):
-                    gpu_written |= helpers.get_data_used_by_outgoing_access_nodes(sdfg,
-                                                                                  state,
-                                                                                  node,
-                                                                                  include_scalars=True)
-
-        return gpu_written

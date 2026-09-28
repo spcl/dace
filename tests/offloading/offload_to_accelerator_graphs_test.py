@@ -14,9 +14,7 @@ from dace.transformation.passes.offloading import offloading_helpers as helpers
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
-# ============================================================================
 # SDFGs for Tests
-# ============================================================================
 
 
 def scalar_to_gpu_sdfg():
@@ -373,9 +371,7 @@ def single_element_copy_sdfg():
     return sdfg
 
 
-# ============================================================================
 # OFFLOADING TESTS
-# ============================================================================
 
 
 # helper
@@ -677,11 +673,12 @@ def test_single_element_copy():
     )
 
 
-def device_map_state_sdfg(host_writer_between: bool) -> dace.SDFG:
+def device_map_state_sdfg(host_writer_between: bool, reads_b: bool = False) -> dace.SDFG:
     """Two device states, and ``B`` first touched on the device in the second of them.
 
     With ``host_writer_between`` a host state writing ``B`` sits between the two, which is what
-    pins ``B``'s copy to that point instead of letting it move up.
+    pins ``B``'s copy to that point instead of letting it move up. With ``reads_b`` the second map
+    also reads ``B``, so its entry value is observed and has to be staged down.
     """
     sdfg = dace.SDFG("device_map_states_" + ("pinned" if host_writer_between else "free"))
     sdfg.add_array("A", [20], dace.float64)
@@ -704,8 +701,11 @@ def device_map_state_sdfg(host_writer_between: bool) -> dace.SDFG:
     second = sdfg.add_state("fill_b")
     sdfg.add_edge(previous, second, dace.InterstateEdge())
     entry, exit_ = second.add_map("fill", dict(i="0:20"))
-    fill = second.add_tasklet("fill", {"x"}, {"y"}, "y = x + 1.0")
+    fill = second.add_tasklet("fill", {"x", "b"} if reads_b else {"x"}, {"y"},
+                              "y = x + b" if reads_b else "y = x + 1.0")
     second.add_memlet_path(second.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    if reads_b:
+        second.add_memlet_path(second.add_read("B"), entry, fill, dst_conn="b", memlet=dace.Memlet("B[i]"))
     second.add_memlet_path(fill, exit_, second.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
 
     sdfg.fill_scope_connectors()
@@ -734,7 +734,7 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
     device is placed between them -- a host state in the middle of a run of kernels, which is
     exactly what a caller fusing that run into one persistent kernel cannot swallow.
     """
-    sdfg = device_map_state_sdfg(host_writer_between=False)
+    sdfg = device_map_state_sdfg(host_writer_between=False, reads_b=True)
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     order = states_in_execution_order(sdfg)
@@ -744,6 +744,21 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
                                    1)), (f"a host state sits between two device states: {[s.label for s in order]}")
     assert writes_container(order[device_at[0] - 1],
                             "B_gpu"), (f"B's copy did not move above the device states: {[s.label for s in order]}")
+
+
+def test_an_array_the_device_overwrites_is_not_staged_down():
+    """Here the second map writes ALL of ``B`` and nothing reads it first, so there is no stage-down to
+    place at all, and in particular none between the two device states."""
+    sdfg = device_map_state_sdfg(host_writer_between=False)
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
+
+    order = states_in_execution_order(sdfg)
+    device_at = [index for index, state in enumerate(order) if holds_device_map(state)]
+    assert len(device_at) == 2, f"expected both maps on the device, got {[s.label for s in order]}"
+    staged = [index for index, state in enumerate(order) if writes_container(state, "B_gpu")]
+    assert all(
+        index in device_at
+        for index in staged), (f"B was staged down although the device writes all of it: {[s.label for s in order]}")
 
 
 def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():

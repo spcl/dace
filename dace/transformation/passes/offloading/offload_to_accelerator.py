@@ -14,7 +14,8 @@ from dace.transformation.passes.offloading.phases.single_element_values import S
 from dace.transformation.passes.offloading.phases.single_iteration_maps import SingleIterationMapPhase
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertionPhase
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import SingleElementCopyOptimization
-from dace.transformation.passes.offloading.offloading_helpers import (get_sdfg_scope_dict,
+from dace.transformation.passes.offloading.offloading_helpers import (device_resident, get_sdfg_scope_dict,
+                                                                      refuse_by_value_scalars_the_device_writes,
                                                                       register_kernel_local_transients,
                                                                       remove_empty_return_entries,
                                                                       separate_early_returns)
@@ -145,3 +146,7 @@ class OffloadToAccelerator(ppl.Pass):
         # A transient only device code touches is a register, not a host allocation the dispatcher
         # would have to answer with an illegal copy.
         register_kernel_local_transients(sdfg)
+        # A kernel writing a by-value scalar loses the write silently, so the placement is checked.
+        refuse_by_value_scalars_the_device_writes(sdfg)
+        # A Pipeline reads the result as "did anything change": nothing on the device is None.
+        return device_resident(sdfg) or None

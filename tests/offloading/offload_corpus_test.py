@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The GPU pipeline over the npbench kernels, as far as a box without a GPU can take it.
 
-``offload_to_accelerator_test.py`` and ``host_maps_test.py`` pin the pass's rules on graphs built to
+``offload_to_accelerator_graphs_test.py`` and ``host_maps_test.py`` pin the pass's rules on graphs built to
 show one rule each. This file asks the other question -- whether those rules hold on kernels nobody
 wrote them for.
 
