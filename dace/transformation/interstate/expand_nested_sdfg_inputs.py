@@ -67,7 +67,7 @@ def _rewrite_scalar_reads_in_tasklets(inner_sdfg: SDFG, inner_name: str, outer_n
         for tnode in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
             if tnode.language != dtypes.Language.Python:
                 # The code below is parsed as PYTHON. A C++ tasklet is not, and the scatter guard's
-                # trap (``if (sym > 0) { std::abort(); }``) raises SyntaxError here rather than
+                # C++ tasklet (e.g. the tile vectorizer's remainder guard) raises SyntaxError here rather than
                 # being skipped. Nothing to rewrite either way: a non-Python tasklet reads its
                 # symbols directly, not through this connector-folding path.
                 continue

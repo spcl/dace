@@ -1318,7 +1318,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'ipow', 'fma', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
-    'AND', 'OR', 'pow', 'round', 'ITE', 'merge', 'int32', 'int64', 'float32', 'float64', 'conj'
+    'AND', 'OR', 'pow', 'round', 'ITE', 'merge', 'int32', 'int64', 'float32', 'float64', 'conj', 'abort'
 }
 
 
@@ -2354,6 +2354,14 @@ class ROUND(DaceFunction):
         return True
 
 
+class abort(DaceFunction):
+    """Terminate the program: ``std::abort()`` in C and C++, a raised exception in Python.
+
+    Opaque on purpose, so no simplification folds it away: a guard ``if cond: abort()`` keeps its
+    call wherever the condition may hold."""
+    nargs = 0
+
+
 class Is(DaceFunction):
     pass
 
@@ -3107,6 +3115,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.IsNot: IsNot,
     }
     _functions = {
+        'abort': abort,
         'abs': sympy.Abs,
         'Abs': sympy.Abs,
         'min': sympy.Min,
@@ -3494,6 +3503,7 @@ def _rewrite_typed_complex(m: re.Match) -> str:
 
 
 _PYSTR2SYM_locals = {
+    'abort': abort,
     'abs': sympy.Abs,
     'min': sympy.Min,
     'max': sympy.Max,

@@ -22,7 +22,7 @@ def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
     """Whether ``node``'s body is a Python expression, i.e. whether parsing it is even defined.
 
     Every pass that reads ``code.as_string`` as an expression raises on a non-Python body rather
-    than declining. The scatter guard's trap (``if (sym > 0) {{ std::abort(); }}``) is the one that
+    than declining. The tile remainder guard (a C++ ``abort()`` tasklet) is the one that
     reaches the vectorizer.
     """
     return node.language == dace.dtypes.Language.Python

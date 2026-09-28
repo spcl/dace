@@ -587,8 +587,7 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
 
     has_check = _count_guard_nodes(sdfg) >= 1
     has_trap = any(
-        isinstance(n, nodes.Tasklet) and 'std::abort' in n.code.as_string for st in sdfg.all_states()
-        for n in st.nodes())
+        isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string for st in sdfg.all_states() for n in st.nodes())
     maps = sum(1 for st in sdfg.all_states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
     assert maps >= 1, 'the scatter must parallelize into a Map'

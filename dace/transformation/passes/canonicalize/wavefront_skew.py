@@ -71,6 +71,7 @@ from typing import Dict, List, Optional, Tuple
 import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -1700,7 +1701,7 @@ class WavefrontSkew(ppl.Pass):
                 node.specialization_hint = hint
 
     def _emit_positive_guard(self, outer: LoopRegion, deps: List[Dependence], guard_syms: List[object]) -> None:
-        """Plant a ``std::abort`` before ``outer`` that fires if any distance
+        """Plant an ``abort()`` guard before ``outer`` that fires if any distance
         component carrying an unannotated symbol is positive at runtime (soundness
         needs it ``<= 0``). Mirrors ``BreakAntiDependence``'s positive guard."""
         gset = dict.fromkeys(s.name for s in guard_syms)
@@ -1717,19 +1718,13 @@ class WavefrontSkew(ppl.Pass):
                         exprs.append(cs)
         if not exprs:
             return
-        parts = ' || '.join(f'(({symbolic.symstr(e)}) > 0)' for e in exprs)
+        parts = ' or '.join(f'(({symbolic.symstr(e)}) > 0)' for e in exprs)
         # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the guard
         # state and tasklet got a different label on every run of the SAME input -- different emitted C
         # symbols and a different build hash. crc32 is a stable digest of the same text.
         tag = zlib.crc32(parts.encode()) & 0xfffffff
-        code = f'if ({parts}) {{ std::abort(); }}'
         pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
-        guard = pre.add_tasklet(name=f'_skew_guard_{tag:x}',
-                                inputs={},
-                                outputs={},
-                                code=code,
-                                language=dace.dtypes.Language.CPP)
-        guard.side_effects = True
+        tutil.add_abort_guard(pre, f'_skew_guard_{tag:x}', parts)
 
 
 def bound_expr(terms: List[object], subs: Dict[str, object], fn: str) -> str:

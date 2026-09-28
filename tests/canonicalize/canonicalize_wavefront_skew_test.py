@@ -174,7 +174,8 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
         n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_skew_guard_')
     ]
     assert len(guards) == 1
-    assert 'std::abort' in guards[0].code.as_string
+    assert guards[0].language == dace.dtypes.Language.Python
+    assert 'abort()' in guards[0].code.as_string
 
     # Runtime check: a positive ``sym_unannot`` value passes the guard and
     # the result matches the un-skewed sequential oracle.
