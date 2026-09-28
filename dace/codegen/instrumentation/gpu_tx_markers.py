@@ -34,6 +34,9 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         self.include_generated = False
         super().__init__()
 
+    def writes_to_report(self) -> bool:
+        return False
+
     def _print_include(self, sdfg: SDFG) -> None:
         """ Prints the include statement for the NVTX/rocTX library for a given SDFG. """
         if self.include_generated:
@@ -151,6 +154,24 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             # Don't instrument device code
             return
         self.print_range_pop(local_stream)
+
+    def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            # Don't instrument device code
+            return
+        self.print_range_push(node.label, sdfg, outer_stream)
+
+    def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                    outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        if not isinstance(node, nodes.CodeNode) or node.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if is_devicelevel_gpu_kernel(sdfg, state, node):
+            # Don't instrument device code
+            return
+        self.print_range_pop(outer_stream)
 
     def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
                        outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
