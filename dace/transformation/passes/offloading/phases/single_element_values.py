@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from ordered_set import OrderedSet
 
-from dace import dtypes
+from dace import data, dtypes
 from dace.sdfg import SDFG
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
@@ -12,8 +12,9 @@ def change_single_element_containers(sdfg: SDFG, exceptions: OrderedSet[str]) ->
     """Device-written scalars become length-1 arrays (a kernel takes a scalar by value), the other length-1
     arrays scalars; ``exceptions`` are not asked again. Return the names asked for."""
     gpu_written = helpers.data_written_by_device_code(sdfg)
-    to_len1_arrays = OrderedSet(name for name in sdfg.arrays
-                                if helpers.is_scalar(name, sdfg) and name in gpu_written and name not in exceptions)
+    to_len1_arrays = OrderedSet(
+        name for name in sdfg.arrays
+        if isinstance(sdfg.arrays[name], data.Scalar) and name in gpu_written and name not in exceptions)
     # ``__return`` stays by reference: the caller reads the result back through it.
     to_scalars = OrderedSet(name for name in sdfg.arrays if helpers.is_length1_array(name, sdfg)
                             and name not in gpu_written and name not in exceptions and not name.startswith("__return"))
@@ -33,5 +34,5 @@ def keep_on_host(sdfg: SDFG, staged: OrderedSet[str]) -> None:
     """A staged scalar inherits its array's storage, but no kernel writes it, so its readers are the host and
     kernels taking it by value: it lives on the host."""
     for name in staged:
-        if helpers.is_scalar(name, sdfg) and helpers.is_array_stored_on_GPU(sdfg, name):
+        if isinstance(sdfg.arrays[name], data.Scalar) and helpers.is_array_stored_on_GPU(sdfg, name):
             sdfg.arrays[name].storage = dtypes.StorageType.Default

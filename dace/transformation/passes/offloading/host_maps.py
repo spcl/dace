@@ -7,7 +7,7 @@ import sympy
 
 from ordered_set import OrderedSet
 
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
@@ -148,11 +148,9 @@ def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry) -> Tuple
 
 
 def provably_nonnegative(expr: Any) -> bool:
-    """``expr >= 0`` for every nonnegative integer value of its symbols, also when read as a polynomial with
+    """``expr >= 0`` for every nonnegative value of its symbols, also when read as a polynomial with
     nonnegative coefficients (SymPy leaves a sum with a negative term open); undecided is False."""
-    expr = sympy.sympify(expr)
-    names = {sym: sympy.Symbol(sym.name, nonnegative=True, integer=True) for sym in expr.free_symbols}
-    expr = sympy.expand(expr.subs(names))
+    expr = sympy.expand(subsets.nng(sympy.sympify(expr)))
     if expr.is_nonnegative:
         return True
     if not expr.free_symbols:

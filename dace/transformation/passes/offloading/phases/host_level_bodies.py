@@ -11,8 +11,6 @@ from dace.sdfg import nodes, SDFG
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import SDFGState
 
-import dace.transformation.passes.offloading.offloading_helpers as helpers
-
 
 def host_level_nested_sdfgs(state: SDFGState,
                             host_maps: OrderedSet[nodes.MapEntry],
@@ -51,7 +49,8 @@ def stage_device_scalar_bindings(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes
     """
     body = nsdfg_node.sdfg
     for edge in state.in_edges(nsdfg_node):
-        if edge.data.is_empty() or edge.dst_conn not in body.arrays or not helpers.is_scalar(edge.dst_conn, body):
+        if edge.data.is_empty() or edge.dst_conn not in body.arrays or not isinstance(
+                body.arrays[edge.dst_conn], data.Scalar):
             continue
         if sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES:
             continue

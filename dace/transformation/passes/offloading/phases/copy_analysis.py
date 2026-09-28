@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import dtypes
+from dace import data, dtypes
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock,
@@ -143,19 +143,19 @@ class CopyAnalysis:
         name = edge.data.data
         if helpers.is_array(name, sdfg):
             return OrderedSet([name])
-        if helpers.is_view(name, sdfg):
+        if isinstance(sdfg.arrays[name], data.View):
             view = next((node for node in state.data_nodes() if node.data == name), None)
             if view is None:
                 return OrderedSet()
             return helpers.get_data_used_by_access_nodes(sdfg, state, view, downstream=is_out_edge)
-        if helpers.is_scalar(name, sdfg):  # might be a scalar access of an array slice
+        if isinstance(sdfg.arrays[name], data.Scalar):  # might be a scalar access of an array slice
             neighbor = edge.dst if is_out_edge else edge.src
             if isinstance(neighbor, nodes.AccessNode):
                 return helpers.get_data_used_by_access_nodes(sdfg, state, neighbor, downstream=is_out_edge)
             return OrderedSet()
         # A structure or container array has no single location to decide, and a Stream is a queue with
         # its own device-side protocol that the code generator allocates where its pusher runs.
-        if helpers.is_unoffloadable(name, sdfg) or helpers.is_stream(name, sdfg):
+        if helpers.is_unoffloadable(name, sdfg) or isinstance(sdfg.arrays[name], data.Stream):
             return OrderedSet()
         raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) on edge {edge}: {edge.data}")
 
@@ -217,7 +217,7 @@ class CopyAnalysis:
         """A library node at a host level goes where its schedule runs; a nested SDFG where its body wants its
         bound arrays."""
         if isinstance(node, nodes.LibraryNode):
-            on_gpu = helpers.has_GPU_schedule(node)
+            on_gpu = node.schedule in dtypes.GPU_SCHEDULES
             (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
             return
         inner_gpu, inner_cpu = CopyAnalysis(node.sdfg, helpers.get_sdfg_scope_dict(node.sdfg),

@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import dtypes, Memlet
+from dace import data, dtypes, Memlet
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 
@@ -25,7 +25,9 @@ def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[
     partition_nodes = boundary | OrderedSet(node for node in top_level if helpers.is_callback_tasklet(node, sdfg))
 
     for partition in subgraphs_after_removing(state, partition_nodes):
-        if not any(isinstance(node, nodes.AccessNode) and not helpers.is_scalar(node.data, sdfg) for node in partition):
+        if not any(
+                isinstance(node, nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], data.Scalar)
+                for node in partition):
             continue
         remove_outer_access_nodes(state, partition)
         # A partition is a dataflow component, and a map scope spans one, so it can hold a lone MapEntry.

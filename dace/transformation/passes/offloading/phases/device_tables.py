@@ -45,9 +45,10 @@ def in_a_loop(block: SDFGState) -> bool:
 
 def fills_from_scalars(sdfg: SDFG, state: SDFGState, scopes: Dict, node: nodes.Node) -> bool:
     """A top-level tasklet with one output whose every input is a scalar, or that has none."""
-    return (isinstance(node, nodes.Tasklet) and scopes[node] is None and state.out_degree(node) == 1 and all(
-        edge.data.is_empty() or (isinstance(edge.src, nodes.AccessNode) and helpers.is_scalar(edge.src.data, sdfg))
-        for edge in state.in_edges(node)))
+    return (isinstance(node, nodes.Tasklet) and scopes[node] is None and state.out_degree(node) == 1
+            and all(edge.data.is_empty() or
+                    (isinstance(edge.src, nodes.AccessNode) and isinstance(sdfg.arrays[edge.src.data], data.Scalar))
+                    for edge in state.in_edges(node)))
 
 
 def host_meta_reads(sdfg: SDFG) -> OrderedSet[str]:
@@ -84,7 +85,7 @@ class TableCensus:
                 self.refused.add(node.data)
             return
         for edge in state.out_edges(node):
-            if isinstance(edge.dst, nodes.MapEntry) and helpers.has_GPU_schedule(edge.dst):
+            if isinstance(edge.dst, nodes.MapEntry) and edge.dst.schedule in dtypes.GPU_SCHEDULES:
                 touched.add(True)
             elif not edge.data.is_empty():
                 touched.add(False)

@@ -5,7 +5,7 @@ from typing import List
 
 from ordered_set import OrderedSet
 
-from dace import Memlet
+from dace import data, Memlet
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 
@@ -28,8 +28,8 @@ def single_element_copies_into_map(sdfg: SDFG) -> None:
             for access in OrderedSet(state.predecessors(map_entry)):
                 # Only a copy the map alone reads moves: another reader would be left reading a node
                 # inside this map's scope.
-                if (isinstance(access, nodes.AccessNode) and state.out_degree(access) == 1
-                        and (helpers.is_scalar(access.data, sdfg) or helpers.is_length1_array(access.data, sdfg))
+                if (isinstance(access, nodes.AccessNode) and state.out_degree(access) == 1 and
+                    (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg))
                         and state.in_degree(access) == 1
                         and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)):
                     changes.append((state, access, map_entry))

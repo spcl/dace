@@ -8,13 +8,6 @@ from dace import dtypes
 from dace.sdfg import nodes, SDFG
 
 
-def set_schedule(node: nodes.Node, schedule: dtypes.ScheduleType) -> None:
-    if isinstance(node, nodes.MapEntry):
-        node.map.schedule = schedule
-    else:
-        node.schedule = schedule
-
-
 def assign_schedules(sdfg: SDFG,
                      host_map_entries: OrderedSet,
                      pinned_maps: OrderedSet,
@@ -30,9 +23,8 @@ def assign_schedules(sdfg: SDFG,
         for node in scope_children.get(entry, ()):
             on_host = node in host_map_entries or node in pinned_maps
             if isinstance(node, (nodes.MapEntry, nodes.LibraryNode)):
-                set_schedule(
-                    node,
-                    dtypes.ScheduleType.GPU_Device if host_level and not on_host else dtypes.ScheduleType.Sequential)
+                node.schedule = (dtypes.ScheduleType.GPU_Device
+                                 if host_level and not on_host else dtypes.ScheduleType.Sequential)
             if isinstance(node, nodes.MapEntry):
                 walk(scope_children, node, host_level and node in host_map_entries and node not in pinned_maps)
             elif isinstance(node, nodes.NestedSDFG):

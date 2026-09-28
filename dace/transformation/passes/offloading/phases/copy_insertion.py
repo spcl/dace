@@ -4,7 +4,7 @@ from typing import Dict, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import dtypes, Memlet, subsets
+from dace import data, dtypes, Memlet, subsets
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, SDFGState
 from dace.sdfg.utils import get_view_node
@@ -67,11 +67,11 @@ class CopyInsertion:
         for state in sdfg.states():
             scope = self.scopes.get(state, {})
             for node in state.data_nodes():
-                if not helpers.is_view(node.data, sdfg):
+                if not isinstance(sdfg.arrays[node.data], data.View):
                     continue
                 desc = sdfg.arrays[node.data]
                 parent = scope.get(node)
-                if isinstance(parent, nodes.MapEntry) and helpers.has_GPU_schedule(parent):
+                if isinstance(parent, nodes.MapEntry) and parent.schedule in dtypes.GPU_SCHEDULES:
                     desc.storage = dtypes.StorageType.Register
                     continue
                 if keep_registers and desc.storage == dtypes.StorageType.Register:
@@ -130,7 +130,7 @@ class CopyInsertion:
         sdfg = self.sdfg
         for access in state.data_nodes():
             name = access.data
-            if name in rename_dict or name not in sdfg.arrays or not helpers.is_view(name, sdfg):
+            if name in rename_dict or name not in sdfg.arrays or not isinstance(sdfg.arrays[name], data.View):
                 continue
             origin = self.origin_of_a_staged_view(state, access)
             if origin is None or origin not in rename_dict:
@@ -154,7 +154,8 @@ class CopyInsertion:
         sdfg = self.sdfg
         node = access
         seen: OrderedSet[str] = OrderedSet()
-        while isinstance(node, nodes.AccessNode) and node.data in sdfg.arrays and helpers.is_view(node.data, sdfg):
+        while isinstance(node, nodes.AccessNode) and node.data in sdfg.arrays and isinstance(
+                sdfg.arrays[node.data], data.View):
             if node.data in seen:  # a cycle is not a chain to a container
                 return None
             seen.add(node.data)
@@ -244,7 +245,7 @@ class CopyInsertion:
             if twin not in sdfg.arrays:
                 register_twin(sdfg, twin, name)
             # A view has no storage: each side re-derives it from its container, whose copy is here.
-            if helpers.is_view(name, sdfg):
+            if isinstance(sdfg.arrays[name], data.View):
                 continue
             copy_state.add_edge(
                 copy_state.add_access(src), None, copy_state.add_access(dst), None,
@@ -263,7 +264,7 @@ def register_twin(sdfg: SDFG, twin: str, home: str) -> None:
     desc = sdfg.arrays[home]
     on_gpu = helpers.is_array_stored_on_GPU(sdfg, home)
     storage = dtypes.StorageType.Default if on_gpu else dtypes.StorageType.GPU_Global
-    if helpers.is_view(home, sdfg):
+    if isinstance(sdfg.arrays[home], data.View):
         sdfg.add_view(twin, desc.shape, desc.dtype, storage=storage)
     else:
         sdfg.add_array(twin, desc.shape, desc.dtype, storage=storage, transient=True)

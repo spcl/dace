@@ -58,18 +58,6 @@ def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional
     return {state: state.scope_dict() for state in sdfg.states()}
 
 
-def get_schedule(node: nodes.Node) -> dtypes.ScheduleType:
-    if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
-        return node.map.schedule
-    if isinstance(node, nodes.LibraryNode):
-        return node.schedule
-    raise TypeError(f'node {node} of type {type(node).__name__} carries no schedule')
-
-
-def has_GPU_schedule(node: nodes.Node) -> bool:
-    return get_schedule(node) in dtypes.GPU_SCHEDULES
-
-
 #: Connectors the Python frontend wires to ``__pystate`` around a callback, to block reordering.
 PYSTATE_CONNECTORS = frozenset({'__istate', '__ostate'})
 
@@ -125,7 +113,7 @@ def sdfg_holds_callback(sdfg: SDFG) -> bool:
 def sdfg_holds_gpu_schedule(sdfg: SDFG) -> bool:
     """Any map or library node anywhere in ``sdfg`` scheduled on the device."""
     return any(
-        isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(node)
+        isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
         for node, _ in sdfg.all_nodes_recursive())
 
 
@@ -133,7 +121,7 @@ def is_device_work(node: nodes.Node) -> bool:
     """A map or library node scheduled on the device, or a nested SDFG holding one."""
     if isinstance(node, nodes.NestedSDFG):
         return sdfg_holds_gpu_schedule(node.sdfg)
-    return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(node)
+    return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
 
 
 def scope_nodes(state: SDFGState, entry: nodes.MapEntry) -> List[nodes.Node]:
@@ -241,23 +229,11 @@ def is_unoffloadable(data_name: str, sdfg: SDFG) -> bool:
     return isinstance(desc, (data.Structure, data.StructureView, data.ContainerArray, data.ContainerView))
 
 
-def is_scalar(data_name: str, sdfg: SDFG) -> bool:
-    assert data_name in sdfg.arrays
-    desc = sdfg.arrays[data_name]
-    return isinstance(desc, data.Scalar)
-
-
 def is_array(data_name: str, sdfg: SDFG) -> bool:
     """A buffer with a location of its own: not a view (placed with its container) and not a container kind."""
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg))
-
-
-def is_view(data_name: str, sdfg: SDFG) -> bool:
-    assert data_name in sdfg.arrays
-    desc = sdfg.arrays[data_name]
-    return isinstance(desc, data.View)
 
 
 def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes.Node) -> Optional[nodes.MapEntry]:
@@ -278,7 +254,7 @@ def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
     for state in sdfg.states():
         scopes = state.scope_dict()
         for node in state.nodes():
-            if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and has_GPU_schedule(node):
+            if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES:
                 through_the_exit |= get_data_used_by_access_nodes(sdfg,
                                                                   state,
                                                                   node,
@@ -309,7 +285,7 @@ def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
     """Raise if a Scalar a kernel writes would reach that kernel by value, which discards the write."""
     offenders = [
         name for name in data_written_by_device_code(sdfg)
-        if is_scalar(name, sdfg) and sdfg.arrays[name].storage != dtypes.StorageType.GPU_Global
+        if isinstance(sdfg.arrays[name], data.Scalar) and sdfg.arrays[name].storage != dtypes.StorageType.GPU_Global
     ]
     if offenders:
         raise ValueError(f'device code writes {offenders}, still Scalars in host storage; a kernel takes those '
@@ -338,12 +314,6 @@ def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:
     """The container ``node`` ultimately aliases, following a chain of views, or None."""
     viewed = get_last_view_node(state, node)
     return viewed.data if viewed is not None else None
-
-
-def is_stream(data_name: str, sdfg: SDFG) -> bool:
-    assert data_name in sdfg.arrays
-    desc = sdfg.arrays[data_name]
-    return isinstance(desc, data.Stream)
 
 
 def is_length1_array(data_name: str, sdfg: SDFG) -> bool:
@@ -430,10 +400,10 @@ def get_data_used_by_access_nodes(sdfg: SDFG,
         stops = False
         if isinstance(current, nodes.AccessNode):
             name = current.data
-            if is_array(name, sdfg) or (include_scalars and is_scalar(name, sdfg)):
+            if is_array(name, sdfg) or (include_scalars and isinstance(sdfg.arrays[name], data.Scalar)):
                 arrays.add(name)
             children = view_origin_nodes(sdfg, state, current)
-            stops = not through_copies and not is_view(name, sdfg)
+            stops = not through_copies and not isinstance(sdfg.arrays[name], data.View)
         if not stops:
             children += neighboring_access_nodes(state, current, downstream, ordering)
         # Reversed, so they pop in order: the same visits in the same order as a recursion.
@@ -443,7 +413,7 @@ def get_data_used_by_access_nodes(sdfg: SDFG,
 
 def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> List[nodes.AccessNode]:
     """The access node a view aliases, or nothing: a chain that reaches no access node has no origin to place."""
-    if not is_view(node.data, sdfg):
+    if not isinstance(sdfg.arrays[node.data], data.View):
         return []
     origin = get_last_view_node(state, node)
     return [] if origin is None else [origin]
