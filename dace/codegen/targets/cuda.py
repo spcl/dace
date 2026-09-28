@@ -29,7 +29,7 @@ from dace.sdfg.scope import get_node_schedule
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.transformation import helpers as xfh
+from dace.transformation import gpu_helpers, helpers as xfh
 from dace.transformation.passes import analysis as ap, gpu_shared_memory
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
@@ -2280,12 +2280,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if len(tb_maps_sym_map) == 0:
             if block_size is None:
                 if has_dtbmap:
-                    if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
-                        raise NotImplementedError('max dynamic block size unimplemented')
-                    else:
-                        block_size = [
-                            int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
-                        ]
+                    block_size = list(gpu_helpers.dynamic_map_block_dims())
                 else:
                     def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
                     warnings.warn(
@@ -2539,8 +2534,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     condition += '%s >= %s' % (v, _topy(minel))
                 # The grid of the distributed dimension is padded to a multiple of the number of
                 # chiplets, so its trailing blocks always have to be masked out
-                if (i >= 3 or (chiplet_count > 1 and i == 0)
-                        or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                if (i >= 3 or (chiplet_count > 1 and i == 0) or
+                    ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], self._block_dims[i]))
                         or (self._block_dims[i] > maxel) == True):
                     if len(condition) > 0:
                         condition += ' && '
@@ -2677,7 +2672,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             if is_wide:
                 template_args += f', {index_type.ctype}'
             dynmap_class = f'dace::DynamicMap<{template_args}>'
-            dynmap_state_bytes = sym2cpp(dynmap_state_desc.total_size * index_type.bytes)
+            dynmap_state_bytes = sym2cpp(dynmap_state_desc.total_size_in_bytes)
             callsite_stream.write(
                 f'static_assert(sizeof({dynmap_class}::shared_type) <= {dynmap_state_bytes}, '
                 f'"The scheduling state of dynamic map {scope_map.label} exceeds its shared memory");', cfg, state_id,
@@ -2853,8 +2848,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     # Optimize conditions if they are always true
                     if i >= 3 or (dsym[i] >= minel) != True:
                         condition += '%s >= %s' % (v, _topy(minel))
-                    if (i >= 3
-                            or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                    if (i >= 3 or
+                        ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], self._block_dims[i]))
                             or (self._block_dims[i] > maxel) == True):
                         if len(condition) > 0:
                             condition += ' && '

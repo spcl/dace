@@ -300,7 +300,8 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 return tuple(int(s) for s in Config.get('compiler', 'cuda', 'default_block_size').split(','))
             elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 # Dynamic thread-block map, use configured value
-                return tuple(int(s) for s in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(','))
+                from dace.transformation import gpu_helpers  # Avoid import cycle (transformations import the SDFG)
+                return gpu_helpers.dynamic_map_block_dims()
 
             scope = sdict[scope]
         # Traverse up nested SDFGs

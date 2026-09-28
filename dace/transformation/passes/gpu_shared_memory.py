@@ -12,19 +12,15 @@ The passes run in this order: ``PrivatizeKernelSharedMemory``, ``LowerDynamicMap
 ``LowerDynamicSharedMemory``.
 """
 import copy
-import functools
 import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
-
-import sympy
 
 from dace import config, data as dt, dtypes, properties, subsets, symbolic
 from dace.codegen import common
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import gpu_helpers, pass_pipeline as ppl
 
 #: Alignment of every container in dynamic shared memory, which suffices for all types up to 16-byte vectors
 DYNAMIC_SHARED_MEMORY_ALIGNMENT = 16
@@ -34,23 +30,6 @@ DYNAMIC_SHARED_MEMORY_BASE = '__dace_dynsmem_base'
 
 #: Name of the flat dynamic shared memory buffers
 DYNAMIC_SHARED_MEMORY_BUFFER = '__dace_dynsmem'
-
-
-def gpu_kernels(sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.MapEntry]]:
-    """
-    Returns the GPU kernels of an SDFG and its nested SDFGs, i.e., the device and persistent maps that are not
-    themselves in device code.
-
-    :param sdfg: The SDFG to search.
-    :return: A list of (SDFG, state, map entry) for each kernel map.
-    """
-    result = []
-    for node, state in sdfg.all_nodes_recursive():
-        if (isinstance(node, nodes.MapEntry)
-                and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
-                and not is_devicelevel_gpu(state.sdfg, state, node)):
-            result.append((state.sdfg, state, node))
-    return result
 
 
 def _nested_sdfg_nodes(sdfg: SDFG) -> List[nodes.NestedSDFG]:
@@ -85,31 +64,6 @@ def dynamic_map_state_elements(fine_grained: bool, block_size: int) -> int:
     return max(4, fine_grained_elements)
 
 
-def dynamic_map_block_size() -> int:
-    """Returns the total thread-block size of dynamic thread-block maps (``compiler.cuda.dynamic_map_block_size``)."""
-    return functools.reduce(
-        lambda a, b: a * b,
-        [int(x) for x in config.Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')])
-
-
-def _align(value: symbolic.SymbolicType, alignment: int) -> symbolic.SymbolicType:
-    """Rounds ``value`` up to a multiple of ``alignment``."""
-    if symbolic.issymbolic(value):
-        return symbolic.int_ceil(value, alignment) * alignment
-    return ((int(value) + alignment - 1) // alignment) * alignment
-
-
-def _is_multiple(value: symbolic.SymbolicType, alignment: int) -> bool:
-    """Returns whether ``value`` is provably a multiple of ``alignment``."""
-    if not symbolic.issymbolic(value):
-        return int(value) % alignment == 0
-    return sympy.Mod(value, alignment) == 0
-
-
-def _size_in_bytes(desc: dt.Data) -> symbolic.SymbolicType:
-    return desc.total_size * desc.dtype.bytes
-
-
 @properties.make_properties
 class PrivatizeKernelSharedMemory(ppl.Pass):
     """
@@ -130,7 +84,7 @@ class PrivatizeKernelSharedMemory(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, List[str]]]:
         owned: Dict[SDFG, Set[str]] = {}
         copies: Dict[str, List[str]] = {}
-        for kernel_sdfg, kernel_state, kernel_entry in gpu_kernels(sdfg):
+        for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             kernel_scope = kernel_state.scope_subgraph(kernel_entry)
             owned_here = owned.setdefault(kernel_sdfg, set())
             names = sorted({
@@ -176,9 +130,9 @@ class LowerDynamicMapState(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, int]]:
         fine_grained = config.Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained')
-        elements = dynamic_map_state_elements(fine_grained, dynamic_map_block_size())
+        elements = dynamic_map_state_elements(fine_grained, gpu_helpers.dynamic_map_block_size())
         added = {}
-        for kernel_sdfg, kernel_state, kernel_entry in gpu_kernels(sdfg):
+        for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             dynamic_maps = self._dynamic_maps(kernel_sdfg, kernel_state, kernel_state.scope_subgraph(kernel_entry))
             if not dynamic_maps:
                 continue
@@ -265,7 +219,7 @@ class PlanSharedMemory(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[nodes.MapEntry, KernelSharedMemory]]:
         result = {}
-        for kernel_sdfg, kernel_state, kernel_entry in gpu_kernels(sdfg):
+        for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
             kernel_entry._cuda_dynamic_shared_memory = plan.dynamic_bytes
             if plan.levels or plan.static_bytes:
@@ -291,7 +245,7 @@ class PlanSharedMemory(ppl.Pass):
         for level_sdfg, names in self._containers(sdfg, kernel_level, top_nested):
             for name in names:
                 desc = level_sdfg.arrays[name]
-                size = _size_in_bytes(desc)
+                size = desc.total_size_in_bytes
                 is_symbolic = symbolic.issymbolic(size, level_sdfg.constants)
                 placement = dtypes.is_dynamic_shared(desc.storage)
                 if placement is False:
@@ -350,11 +304,11 @@ class PlanSharedMemory(ppl.Pass):
                 continue
             desc = sdfg.arrays[name]
             alignment = max(DYNAMIC_SHARED_MEMORY_ALIGNMENT, desc.dtype.bytes)
-            offset = cursor if cursor_alignment % alignment == 0 else _align(cursor, alignment)
-            size = _size_in_bytes(desc)
+            offset = cursor if cursor_alignment % alignment == 0 else symbolic.align(cursor, alignment)
+            size = desc.total_size_in_bytes
             level.containers[name] = (offset, size)
             cursor = offset + size
-            cursor_alignment = alignment if _is_multiple(size, alignment) else 1
+            cursor_alignment = alignment if symbolic.is_multiple(size, alignment) else 1
 
         for nsdfg_node in nested:
             nsdfg = nsdfg_node.sdfg
@@ -363,8 +317,8 @@ class PlanSharedMemory(ppl.Pass):
                        for level_sdfg, level_names in self._containers(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg))
                        for name in level_names):
                 continue
-            nested_base = (cursor if cursor_alignment %
-                           DYNAMIC_SHARED_MEMORY_ALIGNMENT == 0 else _align(cursor, DYNAMIC_SHARED_MEMORY_ALIGNMENT))
+            nested_base = (cursor if cursor_alignment % DYNAMIC_SHARED_MEMORY_ALIGNMENT == 0 else symbolic.align(
+                cursor, DYNAMIC_SHARED_MEMORY_ALIGNMENT))
             if symbolic.issymbolic(nested_base):
                 # Pass the offset of the nested SDFG's part as a symbol
                 symbol_name = DYNAMIC_SHARED_MEMORY_BASE
