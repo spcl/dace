@@ -11,12 +11,12 @@ import sympy
 
 from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic, utils
 from dace.memlet import Memlet
-from dace.properties import CodeBlock
 from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.state import LoopRegion
+from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from ordered_set import OrderedSet
 
 # Deliberately NOT ``dtypes.GPU_SCHEDULES``: that also includes dynamic/persistent thread-block
@@ -64,14 +64,11 @@ def has_wcr_incoming(sdfg: SDFG, data_name: str) -> bool:
 def enclosing_maps(state: SDFGState, node: nodes.Node) -> List[Scope]:
     """Map scopes enclosing ``node``, innermost first, continuing through enclosing nested SDFGs."""
     scopes: List[Scope] = []
-    while True:
-        entry = state.entry_node(node)
-        while entry is not None:
-            scopes.append((entry, state))
-            entry = state.entry_node(entry)
-        if state.sdfg.parent_nsdfg_node is None:
-            return scopes
-        node, state = state.sdfg.parent_nsdfg_node, state.sdfg.parent
+    parent = helpers.get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = helpers.get_parent_map(parent[1], parent[0])
+    return scopes
 
 
 def gpu_levels(state: SDFGState, node: nodes.Node) -> Optional[List[Scope]]:
@@ -142,13 +139,17 @@ class SubscriptPrefixer(ast.NodeTransformer):
         return node
 
 
-def prepend_subscript_indices(code: str, array_name: str, prefix: List[str]) -> Optional[str]:
-    """``code`` with ``prefix`` prepended to each ``array_name`` subscript, or ``None`` if nothing changed."""
+def prepend_subscript_indices(code: str, array_name: str, prefix: List[str]) -> str:
+    """``code`` with ``prefix`` prepended to each ``array_name`` subscript; code that is not Python stays."""
     if array_name not in code:
-        return None
+        return code
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
     prefixer = SubscriptPrefixer(array_name, prefix)
-    tree = prefixer.visit(ast.parse(code))
-    return ast.unparse(ast.fix_missing_locations(tree)) if prefixer.changed else None
+    tree = prefixer.visit(tree)
+    return ast.unparse(ast.fix_missing_locations(tree)) if prefixer.changed else code
 
 
 def free_symbol_names(exprs) -> OrderedSet:
@@ -379,29 +380,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
     def prefix_control_flow(sdfg: SDFG, name: str, point: Optional[List[str]]) -> None:
         """Prepend ``point`` to the subscripts of ``name`` that interstate edges, loops and branches read."""
 
-        def rewrite(code: str) -> Optional[str]:
+        def rewrite(code: str) -> str:
             new_code = prepend_subscript_indices(code, name, point or ['0'])
-            if new_code is not None and point is None:
+            if point is None and new_code != code:
                 raise NotImplementedError(f"Control flow of {sdfg.name} reads '{name}', which varies per GPU thread")
             return new_code
 
-        def block(code: Optional[CodeBlock]) -> Optional[CodeBlock]:
-            if code is None or code.language is not dtypes.Language.Python:
-                return code
-            new_code = rewrite(code.as_string)
-            return code if new_code is None else CodeBlock(new_code, dtypes.Language.Python)
-
-        for cfg in sdfg.all_control_flow_regions():
-            for edge in cfg.edges():
-                for var, value in edge.data.assignments.items():
-                    edge.data.assignments[var] = rewrite(str(value)) or value
-                edge.data.condition = block(edge.data.condition)
-            if isinstance(cfg, LoopRegion):
-                cfg.init_statement = block(cfg.init_statement)
-                cfg.loop_condition = block(cfg.loop_condition)
-                cfg.update_statement = block(cfg.update_statement)
-            elif isinstance(cfg, ConditionalBlock):
-                cfg.branches[:] = [(block(cond), branch) for cond, branch in cfg.branches]
+        rewrite_code_slots(sdfg, rewrite)
 
     def carry_out_of_kernel(self, name: str, desc: dt.Array, levels: List[Scope], accesses: List[Tuple[nodes.AccessNode,
                                                                                                        SDFGState]],

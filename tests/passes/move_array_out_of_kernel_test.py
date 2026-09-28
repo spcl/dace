@@ -11,7 +11,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.move_array_out_of_kernel import tile_extent, MoveArrayOutOfKernel
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel, prepend_subscript_indices, tile_extent
 
 NX, NZ = (dace.symbol(s, dtype=dace.int64) for s in ('NX', 'NZ'))
 GLOBAL = dtypes.StorageType.GPU_Global
@@ -28,51 +28,29 @@ def test_tile_extent_recognises_min_pattern():
     assert b_i not in extent.free_symbols, f"tile extent leaks outer-loop symbol: {extent.free_symbols}"
 
 
-def test_tile_extent_falls_back_for_plain_range():
-    """No ``Min`` in the upper bound: the symbolic extent is returned unchanged."""
-    W = sympy.Symbol('W')
-    extent = tile_extent(W - 1, sympy.Integer(0))
-    assert sympy.simplify(extent - W) == 0, f"expected W, got {extent}"
-
-
-def test_tile_extent_handles_outer_block_strided_loop():
-    """Outer strided GPU_Device map ``b_i = 0:N:32``: the fallback returns the host-visible ``N``."""
+def test_tile_extent_falls_back_to_the_range_extent_without_a_min():
+    """No ``Min`` in the upper bound (a plain or outer strided map): the extent is the symbolic ``N``."""
     N = sympy.Symbol('N')
-    # max_element() of a strided range comes back as ``N - 1``; pin that and check there is no leak.
     extent = tile_extent(N - 1, sympy.Integer(0))
-    assert sympy.simplify(extent - N) == 0
-    assert sympy.Symbol('b_i') not in extent.free_symbols
+    assert sympy.simplify(extent - N) == 0, f"expected N, got {extent}"
 
 
-def test_get_new_shape_info_multidim_prepend_strides():
-    """Lifting a ``[64]`` C-packed transient out of ``map[0:128, 0:32]`` gives ``[128, 32, 64]``
-    with packed C strides ``[2048, 64, 1]``."""
-    sdfg = dace.SDFG('move_array_strides')
-    state = sdfg.add_state('s')
-    me, _mx = state.add_map('kernel', dict(i='0:128', j='0:32'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+@pytest.mark.parametrize('ranges, shape, strides, expected_shape, expected_strides', [
+    (dict(i='0:128', j='0:32'), [64], None, [128, 32, 64], [2048, 64, 1]),
+    (dict(i='0:8'), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]),
+])
+def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(ranges, shape, strides, expected_shape,
+                                                                                expected_strides):
+    """Map dimensions go in front as the slowest axes; a C or Fortran transient keeps its layout on its own axes."""
+    state = dace.SDFG('move_array_strides').add_state('s')
+    me, _ = state.add_map('kernel', ranges, schedule=dace.dtypes.ScheduleType.GPU_Device)
+    arr = dace.data.Array(dace.float64, shape, strides=strides)
 
-    arr = dace.data.Array(dace.float64, [64])
-    new_shape, new_strides, new_total, _new_offsets = MoveArrayOutOfKernel().get_new_shape_info(arr, [me])
+    new_shape, new_strides, new_total, _ = MoveArrayOutOfKernel().get_new_shape_info(arr, [me])
 
-    assert [int(s) for s in new_shape] == [128, 32, 64], new_shape
-    assert [int(s) for s in new_strides] == [2048, 64, 1], new_strides
-    assert int(new_total) == 128 * 32 * 64, new_total
-
-
-def test_get_new_shape_info_keeps_fortran_layout():
-    """A packed-Fortran transient keeps that layout on its own axes; the prepended map dimensions
-    become the slowest-varying ones regardless."""
-    sdfg = dace.SDFG('move_array_strides_f')
-    state = sdfg.add_state('s')
-    me, _mx = state.add_map('kernel', dict(i='0:8'), schedule=dace.dtypes.ScheduleType.GPU_Device)
-
-    arr = dace.data.Array(dace.float64, [4, 16], strides=[1, 4])
-    assert arr.is_packed_fortran_strides()
-    new_shape, new_strides, new_total, _new_offsets = MoveArrayOutOfKernel().get_new_shape_info(arr, [me])
-
-    assert [int(s) for s in new_shape] == [8, 4, 16], new_shape
-    assert [int(s) for s in new_strides] == [64, 1, 4], new_strides
-    assert int(new_total) == 8 * 4 * 16, new_total
+    assert [int(s) for s in new_shape] == expected_shape, new_shape
+    assert [int(s) for s in new_strides] == expected_strides, new_strides
+    assert int(new_total) == int(np.prod(expected_shape)), new_total
 
 
 def test_get_new_shape_info_rejects_unsupported_layout():
@@ -196,21 +174,11 @@ def test_a_small_persistent_transient_is_lifted_not_demoted():
 
 def test_lifted_transient_is_renamed_around_a_colliding_descriptor():
     """An unrelated outer descriptor already holds the name, so the lifted one takes a fresh one."""
-    inner = transient_body()
-
-    sdfg = dace.SDFG('collide')
-    sdfg.add_array('A', [128], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg = kernel_with_transient_behind_a_nested_sdfg()
     sdfg.add_array('buf', [4], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state('s')
-    me, mx = state.add_map('kernel', dict(i='0:128'), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    nsdfg = state.add_nested_sdfg(inner, {}, {'a_out': None})
-    state.add_edge(me, None, nsdfg, None, dace.Memlet())
-    state.add_memlet_path(nsdfg, mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[i]'))
-    sdfg.validate()
 
     assert lift(sdfg) == 1
 
-    # The pre-existing descriptor is untouched; the lifted one lives beside it under a new name.
     assert tuple(sdfg.arrays['buf'].shape) == (4, ), 'the colliding outer descriptor was overwritten'
     lifted = [name for name, desc in sdfg.arrays.items() if name != 'buf' and tuple(desc.shape) == (128, 1024)]
     assert len(lifted) == 1, sorted(sdfg.arrays)
@@ -622,6 +590,27 @@ def test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index():
     sdfg.generate_code()
 
 
+def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
+    """A nest bound to ``order[1]`` must keep reading one element of the now rank-2 buffer."""
+    sdfg = kernel_with_interstate_buffer_read()
+    body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    leaf = dace.SDFG('leaf')
+    leaf.add_symbol('s', dace.int64)
+    leaf.add_array('o', [1], dace.float64, storage=GLOBAL)
+    leaf_state = leaf.add_state()
+    write = leaf_state.add_tasklet('write', {}, {'x': None}, 'x = s')
+    leaf_state.add_edge(write, 'x', leaf_state.add_write('o'), None, dace.Memlet('o[0]'))
+    body.add_array('picked', [1], dace.float64, transient=True, storage=dtypes.StorageType.Register)
+    use = next(s for s in body.states() if s.label == 'use')
+    nest = use.add_nested_sdfg(leaf, {}, {'o': None}, symbol_mapping={'s': 'order[1]'})
+    use.add_edge(nest, 'o', use.add_write('picked'), None, dace.Memlet('picked[0]'))
+
+    lift(sdfg)
+
+    assert str(nest.symbol_mapping['s']) == 'order[i, 1]', nest.symbol_mapping
+    sdfg.validate()
+
+
 @pytest.mark.gpu
 def test_an_interstate_read_of_a_lifted_buffer_computes_the_right_values():
     import cupy  # Only present on GPU runners.
@@ -750,6 +739,13 @@ def test_control_flow_reading_a_per_thread_buffer_is_refused():
     with pytest.warns(UserWarning, match='will be lifted'):
         with pytest.raises(NotImplementedError, match='varies per GPU thread'):
             sut.apply_pass(sdfg, {})
+
+
+def test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim():
+    """A name that only appears as a substring must not count as a rewrite, not even through reformatting."""
+    code = 'x+1 if tmp_flag else 0'
+    assert prepend_subscript_indices(code, 'tmp', ['i']) is code
+    assert prepend_subscript_indices('tmp[0]+1', 'tmp', ['i']) == 'tmp[i, 0] + 1'
 
 
 if __name__ == '__main__':
