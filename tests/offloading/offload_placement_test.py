@@ -858,3 +858,50 @@ def test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes(
     B = np.zeros(256)
     sdfg(A=A, B=B)
     np.testing.assert_allclose(B, A * 2.0 + 1.0)
+
+
+def host_accumulator_beside_a_kernel_in_a_loop(length: int) -> dace.SDFG:
+    """npbench nbody's shape: a kernel on ``A`` and a host tasklet bumping ``PE``, every iteration of a loop,
+    with both signature arrays handed over in device memory."""
+    sdfg = dace.SDFG(f'host_accumulator_beside_a_kernel_in_a_loop_{length}')
+    sdfg.add_array('A', [64], dace.float64)
+    sdfg.add_array('PE', [length], dace.float64)
+    loop = LoopRegion('steps', 't < 10', 't', 't = 0', 't = t + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    body.add_mapped_tasklet('scale', {'i': '0:64'}, {'a': dace.Memlet('A[i]')},
+                            'b = a * 0.5', {'b': dace.Memlet('A[i]')},
+                            external_edges=True)
+    bump = body.add_tasklet('bump', {'p': None}, {'q': None}, 'q = p + 1.0')
+    body.add_edge(body.add_read('PE'), None, bump, 'p', dace.Memlet('PE[0]'))
+    body.add_edge(bump, 'q', body.add_write('PE'), None, dace.Memlet('PE[0]'))
+    sdfg.validate()
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    return sdfg
+
+
+@pytest.mark.parametrize('length', [1, 4])
+def test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length):
+    """A length-1 ``PE`` becomes a staged scalar, which inherited ``GPU_Global`` and was then read on the host."""
+    sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    body = next(state for state in sdfg.all_states() if state.label == 'body')
+    scopes = body.scope_dict()
+    bump = next(node for node in body.nodes() if isinstance(node, dace.nodes.Tasklet) and node.label == 'bump')
+    assert scopes[bump] is None, 'the host accumulation was wrapped into a kernel'
+    assert not copies_inside_loops(sdfg), copies_inside_loops(sdfg)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('length', [1, 4])
+def test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length):
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    A = cupy.asarray(np.arange(64, dtype=np.float64))
+    PE = cupy.zeros(length)
+    sdfg(A=A, PE=PE)
+    np.testing.assert_allclose(A.get(), np.arange(64) * 0.5**10)
+    assert PE.get()[0] == 10.0
