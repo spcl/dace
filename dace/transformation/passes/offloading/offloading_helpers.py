@@ -278,18 +278,43 @@ def get_predecessors(state: SDFGState, node: nodes.Node) -> OrderedSet:
 
 
 def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
-
-    def recursion(node: OffloadingIRNode, visited_set: OrderedSet) -> None:
+    """Pre-order walk calling ``method`` once per node; iterative, since the IR has a node per block."""
+    visited_set: OrderedSet[OffloadingIRNode] = OrderedSet()
+    stack = [IR]
+    while stack:
+        node = stack.pop()
         if node in visited_set:
-            return
+            continue
         visited_set.add(node)
-
         method(node)
+        stack.extend(reversed(node.next))
 
+
+def traverse_IR_after_predecessors(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
+    """Call ``method`` on each node once all of its predecessors had it, else in :func:`traverse_IR` order.
+
+    A join (the close node of a conditional) must hear from every arm before it forwards anything.
+    """
+    waiting: Dict[OffloadingIRNode, int] = {}
+
+    def count(node: OffloadingIRNode) -> None:
         for next in node.next:
-            recursion(next, visited_set)
+            waiting[next] = waiting.get(next, 0) + 1
 
-    return recursion(IR, OrderedSet())
+    traverse_IR(IR, count)
+    stack = [IR]
+    while stack:
+        node = stack.pop()
+        method(node)
+        ready = []
+        for next in node.next:
+            waiting[next] -= 1
+            if waiting[next] == 0:
+                ready.append(next)
+        stack.extend(reversed(ready))
+    stuck = [node.debug_name for node, pending in waiting.items() if pending]
+    if stuck:
+        raise RuntimeError(f'the offloading IR is not a DAG: {stuck} are never reached by all predecessors')
 
 
 def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:  # DFS
@@ -308,7 +333,7 @@ def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode
             break
 
         else:
-            assert False
+            raise ValueError(f'unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}')
 
 
 ########################################

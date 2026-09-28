@@ -210,10 +210,9 @@ class CopyAnalysisPhase():
         assert tails, f"{IR.debug_name} doesn't have any tails! {IR}"
 
         # Behavior 1:
-        # if there are no or multiple direct children, leave the sets empty & propagate later
-        # there is no good heuristic which child to choose here, which copies to make and which not
-        # (not without significantly more analysis)
-        if len(tails) > 1:
+        # if more than one route leads to this section's close node (a conditional inside it counts,
+        # even when its arms meet again before one tail), leave the sets empty & propagate later
+        if not IR.has_one_route():
             return
 
         # Behavior 2:
@@ -245,6 +244,8 @@ class CopyAnalysisPhase():
         # all arrays which aren't used by this state retain their previous status
         # ASSUMPTION: arrays are either gpu or cpu within a state
         def propagate(node: OffloadingIRNode) -> None:
+            if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState):
+                self.place_copy_destinations(node)
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
 
@@ -255,7 +256,30 @@ class CopyAnalysisPhase():
                     if not array in next_arrays:
                         next.gpu_set.add(array)
 
-        helpers.traverse_IR(IR, propagate)
+        # A node forwards what it holds when visited, so a join must first hear from every arm.
+        helpers.traverse_IR_after_predecessors(IR, propagate)
+
+    def place_copy_destinations(self, node: OffloadingIRNode) -> None:
+        """A top-level container-to-container copy writes its destination on its source's side.
+
+        The state analysis leaves such a copy unplaced, so the destination kept its earlier location
+        and a later reader on the other side got no copy in.
+        """
+        state = node.block
+        sdfg = state.sdfg
+        top = self.sdfg_scope_dict[state]
+        for edge in state.edges():
+            src, dst = edge.src, edge.dst
+            if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or edge.data.is_empty():
+                continue
+            if top[src] is not None or top[dst] is not None or dst.data in node.cpu_set or dst.data in node.gpu_set:
+                continue
+            if not helpers.is_array(dst.data, sdfg):
+                continue
+            if src.data in node.gpu_set:
+                node.gpu_set.add(dst.data)
+            elif src.data in node.cpu_set:
+                node.cpu_set.add(dst.data)
 
     def collect_own_use(self, IR: OffloadingIRNode) -> Dict[OffloadingIRNode, OrderedSet]:
         """The containers each IR node accesses itself, before propagation adds the inherited ones."""
