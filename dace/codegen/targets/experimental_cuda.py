@@ -6,7 +6,7 @@ import dace
 from ordered_set import OrderedSet
 
 from dace import data as dt, Memlet
-from dace import dtypes, registry
+from dace import cpf_lowering, dtypes, registry
 from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -110,7 +110,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         this method only does framecode-target bookkeeping (statestruct entry, cache
         rebuild, stream manager, pool-release, per-kernel arglists).
         """
-        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+        # CPF supplies its own context (cpf_gpu_context) with the same shape, because the field is what the generated
+        # body reaches the stream through; the runtime type would drag in the header the rendering exists to do without.
+        context_type = 'cpf_gpu_context' if cpf_lowering.device() else 'dace::cuda::Context'
+        self._frame.statestruct.append(f'{context_type} *gpu_context;')
         self._dispatcher._used_targets.add(self)
 
         pipeline_results: Dict[str, Any] = {}
@@ -748,6 +751,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError(f'Deallocation not implemented for storage type: {nodedesc.storage.name}')
 
     def get_generated_codeobjects(self):
+        if cpf_lowering.device():
+            # CPF renders one unit: only globals, kernels and launch wrappers; CPF supplies the rest
+            # (see :func:`~dace.codegen.cpf.device_prologue`).
+            fileheader = CodeIOStream()
+            self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
+            self._codeobject.code = '\n'.join(
+                (fileheader.getvalue(), self._globalcode.getvalue(), self._localcode.getvalue()))
+            return [self._codeobject]
         stream_create = stream_destroy = None
         if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
             # Every stream is the default (null) stream.
