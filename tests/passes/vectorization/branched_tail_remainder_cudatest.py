@@ -225,6 +225,25 @@ def test_default_gpu_fuses_a_masked_tile_remainder():
     assert "int_floor" not in if_cond.as_string, f"if-condition carries a split residue: {if_cond.as_string}"
 
 
+def test_fusion_reads_each_boundary_descriptor_from_the_array_its_edge_carries():
+    """A body connector need not share its outer array's name: CloudSC's GPU offload feeds ``paph`` from
+    ``gpu_paph``. Fusing the tile/tail pair must take each boundary descriptor from the array the
+    connector's edge carries, not look the connector name up in the outer SDFG."""
+    from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+
+    sdfg = _prep(_add16)
+    unfused = VectorizeGPU(VectorizeConfig(widths=(2, )))
+    assert isinstance(unfused.passes[-1], FuseBranchedTailRemainder)
+    unfused.passes = unfused.passes[:-1]
+    unfused.apply_pass(sdfg, {})
+    for name in [n for n, desc in sdfg.arrays.items() if not desc.transient]:
+        sdfg.replace(name, 'gpu_' + name)
+
+    FuseBranchedTailRemainder(widths=(2, )).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len(_conditionals(sdfg)) == 1
+
+
 def test_default_gpu_emits_widened_load_and_no_scalar_tail():
     """The emitted ``.cu`` under the DEFAULT config: ONE kernel; the full-tile arm carries a
     mask-free ``Align >= 4`` (half2-capable) ``tile_load``; the remainder arm carries a masked
