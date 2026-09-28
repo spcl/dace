@@ -725,21 +725,16 @@ class ExpandTransformation(PatternTransformation):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
 
-            # Carry over connectors the expansion did not declare (e.g. passthrough connectors
-            # injected by upstream passes), else the redirected edges point at nonexistent ones.
-            # Only connectors that still have edges: an expansion may rename edges in place.
-            in_conns_with_edges = {e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None}
-            out_conns_with_edges = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
-            for conn_name, conn_type in node.in_connectors.items():
-                if conn_name not in in_conns_with_edges:
-                    continue
-                if conn_name not in expansion.in_connectors and conn_name not in expansion.out_connectors:
-                    expansion.add_in_connector(conn_name, dtype=conn_type)
-            for conn_name, conn_type in node.out_connectors.items():
-                if conn_name not in out_conns_with_edges:
-                    continue
-                if conn_name not in expansion.out_connectors and conn_name not in expansion.in_connectors:
-                    expansion.add_out_connector(conn_name, dtype=conn_type)
+            # Carry over connectors a pass added to the library node (e.g., a GPU stream). Connectors without
+            # edges stay behind, since an expansion may rename its edges in place.
+            wired_in = {e.dst_conn for e in state.in_edges(node)}
+            wired_out = {e.src_conn for e in state.out_edges(node)}
+            for conn, ctype in node.in_connectors.items():
+                if conn in wired_in and conn not in expansion.in_connectors and conn not in expansion.out_connectors:
+                    expansion.add_in_connector(conn, dtype=ctype)
+            for conn, ctype in node.out_connectors.items():
+                if conn in wired_out and conn not in expansion.out_connectors and conn not in expansion.in_connectors:
+                    expansion.add_out_connector(conn, dtype=ctype)
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 
