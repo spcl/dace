@@ -3,20 +3,20 @@
 Configuring DaCe
 ================
 
-Various aspects of DaCe can be configured. When first run, the framework creates a file called ``.dace.conf``. The
-file is written in YAML format and provides useful settings that can be modified either directly or overridden on a
-case-by-case basis using the configuration API or environment variables.
+Various aspects of DaCe can be configured through a YAML file called ``.dace.conf``, through ``DACE_*`` environment
+variables, or through the configuration API. DaCe does not create or modify a configuration file on its own —
+:func:`~dace.config.Config.save` writes one explicitly — with one exception: a configuration file in the old format
+(which stored *every* entry) is rewritten once, when first loaded, to the current format that keeps only the entries
+changed from their defaults.
 
 .. note::
     Documentation for all configuration entries is available at the :ref:`config_schema`.
 
 
 
-DaCe will first try to search for the configuration file in the ``DACE_CONFIG`` environment variable, if exists.
-Otherwise, it will then look for a ``.dace.conf`` file in the current working directory. If not found,
-it will look for it in the user's home directory. By default, if no file can be found a new one will be created in
-the home directory. If the home directory does not exist (e.g., in Docker containers), the file will be created in the
-current working directory. If no configuration file can be created in any of the above paths, the default settings are used.
+DaCe reads at most one configuration file, the first one found: a ``.dace.conf`` in the current working directory,
+then the file pointed to by the ``DACE_CONFIG`` environment variable, then ``.dace.conf`` in the user's home
+directory. If none exists, the schema defaults are used.
 
 An example configuration file, which changes two configuration entries, looks as follows:
 
@@ -39,6 +39,11 @@ just the ones changed from default, for reproducibility purposes.
 
 Any configuration entry can be overridden using environment variables. To do so, create a variable that starts with
 ``DACE_`` followed by the configuration entry path. Dot (``.``) characters should be replaced with ``_``.
+
+Environment variables are read once, when the configuration is loaded (at import time, or on an explicit
+:func:`~dace.config.Config.load`); their values are coerced to the entry's declared type. Changing a ``DACE_*``
+variable afterwards has no effect until the configuration is reloaded, and values set through the API always take
+precedence over the environment.
 
 For example, setting the CPU compiler path (:envvar:`compiler.cpu.executable`) with an environment variable can be
 done as follows:
@@ -84,13 +89,18 @@ unit tests, where configuration changes must not persist outside of a test):
     Deciding the value of a configuration entry
 
 
-If an entry is defined in multiple places, the priority order for determining the value is as follows:
+If an entry is defined in multiple places, its value is decided when the configuration is loaded, with the following
+sources in increasing priority:
 
-1. If a ``DACE_*`` environment variable is found, its value will always be used
-2. Otherwise, the API (:func:`~dace.config.Config.set`, :func:`~dace.config.set_temporary`) is used
-3. Value located in a ``.dace.conf`` file in the current working directory
-4. Lastly, the value will be searched in ``.dace.conf`` located in the user's home directory or the path pointed to by
-   the ``DACE_CONFIG`` environment variable
+1. The default value from the configuration schema
+2. The configuration file (the first one found, see above)
+3. A ``DACE_*`` environment variable
+
+Values set through the API afterwards (:func:`~dace.config.Config.set`, :func:`~dace.config.set_temporary`,
+:func:`~dace.config.temporary_config`) have the highest priority, since the environment is only consulted while
+loading. Loading does not write the configuration file (apart from the one-time migration of old-format files noted
+above), so neither environment values nor API changes end up in ``.dace.conf`` unless
+:func:`~dace.config.Config.save` is called explicitly.
 
 
 .. rubric::

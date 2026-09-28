@@ -45,13 +45,14 @@ For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use 
 pre-commit run --all-files
 ```
 
-Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. To get `pre-commit` and `yapf`, be sure to install the `linting` extra, e.g. for contributors we recommend
+Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `yapf` as part of the `dev` dependency group. For contributors, we recommend to run
 
 ```bash
-pip install -e ".[testing,linting]"
+uv sync
+source .venv/bin/activate
 ```
 
-to get testing and linting extras in an editable install.
+to get an editable install with all dev dependencies. Add `--extra ml` for optional dace-ml support.
 
 One way to always ensure consistency with our coding standards is to install pre-commit hooks, which will check formatting issues of changed files before every commit. If you wish to do so, run
 
