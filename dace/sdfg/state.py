@@ -2653,8 +2653,9 @@ class SymbolResolver:
     the entry points that belong together; each of them makes its own if it is not given one.
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
-    around it, and may yet come to depend on the inter-state edges that lead to it. Its expensive
-    part, the walk over the data descriptors, is genuinely per SDFG and is reused as such.
+    around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
+    data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
+    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
     """
 
     def __init__(self) -> None:
