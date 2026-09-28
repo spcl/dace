@@ -65,52 +65,53 @@ def test_recreate_sdfg():
 
 
 @pytest.mark.usefixtures('ctypes_interface')
-def test_regenerate_code(monkeypatch):
+def test_regenerate_code():
     # This test edits the generated sources on disk, which only exist in the
-    # development folder mode. The env var wins over Config at read time, so
-    # setting it shields against a CI-side production override.
-    monkeypatch.setenv('DACE_compiler_build_folder_mode', 'development')
+    # development folder mode. The environment only seeds configuration
+    # defaults at load time, so a CI-side production export is overridden
+    # through the API, which always wins over the environment.
+    with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
 
-    # Get the program name, regardless of running directly or through pytest
-    def very_unique_program_432():
-        pass
+        # Get the program name, regardless of running directly or through pytest
+        def very_unique_program_432():
+            pass
 
-    program_name = _program_name(very_unique_program_432)
-    build_folder = _build_folder(program_name)
+        program_name = _program_name(very_unique_program_432)
+        build_folder = _build_folder(program_name)
 
-    # Ensure that the build folder is empty
-    if os.path.exists(build_folder):
-        shutil.rmtree(build_folder)
+        # Ensure that the build folder is empty
+        if os.path.exists(build_folder):
+            shutil.rmtree(build_folder)
 
-    @dace.program(regenerate_code=False)
-    def very_unique_program_432(A: dace.float64[10]):
-        return A + 3
+        @dace.program(regenerate_code=False)
+        def very_unique_program_432(A: dace.float64[10]):
+            return A + 3
 
-    a = np.random.rand(10)
-    assert np.allclose(a + 3, very_unique_program_432(a))
+        a = np.random.rand(10)
+        assert np.allclose(a + 3, very_unique_program_432(a))
 
-    # Source code
-    source_filename = os.path.join(build_folder, 'src', 'cpu', program_name + '.cpp')
-    assert os.path.exists(source_filename)
+        # Source code
+        source_filename = os.path.join(build_folder, 'src', 'cpu', program_name + '.cpp')
+        assert os.path.exists(source_filename)
 
-    # Rewrite source code
-    with open(source_filename, 'r') as f:
-        source = f.read()
-        source = re.sub(r'\b3\b', '4', source)
+        # Rewrite source code
+        with open(source_filename, 'r') as f:
+            source = f.read()
+            source = re.sub(r'\b3\b', '4', source)
 
-    # Make sure file sets to be "changed on disk"
-    time.sleep(2)
+        # Make sure file sets to be "changed on disk"
+        time.sleep(2)
 
-    with open(source_filename, 'w') as f:
-        f.write(source)
+        with open(source_filename, 'w') as f:
+            f.write(source)
 
-    # Now run the same program again, but this time with the modified code (ensures it is recompiled)
-    @dace.program(regenerate_code=False)
-    def very_unique_program_432(A: dace.float64[10]):
-        return A + 3
+        # Now run the same program again, but this time with the modified code (ensures it is recompiled)
+        @dace.program(regenerate_code=False)
+        def very_unique_program_432(A: dace.float64[10]):
+            return A + 3
 
-    a = np.random.rand(10)
-    assert np.allclose(a + 4, very_unique_program_432(a))
+        a = np.random.rand(10)
+        assert np.allclose(a + 4, very_unique_program_432(a))
 
 
 if __name__ == '__main__':
