@@ -11,19 +11,19 @@ from dace.config import set_temporary
 
 
 @pytest.fixture
-def nanobind_interface(monkeypatch):
+def nanobind_interface():
     """Pins ``compiler.interface`` to nanobind for the duration of a test.
 
     Not ``autouse``: a good third of this file only calls
     ``generate_bindings_code`` and compiles nothing, and those tests should not
     depend on a config change they never read.
 
-    ``DACE_compiler_interface`` takes precedence over ``set_temporary``, so it
-    is dropped first. That is what makes these tests self-sufficient: they
-    exercise the nanobind interface whatever interface the surrounding CI leg
-    selects, so the ctypes legs and the GPU job produce real nanobind coverage.
+    ``set_temporary`` takes precedence over a ``DACE_compiler_interface``
+    export, which only seeds the configuration default when it is loaded. That
+    is what makes these tests self-sufficient: they exercise the nanobind
+    interface whatever interface the surrounding CI leg selects, so the ctypes
+    legs and the GPU job produce real nanobind coverage.
     """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
     with set_temporary('compiler', 'interface', value='nanobind'):
         yield
 
@@ -241,22 +241,21 @@ def test_nanobind_interface_state_pointer(nanobind_interface):
         handle.state_pointer  # finalized
 
 
-def test_nanobind_interface_get_state_struct_parity(monkeypatch):
+def test_nanobind_interface_get_state_struct_parity():
     """get_state_struct exposes the same leading state-struct pointer fields as
     the ctypes interface, as a live ctypes.Structure overlay of state memory."""
     import ctypes
 
     # Builds under BOTH interfaces, so it cannot take the nanobind_interface
-    # fixture - but it needs the same delenv: DACE_compiler_interface overrides
-    # set_temporary, and a leg that pins nanobind would make the ctypes half a
-    # second nanobind build and the comparison vacuous.
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    # fixture and pins each interface itself below; a leg that exports nanobind
+    # would otherwise make the ctypes half a second nanobind build and the
+    # comparison vacuous.
+    #
     # The ctypes half needs DEVELOPMENT folder mode: its get_state_struct
     # recovers the layout by parsing the generated src/cpu/<name>.cpp, and
     # production mode trims the sources away (it also moves the .so up out of
     # build/). The nanobind half bakes the field names in at codegen time and
-    # does not care. Env first - it overrides set_temporary.
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+    # does not care.
 
     def build_and_fields(interface):
         with set_temporary('compiler', 'interface', value=interface), \
@@ -359,7 +358,7 @@ def test_nanobind_interface_reuse_unchanged_module(nanobind_interface):
     assert c3.sdfg.name == f'{base_name}_0'
 
 
-def test_nanobind_interface_reuse_refused_after_foreign_rebuild(monkeypatch):
+def test_nanobind_interface_reuse_refused_after_foreign_rebuild():
     """A ctypes rebuild of the same (folder, name) identity invalidates the
     loaded-module reuse: the folder's INTERFACE marker now says ctypes, so a
     later nanobind compile of the unchanged SDFG must NOT reuse the stale
@@ -375,8 +374,6 @@ def test_nanobind_interface_reuse_refused_after_foreign_rebuild(monkeypatch):
 
     sympy.core.cache.clear_cache()
     symbolic.deserialize_symbolic.cache_clear()
-
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
 
     N = dace.symbol('N')
 
@@ -475,14 +472,11 @@ def test_nanobind_interface_handle_sdfg_isolated(nanobind_interface):
     cached-binary, and the regenerate_code=False branch. Passing ``self``
     (the old behavior of the non-codegen paths) leaked later mutations of
     the original into the handle."""
-    with pytest.MonkeyPatch.context() as mp, \
-            set_temporary('compiler', 'build_folder_mode', value='development'):
-        # The else-branch leg (c4) rebuilds from the generated sources, which
-        # only exist in development folder mode (production trims them) - and
-        # an existing folder's FOLDER_MODE marker overrides the config, so the
-        # WHOLE test pins development mode. The env var must be dropped first
-        # (it overrides set_temporary, see the CI-env gotcha).
-        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+    # The else-branch leg (c4) rebuilds from the generated sources, which
+    # only exist in development folder mode (production trims them) - and
+    # an existing folder's FOLDER_MODE marker overrides the config, so the
+    # WHOLE test pins development mode.
+    with set_temporary('compiler', 'build_folder_mode', value='development'):
         N = dace.symbol('N')
 
         @dace.program
@@ -649,25 +643,22 @@ def test_nanobind_interface_perf_folder_only_when_instrumented(nanobind_interfac
     def axpy_nanobind_perfdir(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
         B[:] = alpha * A + B
 
-    # Production mode (env must yield to set_temporary, see gotcha):
-    # no perf/ without instrumentation, perf/ with it.
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
-        with set_temporary('compiler', 'build_folder_mode', value='production'):
-            csdfg = axpy_nanobind_perfdir.to_sdfg().compile()
-            assert not os.path.isdir(os.path.join(csdfg.sdfg.build_folder, 'perf'))
+    # Production mode: no perf/ without instrumentation, perf/ with it.
+    with set_temporary('compiler', 'build_folder_mode', value='production'):
+        csdfg = axpy_nanobind_perfdir.to_sdfg().compile()
+        assert not os.path.isdir(os.path.join(csdfg.sdfg.build_folder, 'perf'))
 
-            sdfg2 = axpy_nanobind_perfdir.to_sdfg()
-            sdfg2.instrument = dace.InstrumentationType.Timer
-            csdfg2 = sdfg2.compile()  # collision-renamed - irrelevant here
-            assert os.path.isdir(os.path.join(csdfg2.sdfg.build_folder, 'perf'))
+        sdfg2 = axpy_nanobind_perfdir.to_sdfg()
+        sdfg2.instrument = dace.InstrumentationType.Timer
+        csdfg2 = sdfg2.compile()  # collision-renamed - irrelevant here
+        assert os.path.isdir(os.path.join(csdfg2.sdfg.build_folder, 'perf'))
 
-        # Development mode: uninstrumented folders are lean here too
-        # (previously perf/ was created unconditionally).
-        with set_temporary('compiler', 'build_folder_mode', value='development'):
-            sdfg3 = axpy_nanobind_perfdir.to_sdfg()
-            csdfg3 = sdfg3.compile()  # renamed again - fresh folder
-            assert not os.path.isdir(os.path.join(csdfg3.sdfg.build_folder, 'perf'))
+    # Development mode: uninstrumented folders are lean here too
+    # (previously perf/ was created unconditionally).
+    with set_temporary('compiler', 'build_folder_mode', value='development'):
+        sdfg3 = axpy_nanobind_perfdir.to_sdfg()
+        csdfg3 = sdfg3.compile()  # renamed again - fresh folder
+        assert not os.path.isdir(os.path.join(csdfg3.sdfg.build_folder, 'perf'))
 
 
 def test_nanobind_interface_sdfg_safe_call_refused(nanobind_interface):
@@ -1602,15 +1593,12 @@ def test_nanobind_interface_same_name_different_programs_coexist(nanobind_interf
         return sdfg
 
     # Distinct build folders per content: the default 'name' cache would
-    # collide the folders and trigger the same-path rename instead. The
-    # env var must be dropped first - a DACE_cache export (the nanobind CI
-    # sets 'unique', under which same-named programs in one process share
-    # a folder and rename) takes precedence over set_temporary.
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_cache', raising=False)
-        with set_temporary('cache', value='hash'):
-            csdfg1 = make(1.0).compile()
-            csdfg2 = make(2.0).compile()
+    # collide the folders and trigger the same-path rename instead. This also
+    # overrides a DACE_cache export (the nanobind CI sets 'unique', under which
+    # same-named programs in one process share a folder and rename).
+    with set_temporary('cache', value='hash'):
+        csdfg1 = make(1.0).compile()
+        csdfg2 = make(2.0).compile()
 
     # Neither was renamed: same-name coexistence, not the rename loop.
     assert csdfg1.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg2({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'

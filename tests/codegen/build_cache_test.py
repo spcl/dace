@@ -67,13 +67,11 @@ def own_build_folder(tmp_path, name):
     """One fresh build folder per program. Pins ``cache=name`` too, since CI's ``DACE_cache=single``
     shares one directory across SDFGs and these tests need a fresh folder. Pins the development
     folder mode too: these tests inspect ``build/`` after compiling, and the production mode CI runs
-    under deletes it (the env var must go first, as it beats ``set_temporary``)."""
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
-        with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
-            with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
-                with dace.config.set_temporary('cache', value='name'):
-                    yield
+    under deletes it."""
+    with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
+        with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
+            with dace.config.set_temporary('cache', value='name'):
+                yield
 
 
 def build_and_check(tmp_path, name, gpu=False):
@@ -232,15 +230,13 @@ def test_wrongly_named_nanobind_archive_is_ignored(tmp_path, monkeypatch):
     publishing the real archive under its own name."""
     monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
     cache_dir = None
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with dace.config.set_temporary('compiler', 'interface', value='nanobind'):
-            with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
-                cache_dir = compiler.nanobind_static_cache_dir()
-                os.makedirs(cache_dir)
-                with open(os.path.join(cache_dir, 'libnanobind-static-stale.a'), 'wb') as fh:
-                    fh.write(b'not an archive')
-                build_and_check(tmp_path, 'staletolerant')
+    with dace.config.set_temporary('compiler', 'interface', value='nanobind'):
+        with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+            cache_dir = compiler.nanobind_static_cache_dir()
+            os.makedirs(cache_dir)
+            with open(os.path.join(cache_dir, 'libnanobind-static-stale.a'), 'wb') as fh:
+                fh.write(b'not an archive')
+            build_and_check(tmp_path, 'staletolerant')
     published = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cache_dir, 'libnanobind*.a')))
     assert len(published) == 2 and 'libnanobind-static-stale.a' in published, \
         f'the build did not publish the real archive next to the stale one: {published}'

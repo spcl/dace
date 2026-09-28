@@ -8,14 +8,6 @@ import dace
 from dace.config import Config, set_temporary
 
 
-@pytest.fixture
-def clean_interface_env(monkeypatch):
-    """Drops the ``DACE_compiler_interface`` export so ``set_temporary`` (and the
-    schema default) decide - the env var overrides ``Config`` reads."""
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    yield
-
-
 def _supported_sdfg(name: str) -> dace.SDFG:
     """A trivially nanobind-supported SDFG: one primitive array, one scalar."""
     sdfg = dace.SDFG(name)
@@ -49,11 +41,11 @@ def _structure_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def test_interface_default_is_auto(clean_interface_env):
+def test_interface_default_is_auto():
     assert Config.get_default('compiler', 'interface') == 'auto'
 
 
-def test_resolve_compiler_interface(clean_interface_env):
+def test_resolve_compiler_interface():
     """The external decision function: explicit values pass through, auto
     inspects the SDFG, and no SDFG means the ctypes-compatible answer."""
     from dace.codegen.compiler import resolve_compiler_interface
@@ -78,7 +70,7 @@ def test_resolve_compiler_interface(clean_interface_env):
             resolve_compiler_interface(supported)
 
 
-def test_auto_falls_back_to_ctypes_without_nanobind_package(clean_interface_env, monkeypatch):
+def test_auto_falls_back_to_ctypes_without_nanobind_package(monkeypatch):
     """``auto`` in an environment without the nanobind package resolves to ctypes instead of
     crashing at compile time, and says so once -- nanobind is a declared dependency, so its
     absence usually means a broken installation and a silent fallback would mask it."""
@@ -98,7 +90,7 @@ def test_auto_falls_back_to_ctypes_without_nanobind_package(clean_interface_env,
     compiler._warn_nanobind_unavailable.cache_clear()
 
 
-def test_explicit_nanobind_ignores_availability_probe(clean_interface_env, monkeypatch):
+def test_explicit_nanobind_ignores_availability_probe(monkeypatch):
     """Explicit ``nanobind`` stays a demand even without the package: resolution passes it
     through unchanged, and the hard CompilerConfigurationError at compile time is the backstop."""
     from dace.codegen import compiler
@@ -108,7 +100,7 @@ def test_explicit_nanobind_ignores_availability_probe(clean_interface_env, monke
         assert compiler.resolve_compiler_interface(_supported_sdfg('demand_probe')) == 'nanobind'
 
 
-def test_auto_selects_nanobind_for_supported_sdfg(clean_interface_env):
+def test_auto_selects_nanobind_for_supported_sdfg():
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='auto'):
@@ -119,7 +111,7 @@ def test_auto_selects_nanobind_for_supported_sdfg(clean_interface_env):
         assert a[0] == 2.0
 
 
-def test_auto_falls_back_to_ctypes_for_callbacks(clean_interface_env):
+def test_auto_falls_back_to_ctypes_for_callbacks():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='auto'):
@@ -130,7 +122,7 @@ def test_auto_falls_back_to_ctypes_for_callbacks(clean_interface_env):
         assert a[0] == 42.0
 
 
-def test_auto_falls_back_to_ctypes_for_structures(clean_interface_env):
+def test_auto_falls_back_to_ctypes_for_structures():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='auto'):
@@ -140,13 +132,13 @@ def test_auto_falls_back_to_ctypes_for_structures(clean_interface_env):
         assert isinstance(csdfg, CtypesCompiledSDFG)
 
 
-def test_explicit_nanobind_refuses_unsupported_sdfg(clean_interface_env):
+def test_explicit_nanobind_refuses_unsupported_sdfg():
     with set_temporary('compiler', 'interface', value='nanobind'):
         with pytest.raises(NotImplementedError, match='ctypes'):
             _callback_sdfg('explicit_nanobind_callback_prog').compile()
 
 
-def test_explicit_ctypes_still_ctypes(clean_interface_env):
+def test_explicit_ctypes_still_ctypes():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='ctypes'):
@@ -154,7 +146,7 @@ def test_explicit_ctypes_still_ctypes(clean_interface_env):
         assert isinstance(csdfg, CtypesCompiledSDFG)
 
 
-def test_auto_nanobind_renames_when_ctypes_holds_the_identity(clean_interface_env, monkeypatch):
+def test_auto_nanobind_renames_when_ctypes_holds_the_identity():
     """A (folder, name) identity resident as a loaded ctypes DLL must drive the
     rename loop for a nanobind compile of the same identity: rebuilding the same
     library path hands importlib the resident ctypes mapping instead of the
@@ -162,7 +154,6 @@ def test_auto_nanobind_renames_when_ctypes_holds_the_identity(clean_interface_en
     the link map), which surfaces as ``ImportError: ... PyInit_<name>``."""
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
-    monkeypatch.delenv('DACE_cache', raising=False)
     with set_temporary('cache', value='unique'):
         with set_temporary('compiler', 'interface', value='ctypes'):
             c1 = _supported_sdfg('resident_tester').compile()

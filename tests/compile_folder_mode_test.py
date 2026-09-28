@@ -72,11 +72,7 @@ def _load_and_run_sdfg(build_folder, sdfg):
     _run_sdfg(csdfg)
 
 
-def test_development_folder_mode(monkeypatch):
-    # Environment variables override Config.set at read time; a CI-side
-    # DACE_compiler_build_folder_mode export must not defeat the explicit
-    # mode this test is about.
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+def test_development_folder_mode():
     with dace.config.temporary_config() as Config:
         Config.set('compiler', 'build_folder_mode', value="development")
         sdfg = _make_test_sdfg()
@@ -121,9 +117,7 @@ def test_development_folder_mode(monkeypatch):
     assert sdfg_compiler.get_folder_mode(build_folder) == "development"
 
 
-def test_production_folder_mode(monkeypatch):
-    # See test_development_folder_mode: shield against environment overrides.
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+def test_production_folder_mode():
     with dace.config.temporary_config() as Config:
         Config.set('compiler', 'build_folder_mode', value="production")
         sdfg = _make_test_sdfg()
@@ -239,10 +233,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
 
 
 @pytest.mark.usefixtures('ctypes_interface')
-def test_build_with_scheme_one_and_then_switch(monkeypatch):
-    # The test switches folder modes itself; a CI-exported mode would
-    #  override every set_temporary below (env wins in Config.get).
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+def test_build_with_scheme_one_and_then_switch():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
         version2="production",
@@ -308,10 +299,7 @@ def test_get_binary_name_detects_folder_mode_switch(tmp_path):
     )
 
 
-def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path, monkeypatch):
-    # A CI-exported folder mode would override the temporary_config below
-    #  (env wins in Config.get).
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
     # An old-style development folder that was generated but never compiled, i.e.
     #  there is no `FOLDER_MODE` file and no `build` folder. Such a folder is
     #  inconsistent, thus probing must return `None` and `get_binary_name()` must
@@ -374,10 +362,7 @@ def test_folder_mode_file_is_never_observed_incomplete(tmp_path):
 
 
 @pytest.mark.usefixtures('ctypes_interface')
-def test_already_loaded_and_comple_again(monkeypatch):
-    # See test_build_with_scheme_one_and_then_switch: the mode must not be
-    #  overridden by a CI env export.
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
+def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
         version2="development",

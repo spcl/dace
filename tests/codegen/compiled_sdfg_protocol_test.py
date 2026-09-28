@@ -18,12 +18,9 @@ def test_compiled_sdfg_protocol_ctypes():
         A[:] = A + 1.0
 
     # Pin the ctypes interface so this exercises the ctypes backend even when the
-    # CI leg exports DACE_compiler_interface=nanobind (the env var wins over
-    # set_temporary in Config.get, so drop it first).
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with set_temporary('compiler', 'interface', value='ctypes'):
-            csdfg = protocol_probe_ctypes.to_sdfg().compile()
+    # CI leg exports DACE_compiler_interface=nanobind.
+    with set_temporary('compiler', 'interface', value='ctypes'):
+        csdfg = protocol_probe_ctypes.to_sdfg().compile()
     assert isinstance(csdfg, CompiledSDFGProtocol)
     assert type(csdfg) is CtypesCompiledSDFG
 
@@ -41,31 +38,28 @@ def test_ctypes_compiled_sdfg_rename_and_deprecation():
         A[:] = A + 1.0
 
     # Pin the ctypes interface so this exercises the ctypes rename even when the
-    # CI leg exports DACE_compiler_interface=nanobind (the env var wins over
-    # set_temporary in Config.get, so drop it first).
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with set_temporary('compiler', 'interface', value='ctypes'):
-            # A normal ctypes compile returns the renamed class and does NOT warn.
-            with warnings.catch_warnings():
-                warnings.simplefilter('error', DeprecationWarning)
-                csdfg = rename_probe.to_sdfg().compile()
-            assert type(csdfg) is CtypesCompiledSDFG
+    # CI leg exports DACE_compiler_interface=nanobind.
+    with set_temporary('compiler', 'interface', value='ctypes'):
+        # A normal ctypes compile returns the renamed class and does NOT warn.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', DeprecationWarning)
+            csdfg = rename_probe.to_sdfg().compile()
+        assert type(csdfg) is CtypesCompiledSDFG
 
-            # Constructing the deprecated ``CompiledSDFG`` directly warns.
-            csdfg(A=np.zeros(8), N=np.int32(8))  # ensure the library is loaded
-            with pytest.warns(DeprecationWarning, match='CompiledSDFG is deprecated'):
-                deprecated = CompiledSDFG(csdfg.sdfg, csdfg._lib, csdfg.sdfg.arg_names)
-            assert isinstance(deprecated, CtypesCompiledSDFG)
+        # Constructing the deprecated ``CompiledSDFG`` directly warns.
+        csdfg(A=np.zeros(8), N=np.int32(8))  # ensure the library is loaded
+        with pytest.warns(DeprecationWarning, match='CompiledSDFG is deprecated'):
+            deprecated = CompiledSDFG(csdfg.sdfg, csdfg._lib, csdfg.sdfg.arg_names)
+        assert isinstance(deprecated, CtypesCompiledSDFG)
 
-            # Both wrappers share one ReloadableDLL and __del__ unloads it
-            # unconditionally, so if `deprecated` is destroyed first (Python
-            # 3.14's destruction order), csdfg's finalize-on-del calls
-            # __dace_exit through a dangling pointer and segfaults. Finalize
-            # now, while the library is still mapped: both destructors then
-            # reduce to plain unloads (first wins, the second is a guarded
-            # no-op) in any destruction order.
-            csdfg.finalize()
+        # Both wrappers share one ReloadableDLL and __del__ unloads it
+        # unconditionally, so if `deprecated` is destroyed first (Python
+        # 3.14's destruction order), csdfg's finalize-on-del calls
+        # __dace_exit through a dangling pointer and segfaults. Finalize
+        # now, while the library is still mapped: both destructors then
+        # reduce to plain unloads (first wins, the second is a guarded
+        # no-op) in any destruction order.
+        csdfg.finalize()
 
 
 def test_compiled_sdfg_protocol_nanobind():

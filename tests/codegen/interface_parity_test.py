@@ -15,10 +15,8 @@ from dace.config import set_temporary
 
 @pytest.fixture(params=['ctypes', 'nanobind'])
 def compiler_interface(request):
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with set_temporary('compiler', 'interface', value=request.param):
-            yield request.param
+    with set_temporary('compiler', 'interface', value=request.param):
+        yield request.param
 
 
 def test_vector_return_exotic_strides(compiler_interface):

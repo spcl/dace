@@ -96,17 +96,13 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     assert np.allclose(result, A @ B)
 
 
-def test_get_state_struct_refused_in_production_folder_mode(monkeypatch):
+def test_get_state_struct_refused_in_production_folder_mode():
     """The ctypes ``get_state_struct`` recovers the layout by parsing the generated
     ``src/cpu/<name>.cpp``, which ``production`` folder mode trims away (it also places
     the library directly in the build folder instead of in ``build/``, so the source path
     would not even resolve). It must refuse explicitly instead of failing on a missing file.
     """
     from dace.config import set_temporary
-
-    # The env vars override set_temporary, so both pins must be dropped first.
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
 
     @dace.program
     def prod_state_struct_probe(A: dace.float64[8]):
@@ -139,4 +135,4 @@ def test_get_state_struct_refused_in_production_folder_mode(monkeypatch):
 
 if __name__ == '__main__':
     test_preallocate_transients_in_state_struct(_cuda_helper())
-    test_get_state_struct_refused_in_production_folder_mode(pytest.MonkeyPatch())
+    test_get_state_struct_refused_in_production_folder_mode()

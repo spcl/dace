@@ -32,8 +32,14 @@ def ctypes_interface(monkeypatch):
 
     Under the default ``auto`` these SDFGs would select the nanobind interface,
     where the asserted behavior differs; a comment at the fixture's use sites
-    names the divergence per file. The ``DACE_compiler_interface`` env var
-    overrides ``set_temporary``, so it is dropped first.
+    names the divergence per file.
+
+    ``DACE_compiler_interface`` is dropped as well, even though the environment
+    no longer overrides ``set_temporary`` on every read: it is re-applied on top
+    whenever the configuration is LOADED, and ``temporary_config()`` restores by
+    loading. A test that opens one inside this fixture would leave the context
+    with the export back in force and this pin gone, so the pin has to outlive
+    the reload -- see tests/compile_folder_mode_test.py.
     """
     import dace
     monkeypatch.delenv('DACE_compiler_interface', raising=False)

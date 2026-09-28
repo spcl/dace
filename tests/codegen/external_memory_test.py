@@ -113,11 +113,8 @@ def test_external_memory_detection_with_gpu_arrays():
     # This probes the CTYPES CompiledSDFG scan and needs the ctypes build
     # layout (stub library + program library); the nanobind interface builds
     # an extension module without the stub, so the interface is pinned.
-    # The env var overrides set_temporary, so it must be dropped first.
-    with pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with set_temporary('compiler', 'interface', value='ctypes'):
-            _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler)
+    with set_temporary('compiler', 'interface', value='ctypes'):
+        _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler)
 
 
 def _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler):
