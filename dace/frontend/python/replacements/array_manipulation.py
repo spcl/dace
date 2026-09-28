@@ -954,7 +954,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     # For cases that can be recognized, if contiguous dimension is too small
     # raise an exception similar to numpy
     if (not symbolic.issymbolic(desc.shape[contigdim], sdfg.constants) and orig_bytes < view_bytes
-            and desc.shape[contigdim] * orig_bytes % view_bytes != 0):
+            and not symbolic.is_multiple(desc.shape[contigdim] * orig_bytes, view_bytes)):
         raise ValueError('When changing to a larger dtype, its size must be a divisor of '
                          'the total size in bytes of the last axis of the array.')
 
@@ -981,7 +981,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               storage=desc.storage,
                               strides=newstrides,
                               allow_conflicts=desc.allow_conflicts,
-                              total_size=symbolic.int_floor(desc.total_size * orig_bytes, view_bytes),
+                              total_size=symbolic.int_floor(desc.total_size_in_bytes, view_bytes),
                               may_alias=desc.may_alias,
                               alignment=desc.alignment,
                               find_new_name=True)

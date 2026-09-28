@@ -127,7 +127,7 @@ def distribute_grid_over_chiplets(kernel_label: str, grid_size: List[symbolic.Sy
     return distributed, chunk
 
 
-def permuted_block_index(chiplets: int, chunk_cpp: str) -> str:
+def permuted_block_index(chiplets: int, chunk_cpp: str, block_index: str = 'blockIdx.x') -> str:
     """
     Returns the C++ expression the distributed first grid dimension is indexed by.
 
@@ -137,8 +137,9 @@ def permuted_block_index(chiplets: int, chunk_cpp: str) -> str:
 
     :param chiplets: Number of chiplets the grid is distributed over, greater than 1.
     :param chunk_cpp: Chunk returned by :func:`distribute_grid_over_chiplets`, rendered as C++.
+    :param block_index: C++ expression of the block index, e.g. ``blockIdx.x`` widened to the map's index type.
     """
-    return f'((blockIdx.x % {chiplets}) * {chunk_cpp} + blockIdx.x / {chiplets})'
+    return f'(({block_index} % {chiplets}) * {chunk_cpp} + {block_index} / {chiplets})'
 
 
 def trailing_block_condition(index_variable: str, exclusive_bound_cpp: str) -> str:
