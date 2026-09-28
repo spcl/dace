@@ -2,7 +2,7 @@
 """Reproduce the four optimized CloudSC SDFGs and run them against the un-transformed reference.
 
 Every step saves its SDFG to ``<out>/<step>.sdfgz`` and a re-run reloads it instead of recomputing, so
-the minutes-long parse, canonicalization and vectorization run once.
+the minutes-long parse, canonicalization and vectorization run once. See ``QUICKSTART.md``.
 
     python -m tests.corpus.cloudsc.reproduce --out ~/.cache/cloudsc_repro canon_cpu vec_cpu
     python -m tests.corpus.cloudsc.reproduce --out ~/.cache/cloudsc_repro --run canon_gpu vec_gpu
