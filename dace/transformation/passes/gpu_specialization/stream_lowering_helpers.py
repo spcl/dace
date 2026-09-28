@@ -18,9 +18,8 @@ from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.nodes import AccessNode, MapExit, Node
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    STREAM_CONNECTOR, add_gpu_stream_connector, dependency_edge, enclosing_map_chain, get_gpu_stream_array_name,
-    has_stream_connector, innermost_enclosing_map, is_gpu_relevant_node, is_gpu_stream_consumer,
-    is_inside_gpu_device_kernel)
+    STREAM_CONNECTOR, add_gpu_stream_connector, enclosing_map_chain, get_gpu_stream_array_name, has_stream_connector,
+    innermost_enclosing_map, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel)
 
 # Stream-array allocation + propagation.
 
@@ -169,7 +168,7 @@ def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn
         prev_access = state.add_access(stream_array_name)
     state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
     next_access = state.add_access(stream_array_name)
-    state.add_edge(exit_, None, next_access, None, dependency_edge())
+    state.add_nedge(exit_, next_access, Memlet())
     return next_access
 
 
@@ -256,7 +255,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, OrderedSet], 
         for sink in existing_sinks:
             if isinstance(sink, nodes.AccessNode) and sink.desc(state).dtype == dtypes.gpuStream_t:
                 continue
-            state.add_edge(sink, None, tasklet, None, dependency_edge())
+            state.add_nedge(sink, tasklet, Memlet())
 
         for stream in sorted_streams:
             src_access = stream_sinks.get(stream) or state.add_access(stream_array_name)
@@ -276,8 +275,8 @@ def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignme
             raise NotImplementedError("Using the default 'nullptr' gpu stream is not supported yet.")
         tasklet = make_sync_tasklet(state, "gpu_stream_synchronization", [stream])
         for succ in list(state.successors(node)):
-            state.add_edge(tasklet, None, succ, None, dependency_edge())
-        state.add_edge(node, None, tasklet, None, dependency_edge())
+            state.add_nedge(tasklet, succ, Memlet())
+        state.add_nedge(node, tasklet, Memlet())
         state.add_edge(state.add_access(stream_array_name), None, tasklet, _stream_connector_name(stream),
                        dace.Memlet(f"{stream_array_name}[{stream}]"))
 

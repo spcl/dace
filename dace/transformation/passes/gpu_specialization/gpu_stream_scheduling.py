@@ -25,11 +25,10 @@ from dace.sdfg.graph import NodeT
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
-    STREAM_CONNECTOR, find_inner_gpu_consumers, get_gpu_stream_array_name, is_already_lowered_gpu_runtime_call,
-    is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer, is_inside_gpu_device_kernel,
-    is_stream_wiring_applied, weakly_connected_node_sets)
+    STREAM_CONNECTOR, find_inner_gpu_consumers, in_scope_of, get_gpu_stream_array_name,
+    is_already_lowered_gpu_runtime_call, is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer,
+    is_inside_gpu_device_kernel, is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (make_sync_tasklet,
                                                                                    _stream_connector_name,
@@ -101,8 +100,7 @@ def is_gpu_device_exit(node) -> bool:
 
 def both_within_gpu_kernel(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
     """Both edge endpoints are inside a GPU schedule scope (i.e. on the device)."""
-    return (is_within_schedule_types(state, src, dtypes.GPU_SCHEDULES)
-            and is_within_schedule_types(state, dst, dtypes.GPU_SCHEDULES))
+    return in_scope_of(state, src, dtypes.GPU_SCHEDULES) and in_scope_of(state, dst, dtypes.GPU_SCHEDULES)
 
 
 @properties.make_properties
@@ -663,9 +661,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
                 else:
                     # Nested inside a Map: descend only when NOT inside a GPU kernel scope.
-                    # ``is_within_schedule_types`` walks enclosing scopes safely, replacing a
-                    # manual ``scope_dict`` climb that spun forever with no GPU-scheduled parent.
-                    if not is_within_schedule_types(state, node, dtypes.GPU_SCHEDULES):
+                    if not in_scope_of(state, node, dtypes.GPU_SCHEDULES):
                         self._add_sync_state(node.sdfg, stream_array_name)
 
             # Append a program-end sync only at GPU *sink* states (no out-edges in their parent

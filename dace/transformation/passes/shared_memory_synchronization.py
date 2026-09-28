@@ -6,6 +6,7 @@ from typing import Dict, Tuple
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
+from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from ordered_set import OrderedSet
@@ -77,8 +78,8 @@ class DefaultSharedMemorySync(ppl.Pass):
             return False
 
         # Collaborative only if within a kernel (GPU_Device) but not within a GPU_ThreadBlock map.
-        if (not helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device])
-                or helpers.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
+        if (not is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_Device])
+                or is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
             return False
 
         return True

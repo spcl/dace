@@ -15,7 +15,8 @@ from dace import SDFG, SDFGState, dtypes, properties, nodes
 from dace.memlet import Memlet
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (dependency_edge, innermost_enclosing_map)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import innermost_enclosing_map
+from dace.transformation.passes.length_one_array_scalar_conversion import descriptor_is_read, descriptor_is_written
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 
@@ -78,7 +79,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         Returns ``False`` (lift skipped) when the inner transient is unused:
         a bare descriptor move with no edges/connectors would corrupt the
         SDFG."""
-        is_read, is_written = _classify_inner_usage(inner_sdfg, name)
+        is_read, is_written = descriptor_is_read(inner_sdfg, name), descriptor_is_written(inner_sdfg, name)
         if not is_read and not is_written:
             return False
 
@@ -98,7 +99,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
 
         if is_read:
             an_read = outer_state.add_access(outer_name)
-            outer_state.add_edge(kernel_entry, None, an_read, None, dependency_edge())
+            outer_state.add_nedge(kernel_entry, an_read, Memlet())
             nsdfg_node.add_in_connector(name, force=True)
             outer_state.add_edge(an_read, None, nsdfg_node, name,
                                  Memlet(data=outer_name, subset=copy.deepcopy(full_subset)))
@@ -108,29 +109,13 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
             nsdfg_node.add_out_connector(name, force=True)
             outer_state.add_edge(nsdfg_node, name, an_write, None,
                                  Memlet(data=outer_name, subset=copy.deepcopy(full_subset)))
-            outer_state.add_edge(an_write, None, kernel_exit, None, dependency_edge())
+            outer_state.add_nedge(an_write, kernel_exit, Memlet())
 
         # Write-only: AN_write has no incoming dep from MapEntry, so anchor it.
         if is_written and not is_read:
-            outer_state.add_edge(kernel_entry, None, an_write, None, dependency_edge())
+            outer_state.add_nedge(kernel_entry, an_write, Memlet())
 
         # Topology changed: drop the scope cache so a sibling ``_lift_one`` in
         # the same state doesn't read it stale.
         outer_state._clear_scopedict_cache()
         return True
-
-
-def _classify_inner_usage(inner_sdfg: SDFG, name: str) -> Tuple[bool, bool]:
-    """``(is_read, is_written)`` for ``name`` inside ``inner_sdfg``, from
-    each state's ``read_and_write_sets``."""
-    is_read = False
-    is_written = False
-    for state in inner_sdfg.states():
-        read_set, write_set = state.read_and_write_sets()
-        if name in read_set:
-            is_read = True
-        if name in write_set:
-            is_written = True
-        if is_read and is_written:
-            return True, True
-    return is_read, is_written
