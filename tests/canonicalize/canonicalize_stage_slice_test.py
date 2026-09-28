@@ -89,5 +89,24 @@ def test_unknown_stage_label_raises():
         canonicalize(sdfg, stages=['not_a_real_stage'])
 
 
+def test_the_stages_after_fuse_without_fuse_final_keep_a_hand_chosen_split():
+    """A caller that picks the map granularity by hand runs the stages after 'fuse' without 'fuse_final', the
+    terminal re-fusion; the two maps it left split stay split and still compute the full run's values."""
+    labels = stage_labels()
+    assert labels.index('fuse') < labels.index('fuse_final')
+    after_fuse = [label for label in labels[labels.index('fuse') + 1:] if label != 'fuse_final']
+
+    sdfg_full = producer_consumer.to_sdfg(simplify=False)
+    canonicalize(sdfg_full, validate=True)
+    _, b_full = run(sdfg_full)
+
+    sdfg_split = producer_consumer.to_sdfg(simplify=False)
+    canonicalize(sdfg_split, validate=True, stages=labels[:labels.index('coalesce')])
+    canonicalize(sdfg_split, validate=True, stages=after_fuse)
+    assert count_top_level_maps(sdfg_split) > count_top_level_maps(sdfg_full)
+    _, b_split = run(sdfg_split)
+    assert np.allclose(b_split, b_full)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])

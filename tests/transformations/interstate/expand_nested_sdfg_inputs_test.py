@@ -346,6 +346,37 @@ def test_an_index_read_on_an_interstate_edge_moves_with_the_window(read, x_strid
     assert b[0] == (float(element > 2) if by_condition else a[element])
 
 
+def column_as_vector_sdfg() -> dace.SDFG:
+    """``b = 2 * a[:, 0]`` for an ``(N, 1)`` ``a``, bound whole as an ``(N,)`` connector."""
+    inner = dace.SDFG('column')
+    inner.add_array('x', [N], dace.float64)
+    inner.add_array('y', [N], dace.float64)
+    inner.add_state().add_mapped_tasklet('twice', {'i': '0:N'}, {'v': dace.Memlet('x[i]')},
+                                         'w = 2 * v', {'w': dace.Memlet('y[i]')},
+                                         external_edges=True)
+    outer = dace.SDFG('column_outer')
+    outer.add_array('a', [N, 1], dace.float64)
+    outer.add_array('b', [N], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {'x'}, {'y'})
+    state.add_edge(state.add_read('a'), None, node, 'x', dace.Memlet('a[0:N, 0]'))
+    state.add_edge(node, 'y', state.add_write('b'), None, dace.Memlet('b[0:N]'))
+    return outer
+
+
+def test_a_whole_array_bound_at_lower_rank_is_widened_to_the_outer_rank():
+    sdfg = column_as_vector_sdfg()
+
+    assert sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs) == 1
+
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert inner.arrays['a'].shape == (N, 1)
+    assert {str(e.data.subset) for s in inner.all_states() for e in s.edges() if e.data.data == 'a'} >= {'i, 0'}
+    a, b = np.arange(8.0).reshape(8, 1), np.zeros(8)
+    sdfg(a=a, b=b, N=8)
+    np.testing.assert_array_equal(b, 2 * a[:, 0])
+
+
 if __name__ == "__main__":
     test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e()
     test_expand_terminates_on_wcr_reduction_out_edge()

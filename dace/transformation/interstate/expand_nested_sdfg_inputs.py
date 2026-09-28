@@ -15,8 +15,8 @@ This transformation does that offset adjustment up-front. Per in/out edge:
   * add the offset to every inner memlet referencing the connector's array.
 After it runs, every edge passes the full-array check and ``InlineMultistateSDFG.apply()`` is correct.
 
-Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``a[0:1, 0:M]`` →
-1-D ``[M]``); the outer array is absent from the parent SDFG (orphan descriptor).
+A connector of lower rank than its outer array (axis-collapse, ``a[0:1, 0:M]`` as 1-D ``[M]``) is widened
+back to the outer rank. Refuses when the outer array is absent from the parent SDFG (orphan descriptor).
 """
 import ast
 import copy
@@ -616,6 +616,11 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             if outer_arr is None:
                 continue
             if edge.data.subset != _full_subset(sdfg, edge.data.data):
+                return True
+            # A whole-array edge can still bind a connector of lower rank (``mass[0:N, 0]`` of an
+            # ``(N, 1)`` array as an ``(N,)`` connector), which the inner memlets index by that rank.
+            inner_arr = nsdfg_node.sdfg.arrays.get(edge.dst_conn if edge.dst is nsdfg_node else edge.src_conn)
+            if inner_arr is not None and len(inner_arr.shape) != len(outer_arr.shape):
                 return True
         return False
 
