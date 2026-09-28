@@ -1,13 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`NestedGPUDeviceMapLowering`.
-
-The pass rewrites the ``GPU_Device`` nested inside ``GPU_Device`` pattern that the
-experimental CUDA codegen explicitly refuses (``Dynamic parallelism ... not supported``):
-the outer kernel's iteration range is union-expanded with the inner kernels' params, each
-inner kernel's body is moved into a ``NestedSDFG`` guarded by an if-bound-check, and the
-inner ``GPU_Device`` map itself is removed. The result is a single flat ``GPU_Device``
-kernel whose body uses if-guards to fan out to each original inner kernel's range.
-"""
+"""Tests for :class:`NestedGPUDeviceMapLowering`: nested ``GPU_Device`` maps become one bound-checked kernel."""
 import re
 
 import dace
@@ -76,41 +68,36 @@ def build_outer_with_two_sibling_inner_gpu_kernels() -> dace.SDFG:
 
 
 def count_gpu_device_maps(sdfg: dace.SDFG) -> tuple[int, int]:
-    """Return ``(top_level, inside_nsdfgs)`` counts of ``GPU_Device`` ``MapEntry``s.
+    """``(top_level, inside_nsdfgs)`` counts of ``GPU_Device`` ``MapEntry``s."""
+    counts = [
+        sum(1 for state in s.states() for n in state.nodes()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+        for s in sdfg.all_sdfgs_recursive()
+    ]
+    return counts[0], sum(counts[1:])
 
-    Top-level counts the outer-state maps. Inside-NSDFG counts maps within any
-    ``NestedSDFG`` in the SDFG hierarchy.
-    """
-    top = sum(1 for state in sdfg.states() for n in state.nodes()
-              if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
-    inner = 0
-    for s in sdfg.all_sdfgs_recursive():
-        if s is sdfg:
-            continue
-        inner += sum(1 for state in s.states() for n in state.nodes()
-                     if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
-    return top, inner
+
+def kernel_entry(sdfg: dace.SDFG) -> dace.nodes.MapEntry:
+    return next(n for state in sdfg.states() for n in state.nodes()
+                if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
 
 
 def test_pass_flattens_nested_gpu_kernels_validates_clean():
-    """After the pass: outer ``GPU_Device`` map gains the inner kernels' params; inner
-    ``GPU_Device`` maps disappear (their bodies live in if-bound-checked NSDFGs); the SDFG
-    validates."""
+    """The kernel gains the inner params, the inner maps disappear, and each guarded body binds ``__k``."""
     sdfg = build_outer_with_two_sibling_inner_gpu_kernels()
-
-    top_before, inner_before = count_gpu_device_maps(sdfg)
-    assert (top_before, inner_before) == (1, 2), (top_before, inner_before)
+    assert count_gpu_device_maps(sdfg) == (1, 2)
 
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
-    top_after, inner_after = count_gpu_device_maps(sdfg)
-    assert (top_after, inner_after) == (1, 0), (top_after, inner_after)
-
-    # The outer map now carries the inner kernels' iteration params.
-    outer = next(n for state in sdfg.states() for n in state.nodes()
-                 if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
-    assert set(outer.map.params) >= {'__j', '__i'}, outer.map.params
-
+    assert count_gpu_device_maps(sdfg) == (1, 0)
+    assert set(kernel_entry(sdfg).map.params) >= {'__j', '__i'}, kernel_entry(sdfg).map.params
+    guarded = [
+        node for sub in sdfg.all_sdfgs_recursive() for state in sub.states() for node in state.nodes()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.label.startswith('if_of_nested_')
+    ]
+    assert len(guarded) == 2, [n.label for n in guarded]
+    for node in guarded:
+        assert '__k' in node.symbol_mapping, (node.label, sorted(node.symbol_mapping))
     sdfg.validate()
 
 
@@ -220,9 +207,7 @@ def build_inner_kernel_with_range(inner_range: str,
 
 
 def absorbed_range(sdfg: dace.SDFG, param: str) -> tuple:
-    """The kernel map's range for ``param`` after lowering."""
-    kernel = next(n for state in sdfg.states() for n in state.nodes()
-                  if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+    kernel = kernel_entry(sdfg)
     return kernel.map.range[kernel.map.params.index(param)]
 
 
@@ -245,26 +230,16 @@ def test_absorbed_range_keeps_the_inner_lower_bound():
     sdfg.validate()
 
 
-def test_bound_check_reproduces_a_strided_range():
-    """A strided inner map must not let the iterations it skips into its body."""
-    sdfg = build_inner_kernel_with_range('0:10:2')
+@pytest.mark.parametrize('inner_range, has_step_term', [('0:10:2', True), ('0:10', False)])
+def test_bound_check_checks_the_step_only_of_a_strided_range(inner_range, has_step_term):
+    """A strided map must not let the iterations it skips into its body; a unit step needs no check."""
+    sdfg = build_inner_kernel_with_range(inner_range)
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
     conditions = guard_conditions(sdfg)
     assert len(conditions) == 1, conditions
-    # The step is what distinguishes the owned iterations from the absorbed unit-step range.
-    assert '% 2' in conditions[0], f'guard {conditions[0]!r} admits the iterations the step skips'
+    assert ('% 2' in conditions[0]) == has_step_term, conditions[0]
     sdfg.validate()
-
-
-def test_unit_step_bound_check_stays_a_plain_interval():
-    """The step term is only emitted when there is a step to check."""
-    sdfg = build_inner_kernel_with_range('0:10')
-    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
-
-    conditions = guard_conditions(sdfg)
-    assert len(conditions) == 1, conditions
-    assert '%' not in conditions[0], conditions[0]
 
 
 def kernel_with_a_directly_nested_gpu_map() -> dace.SDFG:
@@ -294,36 +269,12 @@ def test_directly_nested_gpu_map_lowers_without_detaching_its_body():
     sdfg = kernel_with_a_directly_nested_gpu_map()
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
-    top, inner = count_gpu_device_maps(sdfg)
-    assert (top, inner) == (1, 0), (top, inner)
-    kernel = next(n for state in sdfg.states() for n in state.nodes()
-                  if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
-    assert set(kernel.map.params) == {'__k', '__j'}, kernel.map.params
-    # The body's nested SDFG stays attached to the kernel, or the scope traversal cannot place it.
-    body = next(n for state in sdfg.states() for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    assert count_gpu_device_maps(sdfg) == (1, 0)
+    assert set(kernel_entry(sdfg).map.params) == {'__k', '__j'}, kernel_entry(sdfg).map.params
     state = sdfg.states()[0]
+    body = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
     assert state.in_degree(body) > 0, 'the guarded body was detached from the kernel scope'
     sdfg.validate()
-
-
-def test_enclosing_kernel_symbol_is_bound_on_the_guarded_body():
-    """A body may name the outer kernel's parameter, so the nested SDFG node must bind it."""
-    sdfg = build_outer_with_two_sibling_inner_gpu_kernels()
-    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
-
-    guarded = [
-        node for sub in sdfg.all_sdfgs_recursive() for state in sub.states() for node in state.nodes()
-        if isinstance(node, dace.nodes.NestedSDFG) and node.label.startswith('if_of_nested_')
-    ]
-    assert guarded, 'no guarded body was produced'
-    for node in guarded:
-        assert '__k' in node.symbol_mapping, (node.label, sorted(node.symbol_mapping))
-    sdfg.validate()
-
-
-def kernel_entry(sdfg: dace.SDFG) -> dace.nodes.MapEntry:
-    return next(n for state in sdfg.states() for n in state.nodes()
-                if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
 
 
 def test_a_bound_naming_a_nested_scope_symbol_is_hoisted_in_the_kernel_symbols():
@@ -346,19 +297,13 @@ def test_a_swapping_symbol_mapping_is_applied_simultaneously():
     assert (begin, end) == (0, dace.symbolic.pystr_to_symbolic('N - 1')), (begin, end)
 
 
-def test_a_bound_naming_a_kernel_parameter_is_refused():
-    """The kernel's range sizes the grid on the host, where the per-block ``__k`` does not exist."""
-    sdfg = build_inner_kernel_with_range('__k:__k + 4')
-    with pytest.raises(NotImplementedError, match='__k'):
-        NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
-
-
-def test_a_bound_naming_a_loop_variable_inside_the_kernel_is_refused():
-    """A loop inside the kernel defines ``t`` per thread; the host cannot size the grid from it."""
-    sdfg = build_inner_kernel_with_range('0:t + 1', loop_var='t')
+@pytest.mark.parametrize('inner_range, loop_var, unavailable', [('__k:__k + 4', None, '__k'), ('0:t + 1', 't', "'t'")])
+def test_a_bound_the_host_cannot_evaluate_is_refused(inner_range, loop_var, unavailable):
+    """The grid is sized on the host, where neither a kernel parameter nor an in-kernel loop variable exists."""
+    sdfg = build_inner_kernel_with_range(inner_range, loop_var=loop_var)
     sdfg.validate()
 
-    with pytest.raises(NotImplementedError, match="'t'"):
+    with pytest.raises(NotImplementedError, match=unavailable):
         NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
 
