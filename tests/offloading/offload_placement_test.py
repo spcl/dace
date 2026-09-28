@@ -661,3 +661,30 @@ def test_a_single_element_two_maps_read_stays_outside_both():
     tasklets = {node.label: scopes[node].map.label for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)}
     assert tasklets == {'times_B': 'scale_B', 'times_C': 'scale_C'}, tasklets
     assert all(scopes[node] is None for node in state.data_nodes() if node.data == 's')
+
+
+def per_iteration_scratch() -> dace.SDFG:
+    """``tmp`` is written and read inside the scope of one map."""
+    sdfg = dace.SDFG('per_iteration_scratch')
+    sdfg.add_array('A', [LENGTH], dace.float64)
+    sdfg.add_array('B', [LENGTH], dace.float64)
+    sdfg.add_transient('tmp', [2], dace.float64)
+    state = sdfg.add_state('kernel')
+    entry, exit_node = state.add_map('twice', {'i': f'0:{LENGTH}'})
+    fill = state.add_tasklet('fill', {'a': None}, {'t': None}, 't = a')
+    scratch = state.add_access('tmp')
+    use = state.add_tasklet('use', {'t': None}, {'b': None}, 'b = 2 * t')
+    state.add_memlet_path(state.add_read('A'), entry, fill, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_edge(fill, 't', scratch, None, dace.Memlet('tmp[0]'))
+    state.add_edge(scratch, None, use, 't', dace.Memlet('tmp[0]'))
+    state.add_memlet_path(use, exit_node, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_transient_one_kernel_uses_is_a_register():
+    """GPUTransformSDFG made such a transient a register; left in GPU_Global a block-wide reduce refuses it."""
+    sdfg = per_iteration_scratch()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.arrays['tmp'].storage == dtypes.StorageType.Register

@@ -286,27 +286,22 @@ def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
                          'by value, so the write would be lost')
 
 
-def register_kernel_local_transients(sdfg: SDFG) -> None:
-    """Make a register of every Default transient whose accesses all lie inside kernels."""
+def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: OrderedSet[str]) -> None:
+    """Make a register of every transient (Default, or put on the device by this pass) that only one kernel accesses."""
     for nested in sdfg.all_sdfgs_recursive():
-        local: OrderedSet = OrderedSet()
-        escapes: OrderedSet = OrderedSet()
+        kernels: Dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
         for state in nested.states():
             scopes = state.scope_dict()
             for node in state.data_nodes():
-                if node.data not in nested.arrays:
+                desc = nested.arrays.get(node.data)
+                if (desc is None or not desc.transient or isinstance(desc, (data.View, data.Stream))
+                        or not (desc.storage == dtypes.StorageType.Default or
+                                (nested is sdfg and node.data in placed_on_gpu))):
                     continue
-                desc = nested.arrays[node.data]
-                if not desc.transient or desc.storage in GPU_RESIDENT_STORAGES:
-                    continue
-                if isinstance(desc, (data.View, data.Stream)):
-                    continue
-                if enclosing_kernel(scopes, node):
-                    local.add(node.data)
-                else:
-                    escapes.add(node.data)
-        for name in local - escapes:
-            nested.arrays[name].storage = dtypes.StorageType.Register
+                kernels.setdefault(node.data, OrderedSet()).add(enclosing_kernel(scopes, node))
+        for name, owners in kernels.items():
+            if len(owners) == 1 and owners[0] is not None:
+                nested.arrays[name].storage = dtypes.StorageType.Register
 
 
 def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:

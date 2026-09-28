@@ -22,6 +22,8 @@ class CopyInsertion:
         # Read before renaming moves the accesses onto the twins.
         self.no_copy_in_needed = helpers.overwritten_before_any_read(sdfg)
         self.written: OrderedSet[str] = OrderedSet()
+        #: Transients this insertion put in device memory.
+        self.placed_on_gpu: OrderedSet[str] = OrderedSet()
         # Directions each container is already copied in at one program point, keyed (block, side).
         self.placed: Dict[Tuple[ControlFlowBlock, str], Dict[str, OrderedSet[bool]]] = {}
         # Fills of containers neither side writes, by direction: placed once, at the program's entry.
@@ -51,6 +53,8 @@ class CopyInsertion:
                     if self.sdfg.arrays[name].transient and name not in seen:
                         self.sdfg.arrays[name].storage = storage
                         seen.add(name)
+                        if storage == dtypes.StorageType.GPU_Global:
+                            self.placed_on_gpu.add(name)
 
         helpers.traverse_IR(IR, place)
 

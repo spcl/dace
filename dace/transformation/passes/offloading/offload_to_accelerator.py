@@ -91,7 +91,8 @@ class OffloadToAccelerator(ppl.Pass):
         assign_schedules(sdfg, host_map_entries, self.sequential_innermaps)
 
         analysis, IR, wrapped = self.place(sdfg)
-        CopyInsertion(sdfg, analysis.scopes).apply(IR)
+        insertion = CopyInsertion(sdfg, analysis.scopes)
+        insertion.apply(IR)
         helpers.remove_empty_return_entries(entries)
 
         if wrapped:
@@ -102,7 +103,7 @@ class OffloadToAccelerator(ppl.Pass):
             ]).apply_pass(sdfg, {})
         single_element_copies_into_map(sdfg)
 
-        helpers.register_kernel_local_transients(sdfg)
+        helpers.register_kernel_local_transients(sdfg, insertion.placed_on_gpu)
         helpers.refuse_by_value_scalars_the_device_writes(sdfg)
         # A Pipeline reads the result as "did anything change": nothing on the device is None.
         return helpers.device_resident(sdfg) or None
