@@ -106,50 +106,35 @@ def test_the_lifted_accumulator_sums_each_row():
     assert np.array_equal(cupy.asnumpy(out), cupy.asnumpy(A).sum(axis=1))
 
 
-@pytest.mark.gpu
-def test_wcr_via_augmented_assign():
-    """``acc[0] += A[i]`` in a GPU_Device map accumulates atomically; the accumulator is not demoted."""
+@dace.program
+def aug_assign(A: dace.float64[8, 8] @ dace.StorageType.GPU_Global, acc: dace.float64[1] @ dace.StorageType.GPU_Global):
+    for i in dace.map[0:8] @ dace.ScheduleType.GPU_Device:
+        acc[0] += A[0, i]
 
-    @dace.program
-    def aug_assign(A: dace.float64[64] @ dace.StorageType.GPU_Global,
-                   acc: dace.float64[1] @ dace.StorageType.GPU_Global):
-        for i in dace.map[0:64] @ dace.ScheduleType.GPU_Device:
-            acc[0] += A[i]
 
-    import cupy as cp
-    sdfg = aug_assign.to_sdfg()
-    set_block_sizes(sdfg)
-    MoveArrayOutOfKernel().apply_pass(sdfg, {})
-    assert_no_wcr_target_in_registers(sdfg)
-    assert sdfg.arrays['acc'].storage == GLOBAL and tuple(sdfg.arrays['acc'].shape) == (1, )
-
-    A = cp.arange(64, dtype=cp.float64)
-    acc = cp.zeros(1, dtype=cp.float64)
-    sdfg(A=A, acc=acc)
-    assert float(acc[0]) == float(cp.sum(A))
+@dace.program
+def row_reduce(A: dace.float64[8, 8] @ dace.StorageType.GPU_Global, acc: dace.float64[8] @ dace.StorageType.GPU_Global):
+    for i, j in dace.map[0:8, 0:8] @ dace.ScheduleType.GPU_Device:
+        acc[i] += A[i, j]
 
 
 @pytest.mark.gpu
-def test_wcr_via_reduction_kernel():
-    """Row-reduction kernel: a 2D map atomically accumulates each row of ``A`` into ``row_sums[i]``."""
-
-    @dace.program
-    def row_reduce(A: dace.float64[8, 8] @ dace.StorageType.GPU_Global,
-                   row_sums: dace.float64[8] @ dace.StorageType.GPU_Global):
-        for i, j in dace.map[0:8, 0:8] @ dace.ScheduleType.GPU_Device:
-            row_sums[i] += A[i, j]
-
-    import cupy as cp
-    sdfg = row_reduce.to_sdfg()
+@pytest.mark.parametrize('program, expected', [(aug_assign, lambda A: A[0].sum(keepdims=True)),
+                                               (row_reduce, lambda A: A.sum(axis=1))])
+def test_a_non_transient_accumulator_keeps_its_storage_and_sums(program, expected):
+    """A kernel accumulating into an argument atomically leaves it in global memory at its own shape."""
+    import cupy as cp  # Only present on GPU runners.
+    sdfg = program.to_sdfg()
     set_block_sizes(sdfg)
+    shape = tuple(sdfg.arrays['acc'].shape)
     MoveArrayOutOfKernel().apply_pass(sdfg, {})
     assert_no_wcr_target_in_registers(sdfg)
-    assert sdfg.arrays['row_sums'].storage == GLOBAL and tuple(sdfg.arrays['row_sums'].shape) == (8, )
+    assert sdfg.arrays['acc'].storage == GLOBAL and tuple(sdfg.arrays['acc'].shape) == shape
 
     A = cp.arange(64, dtype=cp.float64).reshape(8, 8)
-    row_sums = cp.zeros(8, dtype=cp.float64)
-    sdfg(A=A, row_sums=row_sums)
-    cp.testing.assert_array_equal(row_sums, A.sum(axis=1))
+    acc = cp.zeros(shape, dtype=cp.float64)
+    sdfg(A=A, acc=acc)
+    cp.testing.assert_array_equal(acc, expected(A))
 
 
 @pytest.mark.gpu
