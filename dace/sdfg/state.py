@@ -1671,25 +1671,24 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         symbols = collections.OrderedDict(self.sdfg_symbols() if sdfg_symbols is None else sdfg_symbols)
 
-        # Add symbols from inter-state edges along the path to the state
-        try:
-            start_state = sdfg.start_state
-            for e in sdfg.predecessor_state_transitions(start_state):
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-        except ValueError:
-            # Cannot determine starting state (possibly some inter-state edges
-            # do not yet exist)
-            for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+        # The blocks from this state up to the SDFG, each one nested in the next
+        path = [self]
+        while path[-1] is not sdfg and path[-1].parent_graph is not None:
+            path.append(path[-1].parent_graph)
 
-        # Add the symbols of the control flow regions this state is nested in
-        regions = []
-        region = self.parent_graph
-        while region is not None and region is not sdfg:
-            regions.append(region)
-            region = region.parent_graph
-        for region in reversed(regions):
-            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
+        # From the outermost region inward, add the symbols each control flow region defines and the ones of the
+        # inter-state edges along the paths to the block of the path it contains
+        for graph, block in reversed(list(zip(path[1:], path[:-1]))):
+            if graph is not sdfg:
+                symbols.update({k: v for k, v in graph.new_symbols(symbols).items() if v is not None})
+            try:
+                graph.start_block
+                edges = graph.edge_bfs(block, reverse=True)
+            except ValueError:
+                # Cannot determine starting block (possibly some inter-state edges do not yet exist)
+                edges = graph.edges()
+            for e in edges:
+                symbols.update(e.data.new_symbols(sdfg, symbols))
 
         return symbols
 
