@@ -3495,6 +3495,14 @@ class ProgramVisitor(ExtNodeVisitor):
         if storage != dtypes.StorageType.Default:
             self.sdfg.arrays[results[0][0]].storage = storage
 
+    def view_already_sees(self, name: str, result: Any) -> bool:
+        # A no-op rebind: ``name`` views all of ``result``, or all of another view of the same slice
+        # (each subscript builds its own anonymous view, so equal slices differ by name only).
+        viewed, memlet = self.views[name]
+        if viewed not in self.sdfg.arrays or memlet != Memlet.from_array(viewed, self.sdfg.arrays[viewed]):
+            return False
+        return viewed == result or (result in self.views and self.views.get(viewed) == self.views[result])
+
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
         elts = None
@@ -3600,16 +3608,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if true_name in self.views:
-                    if result in self.sdfg.arrays and self.views[true_name] == (result,
-                                                                                Memlet.from_array(
-                                                                                    result, self.sdfg.arrays[result])):
-                        continue
-                    # Re-viewing the same slice of the same array is a no-op. ``col = a[0:2]`` twice
-                    # builds a second anonymous view, so the two results differ by name while the
-                    # data they see does not; compare what each one views instead.
-                    viewed, viewed_memlet = self.views[true_name]
-                    if (viewed in self.views and result in self.views and self.views[viewed] == self.views[result]
-                            and viewed_memlet == Memlet.from_array(viewed, self.sdfg.arrays[viewed])):
+                    if self.view_already_sees(true_name, result):
                         continue
                     raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
                 if (isinstance(result, str) and result in self.sdfg.arrays
