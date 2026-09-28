@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import ctypes
 import functools
 import warnings
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 import sympy
 from io import StringIO
+from ordered_set import OrderedSet
 
 import dace
 from dace import data as dt, Memlet
@@ -1017,27 +1019,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         return max_streams, max_events
 
     def _default_stream_unaware_gpu_callbacks(self, top_sdfg: SDFG):
-        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream."""
-        for sd in top_sdfg.all_sdfgs_recursive():
-            for state in sd.states():
-                for node in list(state.nodes()):
-                    if not (isinstance(node, nodes.Tasklet) and node.side_effects):
-                        continue
-                    if is_devicelevel_gpu(sd, state, node):
-                        continue
-                    if not any(
-                            e.data.data in sd.arrays and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
-                            for e in state.all_edges(node)):
-                        continue
-                    if '__dace_current_stream' in node.code.as_string:  # stream-aware: leave as is
-                        continue
-                    warnings.warn(
-                        f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
-                        'movement is forced onto the default stream. This is only correct if the callback uses '
-                        'the default stream; for any other stream, add a "dace.current_stream" argument to the '
-                        'callback and use it (e.g. cupy ExternalStream).', UserWarning)
-                    for n in nx.node_connected_component(state.nx.to_undirected(as_view=True), node):
-                        n._cuda_stream = 'nullptr'
+        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream.
+
+        Such a callback issues its GPU work on the null stream, which does not synchronize with DaCe's
+        non-blocking streams, so everything touching the callback's GPU data is moved there too. The pin
+        follows the data across states and nested SDFGs, not just the callback's own state.
+        """
+        seeds = stream_unaware_gpu_callback_data(top_sdfg)
+        if seeds:
+            pin_data_to_null_stream(top_sdfg, propagate_data_across_nested_sdfgs(seeds))
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
@@ -3296,3 +3286,74 @@ def _get_const_params(dfg_scope):
                           if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
     dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
     return input_params - (output_params | toplevel_params | dynamic_inputs)
+
+
+def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
+    """Warn about every stream-unaware GPU-touching callback and return the GPU arrays it touches."""
+    seeds: List[Tuple[SDFG, str]] = []
+    for sd in top_sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not (isinstance(node, nodes.Tasklet) and node.side_effects) or is_devicelevel_gpu(sd, state, node):
+                    continue
+                touched = OrderedSet(
+                    e.data.data for e in state.all_edges(node)
+                    if not e.data.is_empty() and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global)
+                if not touched or '__dace_current_stream' in node.code.as_string:
+                    continue
+                warnings.warn(
+                    f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
+                    'movement is forced onto the default stream. This is only correct if the callback uses '
+                    'the default stream; for any other stream, add a "dace.current_stream" argument to the '
+                    'callback and use it (e.g. cupy ExternalStream).', UserWarning)
+                seeds.extend((sd, name) for name in touched)
+    return seeds
+
+
+def connector_neighbors(sd: SDFG, name: str) -> List[Tuple[SDFG, str]]:
+    """The names ``sd``'s array ``name`` goes by in the enclosing SDFG and in the nested SDFGs it is handed to."""
+    found: List[Tuple[SDFG, str]] = []
+    nsdfg_node = sd.parent_nsdfg_node
+    if nsdfg_node is not None:
+        found.extend((sd.parent_sdfg, e.data.data) for e in sd.parent.all_edges(nsdfg_node)
+                     if not e.data.is_empty() and name in (e.dst_conn, e.src_conn))
+    for state in sd.states():
+        for nsdfg in (n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)):
+            found.extend((nsdfg.sdfg, e.dst_conn) for e in state.in_edges(nsdfg)
+                         if not e.data.is_empty() and e.data.data == name and e.dst_conn is not None)
+            found.extend((nsdfg.sdfg, e.src_conn) for e in state.out_edges(nsdfg)
+                         if not e.data.is_empty() and e.data.data == name and e.src_conn is not None)
+    return found
+
+
+def propagate_data_across_nested_sdfgs(seeds: List[Tuple[SDFG, str]]) -> Dict[SDFG, OrderedSet]:
+    """Close the seed arrays over nested-SDFG connectors: one buffer has a name on either side."""
+    tracked: Dict[SDFG, OrderedSet] = {}
+    worklist = collections.deque(seeds)
+    while worklist:
+        sd, name = worklist.popleft()
+        names = tracked.setdefault(sd, OrderedSet())
+        if name not in names:
+            names.add(name)
+            worklist.extend(connector_neighbors(sd, name))
+    return tracked
+
+
+def node_touches_data(state: SDFGState, node: nodes.Node, names: OrderedSet) -> bool:
+    if isinstance(node, nodes.AccessNode) and node.data in names:
+        return True
+    return any(not e.data.is_empty() and e.data.data in names for e in state.all_edges(node))
+
+
+def pin_data_to_null_stream(top_sdfg: SDFG, tracked: Dict[SDFG, OrderedSet]) -> None:
+    """Move every weakly connected component touching a tracked array, nested SDFGs whole, onto the null stream."""
+    for sd, names in tracked.items():
+        for state in sd.states():
+            component_of = {n: i for i, comp in enumerate(nx.weakly_connected_components(state.nx)) for n in comp}
+            pinned = OrderedSet(component_of[n] for n in state.nodes() if node_touches_data(state, n, names))
+            for node in (n for n in state.nodes() if component_of[n] in pinned):
+                node._cuda_stream = 'nullptr'
+                if isinstance(node, nodes.NestedSDFG):
+                    # Inner stream numbering starts from the node's own stream.
+                    for inner, _ in node.sdfg.all_nodes_recursive():
+                        inner._cuda_stream = 'nullptr'
