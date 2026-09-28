@@ -28,7 +28,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR, find_inner_gpu_consumers, in_scope_of, get_gpu_stream_array_name,
     is_already_lowered_gpu_runtime_call, is_gpu_copy_or_fill_libnode, is_gpu_relevant_node, is_gpu_stream_consumer,
-    is_inside_gpu_device_kernel, is_stream_wiring_applied, weakly_connected_node_sets)
+    is_inside_gpu_device_kernel, is_stream_wiring_applied, persisted_stream_assignments, weakly_connected_node_sets)
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (make_sync_tasklet,
                                                                                    stream_connector_name,
@@ -566,10 +566,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         # A stream pipeline already ran (e.g. ``GPUStreamPipeline`` before ``sdfg.compile()``): reuse its
         # persisted ``Node.gpu_stream_id`` and skip classification and sync insertion.
         if is_stream_wiring_applied(sdfg):
-            return {
-                n: n.gpu_stream_id
-                for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
-            }
+            return persisted_stream_assignments(sdfg)
 
         # A MIXED top-level node cannot be single-streamed: fall back to Naive for the whole SDFG.
         offenders = mixed_nodes(sdfg)

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared utilities for the GPU-specialization passes: stream names, node and connector
 predicates, and the stream-wiring idempotency signal."""
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ordered_set import OrderedSet
 
@@ -151,3 +151,11 @@ def find_inner_gpu_consumers(sdfg: SDFG):
             for node in state.nodes():
                 if is_gpu_stream_consumer(node, nsdfg, state):
                     yield node, nsdfg, state
+
+
+def persisted_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+    """Every ``Node.gpu_stream_id`` set across the hierarchy; the per-node property is the durable record."""
+    return {
+        n: n.gpu_stream_id
+        for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
+    }

@@ -27,8 +27,8 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
-from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (generate_sync_debug_call, host_read_device_copies)
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (assigned_stream_expr, generate_sync_debug_call,
+                                                                      host_read_device_copies, num_gpu_streams)
 
 from dace.codegen.targets import cpp
 
@@ -86,7 +86,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 self._dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
 
         self._current_kernel_spec: Optional[KernelSpec] = None
-        self._gpu_stream_manager: Optional[GPUStreamManager] = None
+        self._num_gpu_streams: int = 0
         self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
         self._tb_inserted_kernels: Set[nodes.MapEntry] = OrderedSet()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
@@ -117,10 +117,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # the framecode's symbol/constant cache so lookups succeed for them.
         self._frame.resolve_symbols_and_constants(sdfg)
 
-        # Stream assignment is persisted per node via ``Node.gpu_stream_id``
-        # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
-        # directly so a deserialised SDFG round-trips without re-scheduling.
-        self._gpu_stream_manager = GPUStreamManager(sdfg)
+        # Streams are read off ``Node.gpu_stream_id``, so a deserialized SDFG needs no re-scheduling.
+        self._num_gpu_streams = num_gpu_streams(sdfg)
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
@@ -383,7 +381,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if key in self._synchronized_d2h:
                 continue
             self._synchronized_d2h.add(key)
-            gpu_stream = self._gpu_stream_manager.get_stream_node(producer)
+            gpu_stream = assigned_stream_expr(producer)
             callsite_stream.write(f'DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n', cfg, state_id,
                                   consumer)
 
@@ -632,7 +630,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
         if nodedesc.pool:
-            gpu_stream = self._gpu_stream_manager.get_stream_node(node)
+            gpu_stream = assigned_stream_expr(node)
             allocation_stream.write(
                 f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n',
                 cfg, state_id, node)
@@ -708,7 +706,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 # Pooled arrays whose release point was picked up by compute_pool_release are
                 # freed in generate_state; everything else is freed here.
                 if (sdfg, dataname) not in self.pool_release:
-                    gpu_stream = self._gpu_stream_manager.get_stream_node(node)
+                    gpu_stream = assigned_stream_expr(node)
                     callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeAsync({dataname}, {gpu_stream}));\n', cfg,
                                           state_id, node)
             else:
@@ -734,8 +732,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._codeobject.code = gpu_runtime_code(self._frame, self._global_sdfg, 'experimental_cuda', self.backend,
                                                  self.has_pool, self._initcode, self._exitcode,
                                                  self._globalcode.getvalue(), self._localcode.getvalue(),
-                                                 self._gpu_stream_manager.num_gpu_streams,
-                                                 self._gpu_stream_manager.num_gpu_events, stream_create, stream_destroy)
+                                                 self._num_gpu_streams, 0, stream_create, stream_destroy)
         return [self._codeobject]
 
     @staticmethod
