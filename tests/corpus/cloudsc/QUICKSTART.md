@@ -2,6 +2,9 @@
 
 Reproduce the four optimized CloudSC SDFGs and run each one against the un-transformed reference.
 
+Status: canon_cpu, canon_gpu and vec_cpu match the reference; vec_gpu builds and runs but does not match
+yet (see `doc/design/cloudsc_pipelines_and_vectorizer_perf.md`).
+
 Tested on dace branch `extended` at commit `a57fab95228e82e216e1fc3db93ef20b02b4fe17`.
 
 ## Pipeline
