@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 import copy
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import networkx as nx
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
 from dace.memlet import Memlet
@@ -72,6 +74,29 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
         if any(existing.src is edge.src for existing in state.in_edges(libnode)):
             continue
         state.add_edge(edge.src, None, libnode, None, Memlet())
+
+
+def _consumers_to_precede(state: SDFGState, edge) -> Optional[List[nodes.Node]]:
+    """The other consumers of the copy's source, which a lifted copy must be ordered before.
+
+    Plain copy-edge codegen emits the copy when its SOURCE access node is visited, so the copy lands
+    before every other consumer of that node. Ordering the lifted copy ahead of those consumers keeps
+    that guarantee. Consumers that reach a node the copy must follow (an ordering edge into the
+    destination, see :func:`_carry_write_ordering`) cannot be preceded without a cycle.
+
+    :param state: the state holding the copy edge.
+    :param edge: the direct ``AccessNode -> AccessNode`` copy edge.
+    :returns: the consumers to order after the copy, or ``None`` if that ordering would be cyclic.
+    """
+    consumers = []
+    for other in state.out_edges(edge.src):
+        if other is edge or other.dst is edge.dst or other.dst in consumers:
+            continue
+        consumers.append(other.dst)
+    predecessors = [e.src for e in state.in_edges(edge.dst) if e.data.is_empty()]
+    if any(nx.has_path(state.nx, consumer, pred) for consumer in consumers for pred in predecessors):
+        return None
+    return consumers
 
 
 @properties.make_properties
@@ -179,8 +204,15 @@ class InsertExplicitCopies(ppl.Pass):
             if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
                 continue
 
+            # An implicit copy that touches device memory has no host-side lowering, so it is lifted
+            # regardless, ordered before the source's other consumers as the implicit copy was.
+            precede = []
             if _competing_writer(state, dst_node, edge, dst_name, dst_subset):
-                continue
+                if not (src_desc.storage in GPU_RESIDENT_STORAGES or dst_desc.storage in GPU_RESIDENT_STORAGES):
+                    continue
+                precede = _consumers_to_precede(state, edge)
+                if precede is None:
+                    continue
 
             in_memlet = Memlet(data=src_name, subset=copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
@@ -202,6 +234,8 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
             _carry_write_ordering(state, dst_node, libnode)
+            for consumer in precede:
+                state.add_edge(libnode, None, consumer, None, Memlet())
             count += 1
 
         return count

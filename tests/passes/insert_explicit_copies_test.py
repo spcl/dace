@@ -1178,6 +1178,35 @@ def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
     assert not lifted, "a copy competing with another write to B was lifted"
 
 
+def test_device_copy_competing_with_another_write_is_lifted_ahead_of_the_source_consumers():
+    """A device copy left implicit has no host lowering (the experimental CUDA codegen would emit a
+    host ``CopyND`` over device pointers), so it is lifted even when ``intersects`` cannot rule out
+    the overlap -- here ``Min``/``Max`` bounds that are disjoint but undecidable. The lifted copy is
+    ordered before the source's other consumers, where plain copy-edge codegen placed it."""
+    GPU = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG("device_competing_writer")
+    sdfg.add_array("A", ["N"], dace.float64, storage=GPU)
+    sdfg.add_array("B", ["N"], dace.float64, storage=GPU)
+    sdfg.add_symbol("K", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+    a = state.add_access("A")
+    b = state.add_access("B")
+    me, mx = state.add_map("k", {"i": "0:Min(K, N)"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet("double", {"i_"}, {"o"}, "o = i_ * 2.0")
+    state.add_memlet_path(a, me, tasklet, dst_conn="i_", memlet=Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, b, src_conn="o", memlet=Memlet("B[i]"))
+    state.add_nedge(a, b, Memlet("A[Max(K, 0):N] -> [Max(K, 0):N]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(lifted) == 1, "the device copy competing with the kernel's write was left implicit"
+    ordered_before = [e.dst for e in state.out_edges(lifted[0]) if e.data.is_empty()]
+    assert ordered_before == [me], "the lifted copy is not ordered before the source's other consumer"
+
+
 def test_zero_element_copy_is_not_lifted():
     """A copy that moves nothing needs no node: plain copy-edge codegen emits nothing for it."""
     sdfg = dace.SDFG("zero_element_copy")

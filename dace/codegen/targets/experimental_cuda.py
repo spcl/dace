@@ -18,11 +18,13 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen import common
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
+from dace.codegen.exceptions import CodegenError
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, mangle_dace_state_struct_name, ptr, sym2cpp)
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
@@ -454,6 +456,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # ``InsertExplicitCopies`` during ``preprocess()`` and
         # lowered through their expansions. Anything reaching this dispatch
         # is a register / scope-local CPU copy -- delegate to CPU codegen.
+        # A host-side copy touching device memory has no CPU lowering: CopyND would dereference
+        # device pointers on the host, so refuse it rather than emit a segfault.
+        if (not self._in_device_code and isinstance(src_node, nodes.AccessNode)
+                and isinstance(dst_node, nodes.AccessNode)
+                and GPU_RESIDENT_STORAGES & {sdfg.arrays[src_node.data].storage, sdfg.arrays[dst_node.data].storage}):
+            raise CodegenError(f'Copy {src_node} -> {dst_node} involves GPU memory but was not lowered to a '
+                               'CopyLibraryNode by InsertExplicitCopies; the CPU fallback would access device '
+                               'memory from the host.')
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def _synchronize_host_reads(self,
