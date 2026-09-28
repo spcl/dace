@@ -154,10 +154,21 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # The mode the LAST ``can_be_applied`` ran in, so ``apply``'s recorder replay below can
         # ask the same question the matcher answered. See ``apply``.
         self._matched_permissive = False
+        self._side_effect_cache: dict[tuple[SDFGState, bool], bool] | None = None
 
     @property
     def connections_to_make(self):
         return self._connections_to_make
+
+    @property
+    def side_effect_cache(self) -> dict[tuple[SDFGState, bool], bool] | None:
+        """``(state, permissive) -> blocked`` side-effect verdicts; ``None`` = uncached. A caller probing
+        many pairs sets a dict and drops the entries of every state a fusion touches."""
+        return self._side_effect_cache
+
+    @side_effect_cache.setter
+    def side_effect_cache(self, cache: dict[tuple[SDFGState, bool], bool] | None) -> None:
+        self._side_effect_cache = cache
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
@@ -302,6 +313,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         return not StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state,
                                                          nodes_second, second_read)
 
+    def state_blocks_fusion(self, state: SDFGState, sdfg, permissive: bool) -> bool:
+        """Whether a side effect in ``state`` refuses fusion, memoized in :attr:`side_effect_cache` when set."""
+        key = (state, permissive)
+        cache = self.side_effect_cache
+        if cache is not None and key in cache:
+            return cache[key]
+        blocked = StateFusionExtended.state_has_side_effect_node(state, sdfg) or (not permissive and any(
+            isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg)
+            for node in state.nodes()))
+        if cache is not None:
+            cache[key] = blocked
+        return blocked
+
     @staticmethod
     def state_has_side_effect_node(state: SDFGState, sdfg) -> bool:
         """Whether ``state`` carries a node whose execution has side effects (a Tasklet with
@@ -406,8 +430,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Below the structural refusals above: this walks both states (and every nested SDFG) and
         # re-parses tasklet code, while they are O(1) edge tests. Independent ANDed refusals, so
         # the order only moves cost.
-        if (StateFusionExtended.state_has_side_effect_node(first_state, sdfg)
-                or StateFusionExtended.state_has_side_effect_node(second_state, sdfg)):
+        # Non-permissive also refuses a library node / nested SDFG with any side effect: they carry
+        # dependencies fusion cannot see (tasklet callbacks are governed by dont_fuse_callbacks).
+        if self.state_blocks_fusion(first_state, sdfg, permissive) or self.state_blocks_fusion(
+                second_state, sdfg, permissive):
             return False
 
         # Structural well-formedness of BOTH states, above the permissive branch on purpose:
@@ -421,13 +447,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if Config.get_bool('frontend', 'dont_fuse_callbacks'):
                 for node in (first_state.data_nodes() + second_state.data_nodes()):
                     if node.data == '__pystate':
-                        return False
-
-            # Library nodes and nested SDFGs carry dependencies fusion cannot see.
-            # Tasklet callbacks are governed by dont_fuse_callbacks above.
-            for state in (first_state, second_state):
-                for node in state.nodes():
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
                         return False
 
             # Reused-transient ambiguity: when BOTH states write into the same

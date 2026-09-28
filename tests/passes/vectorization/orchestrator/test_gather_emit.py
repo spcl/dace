@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
@@ -64,6 +65,8 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     ref.name = f"dgb_ref{n}"
     vec = _data_gather_binop_kernel.to_sdfg(simplify=True)
     vec.name = f"dgb_vec{n}"
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(vec, validate=True)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
 

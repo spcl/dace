@@ -5,6 +5,7 @@ import dace
 import numpy
 from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.harness import (
     run_vectorization_test,
@@ -934,12 +935,13 @@ def test_scatter_loop_permissive_tile(n):
     ref.name = f"scatter_loop_ref_{n}"
     vec = scatter_loop_stencil.to_sdfg(simplify=True)
     vec.name = f"scatter_loop_vec_{n}"
+    # The caller parallelizes; permissive because only the test knows ``idx`` is a permutation.
+    ParallelizeLoops(permissive=True).apply_pass(vec, {})
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(8, ),
                         target_isa=ISA.SCALAR,
                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                        branch_mode=BranchMode.MERGE,
-                        loop_to_map_permissive=True)).apply_pass(vec, {})
+                        branch_mode=BranchMode.MERGE)).apply_pass(vec, {})
     vec.validate()
     d_ref, d_vec = numpy.zeros(n), numpy.zeros(n)
     ref.compile()(src=src.copy(), idx=idx.copy(), dst=d_ref, N=n)

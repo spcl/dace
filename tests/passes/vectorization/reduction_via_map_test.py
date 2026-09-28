@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
@@ -59,6 +60,8 @@ def masked_reduce(data: dace.float64[N], mask: dace.int64[N], res: dace.float64[
 def _run(prog, kwargs, ref, isa):
     from dace.libraries.tileops import TileReduce
     sdfg = prog.to_sdfg(simplify=True)
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(sdfg, validate=True)
     cfg = VectorizeConfig(widths=(8, ),
                           target_isa=isa,
                           remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,

@@ -33,6 +33,7 @@ that the expected per-tile-dim shape survives.
 import numpy as np
 import pytest
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
@@ -74,14 +75,16 @@ def _tile_loads(sdfg: dace.SDFG) -> list[TileLoad]:
 
 
 def _vectorize_k2(sdfg: dace.SDFG) -> None:
-    """Run the K=2 (8, 8) orchestrator, leaving tile lib nodes intact."""
+    """Canonicalize, then run the K=2 (8, 8) orchestrator, leaving tile lib nodes intact."""
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself). ``lift_copy``
+    # off: the copy kernels here are the subject, not a memcpy library node.
+    canonicalize(sdfg, validate=True, lift_copy=False)
     VectorizeCPUMultiDim(
         VectorizeConfig(
             widths=(8, 8),
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=False,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
         )).apply_pass(sdfg, {})

@@ -106,7 +106,6 @@ def test_k0_postamble_runs_on_cloudsc_tidy_branch():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=False,
             scalar_remainder_emit="tile_k1",
         )).apply_pass(sdfg, {})
     sdfg.validate()

@@ -102,6 +102,7 @@ class ParallelizePipeline(ppl.Pass):
 
     def _stages(self) -> List[ppl.Pass]:
         from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
         from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
         from dace.transformation.passes.fuse_maps import FuseMaps
@@ -129,6 +130,10 @@ class ParallelizePipeline(ppl.Pass):
             PrivatizeScalars(),
             SimplifyPass(),
             ParallelizeLoops(),
+            # Close the induction variables the new map bodies still carry and settle the CFG, so the
+            # result meets the vectorizer's input contract exactly as a canonicalized graph does.
+            IvSubstitutionFissionFixpoint(),
+            StructuralCleanup(),
         ]
         for _ in range(FUSE_ROUNDS):
             # One Pipeline, four fusion passes, each the pass form of its transformation:

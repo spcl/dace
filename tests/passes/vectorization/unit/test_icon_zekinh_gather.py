@@ -16,6 +16,7 @@ write / index-tile-fill is a tile lib node.
 
 import pytest
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 
 from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
@@ -84,6 +85,8 @@ def test_icon_zekinh_descent_to_tile_only():
     """
     sdfg = _icon_zekinh_gather.to_sdfg()
     sdfg.validate()
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(sdfg, validate=True)
 
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -91,7 +94,6 @@ def test_icon_zekinh_descent_to_tile_only():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=False,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
         )).apply_pass(sdfg, {})

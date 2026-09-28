@@ -6,18 +6,19 @@ constraints against them lived in ``tests/canonicalize/canonicalize_pipeline_sta
 passes now live HERE, so the constraints do too -- otherwise they are asserted in a file where
 their subject no longer exists, which is a test that passes by skipping.
 """
+import inspect
 import warnings
 
 import pytest
 
 import dace
 from dace.libraries.standard.nodes.fill import FillLibraryNode
-from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint
+from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
+from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_multi_dim import (EMITTABLE_TILE_NODE_TYPES,
-                                                                          VectorizeCPUMultiDim,
-                                                                          vectorization_prep_units)
+                                                                          VectorizeCPUMultiDim, VectorizeMultiDim)
 
 N_SYM = dace.symbol('N')
 
@@ -52,35 +53,39 @@ def test_merge_mode_has_no_fp_factor_lowering():
     assert 'LowerITEToFpFactor' not in _pass_names(branch_mode=BranchMode.MERGE)
 
 
-def _prep_pass_names() -> list:
-    """Every pass the entry prep runs, composites expanded to their members."""
+def _stage_names(stages) -> list:
+    """Every pass in ``stages``, composites expanded to their members."""
     names = []
-    for unit in vectorization_prep_units():
+    for unit in stages:
         names.append(type(unit).__name__)
-        members = unit.round_units() if isinstance(unit, IvSubstitutionFissionFixpoint) else unit.units()
-        names += [type(m).__name__ for m in members]
+        if isinstance(unit, IvSubstitutionFissionFixpoint):
+            names += [type(m).__name__ for m in unit.round_units()]
+        elif isinstance(unit, StructuralCleanup):
+            names += [type(m).__name__ for m in unit.units()]
     return names
 
 
-def test_the_entry_prep_substitutes_induction_variables():
-    """The prep must close induction variables. While an IV is live every statement in the body
-    reads the same counter, so the body is one dependence component: the statement fission the
-    tile emitter needs is illegal and no per-lane widening can proceed. Asserted as presence --
-    a caller arriving from a bare ``LoopToMap`` + ``simplify`` has run no such pass."""
-    assert 'InductionVariableSubstitution' in _prep_pass_names()
+def test_parallelize_closes_induction_variables_for_the_vectorizer():
+    """The vectorizer no longer substitutes induction variables itself, so each recipe it accepts as
+    input must. While an IV is live every statement in the body reads the same counter, so the body
+    is one dependence component: the statement fission the tile emitter needs is illegal."""
+    names = _stage_names(ParallelizePipeline()._stages())
+    assert 'InductionVariableSubstitution' in names
+    assert names.index('InductionVariableSubstitution') > names.index('ParallelizeLoops')
 
 
-def test_the_entry_prep_does_not_canonicalize():
-    """The prep is STRUCTURAL, not the canonicalize recipe. The documented order is canonicalize
-    (or ParallelizeLoops) -> vectorize, so re-deriving the canonical shape here pays for it twice.
-
-    Two members of the recipe would additionally be wrong to run: a semantic lift hands the tiler
-    a library node with no per-lane body to widen, and ``ShortLoopUnroll`` straight-lines a short
-    constant-trip loop, deleting the very map the tiler was called to widen."""
-    names = _prep_pass_names()
-    for recipe_only in ('ShortLoopUnroll', 'LiftInv', 'LoopToSymm', 'ParallelizeLoops',
-                        'AssignmentAndCopyKernelToMemsetAndMemcpy'):
-        assert recipe_only not in names, f'{recipe_only} is the caller\'s recipe, not the entry prep'
+def test_the_vectorizer_reruns_no_recipe_pass():
+    """Canonicalize (or ParallelizePipeline) runs first, so the vectorizer re-derives nothing: no
+    loop parallelization, no IV substitution, no structural cleanup, no unrolling. A re-run pays for
+    the recipe twice (on CloudSC the entry prep alone was 12% of the pass), and ``ShortLoopUnroll``
+    would additionally delete the very map the tiler was called to widen."""
+    names = _pass_names()
+    for recipe_only in ('ParallelizeLoops', 'LoopToMap', 'IvSubstitutionFissionFixpoint', 'StructuralCleanup',
+                        'ShortLoopUnroll', 'LiftInv', 'LoopToSymm', 'AssignmentAndCopyKernelToMemsetAndMemcpy'):
+        assert recipe_only not in names, f'{recipe_only} is the caller\'s recipe, not the vectorizer\'s'
+    source = inspect.getsource(VectorizeMultiDim._vectorize_once)
+    for recipe_only in ('ParallelizeLoops', 'LoopToMap', 'prepare_for_vectorization'):
+        assert recipe_only not in source, f'{recipe_only} runs at the vectorizer entry'
 
 
 def test_the_semantic_lifts_do_not_run_inside_the_vectorizer():
