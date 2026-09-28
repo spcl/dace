@@ -196,6 +196,7 @@ def test_scatter_conflict_checks_in_sibling_regions_build_and_agree(duplicate):
 DETECT_ALL_POSITIVE_MAIN = """
 #include <cstdio>
 #include <vector>
+#include "dace/dace.h"  // a generated TU includes the runtime first
 #include "dace/cuda/detect.cuh"
 
 int main() {
@@ -240,7 +241,7 @@ def test_detect_all_positive_device(tmp_path):
     src.write_text(DETECT_ALL_POSITIVE_MAIN)
     include = pathlib.Path(dace.__file__).parent / 'runtime' / 'include'
     binary = tmp_path / 'detect_all_positive'
-    build = subprocess.run([nvcc, '-std=c++17', '-O2', f'-I{include}',
+    build = subprocess.run([nvcc, '-std=c++20', '-O2', f'-I{include}',
                             str(src), '-o', str(binary)],
                            capture_output=True,
                            text=True)
