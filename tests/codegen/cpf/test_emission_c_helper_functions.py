@@ -110,7 +110,7 @@ def sort_sdfg() -> dace.SDFG:
     sdfg.add_array('ordered', [N], dace.int64)
     state = sdfg.add_state()
     node = IntegerSort('sort')
-    node.implementation = 'pure'
+    node.implementation = 'ISO C++'
     state.add_node(node)
     state.add_edge(state.add_read('keys'), None, node, IntegerSort.INPUT_CONNECTOR_NAME, dace.Memlet('keys[0:N]'))
     state.add_edge(node, IntegerSort.OUTPUT_CONNECTOR_NAME, state.add_write('ordered'), None,

@@ -63,7 +63,7 @@ def test_find_first_cuda_matches_host(first):
     got_gpu = np.zeros(1, dtype=np.int64)
     make_find_first_sdfg('CUDA', 0.5)(a=a.copy(), out=got_gpu, N=n)
     got_cpu = np.zeros(1, dtype=np.int64)
-    make_find_first_sdfg('OpenMP', 0.5)(a=a.copy(), out=got_cpu, N=n)
+    make_find_first_sdfg('CPU', 0.5)(a=a.copy(), out=got_cpu, N=n)
 
     assert got_gpu[0] == expected, f'CUDA answered {got_gpu[0]}, expected {expected}'
     assert got_cpu[0] == expected, f'OpenMP answered {got_cpu[0]}, expected {expected}'
@@ -90,7 +90,7 @@ def test_find_first_host_expansion_refuses_device_memory():
     with the knob to turn, never silently emitted."""
     sdfg = make_find_first_sdfg('CUDA', 0.5)
     node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, FindFirst))
-    node.implementation = 'OpenMP'
+    node.implementation = 'CPU'
     with pytest.raises(NotImplementedError, match="implementation='CUDA'"):
         sdfg.expand_library_nodes()
 

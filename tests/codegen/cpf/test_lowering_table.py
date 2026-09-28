@@ -644,7 +644,7 @@ def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
 
 
-#: The statement ``ExpandFindFirstPure`` / ``ExpandFindFirstOpenMP`` write, copied here rather than
+#: The statement ``ExpandFindFirstSequential`` / ``ExpandFindFirstCPU`` write, copied here rather than
 #: imported so that a change to the expansion's spelling breaks this file instead of silently
 #: turning the C rewrite into a no-op -- which would surface only as an unlowered ``dace::`` name in
 #: some kernel that happens to search.

@@ -137,7 +137,8 @@ class Data:
 
     #: Sources of ``free_symbols``, all tuples or sympy expressions: reassigning one is the only way
     #: any can change, so that is what drops the memo. Structure overrides and computes fresh.
-    SYMBOL_SOURCE_ATTRIBUTES = frozenset({'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype'})
+    SYMBOL_SOURCE_ATTRIBUTES = frozenset(
+        {'_shape', '_strides', '_offset', '_total_size', '_transient', '_dtype', '_buffer_size'})
     _free_symbols_memo = None
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:

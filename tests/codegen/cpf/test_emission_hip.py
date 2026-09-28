@@ -144,7 +144,7 @@ def device_find_first_sdfg(name: str) -> dace.SDFG:
     sdfg.add_array('out', [1], dace.int64)
     state = sdfg.add_state()
     node = FindFirst('ff', predicate='_a[__i] > 0.5', begin=0, end=N)
-    node.implementation = 'OpenMP'
+    node.implementation = 'CPU'
     node.schedule = dace.dtypes.ScheduleType.GPU_Device
     node.add_in_connector('_a', dace.pointer(dace.float64))
     state.add_node(node)

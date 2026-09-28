@@ -2132,7 +2132,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         input_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode], Set[nd.AccessNode]]] = None,
         output_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode], Set[nd.AccessNode]]] = None,
         propagate=True,
-        scope_symbols: Optional[Dict[str, dtypes.typeclass]] = None,
     ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -2163,9 +2162,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :param propagate: If True, computes outer memlets via propagation.
                               False will run faster but the SDFG may not be
                               semantically correct.
-            :param scope_symbols: ``sdfg_scope_symbols(self.sdfg)`` when the caller already holds
-                                  it. Never mutated. Building it here walks every descriptor's
-                                  free symbols, once per mapped tasklet.
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
@@ -2228,19 +2224,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if len(inputs) == 0:
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
-        # Every edge below propagates through one scope, so its symbols are derived once.
-        defined_variables = (self.symbols_defined_at(map_entry, scope_symbols).keys()
-                             | self.sdfg.constants.keys()) if external_edges and propagate else None
+        # Every edge below propagates through this one scope: resolve its symbols once
+        symbols = SymbolResolver()
 
         if external_edges:
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self,
-                                                           tomemlet[inp],
-                                                           map_entry,
-                                                           True,
-                                                           defined_variables=defined_variables)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2271,11 +2262,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self,
-                                                           tomemlet[out],
-                                                           map_exit,
-                                                           True,
-                                                           defined_variables=defined_variables)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))

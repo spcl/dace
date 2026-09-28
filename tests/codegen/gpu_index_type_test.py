@@ -30,12 +30,14 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = 'cuda', **config) -> str:
     """Generates the GPU code of ``sdfg`` for the given backend, with the given ``compiler.cuda`` entries set."""
     with dace.config.temporary_config():
         dace.config.Config.set('compiler', 'cuda', 'backend', value=backend)
+        # The expected code below is the legacy code generator's
+        dace.config.Config.set('compiler', 'cuda', 'implementation', value='legacy')
         # The expected code below assumes the default block size, whatever a local configuration file sets
         dace.config.Config.set('compiler', 'cuda', 'default_block_size', value='32,1,1')
         for key, value in config.items():
             dace.config.Config.set('compiler', 'cuda', key, value=value)
-        # The chiplet count is cached for the whole process; clear it before and after, so that the backend set above
-        # reaches the code generator and does not leak into other tests
+        # The backend is read from the configuration on every call, but the chiplet count is cached for the whole
+        # process; clear it before and after, so that it does not leak into other tests
         common.get_gpu_chiplet_count.cache_clear()
         try:
             # The GPU code object is named the same for every backend, while its language is the file extension

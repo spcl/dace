@@ -437,7 +437,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         # auto_optimize while canonicalize took the fast form.
         #
         # HPTT needs its own install (gated on HPTT_ROOT); TTGT is transpose+GEMM with no external
-        # dependency; ``OpenMP`` covers Reduce/ArgReduce and ``CPU`` the OpenMP-5 Scan / radix sort /
+        # dependency; ``OpenMP`` covers Reduce and ``CPU`` the ArgReduce / OpenMP-5 Scan / radix sort /
         # ScatterConflictCheck. ``apply_cpu_library_parallelism`` below still has the last word on the
         # scope-dependent types, so a node nested in a parallel map keeps its sequential expansion.
         if 'HPTT_ROOT' in os.environ:
@@ -579,7 +579,7 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     or scheduled onto something that is not an OpenMP team -- and it takes its efficient single-core
     expansion instead.
 
-    * ``Reduce`` / ``ArgReduce``: ``OpenMP`` (privatized ``reduction(op:var)``; for ArgReduce a
+    * ``Reduce`` / ``ArgReduce``: ``OpenMP`` / ``CPU`` (privatized ``reduction(op:var)``; for ArgReduce a
       ``declare reduction`` over the (value, index) pair) vs the plain ``pure`` accumulate loop --
       never a contended ``omp atomic`` or a re-forked team per outer iteration.
     * ``Scan`` / ``ScatterConflictCheck``: ``CPU`` (OpenMP 5.0 ``reduction(inscan,..)`` +
@@ -617,7 +617,7 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
         # ``pure-seq`` needs an ``identity`` a lifted node may not carry, so ``pure`` is the robust
         # single-core choice (it lowers to a plain accumulate loop when Sequential).
         node.implementation = (single_core_implementation(node) if sequential else
-                               ('OpenMP' if 'OpenMP' in impls else node.implementation))
+                               ('CPU' if 'CPU' in impls else 'OpenMP' if 'OpenMP' in impls else node.implementation))
     elif isinstance(node, (Scan, ScatterConflictCheck)):
         node.implementation = (single_core_implementation(node) if sequential else
                                ('CPU' if 'CPU' in impls else node.implementation))
@@ -628,15 +628,24 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     return True
 
 
+#: The C++ single-core lowering (``sequential``) of a node that keeps one beside its SDFG-component ``pure``.
+#: ``CPU`` names a node's fast parallel C++ lowering.
+SINGLE_CORE_CPP_IMPLEMENTATION: Dict[str, str] = {
+    'ArgReduce': 'sequential',
+    'FindFirst': 'sequential',
+    'Scan': 'sequential',
+    'ScatterConflictCheck': 'sequential',
+}
+
+
 def single_core_implementation(node: nodes.LibraryNode) -> str:
-    """The single-core lowering a selector picks: ``pure``, except on a node that keeps a faster C++
-    ``sequential`` beside an SDFG-component ``pure`` (``ArgReduce``, ``Scan``, ``ScatterConflictCheck``).
+    """The single-core lowering a selector picks: the node's C++ single-core lowering when it has one
+    (:data:`SINGLE_CORE_CPP_IMPLEMENTATION`), else ``pure``.
 
     :param node: A library node the caller is pinning to one core.
     :returns: The implementation name.
     """
-    impls = type(node).implementations
-    return 'sequential' if 'sequential' in impls and 'pure' in impls else 'pure'
+    return SINGLE_CORE_CPP_IMPLEMENTATION.get(type(node).__name__, 'pure')
 
 
 def set_fast_implementations(sdfg: SDFG,
@@ -683,7 +692,7 @@ def set_fast_implementations(sdfg: SDFG,
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     # Not every node has a ``pure`` expansion: a Copy has none, and its own selector
                     # already picks the in-kernel form.
-                    if 'pure' in node.implementations:
+                    if single_core_implementation(node) in node.implementations:
                         node.implementation = single_core_implementation(node)
                     continue
                 for impl in implementation_prio:
@@ -723,7 +732,7 @@ def set_fast_implementations(sdfg: SDFG,
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
-                    if 'pure' in node.implementations:
+                    if single_core_implementation(node) in node.implementations:
                         node.implementation = single_core_implementation(node)
                     continue
                 # use GPUAuto expansion if applicable

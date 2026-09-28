@@ -10,13 +10,15 @@ import pytest
 
 import dace
 from dace.codegen import cpf
+from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
+from dace.libraries.standard.nodes.find_first import FindFirst
 from dace.libraries.standard.nodes.scan import (COEF_CONNECTOR_NAME, INIT_CONNECTOR_NAME, Scan, ScanOp, in_connector,
                                                 out_connector)
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.tasklet_utils import is_abort_guard
-from dace.transformation.auto.auto_optimize import single_core_implementation
+from dace.transformation.auto.auto_optimize import set_fast_implementations, single_core_implementation
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -130,18 +132,18 @@ def test_the_pure_scan_is_python_loops_computing_what_the_sequential_scan_comput
         np.testing.assert_allclose(got, want, rtol=1e-14)
 
 
-def matrix_sdfg(implementation: str) -> dace.SDFG:
+def matrix_sdfg(scan_implementation: str, arg_implementation: str) -> dace.SDFG:
     """A Scan and an ArgReduce over a whole matrix, both of which walk it in row-major order."""
-    sdfg = dace.SDFG(f'matrix_{implementation}')
+    sdfg = dace.SDFG(f'matrix_{arg_implementation}')
     sdfg.add_array('x', [M, M], dace.float64)
     sdfg.add_array('y', [M, M], dace.float64)
     sdfg.add_array('idx', [1], dace.int64)
     state = sdfg.add_state()
     scan = Scan('scan', op=ScanOp.MAX)
     arg = ArgReduce('argreduce', op='max')
-    for node in (scan, arg):
-        node.implementation = implementation
-        state.add_node(node)
+    scan.implementation, arg.implementation = scan_implementation, arg_implementation
+    state.add_node(scan)
+    state.add_node(arg)
     read = state.add_read('x')
     state.add_edge(read, None, scan, in_connector(0), dace.Memlet('x[0:M, 0:M]'))
     state.add_edge(scan, out_connector(0), state.add_write('y'), None, dace.Memlet('y[0:M, 0:M]'))
@@ -158,8 +160,8 @@ def run_matrix(sdfg: dace.SDFG) -> tuple:
 
 
 def test_a_matrix_operand_is_walked_in_row_major_order_like_the_sequential_loop():
-    got_y, got_idx = run_matrix(matrix_sdfg('pure'))
-    want_y, want_idx = run_matrix(matrix_sdfg('sequential'))
+    got_y, got_idx = run_matrix(matrix_sdfg('pure', 'pure'))
+    want_y, want_idx = run_matrix(matrix_sdfg('sequential', 'sequential'))
 
     np.testing.assert_array_equal(got_y, want_y)
     assert got_idx == want_idx
@@ -217,13 +219,35 @@ def test_a_duplicate_index_is_flagged_by_the_pure_check():
     assert run_conflict(conflict_sdfg('pure', True), INDICES['a duplicate']) == 1
 
 
-@pytest.mark.parametrize('node_type, default', [(ArgReduce, 'sequential'), (Scan, 'CPU'),
-                                                (ScatterConflictCheck, 'CPU')])
-def test_speed_driven_choices_keep_the_cpp_lowerings(node_type, default):
+@pytest.mark.parametrize('node_type, default, single_core', [(ArgReduce, 'sequential', 'sequential'),
+                                                             (Scan, 'CPU', 'sequential'),
+                                                             (ScatterConflictCheck, 'CPU', 'sequential')])
+def test_speed_driven_choices_keep_the_cpp_lowerings(node_type, default, single_core):
     node = node_type('node')
     renderable = cpf.renderable_implementations(node, dace.SDFGState())
     cpf_pick = next(impl for impl in renderable if impl in node_type.implementations)
 
     assert node_type.default_implementation == default
-    assert single_core_implementation(node) == 'sequential'
-    assert cpf_pick in ('OpenMP', 'sequential')
+    assert single_core_implementation(node) == single_core
+    assert cpf_pick in ('CPU', 'sequential')
+
+
+@pytest.mark.parametrize('node_type, lowerings', [
+    (ArgReduce, {'CPU', 'sequential', 'pure', 'CUDA'}),
+    (FindFirst, {'CPU', 'sequential', 'CUDA'}),
+    (IntegerSort, {'CPU', 'ISO C++', 'CUDA'}),
+])
+def test_cpu_names_the_parallel_cpp_lowering_and_pure_only_sdfg_components(node_type, lowerings):
+    assert set(node_type.implementations) == lowerings
+    assert node_type.default_implementation != 'pure'
+
+
+@pytest.mark.parametrize('node', [FindFirst('search', predicate='_a[__i] > 0', begin=0, end=M), IntegerSort('sort')])
+def test_fast_implementations_prefer_the_cpu_lowering(node):
+    sdfg = dace.SDFG(f'fast_{type(node).__name__}')
+    state = sdfg.add_state()
+    state.add_node(node)
+
+    set_fast_implementations(sdfg, dace.DeviceType.CPU)
+
+    assert node.implementation == 'CPU'

@@ -1146,9 +1146,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # over the same ``0:i+1`` slice, stayed as two maps == two fork/joins per k step).
     # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
     # fused; the dependency guards still refuse the unsafe ones. The
-    # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
-    s += [('end', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
-    s += [('end', ppl.Pipeline([FuseMaps()]))]
+    # following SymbolDedup cleans up the duplicate index symbols fusion introduces. Its own label lets a
+    # caller that chose the map granularity by hand run the stages after ``fuse`` without it.
+    s += [('fuse_final', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
+    s += [('fuse_final', ppl.Pipeline([FuseMaps()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
     # its destination, so the producing map writes the destination directly. No ``SimplifyPass`` runs

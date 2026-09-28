@@ -169,8 +169,6 @@ class FuseBranchedTailRemainder(ppl.Pass):
                     if self._fuse_one(resolver, sd, state, main_entry, rem_entry):
                         fused += 1
                         resolver.invalidate_state(state)  # a fuse deleted one map scope and restrided another
-        if fused:
-            sdfg.reset_cfg_list()
         return fused or None
 
     def _fuse_one(self, resolver: scopes.ScopedSymbolResolver, sd: dace.SDFG, state: dace.SDFGState,
@@ -242,9 +240,13 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
         # Boundary arrays (the nested-SDFG connectors) become non-transient descriptors. Ordered
         # dedup, not a set: this is the order the arrays are declared in, hence in the emitted code.
+        # A connector need not share its outer array's name (a GPU offload feeds ``x`` from ``gpu_x``), so each
+        # descriptor comes from the array the connector's edge carries.
+        outer_data = {e.dst_conn: e.data.data for e in state.in_edges(main_nsdfg)}
+        outer_data.update({e.src_conn: e.data.data for e in state.out_edges(main_nsdfg)})
         conn_arrays = dict.fromkeys(list(main_nsdfg.in_connectors) + list(main_nsdfg.out_connectors))
         for name in conn_arrays:
-            desc = copy.deepcopy(sd.arrays[name])
+            desc = copy.deepcopy(sd.arrays[outer_data[name]])
             desc.transient = False
             body.add_datadesc(name, desc)
 

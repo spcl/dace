@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.sdfg.state import LoopRegion
 
@@ -344,6 +345,77 @@ def test_an_index_read_on_an_interstate_edge_moves_with_the_window(read, x_strid
     a, b = np.arange(16.0), np.zeros(1)
     sdfg(a=a, b=b)
     assert b[0] == (float(element > 2) if by_condition else a[element])
+
+
+def column_as_vector_sdfg() -> dace.SDFG:
+    """``b = 2 * a[:, 0]`` for an ``(N, 1)`` ``a``, bound whole as an ``(N,)`` connector."""
+    inner = dace.SDFG('column')
+    inner.add_array('x', [N], dace.float64)
+    inner.add_array('y', [N], dace.float64)
+    inner.add_state().add_mapped_tasklet('twice', {'i': '0:N'}, {'v': dace.Memlet('x[i]')},
+                                         'w = 2 * v', {'w': dace.Memlet('y[i]')},
+                                         external_edges=True)
+    outer = dace.SDFG('column_outer')
+    outer.add_array('a', [N, 1], dace.float64)
+    outer.add_array('b', [N], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {'x'}, {'y'})
+    state.add_edge(state.add_read('a'), None, node, 'x', dace.Memlet('a[0:N, 0]'))
+    state.add_edge(node, 'y', state.add_write('b'), None, dace.Memlet('b[0:N]'))
+    return outer
+
+
+def test_a_whole_array_bound_at_lower_rank_is_widened_to_the_outer_rank():
+    sdfg = column_as_vector_sdfg()
+
+    assert sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs) == 1
+
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert inner.arrays['a'].shape == (N, 1)
+    assert {str(e.data.subset) for s in inner.all_states() for e in s.edges() if e.data.data == 'a'} >= {'i, 0'}
+    a, b = np.arange(8.0).reshape(8, 1), np.zeros(8)
+    sdfg(a=a, b=b, N=8)
+    np.testing.assert_array_equal(b, 2 * a[:, 0])
+
+
+@dace.program
+def every_other(src: dace.float64[2 * N], dst: dace.float64[N]):
+    for i in dace.map[0:N]:
+        dst[i] = src[i * 2]
+
+
+def test_widening_keeps_an_index_that_already_carries_the_step():
+    """The inner array keeps the outer stride and its index is already ``2*i``: widening must not scale
+    it again. Canonicalization nests exactly this shape, and scaling it read ``src[4*i]``."""
+    sdfg = every_other.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+
+    reads = {
+        str(e.data.subset)
+        for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.data == 'src'
+    }
+    assert not any('4*' in r for r in reads), reads
+    src, dst = np.arange(20.0), np.zeros(10)
+    sdfg(src=src, dst=dst, N=10)
+    np.testing.assert_array_equal(dst, src[::2])
+
+
+@dace.program
+def bump_every_other(a: dace.float64[2 * N]):
+    for i in dace.map[0:N]:
+        a[i * 2] = a[i * 2] + 1.0
+
+
+def test_widening_an_array_read_and_written_in_place():
+    """An in-place array is both an input and an output connector; the first widening renames its inner
+    array, so the second must not look it up by the old name (CloudSC ``zsolqb``)."""
+    sdfg = bump_every_other.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    a = np.arange(20.0)
+    expected = a.copy()
+    expected[::2] += 1.0
+    sdfg(a=a, N=10)
+    np.testing.assert_array_equal(a, expected)
 
 
 if __name__ == "__main__":

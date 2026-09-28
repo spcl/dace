@@ -2,7 +2,10 @@
 
 Reproduce the four optimized CloudSC SDFGs and run each one against the un-transformed reference.
 
-Tested on dace branch `extended` at commit `a57fab95228e82e216e1fc3db93ef20b02b4fe17`.
+Status: canon_cpu, canon_gpu and vec_cpu match the reference; vec_gpu builds and runs but does not match
+yet (see `doc/design/cloudsc_pipelines_and_vectorizer_perf.md`).
+
+Tested on dace branch `extended` at commit `22f4863874bbcd1be3bf3033f823dcab20a815ed`.
 
 ## Pipeline
 
@@ -19,7 +22,7 @@ Both canonicalizations bake in the species constants (`nclv=5`, `ncldq*`) and th
 
 ```bash
 git clone -b extended https://github.com/spcl/dace.git && cd dace
-git checkout a57fab95228e82e216e1fc3db93ef20b02b4fe17
+git checkout 22f4863874bbcd1be3bf3033f823dcab20a815ed
 pip install -e .          # Python >= 3.10; islpy and z3-solver are required deps
 export PYTHONHASHSEED=0 OMP_STACKSIZE=64M DACE_compiler_max_stack_array_size=65536
 ulimit -s 65536           # CloudSC keeps large arrays on the stack
