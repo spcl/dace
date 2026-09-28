@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import dace
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.sdfg.state import LoopRegion
 
@@ -375,6 +376,46 @@ def test_a_whole_array_bound_at_lower_rank_is_widened_to_the_outer_rank():
     a, b = np.arange(8.0).reshape(8, 1), np.zeros(8)
     sdfg(a=a, b=b, N=8)
     np.testing.assert_array_equal(b, 2 * a[:, 0])
+
+
+@dace.program
+def every_other(src: dace.float64[2 * N], dst: dace.float64[N]):
+    for i in dace.map[0:N]:
+        dst[i] = src[i * 2]
+
+
+def test_widening_keeps_an_index_that_already_carries_the_step():
+    """The inner array keeps the outer stride and its index is already ``2*i``: widening must not scale
+    it again. Canonicalization nests exactly this shape, and scaling it read ``src[4*i]``."""
+    sdfg = every_other.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+
+    reads = {
+        str(e.data.subset)
+        for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.data == 'src'
+    }
+    assert not any('4*' in r for r in reads), reads
+    src, dst = np.arange(20.0), np.zeros(10)
+    sdfg(src=src, dst=dst, N=10)
+    np.testing.assert_array_equal(dst, src[::2])
+
+
+@dace.program
+def bump_every_other(a: dace.float64[2 * N]):
+    for i in dace.map[0:N]:
+        a[i * 2] = a[i * 2] + 1.0
+
+
+def test_widening_an_array_read_and_written_in_place():
+    """An in-place array is both an input and an output connector; the first widening renames its inner
+    array, so the second must not look it up by the old name (CloudSC ``zsolqb``)."""
+    sdfg = bump_every_other.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    a = np.arange(20.0)
+    expected = a.copy()
+    expected[::2] += 1.0
+    sdfg(a=a, N=10)
+    np.testing.assert_array_equal(a, expected)
 
 
 if __name__ == "__main__":
