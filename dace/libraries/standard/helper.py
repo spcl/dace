@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
-from typing import Callable, List, Tuple
+"""Shared helpers for the standard library node expansions."""
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import dace
 from dace import dtypes
@@ -94,3 +94,55 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
+def broadcast_axes(result: Sequence, rank: int, axis: Optional[int]) -> List:
+    """The entries of ``result``, one per result axis, that an operand of rank ``rank`` lines up with.
+
+    :param axis: The result axis the operand lacks (Fortran ``SPREAD``), or ``None`` to right-align the
+                 operand's axes against the result's (NumPy). An operand that fits neither way gets a
+                 list of a length other than ``rank``.
+    """
+    if axis is None:
+        return list(result[len(result) - rank:]) if rank <= len(result) else []
+    return list(result[:axis]) + list(result[axis + 1:])
+
+
+def broadcast_map_expansion(label: str, parent_sdfg: dace.SDFG, inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
+                            output: Tuple[str, dace.Memlet], code: str) -> dace.SDFG:
+    """Expand an element-wise library node into one map over its output.
+
+    Every operand keeps its own layout and is broadcast by the NumPy rule: an axis of extent 1 is read at
+    index 0, any other axis at the result iterator it lines up with (see :func:`broadcast_axes`). The
+    tasklet connector of a node connector ``c`` is ``c_v``.
+
+    :param inputs: Node input connector -> (its memlet, the ``axis`` of :func:`broadcast_axes`).
+    :param output: The node output connector and its memlet.
+    :param code: The tasklet code.
+    :returns: The nested SDFG.
+    """
+    out_conn, out_memlet = output
+    params = [f'__i{d}' for d in range(out_memlet.subset.dims())]
+    sdfg = dace.SDFG(f'{label}_sdfg')
+
+    def operand(conn: str, memlet: dace.Memlet, iterators: List[str]) -> dace.Memlet:
+        desc = parent_sdfg.arrays[memlet.data]
+        shape = memlet.subset.size()
+        if len(shape) != len(iterators):
+            raise ValueError(f'{label}: {conn} has rank {len(shape)} and cannot broadcast to rank {len(params)}')
+        strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+        sdfg.add_array(conn, shape, desc.dtype, desc.storage, strides=strides)
+        return dace.Memlet(f"{conn}[{', '.join('0' if n == 1 else i for n, i in zip(shape, iterators))}]")
+
+    tasklet_inputs = {
+        f'{conn}_v': operand(conn, memlet, broadcast_axes(params, memlet.subset.dims(), axis))
+        for conn, (memlet, axis) in inputs.items()
+    }
+    sdfg.add_state().add_mapped_tasklet(f'{label}_tasklet', {
+        p: f'0:{n}'
+        for p, n in zip(params, out_memlet.subset.size())
+    },
+                                        tasklet_inputs,
+                                        code, {f'{out_conn}_v': operand(out_conn, out_memlet, params)},
+                                        external_edges=True)
+    return sdfg

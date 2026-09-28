@@ -8,10 +8,11 @@ import dace
 from dace.libraries.standard.nodes import Broadcast
 
 
-def _build(src_shape, dst_shape, dim, dtype):
-    sdfg = dace.SDFG(f"broadcast_{dim}")
-    sdfg.add_array("src", list(src_shape), dtype)
-    sdfg.add_array("dst", list(dst_shape), dtype)
+def _build(src_shape, dst_shape, dim, dtype, src_strides=None, dst_strides=None):
+    tag = '_'.join(map(str, [*src_shape, 'to', *dst_shape]))
+    sdfg = dace.SDFG(f"broadcast_{dim}_{tag}")
+    sdfg.add_array("src", list(src_shape), dtype, strides=src_strides)
+    sdfg.add_array("dst", list(dst_shape), dtype, strides=dst_strides)
     state = sdfg.add_state()
     node = Broadcast("broadcast", dim=dim)
     state.add_node(node)
@@ -64,6 +65,20 @@ def test_broadcast_numpy_rule_rejects_a_mismatch():
         _build((3, ), (2, 5), None, dace.float64)
 
 
+def test_broadcast_keeps_the_operand_layout():
+    """Column-major operands: the expansion must address them by their own strides, not a packed C
+    layout, or it reads and writes the wrong elements."""
+    sdfg = _build((3, 2), (4, 3, 2), None, dace.float64, src_strides=(1, 3), dst_strides=(1, 4, 12))
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert tuple(inner.arrays['_src'].strides) == (1, 3)
+    assert tuple(inner.arrays['_dst'].strides) == (1, 4, 12)
+
+    src = np.asfortranarray(np.arange(6, dtype=np.float64).reshape(3, 2))
+    dst = np.zeros((4, 3, 2), order='F')
+    sdfg(src=src, dst=dst)
+    np.testing.assert_array_equal(dst, np.broadcast_to(src, (4, 3, 2)))
+
+
 def test_broadcast_to_frontend():
     """``np.broadcast_to`` in a dace.program must reach the library node and match NumPy."""
 
@@ -86,5 +101,6 @@ if __name__ == '__main__':
     for shapes in [((3, ), (2, 3)), ((3, 1), (3, 4)), ((1, 4), (3, 4)), ((1, ), (2, 5)), ((2, 3), (4, 2, 3))]:
         test_broadcast_numpy_rule(*shapes)
     test_broadcast_numpy_rule_rejects_a_mismatch()
+    test_broadcast_keeps_the_operand_layout()
     test_broadcast_to_frontend()
     print('Broadcast tests PASS')
