@@ -905,3 +905,42 @@ def test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length)
     sdfg(A=A, PE=PE)
     np.testing.assert_allclose(A.get(), np.arange(64) * 0.5**10)
     assert PE.get()[0] == 10.0
+
+
+def kernel_with_a_shared_tile() -> dace.SDFG:
+    """A block map stages ``A`` in the ``GPU_Shared`` transient ``tile``, and a second inner map reads it."""
+    sdfg = dace.SDFG('kernel_with_a_shared_tile')
+    sdfg.add_array('A', [64], dace.float64)
+    sdfg.add_array('B', [64], dace.float64)
+    sdfg.add_transient('tile', [32], dace.float64, storage=dtypes.StorageType.GPU_Shared)
+    state = sdfg.add_state('kernel')
+    blocks, blocks_exit = state.add_map('blocks', {'b': '0:2'})
+    load_entry, load_exit = state.add_map('load', {'t': '0:32'})
+    use_entry, use_exit = state.add_map('use', {'t': '0:32'})
+    load = state.add_tasklet('load', {'a': None}, {'o': None}, 'o = a')
+    use = state.add_tasklet('use', {'s': None}, {'o': None}, 'o = s * 2')
+    tile = state.add_access('tile')
+    state.add_memlet_path(state.add_read('A'),
+                          blocks,
+                          load_entry,
+                          load,
+                          dst_conn='a',
+                          memlet=dace.Memlet('A[b * 32 + t]'))
+    state.add_memlet_path(load, load_exit, tile, src_conn='o', memlet=dace.Memlet('tile[t]'))
+    state.add_memlet_path(tile, use_entry, use, dst_conn='s', memlet=dace.Memlet('tile[t]'))
+    state.add_memlet_path(use,
+                          use_exit,
+                          blocks_exit,
+                          state.add_write('B'),
+                          src_conn='o',
+                          memlet=dace.Memlet('B[b * 32 + t]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_shared_memory_transient_keeps_its_storage():
+    """The placement made the tile GPU_Global and the register rule then a per-thread register."""
+    sdfg = kernel_with_a_shared_tile()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.arrays['tile'].storage == dtypes.StorageType.GPU_Shared

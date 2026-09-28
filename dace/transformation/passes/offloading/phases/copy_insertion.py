@@ -45,8 +45,11 @@ class CopyInsertion:
         self.place_views(keep_registers=True)
 
     def place_transients(self, IR: OffloadingIRNode) -> None:
-        """A transient lives on the side of the first IR node that names it."""
-        seen: OrderedSet[str] = OrderedSet()
+        """A transient lives on the side of the first IR node that names it; a shared-memory or register one keeps
+        the scope-local storage it was given."""
+        seen: OrderedSet[str] = OrderedSet(name for name, desc in self.sdfg.arrays.items()
+                                           if desc.storage in (dtypes.StorageType.GPU_Shared,
+                                                               dtypes.StorageType.Register))
 
         def place(node: OffloadingIRNode) -> None:
             for storage, names in ((dtypes.StorageType.GPU_Global, node.gpu_set), (dtypes.StorageType.Default,
