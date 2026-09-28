@@ -161,6 +161,11 @@ class Data:
     def ctype(self):
         return self.dtype.ctype
 
+    def num_elements(self):
+        """ The number of elements in this data descriptor, i.e., the product of its shape. Unlike ``total_size``,
+        this does not include any pre- or post-padding. """
+        return _prod(self.shape)
+
     def strides_from_layout(
         self,
         *dimensions: int,
@@ -286,6 +291,9 @@ class Scalar(Data):
     def total_size(self):
         return 1
 
+    def num_elements(self):
+        return 1
+
     @property
     def offset(self):
         return [0]
@@ -371,7 +379,8 @@ class Array(Data):
          used to ensure that a specific index is aligned as a form of pre-padding (that element may not necessarily be
          the first element, e.g., in the case of halo or "ghost cells" in stencils).
        * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
-         the ``shape`` elements, but if pre- or post-padding is involved it may be larger.
+         the ``shape`` elements, but if pre- or post-padding is involved it may be larger. The number of elements
+         without padding is available from ``num_elements()``.
        * ``alignment`` serves as an alignment _hint_ that might or might not be honored, depending on the backend and
          selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
          no alignment requirements.
@@ -1176,7 +1185,7 @@ class View:
                                    name=viewed_container.name,
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    debuginfo=debuginfo)
         elif isinstance(viewed_container, ContainerArray):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
@@ -1187,7 +1196,7 @@ class View:
                                    strides=viewed_container.strides,
                                    offset=viewed_container.offset,
                                    may_alias=viewed_container.may_alias,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    alignment=viewed_container.alignment,
                                    debuginfo=debuginfo,
                                    total_size=viewed_container.total_size,
@@ -1203,7 +1212,7 @@ class View:
                                strides=viewed_container.strides,
                                offset=viewed_container.offset,
                                may_alias=viewed_container.may_alias,
-                               lifetime=viewed_container.lifetime,
+                               lifetime=dtypes.AllocationLifetime.Scope,
                                alignment=viewed_container.alignment,
                                debuginfo=debuginfo,
                                total_size=viewed_container.total_size,
@@ -1268,8 +1277,9 @@ class Reference:
         if debuginfo is not None:
             result.debuginfo = debuginfo
 
-        # References are always transient
+        # References are always transient and bound where they are used
         result.transient = True
+        result.lifetime = dtypes.AllocationLifetime.Scope
         return result
 
 

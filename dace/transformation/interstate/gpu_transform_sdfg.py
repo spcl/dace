@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
+from ordered_set import OrderedSet
+
 from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
@@ -245,7 +247,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         data_already_on_gpu = {}
 
         cloned_arrays = {}
-        for inodename, inode in set(input_nodes):
+        for inodename, inode in OrderedSet(input_nodes):
             if inode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[inodename] = None
                 continue
@@ -257,7 +259,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             name = sdfg.add_datadesc('gpu_' + inodename, newdesc, find_new_name=True)
             cloned_arrays[inodename] = name
 
-        for onodename, onode in set(output_nodes):
+        for onodename, onode in OrderedSet(output_nodes):
             if onode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[onodename] = None
                 continue
@@ -361,10 +363,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             sdict = state.scope_dict()
             for node in state.nodes():
                 if sdict[node] is None:
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        if node.guid:
-                            if isinstance(node, nodes.LibraryNode):
-                                node.schedule = dtypes.ScheduleType.GPU_Device
+                    if isinstance(node, (nodes.LibraryNode)):
+                        if not self._output_or_input_is_marked_host(state, node):
+                            node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
                         if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
@@ -378,21 +379,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
                                 nnode.schedule = dtypes.ScheduleType.Sequential
 
-        # NOTE: The outputs of LibraryNodes, NestedSDFGs and Map that have GPU schedule must be moved to GPU memory.
+        # NOTE: The outputs of LibraryNodes and Maps that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
         for state, node in gpu_nodes:
-            if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+            if isinstance(node, (nodes.LibraryNode)):
                 for e in state.out_edges(node):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
                         desc.storage = dtypes.StorageType.GPU_Global
-            if isinstance(node, nodes.EntryNode):
+            elif isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
                         desc.storage = dtypes.StorageType.GPU_Global
+            else:
+                raise RuntimeError(
+                    f"GPU node of unexpected type. Expected `LibraryNode` or `EntryNode`, found {type(node)}.")
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
