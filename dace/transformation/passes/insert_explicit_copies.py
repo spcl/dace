@@ -76,13 +76,33 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
         state.add_edge(edge.src, None, libnode, None, Memlet())
 
 
+def _copy_destination(state: SDFGState, edge) -> Optional[str]:
+    """The container written by ``edge`` out of an access node, if the edge is (or feeds) a copy.
+
+    :param state: the state holding ``edge``.
+    :param edge: an out-edge of an access node.
+    :returns: the name written by the direct copy edge or ``CopyLibraryNode`` it feeds, else ``None``.
+    """
+    if isinstance(edge.dst, CopyLibraryNode):
+        return next(
+            (e.data.data for e in state.out_edges_by_connector(edge.dst, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)), None)
+    # An edge into a view defines the view (an alias of the source), not a copy.
+    if (isinstance(edge.dst, nodes.AccessNode) and not edge.data.is_empty()
+            and not isinstance(state.sdfg.arrays[edge.dst.data], data.View)):
+        return edge.dst.data
+    return None
+
+
 def _consumers_to_precede(state: SDFGState, edge) -> Optional[List[nodes.Node]]:
     """The other consumers of the copy's source, which a lifted copy must be ordered before.
 
     Plain copy-edge codegen emits the copy when its SOURCE access node is visited, so the copy lands
     before every other consumer of that node. Ordering the lifted copy ahead of those consumers keeps
-    that guarantee. Consumers that reach a node the copy must follow (an ordering edge into the
-    destination, see :func:`_carry_write_ordering`) cannot be preceded without a cycle.
+    that guarantee. Other copies out of the same source (implicit edges or already lifted) land at the
+    same visit, and their order only matters when they write the same container; ordering against
+    the rest would only build cycles out of this pass's own ordering edges. Consumers that reach a
+    node the copy must follow (an ordering edge into the destination, see
+    :func:`_carry_write_ordering`) cannot be preceded without a cycle.
 
     :param state: the state holding the copy edge.
     :param edge: the direct ``AccessNode -> AccessNode`` copy edge.
@@ -91,6 +111,8 @@ def _consumers_to_precede(state: SDFGState, edge) -> Optional[List[nodes.Node]]:
     consumers = []
     for other in state.out_edges(edge.src):
         if other is edge or other.dst is edge.dst or other.dst in consumers:
+            continue
+        if _copy_destination(state, other) not in (None, edge.dst.data):
             continue
         consumers.append(other.dst)
     predecessors = [e.src for e in state.in_edges(edge.dst) if e.data.is_empty()]

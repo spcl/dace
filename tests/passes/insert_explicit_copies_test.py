@@ -1207,6 +1207,41 @@ def test_device_copy_competing_with_another_write_is_lifted_ahead_of_the_source_
     assert ordered_before == [me], "the lifted copy is not ordered before the source's other consumer"
 
 
+def test_sibling_copies_out_of_one_source_are_not_ordered_against_each_other():
+    """Copies out of one source land together when the source is visited; between copies writing
+    different arrays the order is irrelevant. Ordering a lifted copy before the other copy's
+    destination builds a cycle out of the pass's own ordering edges once that copy is lifted too, and
+    leaves it implicit -- a device copy the experimental CUDA codegen refuses."""
+    GPU = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG("sibling_device_copies")
+    for name in "ASDE":
+        sdfg.add_array(name, ["N"], dace.float64, storage=GPU)
+    sdfg.add_symbol("K", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+    source = state.add_access("S")
+    destinations = {}
+    for name in "DE":
+        # A kernel write that ``intersects`` cannot tell apart from the copy's: both copies compete.
+        dst = destinations[name] = state.add_access(name)
+        me, mx = state.add_map(f"k_{name}", {"i": "0:Min(K, N)"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
+        tasklet = state.add_tasklet(f"double_{name}", {"i_"}, {"o"}, "o = i_ * 2.0")
+        state.add_memlet_path(state.add_access("A"), me, tasklet, dst_conn="i_", memlet=Memlet("A[i]"))
+        state.add_memlet_path(tasklet, mx, dst, src_conn="o", memlet=Memlet(f"{name}[i]"))
+        state.add_nedge(source, dst, Memlet("S[Max(K, 0):N] -> [Max(K, 0):N]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    copies = [e.dst for e in state.out_edges(source)]
+    assert len(copies) == 2 and all(isinstance(n, CopyLibraryNode) for n in copies), \
+        "a copy out of S was left implicit"
+    for libnode in copies:
+        ordered_before = {e.dst for e in state.out_edges(libnode) if e.data.is_empty()}
+        assert not ordered_before & (set(destinations.values()) | set(copies)), \
+            "a copy out of S was ordered against its sibling copy"
+
+
 def test_zero_element_copy_is_not_lifted():
     """A copy that moves nothing needs no node: plain copy-edge codegen emits nothing for it."""
     sdfg = dace.SDFG("zero_element_copy")
