@@ -20,7 +20,7 @@ back to the outer rank. Refuses when the outer array is absent from the parent S
 """
 import ast
 import copy
-from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
@@ -204,6 +204,32 @@ def window_steps(outer_subset: subsets.Range, collapsed_dims: List[bool], inner_
     return steps
 
 
+def widen_far_side_of_copy(state: SDFGState, edge: MultiConnectorEdge, inner_name: str, inner_shape: Tuple,
+                           outer_ranges: Callable[[list], Tuple[list, bool]]) -> None:
+    """A copy whose memlet names the OTHER array addresses ``inner_name`` through ``other_subset``, or,
+    with none, through the whole of it. Once ``inner_name`` becomes a window of the outer array that
+    side has to move with it: ``tmp -> x`` with ``x`` widened to ``s[j]`` otherwise writes ``s[0]``."""
+    endpoints = (edge.src, edge.dst)
+    if not any(isinstance(n, nodes.AccessNode) and n.data == inner_name for n in endpoints):
+        return
+    memlet = edge.data
+    far = memlet.other_subset
+    if far is None:
+        far = subsets.Range([(0, s - 1, 1) for s in inner_shape])
+    memlet.other_subset = subsets.Range(outer_ranges(far.ranges)[0])
+
+
+def remap_reduce_axes(node: nodes.Node, collapsed_dims: List[bool]) -> None:
+    """A ``Reduce`` whose rank-reduced input memlet is uncollapsed keeps reducing the same data: its
+    ``axes`` (indices into the input subset) move onto the dims that survived the collapse. Left as
+    they were, ``axes=[0]`` over ``x[0:M]`` widened to ``a[j, 0:M]`` reduces the length-1 dim, a copy."""
+    from dace.libraries.standard.nodes.reduce import Reduce
+    if not isinstance(node, Reduce) or node.axes is None:
+        return
+    surviving = [d for d, collapsed in enumerate(collapsed_dims) if not collapsed]
+    node.axes = [surviving[axis] for axis in node.axes]
+
+
 def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
                                  inner_name: str,
                                  offset_dims: List[sympy.Basic],
@@ -217,52 +243,46 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
     cross-iteration.
     """
     step_dims = step_dims or [1] * len(offset_dims)
+
+    def outer_ranges(inner_subset: list) -> Tuple[list, bool]:
+        # ``offset_dims`` / ``collapsed_dims`` span the FULL outer rank; an inner subset aligns two ways.
+        #  * Full-rank (``len(inner_subset) == len(offset_dims)``): 1:1 dim map, the boundary begin is added to
+        #    EACH dim, length-1 collapsed ones included -- a 3-point stencil reads ``A[0,0]/A[0,1]/A[0,2]`` with
+        #    dim0 collapsed, and the ``+1``/``+2`` lives in the inner begin.
+        #  * Rank-reduced (collapsed dims dropped): a collapsed dim contributes only its offset and
+        #    ``memlet_access_idx`` walks the surviving inner dims.
+        new_range_list = []
+        memlet_access_idx = 0
+        inner_is_full_rank = len(inner_subset) == len(offset_dims)
+        for d, (offset, collapsed, step) in enumerate(zip(offset_dims, collapsed_dims, step_dims)):
+            if inner_is_full_rank:
+                (lo, hi, stp) = inner_subset[d]
+                # Nest rebases each access relative to the boundary begin, so the outer begin is
+                # ``lo + offset``; in-place RMW keeps its access ABSOLUTE (``lo == offset``), and re-adding
+                # there double-counts (``i + i = 2*i``). No ``sympy.simplify``: too slow on Min/int_floor.
+                if keeps_absolute_index(lo, offset, inner_shape, d):
+                    new_range_list.append((lo, hi, stp))
+                else:
+                    new_range_list.append(widened_range(lo, hi, stp, offset, step))
+            elif collapsed is True:
+                new_range_list.append((offset, offset, 1))
+            else:
+                (lo, hi, stp) = inner_subset[memlet_access_idx]
+                new_range_list.append(widened_range(lo, hi, stp, offset, step))
+                memlet_access_idx += 1
+        return new_range_list, inner_is_full_rank
+
     for state in inner_sdfg.all_states():
         for edge in state.edges():
             memlet = edge.data
-            if memlet is None or memlet.data != inner_name:
+            if memlet is None or memlet.is_empty():
                 continue
-            new_range_list = []
-            memlet_access_idx = 0
-            inner_subset = memlet.subset.ranges
-            # ``offset_dims`` / ``collapsed_dims`` span the FULL outer rank. Inner memlet aligns
-            # two ways:
-            #  * Full-rank inner (``len(inner_subset) == len(offset_dims)``): 1:1 dim map. Add
-            #    boundary begin to EACH dim's begin, including length-1 collapsed dims (inner
-            #    begin 0 → just offset). Modern NestInnermostMapBodyIntoNSDFG produces this: a
-            #    3-point j-stencil reads ``A[0,0]/A[0,1]/A[0,2]`` as 2-D memlets even with dim0
-            #    ``i:i`` length-1, so the intra-window ``+1``/``+2`` lives in the inner begin and
-            #    MUST be carried through.
-            #  * Rank-reduced inner (collapsed dims dropped): one entry per non-collapsed outer
-            #    dim; collapsed dim contributes only the offset, ``memlet_access_idx`` walks the
-            #    surviving inner dims.
-            # Indexing rank-reduced against a full-rank inner = classic stencil miscompile:
-            # ``A[0,1]`` consumes collapsed dim0's inner begin (``0``) for dim1, dropping ``+1``.
-            inner_is_full_rank = (len(inner_subset) == len(offset_dims))
-            for d, (offset, collapsed, step) in enumerate(zip(offset_dims, collapsed_dims, step_dims)):
-                if inner_is_full_rank:
-                    (lo, hi, stp) = inner_subset[d]
-                    # Nest rebases each access RELATIVE to boundary begin
-                    # (``lo = original_begin - offset``): ``0`` collapsed, intra-window
-                    # ``0``/``1``/``2`` stencil, or ``begin - bbox_begin`` for a multi-access
-                    # array (non-affine ``Min(...)`` bbox begin). So absolute outer begin =
-                    # ``lo + offset`` in every relative case. ONE exception: in-place RMW keeps
-                    # its access ABSOLUTE (``A[i,j]`` verbatim, inner begin == boundary begin);
-                    # re-adding there double-counts (``i + i = 2*i``). Detect via ``lo == offset``
-                    # -- a free-symbol overlap test mis-fires on relative ``i - Min(i, i+H)``
-                    # (begin shares ``i`` yet must still rebase), dropping the slide. ``lo==offset``
-                    # found via sympy Add cancellation (``i - i`` → 0, relative ``(i-Min)-Min`` stays
-                    # ``i-2*Min``). No ``sympy.simplify`` -- too slow on Min/int_floor in a codegen-hot pass.
-                    if keeps_absolute_index(lo, offset, inner_shape, d):
-                        new_range_list.append((lo, hi, stp))
-                    else:
-                        new_range_list.append(widened_range(lo, hi, stp, offset, step))
-                elif collapsed is True:
-                    new_range_list.append((offset, offset, 1))
-                else:
-                    (lo, hi, stp) = inner_subset[memlet_access_idx]
-                    new_range_list.append(widened_range(lo, hi, stp, offset, step))
-                    memlet_access_idx += 1
+            if memlet.data != inner_name:
+                widen_far_side_of_copy(state, edge, inner_name, inner_shape, outer_ranges)
+                continue
+            new_range_list, inner_is_full_rank = outer_ranges(memlet.subset.ranges)
+            if not inner_is_full_rank:
+                remap_reduce_axes(edge.dst, collapsed_dims)
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
             # subset like any memlet and carry the ``wcr`` lambda through (dropping it would
             # miscompile gramschmidt / correlation).
