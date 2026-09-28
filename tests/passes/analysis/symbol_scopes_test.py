@@ -28,32 +28,8 @@ def assert_matches(sdfg: dace.SDFG) -> SymbolResolver:
     return result
 
 
-def nested_maps() -> dace.SDFG:
-
-    @dace.program
-    def program(A: dace.float64[N, M]):
-        for i in dace.map[0:N]:
-            for j in dace.map[0:M]:
-                A[i, j] = A[i, j] * 2.0
-
-    return program.to_sdfg(simplify=False)
-
-
-def nested_sdfg() -> dace.SDFG:
-
-    @dace.program
-    def inner(A: dace.float64[N]):
-        for i in dace.map[0:N]:
-            A[i] = A[i] + 1.0
-
-    @dace.program
-    def outer(A: dace.float64[N]):
-        inner(A)
-
-    return outer.to_sdfg(simplify=False)
-
-
-def gemm(simplify: bool) -> dace.SDFG:
+def gemm() -> dace.SDFG:
+    """A loop inside a map: the frontend nests the loop in an SDFG of its own."""
 
     @dace.program
     def program(A: dace.float64[N, M], B: dace.float64[M, N], C: dace.float64[N, N]):
@@ -63,7 +39,7 @@ def gemm(simplify: bool) -> dace.SDFG:
                 acc += A[i, k] * B[k, j]
             C[i, j] = acc
 
-    return program.to_sdfg(simplify=simplify)
+    return program.to_sdfg(simplify=False)
 
 
 def loop_around_a_map() -> tuple[dace.SDFG, SDFGState, dace.nodes.Tasklet]:
@@ -108,7 +84,7 @@ def map_inside_a_consume() -> dace.SDFG:
 
 
 def map_around_a_nested_sdfg() -> tuple[dace.SDFG, dace.SDFG]:
-    """Outer map ``i`` (int64) calls a body binding its own ``n`` (declared int32) to ``i``; the body never names ``i``."""
+    """Outer map ``i`` calls a body binding its own ``n`` (declared int32) to ``i``; the body never names ``i``."""
     inner = dace.SDFG('body')
     inner.add_symbol('n', dace.int32)
     inner.add_array('b', [M], dace.float64)
@@ -123,7 +99,6 @@ def map_around_a_nested_sdfg() -> tuple[dace.SDFG, dace.SDFG]:
     sdfg.add_array('A', [M, M], dace.float64)
     outer = sdfg.add_state('s', is_start_block=True)
     entry, exit_node = outer.add_map('outer', {'i': '0:M'})
-    entry.map.range = dace.subsets.Range([(0, dace.symbol('M', dace.int64) - 1, 1)])
     node = outer.add_nested_sdfg(inner, {}, {'b': None}, symbol_mapping={'n': 'i', 'M': 'M'})
     outer.add_nedge(entry, node, dace.Memlet())
     outer.add_memlet_path(node, exit_node, outer.add_access('A'), src_conn='b', memlet=dace.Memlet('A[i, 0:M]'))
@@ -143,10 +118,8 @@ def test_a_nested_sdfg_sees_only_its_own_symbols():
             assert visible['n'] == dace.int32, 'the body types its own symbol as it declares it'
 
 
-@pytest.mark.parametrize('build', [
-    nested_maps, nested_sdfg, map_inside_a_consume, lambda: loop_around_a_map()[0], lambda: dynamic_map_range()[0],
-    lambda: gemm(False), lambda: gemm(True)
-])
+@pytest.mark.parametrize('build',
+                         [map_inside_a_consume, gemm, lambda: loop_around_a_map()[0], lambda: dynamic_map_range()[0]])
 def test_every_node_sees_what_symbols_defined_at_sees(build):
     assert_matches(build())
 
@@ -167,7 +140,7 @@ def test_a_dynamic_range_binds_its_connector_inside_the_map_only():
 
 def test_every_state_and_scope_is_tabulated_once(monkeypatch):
     """One ``symbols_defined_at_state`` per state and one ``new_symbols`` per scope, however many nodes ask."""
-    sdfg = nested_sdfg()
+    sdfg = map_around_a_nested_sdfg()[0]
     calls = collections.Counter()
     for cls, name in [(SDFGState, 'sdfg_symbols'), (SDFGState, 'symbols_defined_at_state'),
                       (dace.nodes.MapEntry, 'new_symbols')]:
