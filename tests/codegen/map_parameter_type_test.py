@@ -101,6 +101,58 @@ def test_64bit_iteration_does_not_overflow():
     assert np.array_equal(A, np.arange(count, dtype=np.int64) * step), A
 
 
+N64 = dace.symbol('N64', dace.int64)
+S64 = dace.symbol('S64', dace.int64)
+M32 = dace.symbol('M32', dace.int32)
+
+
+@dace.program
+def strided_conditional(out: dace.int64[8]):
+    for i in dace.map[0:N64:S64]:
+        if i >= 0:
+            out[i // S64] = i
+
+
+@dace.program
+def default_conditional(out: dace.int64[M32]):
+    for i in dace.map[0:M32]:
+        if i >= 0:
+            out[i] = i
+
+
+def _nested_symbol_types(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
+    return [n.sdfg.symbols[name] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+
+
+def test_frontend_declares_map_parameter_with_its_range_type():
+    """The body of a map is a nested SDFG, which receives the parameter as a symbol of the type the frontend infers
+    from the range (``start:stop:step``); it must match the map's, or the call narrows the parameter."""
+    assert _nested_symbol_types(strided_conditional.to_sdfg(simplify=True), 'i') == [dace.int64]
+    assert _nested_symbol_types(default_conditional.to_sdfg(simplify=True), 'i') == [dace.int32]
+
+
+def test_frontend_map_parameter_beyond_32_bits():
+    step = 2**30
+    out = np.zeros(8, dtype=np.int64)
+    strided_conditional(out=out, N64=8 * step, S64=step)
+    assert np.array_equal(out, np.arange(8, dtype=np.int64) * step), out
+
+
+def test_power_bounds_declare_integer_parameters():
+    """The frontend evaluates ``2**3`` to ``8.0``, as NumPy does; a map bound is an integer all the same."""
+
+    @dace.program
+    def powers(A: dace.float64[8], B: dace.float64[4]):
+        for i in dace.map[0:2**3]:
+            A[i] = 1
+        for j in dace.map[0:2**40:2**38]:
+            B[j // 2**38] = 1
+
+    sdfg = powers.to_sdfg(simplify=True)
+    assert all(h.startswith('for (int i = 0;') for h in _loop_headers(sdfg, 'i')), _loop_headers(sdfg, 'i')
+    assert all(h.startswith('for (int64_t j = 0;') for h in _loop_headers(sdfg, 'j')), _loop_headers(sdfg, 'j')
+
+
 def _consume_pe_header(num_pes: str, pe_type: dace.typeclass) -> str:
     sdfg = dace.SDFG('consume_pe_type')
     sdfg.add_symbol('P', pe_type)
@@ -135,4 +187,7 @@ if __name__ == '__main__':
     test_tiled_map_keeps_default_type()
     test_dynamic_map_range_declares_connector_type()
     test_64bit_iteration_does_not_overflow()
+    test_frontend_declares_map_parameter_with_its_range_type()
+    test_frontend_map_parameter_beyond_32_bits()
+    test_power_bounds_declare_integer_parameters()
     test_consume_pe_index_declares_inferred_type()

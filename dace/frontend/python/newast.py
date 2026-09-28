@@ -1660,10 +1660,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) in (1, 3):
-                    bounds = values[:1]
-                elif len(values) == 2:
-                    bounds = values
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "

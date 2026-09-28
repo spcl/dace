@@ -187,6 +187,22 @@ def test_nested_device_map():
     assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
 
 
+def test_nested_sdfg_receives_wide_index():
+    """A map body with control flow is a nested SDFG; its device function must take the index as wide as the map."""
+
+    @dace.program
+    def conditional(out: dace.int64[64]):
+        for i in dace.map[0:N]:
+            if i >= N - 64:
+                out[i - N + 64] = i
+
+    sdfg = conditional.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    code = _cuda_code(sdfg)
+    assert re.search(r'DACE_DFI void \w+\([^)]*\bint64_t i\)', code), _kernels(code)
+    assert _declaration(code, 'i') == 'int64_t i = (threadIdx.x + b_i);'
+
+
 def test_persistent_map():
     code = _cuda_code(_persistent(persistent_offset_indices.to_sdfg(simplify=False)))
     header = _declaration(code, 'i')
@@ -316,6 +332,7 @@ if __name__ == '__main__':
     test_each_dimension_takes_its_own_type()
     test_threadblock_map_keeps_its_own_type()
     test_nested_device_map()
+    test_nested_sdfg_receives_wide_index()
     test_persistent_map()
     test_dynamic_map(1)
     test_dynamic_map(2)
