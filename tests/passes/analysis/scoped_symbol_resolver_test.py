@@ -139,7 +139,7 @@ def test_a_map_scope_added_after_a_query_is_refused_until_the_state_is_invalidat
 
     sut.invalidate_state(state)
     assert list(sut.defined_at(state, added)) == ['N', 'k']
-    assert sut.resolve_dtype('k', sdfg, state, added) == dace.int64
+    assert sut.resolve_dtype('k', sdfg, state, added) == dace.int32
 
 
 def test_a_symbol_declared_after_a_query_stays_invisible_until_the_sdfg_is_invalidated():
@@ -185,7 +185,7 @@ def test_the_ladder_prefers_each_more_specific_source_over_the_symbol_table():
     # Each rung answers on its own ...
     assert sut.resolve_dtype('A', sdfg) == dace.float64
     assert sut.resolve_dtype('unnamed', sdfg, state, tasklet, edge=write_edge) == dace.float32
-    assert sut.resolve_dtype('i', sdfg, state, tasklet) == dace.int64
+    assert sut.resolve_dtype('i', sdfg, state, tasklet) == dace.int32
     assert sut.resolve_dtype('N', sdfg) == dace.int32
     # ... and a more specific rung outranks every rung below it.
     assert sut.resolve_dtype('A', sdfg, state, tasklet, edge=write_edge) == dace.float64

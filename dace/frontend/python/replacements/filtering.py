@@ -192,8 +192,7 @@ def _array_array_where(visitor: ProgramVisitor,
                                                                                                i2=tasklet_args[2]),
                                                    {'__out': Memlet.simple(out_operand, out_idx)},
                                                    external_edges=True,
-                                                   input_nodes=input_nodes,
-                                                   scope_symbols=visitor.scope_symbol_table(sdfg))
+                                                   input_nodes=input_nodes)
         if generated_nodes is not None:
             generated_nodes.add(tasklet)
             generated_nodes.add(me)

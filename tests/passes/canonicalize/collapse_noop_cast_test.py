@@ -190,8 +190,8 @@ def build_map_param_cast_sdfg(ndrange, out_ty, body):
 
 
 def test_cast_of_a_sugared_map_parameter_to_its_own_width_is_collapsed():
-    """``for i in 0:N`` carries an int64 parameter, so ``int64(i)`` into an int64 slot is noise."""
-    sdfg, tasklet = build_map_param_cast_sdfg({'i': '0:N'}, dace.int64, 'out = int64(i)')
+    """``for i in 0:N`` carries the int32 parameter its bounds infer, so ``int32(i)`` into an int32 slot is noise."""
+    sdfg, tasklet = build_map_param_cast_sdfg({'i': '0:N'}, dace.int32, 'out = int32(i)')
     assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
     assert tasklet.code.as_string == 'out = i'
 

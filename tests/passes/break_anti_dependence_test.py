@@ -14,6 +14,8 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 
 N = dace.symbol('N')
+#: An int64 extent, so the frontend infers an int64 iterator and casts it to meet an int32 index array.
+N_INT64 = dace.symbol('N', dace.int64)
 
 
 def _nmaps(sdfg):
@@ -260,7 +262,7 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     idx_dtype = dace.int32
 
     @dace.program
-    def indirect(a: dace.float64[N], b: dace.float64[N], idx: idx_dtype[N]):
+    def indirect(a: dace.float64[N_INT64], b: dace.float64[N_INT64], idx: idx_dtype[N_INT64]):
         # Bound at N-1 so a[i + idx[i]] with idx[i] == 1 stays in range.
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
@@ -414,7 +416,7 @@ def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
     sequential). This asserts the whole chain resolves through the cast to the ``idx`` array."""
 
     @dace.program
-    def cast_indirect(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+    def cast_indirect(a: dace.float64[N_INT64], b: dace.float64[N_INT64], idx: dace.int32[N_INT64]):
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
 
@@ -454,7 +456,7 @@ def test_break_anti_dependence_loop_invariant_array_offset_refused():
     enhancement; today's contract is safe-refuse.)"""
 
     @dace.program
-    def inv_array(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+    def inv_array(a: dace.float64[N_INT64], b: dace.float64[N_INT64], idx: dace.int32[N_INT64]):
         for i in range(N - 1):
             a[i] = a[i + idx[0]] + b[i]
 

@@ -41,8 +41,7 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
     }, {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              '__out = %s __in1' % opcode,
                              {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
-                             external_edges=True,
-                             scope_symbols=pv.scope_symbol_table(sdfg))
+                             external_edges=True)
     return name
 
 
@@ -440,8 +439,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
                                  },
                                  binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True,
-                                 scope_symbols=visitor.scope_symbol_table(sdfg))
+                                 external_edges=True)
 
     return out_operand
 
@@ -511,8 +509,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
                                  inp_memlets,
                                  binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True,
-                                 scope_symbols=visitor.scope_symbol_table(sdfg))
+                                 external_edges=True)
 
     return out_operand
 
@@ -582,8 +579,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
                                  inp_memlets,
                                  binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True,
-                                 scope_symbols=visitor.scope_symbol_table(sdfg))
+                                 external_edges=True)
 
     return out_operand
 

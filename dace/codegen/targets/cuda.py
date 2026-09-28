@@ -87,6 +87,8 @@ class CUDACodeGen(TargetCodeGenerator):
 
         self.create_grid_barrier = False
         self.dynamic_tbmap_type = None
+        self._dynamic_map_index_type = None
+        self._dynamic_map_fine_grained = False
         self.extra_nsdfg_args = []
         self._in_device_code = False
         self._cpu_codegen: Optional['CPUCodeGen'] = None
@@ -2307,28 +2309,136 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
+    @staticmethod
+    def thread_id_type() -> dtypes.typeclass:
+        """
+        Returns the configured type of thread and block indices (``compiler.cuda.thread_id_type``).
+
+        :return: The configured index type.
+        """
+        ttype = Config.get('compiler', 'cuda', 'thread_id_type')
+        tidtype = getattr(dtypes, ttype, False)
+        if not isinstance(tidtype, dtypes.typeclass):
+            raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
+                             'See ``dace.dtypes`` for available types (for example ``int32``).')
+        return tidtype
+
+    @staticmethod
+    def map_index_types(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns the type to declare each parameter of a GPU map with.
+
+        That is the configured ``thread_id_type``, unless the type inferred for the parameter from its range is a
+        wider integer. 64-bit integer arithmetic costs several instructions and twice the registers on GPUs, so
+        indices stay as narrow as configured unless the range needs more, e.g., when it spans a 64-bit symbol.
+
+        :param sdfg: The SDFG that contains the map.
+        :param state: The state that contains the map.
+        :param map_entry: The entry node of the map.
+        :return: A dictionary mapping each map parameter to its type.
+        """
+        tidtype = CUDACodeGen.thread_id_type()
+        inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry))
+        result = {}
+        for param in map_entry.map.params:
+            dtype = inferred.get(param)
+            wider = dtype in dtypes.INTEGER_TYPES and dtype.bytes > tidtype.bytes
+            result[param] = dtype if wider else tidtype
+        return result
+
+    def _dynamic_map_index_type_of(self, sdfg: SDFG, state: SDFGState, kernel_nodes: List[nodes.Node],
+                                   kernel_index_types: Dict[str, dtypes.typeclass]) -> dtypes.typeclass:
+        """
+        Returns the index type of the dynamic thread-block maps in a kernel, which ``dace::DynamicMap`` uses both for
+        the index of the enclosing map and for its own. Its shared scheduling state is declared once per kernel, so
+        the type is the widest over every dynamic map in the kernel and the maps that enclose them.
+
+        :param sdfg: The SDFG that contains the kernel.
+        :param state: The state that contains the kernel.
+        :param kernel_nodes: The nodes of the kernel map's scope.
+        :param kernel_index_types: The index types of the kernel map's parameters.
+        :return: The index type of the dynamic maps.
+        """
+        result = self.thread_id_type()
+
+        def widen(types: Dict[str, dtypes.typeclass]) -> None:
+            nonlocal result
+            for dtype in types.values():
+                if dtype.bytes > result.bytes:
+                    result = dtype
+
+        def visit(sdfg: SDFG, state: SDFGState, graph_nodes: List[nodes.Node]) -> None:
+            for node in graph_nodes:
+                if isinstance(node, nodes.NestedSDFG):
+                    for nstate in node.sdfg.states():
+                        visit(node.sdfg, nstate, nstate.nodes())
+                elif (isinstance(node, nodes.MapEntry)
+                      and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+                    widen(self.map_index_types(sdfg, state, node))
+                    outer = state.entry_node(node)
+                    if outer is not None:
+                        widen(self.map_index_types(sdfg, state, outer))
+
+        widen(kernel_index_types)
+        visit(sdfg, state, kernel_nodes)
+        return result
+
+    def _dynamic_map_fine_grained_of(self, block_size: int) -> bool:
+        """
+        Returns whether the dynamic thread-block maps of the current kernel use the fine-grained schedule.
+
+        That schedule keeps two index arrays of ``WARP_SIZE`` squared entries per warp in shared memory (see
+        ``dynmap.cuh``), which does not fit in the static shared memory of a block for every combination of block size
+        and index type. Such a kernel would fail to link, so the coarse-grained schedule is used instead.
+
+        :param block_size: The total thread-block size.
+        :return: True if the fine-grained schedule is configured and fits in shared memory.
+        """
+        if not Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained'):
+            return False
+        fine_grained_bytes = 2 * (block_size // 32) * 32 * 32 * self._dynamic_map_index_type.bytes
+        if fine_grained_bytes > _STATIC_SHARED_MEMORY_LIMIT:
+            warnings.warn(f'The fine-grained schedule of dynamic thread-block maps needs {fine_grained_bytes} bytes of '
+                          f'shared memory for a block size of {block_size} and {self._dynamic_map_index_type} indices, '
+                          f'more than the {_STATIC_SHARED_MEMORY_LIMIT} bytes a block can declare statically. Using '
+                          'the coarse-grained schedule instead.')
+            return False
+        return True
+
+    def _dynamic_map_class(self, block_size: int) -> str:
+        """
+        Returns the ``dace::DynamicMap`` class that schedules the dynamic thread-block maps of the current kernel.
+
+        :param block_size: The total thread-block size.
+        :return: The C++ class name.
+        """
+        template_args = f'{"true" if self._dynamic_map_fine_grained else "false"}, {block_size}'
+        if self._dynamic_map_index_type.bytes > 4:
+            template_args += f', 32, {self._dynamic_map_index_type.ctype}'
+        return f'dace::DynamicMap<{template_args}>'
+
     def generate_kernel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                               kernel_map: nodes.Map, kernel_name: str, grid_dims: list, block_dims: list,
                               has_tbmap: bool, has_dtbmap: bool, kernel_params: list, function_stream: CodeIOStream,
                               kernel_stream: CodeIOStream) -> None:
         node = dfg_scope.source_nodes()[0]
 
-        # Get the thread/block index type
-        ttype = Config.get('compiler', 'cuda', 'thread_id_type')
-        tidtype = getattr(dtypes, ttype, False)
-        if not isinstance(tidtype, dtypes.typeclass):
-            raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
-                             'See ``dace.dtypes`` for available types (for example ``int32``).')
+        # Get the thread/block index types
+        index_types = self.map_index_types(sdfg, cfg.node(state_id), node)
 
         # allocating shared memory for dynamic threadblock maps
         if has_dtbmap:
-            self.dynamic_tbmap_type = (
-                f'dace::DynamicMap<{"true" if Config.get_bool("compiler", "cuda", "dynamic_map_fine_grained") else "false"}, '
-                f'{functools.reduce((lambda x, y: x * y), [int(x) for x in Config.get("compiler", "cuda", "dynamic_map_block_size").split(",")])}>'
-                '::shared_type')
+            self._dynamic_map_index_type = self._dynamic_map_index_type_of(sdfg, cfg.node(state_id), dfg_scope.nodes(),
+                                                                           index_types)
+            dynmap_block_size = functools.reduce(
+                (lambda x, y: x * y),
+                [int(x) for x in Config.get("compiler", "cuda", "dynamic_map_block_size").split(",")])
+            self._dynamic_map_fine_grained = self._dynamic_map_fine_grained_of(dynmap_block_size)
+            self.dynamic_tbmap_type = f'{self._dynamic_map_class(dynmap_block_size)}::shared_type'
             kernel_stream.write(f'__shared__ {self.dynamic_tbmap_type} dace_dyn_map_shared;', cfg, state_id, node)
         else:
             self.dynamic_tbmap_type = None
+            self._dynamic_map_index_type = None
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -2366,12 +2476,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # First three dimensions are evaluated directly
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
+                index_type = index_types[varname]
 
                 if chiplet_count > 1 and i == 0:
-                    block_expr = gpu_chiplets.permuted_block_index(chiplet_count, _topy(chiplet_chunk))
+                    block_expr = gpu_chiplets.permuted_block_index(chiplet_count, _topy(chiplet_chunk),
+                                                                   _widen_register('blockIdx.x', index_type))
                 else:
                     # If we defaulted to a fixed number of threads per block, offset by thread ID
-                    block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                    block_expr = _widen_register('blockIdx.%s' % _named_idx(min(i, 2)), index_type)
                 if not has_tbmap or has_dtbmap:
                     block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -2381,15 +2493,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
+                kernel_stream.write(f'{index_type.ctype} {varname} = {expr};', cfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_type.ctype)
 
             # Delinearize beyond the third dimension
             if len(krange) > 3:
                 for i in range(3, len(krange)):
                     varname = kernel_map.params[-i - 1]
+                    index_type = index_types[varname]
 
-                    block_expr = 'blockIdx.z'
+                    block_expr = _widen_register('blockIdx.z', index_type)
                     if not has_tbmap or has_dtbmap:
                         block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
 
@@ -2401,8 +2514,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
+                    kernel_stream.write(f'{index_type.ctype} {varname} = {expr};', cfg, state_id, node)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_type.ctype)
 
         # Dispatch internal code
         assert not self._in_device_code
@@ -2504,6 +2617,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._kernel_chiplet_count = 1
         self._kernel_chiplet_chunk = 1
         self.dynamic_tbmap_type = None
+        self._dynamic_map_index_type = None
+        self._dynamic_map_fine_grained = False
 
     def get_next_scope_entries(self, dfg, scope_entry):
         parent_scope_entry = dfg.entry_node(scope_entry)
@@ -2556,6 +2671,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
+        index_types = self.map_index_types(sdfg, dfg, scope_entry)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -2582,7 +2698,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be
             #       more than one dynamic thread-block map in a GPU device map
-            callsite_stream.write('unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;', cfg, state_id,
+            dynmap_ctype = 'unsigned int'
+            if self._dynamic_map_index_type.bytes > 4:
+                dynmap_ctype = self._dynamic_map_index_type.ctype
+            callsite_stream.write(f'{dynmap_ctype} __dace_dynmap_begin = 0, __dace_dynmap_end = 0;', cfg, state_id,
                                   scope_entry)
 
             outer_scope = dfg.entry_node(scope_entry)
@@ -2630,12 +2749,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 callsite_stream.write('}', cfg, state_id, scope_entry)
 
             callsite_stream.write(
-                'dace::DynamicMap<{fine_grained}, {bsize}>::'
+                '{dynmap_class}::'
                 'schedule(dace_dyn_map_shared, __dace_dynmap_begin, '
                 '__dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
-                'auto {param}) {{'.format(fine_grained=('true' if Config.get_bool(
-                    'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
-                                          bsize=total_block_size,
+                'auto {param}) {{'.format(dynmap_class=self._dynamic_map_class(total_block_size),
                                           kmapIdx=outer_scope.map.params[-1],
                                           param=dynmap_var), cfg, state_id, scope_entry)
 
@@ -2652,9 +2769,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                         sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             if dynmap_step != 1:
+                # Up to 32 bits, the parameter takes the type of its range, as the lambda's parameters do
+                dynmap_param_ctype = 'auto'
+                if self._dynamic_map_index_type.bytes > 4:
+                    dynmap_param_ctype = self._dynamic_map_index_type.ctype
                 callsite_stream.write(
-                    f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', cfg,
-                    state_id, scope_entry)
+                    f'{dynmap_param_ctype} {scope_map.params[0]} = '
+                    f'{scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', cfg, state_id, scope_entry)
 
             # Emit internal array allocation (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
@@ -2702,9 +2823,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                     # Delinearize third dimension if necessary
                     if i == 2 and len(device_map_range) > 3:
-                        block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, device_map_dims[3:], 1))
+                        block_expr = '(%s / (%s))' % (_widen_register('blockIdx.z', index_types[varname]),
+                                                      _topy(functools.reduce(sympy.Mul, device_map_dims[3:], 1)))
                     else:
-                        block_expr = 'blockIdx.%s' % _named_idx(i)
+                        block_expr = _widen_register('blockIdx.%s' % _named_idx(i), index_types[varname])
                         # If we defaulted to 32 threads per block, offset by thread ID
                         if not has_tbmap or has_dtbmap:
                             block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
@@ -2713,14 +2835,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                     declarations.append((varname, expr))
 
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_types[varname].ctype)
 
                 # Delinearize beyond the third dimension
                 if len(device_map_range) > 3:
                     for i in range(3, len(device_map_range)):
                         varname = scope_map.params[-i - 1]
                         # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                        block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                        block_expr = '(%s / (%s)) %% (%s)' % (
+                            _widen_register('blockIdx.z', index_types[varname]),
                             _topy(functools.reduce(sympy.Mul, device_map_dims[i + 1:], 1)),
                             _topy(device_map_dims[i]),
                         )
@@ -2729,7 +2852,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                         declarations.append((varname, expr))
 
-                        self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                        self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_types[varname].ctype)
 
                 kmap_min = subsets.Range(self._kernel_map.range[::-1]).min_element()
                 kmap_max = subsets.Range(self._kernel_map.range[::-1]).max_element()
@@ -2759,9 +2882,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                             condition += '%s < %s' % (v, _topy(maxel + 1))
 
                     if is_persistent and not has_tbmap:
-                        stride = 'gridDim.x * {}'.format(_topy(block_dims[i]))
+                        stride = '{} * {}'.format(_widen_register('gridDim.x', index_types[v]), _topy(block_dims[i]))
                     elif is_persistent and has_tbmap:
-                        stride = 'gridDim.x'
+                        stride = _widen_register('gridDim.x', index_types[v])
                     else:
                         stride = self._grid_dims[i] if has_tbmap \
                             else (kmap_max[i] + 1 - kmap_min[i])
@@ -2769,8 +2892,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     if len(condition) > 0:
                         varname, expr = declarations.pop(0)
                         callsite_stream.write(
-                            'for (int {varname} = {expr}; {cond}; {varname} += '
+                            'for ({ctype} {varname} = {expr}; {cond}; {varname} += '
                             '{stride}) {{'.format(
+                                ctype=index_types[varname].ctype,
                                 varname=varname,
                                 expr=expr,
                                 cond=condition,
@@ -2780,11 +2904,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     else:
                         # will only be entered once
                         varname, expr = declarations.pop(0)
-                        callsite_stream.write('int {varname} = {expr};\n'
-                                              '{{'.format(
-                                                  varname=varname,
-                                                  expr=expr,
-                                              ), cfg, state_id, node)
+                        callsite_stream.write(
+                            '{ctype} {varname} = {expr};\n'
+                            '{{'.format(
+                                ctype=index_types[varname].ctype,
+                                varname=varname,
+                                expr=expr,
+                            ), cfg, state_id, node)
 
                 # Emit internal array allocation here for GPU_ThreadBlock (deallocation handled at MapExit)
                 self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
@@ -2807,13 +2933,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 for i in range(len(brange)):
                     varname = scope_map.params[-i - 1]
                     idx = _named_idx(i + gdims)
-                    block_expr = f'blockIdx.{idx}'
+                    block_expr = _widen_register(f'blockIdx.{idx}', index_types[varname])
                     if relevant_block_dims[i] != 1:
-                        block_expr = f'(blockIdx.{idx} * {_topy(relevant_block_dims[i])} + threadIdx.{idx})'
+                        block_expr = f'({block_expr} * {_topy(relevant_block_dims[i])} + threadIdx.{idx})'
 
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                    callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    ctype = index_types[varname].ctype
+                    callsite_stream.write('%s %s = %s;' % (ctype, varname, expr), cfg, state_id, scope_entry)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, ctype)
 
                 # Emit internal array allocation (deallocation handled at MapExit)
                 self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
@@ -2881,8 +3008,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     block_expr = 'threadIdx.%s' % _named_idx(i)
 
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                ctype = index_types[varname].ctype
+                callsite_stream.write('%s %s = %s;' % (ctype, varname, expr), cfg, state_id, scope_entry)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, ctype)
 
             # Delinearize beyond the third dimension
             if len(brange) > 3:
@@ -2895,8 +3023,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                    callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    ctype = index_types[varname].ctype
+                    callsite_stream.write('%s %s = %s;' % (ctype, varname, expr), cfg, state_id, scope_entry)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, ctype)
 
             # Emit internal array allocation here (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
@@ -3233,6 +3362,25 @@ def _topy(arr):
     if not isinstance(arr, list):
         return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True))
     return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True)) for d in arr]
+
+
+# The static shared memory a thread block can declare on CUDA devices
+_STATIC_SHARED_MEMORY_LIMIT = 48 * 1024
+
+
+def _widen_register(register: str, dtype: dtypes.typeclass) -> str:
+    """
+    Casts a hardware index or dimension register (e.g., ``blockIdx.x``, ``gridDim.x``) to an index type wider than
+    32 bits. The registers are 32-bit unsigned, so an index computed from them, such as ``blockIdx.x * 64``, would
+    otherwise wrap around before it is widened.
+
+    :param register: The register expression.
+    :param dtype: The type of the index computed from the register.
+    :return: The register expression, cast to ``dtype`` if it is wider than 32 bits.
+    """
+    if dtype.bytes > 4:
+        return f'static_cast<{dtype.ctype}>({register})'
+    return register
 
 
 def _named_idx(idx):
