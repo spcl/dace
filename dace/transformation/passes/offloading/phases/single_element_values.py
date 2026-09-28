@@ -25,9 +25,13 @@ def change_single_element_containers(sdfg: SDFG, exceptions: OrderedSet[str]) ->
     if to_scalars:
         before = OrderedSet(sdfg.arrays)
         ConvertLengthOneArraysToScalars(recursive=True, preserve_abi=True, filter=to_scalars).apply_pass(sdfg, {})
-        # A staged scalar inherits its array's storage, but no kernel writes it, so its readers are the host
-        # and kernels taking it by value: it lives on the host.
-        for name in OrderedSet(sdfg.arrays) - before:
-            if helpers.is_scalar(name, sdfg) and helpers.is_array_stored_on_GPU(sdfg, name):
-                sdfg.arrays[name].storage = dtypes.StorageType.Default
+        keep_on_host(sdfg, OrderedSet(sdfg.arrays) - before)
     return to_scalars | to_len1_arrays
+
+
+def keep_on_host(sdfg: SDFG, staged: OrderedSet[str]) -> None:
+    """A staged scalar inherits its array's storage, but no kernel writes it, so its readers are the host and
+    kernels taking it by value: it lives on the host."""
+    for name in staged:
+        if helpers.is_scalar(name, sdfg) and helpers.is_array_stored_on_GPU(sdfg, name):
+            sdfg.arrays[name].storage = dtypes.StorageType.Default
