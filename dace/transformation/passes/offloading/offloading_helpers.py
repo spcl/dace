@@ -29,10 +29,7 @@ def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState
 
 
 def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
-    """Put an empty state before each return on ``sdfg``'s own level, so its copies run on the return's path alone.
-
-    :return: every region given such a state, with that state; ``remove_empty_return_entries`` takes them out again.
-    """
+    """Put an empty state before each return, for its copy-backs; return the (region, state) pairs."""
     entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
         for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
@@ -56,38 +53,25 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
             node.append_node(IR.close)
 
 
-##################################################
-###                Scope Dict                  ###
-### is expensive to generate, should be cached ###
-##################################################
-
-
 def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]:
-    scopes = {}
-    for state in sdfg.states():
-        scopes[state] = state.scope_dict()
-    return scopes
+    """``scope_dict`` of every state, built once: it is expensive."""
+    return {state: state.scope_dict() for state in sdfg.states()}
 
 
-###################################
-###  Checking Common Conditions ###
-###################################
+def get_schedule(node: nodes.Node) -> dtypes.ScheduleType:
+    if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+        return node.map.schedule
+    if isinstance(node, nodes.LibraryNode):
+        return node.schedule
+    raise TypeError(f'node {node} of type {type(node).__name__} carries no schedule')
 
 
 def has_GPU_schedule(node: nodes.Node) -> bool:
-    schedule = None
-    if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
-        schedule = node.map.schedule
-    elif isinstance(node, nodes.LibraryNode):
-        schedule = node.schedule
-    else:
-        assert False
-    return schedule in dtypes.GPU_SCHEDULES
+    return get_schedule(node) in dtypes.GPU_SCHEDULES
 
 
 #: Connectors the Python frontend wires to ``__pystate`` around a callback, to block reordering.
 PYSTATE_CONNECTORS = frozenset({'__istate', '__ostate'})
-PYSTATE = '__pystate'
 
 
 def callback_symbol_names(sdfg: SDFG) -> OrderedSet[str]:
@@ -101,14 +85,7 @@ def callback_symbol_names(sdfg: SDFG) -> OrderedSet[str]:
 
 
 def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[OrderedSet[str]] = None) -> bool:
-    """A tasklet that calls back into Python, so it can only run on the host.
-
-    Neither kind of callback can be offloaded: a Python callback needs the interpreter, and a GPU
-    callback is itself a launch. The frontend wires ``__pystate`` through ``__istate``/``__ostate``,
-    and the callee is a ``dace.callback`` symbol the code names; either marker can be absent.
-
-    :param callback_names: :func:`callback_symbol_names` of ``sdfg``, when the caller asks per node.
-    """
+    """A tasklet calling back into Python (``__pystate`` connectors or a ``dace.callback`` symbol): host only."""
     if not isinstance(node, nodes.Tasklet):
         return False
     if PYSTATE_CONNECTORS & (OrderedSet(node.in_connectors) | OrderedSet(node.out_connectors)):
@@ -154,8 +131,7 @@ def sdfg_holds_gpu_schedule(sdfg: SDFG) -> bool:
 
 
 def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:
-    storage = sdfg.arrays[array_name].storage
-    return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
+    return sdfg.arrays[array_name].storage in GPU_RESIDENT_STORAGES
 
 
 def host_name(name: str) -> str:
@@ -189,11 +165,7 @@ def read_anywhere(sdfg: SDFG, name: str) -> bool:
 
 
 def written_in_full(sdfg: SDFG, name: str) -> bool:
-    """One write to ``name`` provably touches every element of its descriptor.
-
-    A covering subset is not enough: an indirect write carries the whole array as its subset while
-    its volume counts what it writes, so both must match the descriptor.
-    """
+    """One write covers all of ``name``: by subset and by volume (an indirect write covers by subset only)."""
     desc = sdfg.arrays[name]
     whole = subsets.Range.from_array(desc)
     for state in sdfg.states():
@@ -223,12 +195,7 @@ def overwritten_before_any_read(sdfg: SDFG) -> OrderedSet[str]:
 
 
 def containers_written(sdfg: SDFG) -> OrderedSet:
-    """Every container this SDFG writes, read off the graph rather than off the placement IR.
-
-    An incoming edge is the write, whichever node carries it: a tasklet, a map exit and a nested
-    SDFG's output connector all reach the container the same way. What is never written keeps the
-    contents it was called with, so its home copy stays valid for the whole run.
-    """
+    """Every container some access node of ``sdfg`` writes."""
     written: OrderedSet[str] = OrderedSet()
     for state in sdfg.states():
         for node in state.data_nodes():
@@ -238,13 +205,7 @@ def containers_written(sdfg: SDFG) -> OrderedSet:
 
 
 def is_unoffloadable(data_name: str, sdfg: SDFG) -> bool:
-    """A descriptor this pass does not place: a structure, or a container of containers.
-
-    These have no single buffer whose location can be decided and copied -- a ``Structure`` is a
-    record of other descriptors, and a ``ContainerArray`` an array of them -- so they are skipped
-    rather than classified. ``ContainerArray`` needs saying explicitly because it derives from
-    ``Array`` and would otherwise read as an ordinary buffer.
-    """
+    """A structure or container of containers: no single buffer to place."""
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, (data.Structure, data.StructureView, data.ContainerArray, data.ContainerView))
@@ -257,12 +218,7 @@ def is_scalar(data_name: str, sdfg: SDFG) -> bool:
 
 
 def is_array(data_name: str, sdfg: SDFG) -> bool:
-    """A buffer with a location of its own.
-
-    ``ArrayView``, ``ContainerView`` and ``ContainerArray`` all derive from ``Array``, so the bare
-    isinstance answers True for an alias and for a container of containers. A view is placed with
-    the container it aliases, and the container kinds are not placed at all.
-    """
+    """A buffer with a location of its own: not a view (placed with its container) and not a container kind."""
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg))
@@ -285,12 +241,7 @@ def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes
 
 
 def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
-    """Every descriptor a GPU-scheduled scope writes whose value has to outlive that scope.
-
-    Either through the scope's exit, or by an access node inside a kernel that is also accessed
-    outside it or under another kernel: a size-1 wrapper can pull a tasklet and the node it writes
-    into one kernel, leaving nothing at the exit.
-    """
+    """Descriptors a kernel writes that outlive it: through its exit, or inside it and accessed elsewhere too."""
     through_the_exit: OrderedSet[str] = OrderedSet()
     written_inside: OrderedSet[str] = OrderedSet()
     kernels_per_data: Dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
@@ -298,12 +249,13 @@ def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
         scopes = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and has_GPU_schedule(node):
-                through_the_exit |= get_data_used_by_outgoing_access_nodes(sdfg,
-                                                                           state,
-                                                                           node,
-                                                                           include_scalars=True,
-                                                                           ordering=False,
-                                                                           through_copies=False)
+                through_the_exit |= get_data_used_by_access_nodes(sdfg,
+                                                                  state,
+                                                                  node,
+                                                                  downstream=True,
+                                                                  include_scalars=True,
+                                                                  ordering=False,
+                                                                  through_copies=False)
             if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
                 continue
             kernel = enclosing_kernel(scopes, node)
@@ -335,16 +287,7 @@ def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
 
 
 def register_kernel_local_transients(sdfg: SDFG) -> None:
-    """Storage for a transient every access of which is inside one kernel: a register.
-
-    The copy analysis places the containers that CROSS the host/device boundary and leaves the rest
-    at ``Default``, which is host memory. A transient the kernel both writes and reads -- the scalar
-    a fused map keeps its intermediate in -- is then a host allocation named only by device code,
-    and the copy into it is host-to-device inside a kernel: the generator's dispatcher answers that
-    pattern with ``IllegalCopy``. It never emits one here, but registering the target and not using
-    it trips the code generator's own consistency check, which fires as a bare AssertionError naming
-    nothing. The transformation this pass replaced made the same descriptors registers.
-    """
+    """Make a register of every Default transient whose accesses all lie inside kernels."""
     for nested in sdfg.all_sdfgs_recursive():
         local: OrderedSet = OrderedSet()
         escapes: OrderedSet = OrderedSet()
@@ -379,28 +322,10 @@ def is_stream(data_name: str, sdfg: SDFG) -> bool:
 
 
 def is_length1_array(data_name: str, sdfg: SDFG) -> bool:
-    """A length-1 buffer that could be held as a scalar instead.
-
-    A view is excluded: a ``Scalar`` cannot carry the ``views`` alias edge, which is why
-    ``ConvertLengthOneArraysToScalars`` exempts one as well -- offering it a view to convert asks it
-    for a rewrite it refuses.
-    """
+    """A length-1 array, not a view (a Scalar cannot carry the ``views`` edge)."""
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return is_array(data_name, sdfg) and len(desc.shape) == 1 and desc.shape[0] == 1
-
-
-#######################
-###  SDFG Traversal ###
-#######################
-
-
-def get_children(state: SDFGState, node: nodes.Node) -> OrderedSet:
-    return OrderedSet(e.dst for e in state.out_edges(node))
-
-
-def get_predecessors(state: SDFGState, node: nodes.Node) -> OrderedSet:
-    return OrderedSet(e.src for e in state.in_edges(node))
 
 
 def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
@@ -417,10 +342,7 @@ def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]
 
 
 def traverse_IR_after_predecessors(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
-    """Call ``method`` on each node once all of its predecessors had it, else in :func:`traverse_IR` order.
-
-    A join (the close node of a conditional) must hear from every arm before it forwards anything.
-    """
+    """Call ``method`` on each node after all its predecessors, so a join hears every arm first."""
     waiting: Dict[OffloadingIRNode, int] = {}
 
     def count(node: OffloadingIRNode) -> None:
@@ -462,112 +384,58 @@ def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode
             raise ValueError(f'unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}')
 
 
-########################################
-###  Get Arrays Used by Access Nodes ###
-########################################
+def get_data_used_by_access_nodes(sdfg: SDFG,
+                                  state: SDFGState,
+                                  node: nodes.Node,
+                                  downstream: bool,
+                                  include_scalars: bool = False,
+                                  ordering: bool = True,
+                                  through_copies: bool = True) -> OrderedSet[str]:
+    """Arrays reachable from ``node`` through access nodes, following empty memlets and copies if asked."""
+    arrays: OrderedSet[str] = OrderedSet()
+    # Visited, because an access node and a view of it can refer to each other.
+    visited: OrderedSet[nodes.Node] = OrderedSet()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        children: List[nodes.Node] = []
+        stops = False
+        if isinstance(current, nodes.AccessNode):
+            name = current.data
+            if is_array(name, sdfg) or (include_scalars and is_scalar(name, sdfg)):
+                arrays.add(name)
+            children = view_origin_nodes(sdfg, state, current)
+            stops = not through_copies and not is_view(name, sdfg)
+        if not stops:
+            children += neighboring_access_nodes(state, current, downstream, ordering)
+        # Reversed, so they pop in order: the same visits in the same order as a recursion.
+        stack.extend(reversed(children))
+    return arrays
 
 
-def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
-                                           state: SDFGState,
-                                           node: nodes.Node,
-                                           include_scalars: bool = False) -> OrderedSet[str]:
-
-    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet:
-        if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node refering back to A
-            return OrderedSet()
-        visited_set.add(node)
-
-        # find accessed arrays
-        arrays: OrderedSet[str] = OrderedSet()
-        if isinstance(node, nodes.AccessNode):
-            data_name = node.data
-            if is_array(data_name, sdfg):
-                arrays.add(data_name)
-
-            elif is_view(data_name, sdfg):  # trace it if it is a view
-                # once the view access node is known, its original access node can be found and its
-                # data added. A chain that reaches no access node has no origin to place, and
-                # recursing on None asks the state for the edges of a node it does not hold.
-                original = get_last_view_node(state, node)
-                if original is not None:
-                    arrays |= recursion(original, visited_set)
-
-            elif include_scalars and is_scalar(data_name, sdfg):
-                arrays.add(data_name)
-
-        # check if more access nodes UPstream
-        for n in get_predecessors(state, node):
-            if isinstance(n, nodes.AccessNode):
-                arrays |= recursion(n, visited_set)
-
-        return arrays
-
-    return recursion(node, OrderedSet())
+def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> List[nodes.AccessNode]:
+    """The access node a view aliases, or nothing: a chain that reaches no access node has no origin to place."""
+    if not is_view(node.data, sdfg):
+        return []
+    origin = get_last_view_node(state, node)
+    return [] if origin is None else [origin]
 
 
-def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
-                                           state: SDFGState,
-                                           node: nodes.Node,
-                                           include_scalars: bool = False,
-                                           ordering: bool = True,
-                                           through_copies: bool = True) -> OrderedSet[str]:
-    """Data of the access nodes downstream of ``node``.
-
-    Placement follows empty memlets (``ordering``) and container-to-container copies
-    (``through_copies``); a write analysis must not, since neither is a write by ``node``.
-    """
-
-    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet:
-        if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
-            return OrderedSet()
-        visited_set.add(node)
-
-        # find accessed arrays
-        arrays: OrderedSet[str] = OrderedSet()
-        if isinstance(node, nodes.AccessNode):
-            data_name = node.data
-
-            if is_array(data_name, sdfg):
-                arrays.add(data_name)
-
-            elif is_view(data_name, sdfg):  # trace it if it is a view
-                # once the view access node is known, its original access node can be found and its
-                # data added. A chain that reaches no access node has no origin to place, and
-                # recursing on None asks the state for the edges of a node it does not hold.
-                original = get_last_view_node(state, node)
-                if original is not None:
-                    arrays |= recursion(original, visited_set)
-
-            elif include_scalars and is_scalar(data_name, sdfg):
-                arrays.add(data_name)
-
-            if not through_copies and not is_view(data_name, sdfg):
-                return arrays
-
-        # check if more access nodes DOWNstream
-        for edge in state.out_edges(node):
-            if isinstance(edge.dst, nodes.AccessNode) and (ordering or not edge.data.is_empty()):
-                arrays |= recursion(edge.dst, visited_set)
-
-        return arrays
-
-    return recursion(node, OrderedSet())
-
-
-############################
-###  Map Creation Helper ###
-############################
+def neighboring_access_nodes(state: SDFGState, node: nodes.Node, downstream: bool,
+                             ordering: bool) -> List[nodes.AccessNode]:
+    edges = state.out_edges(node) if downstream else state.in_edges(node)
+    neighbors = [(edge.dst if downstream else edge.src, edge) for edge in edges]
+    return [
+        neighbor for neighbor, edge in neighbors
+        if isinstance(neighbor, nodes.AccessNode) and (ordering or not edge.data.is_empty())
+    ]
 
 
 def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> Tuple[str, str]:
-    """A label and a map parameter that collide with nothing the SDFG already knows.
-
-    The parameter becomes a SYMBOL, so uniqueness has to be checked against every name that could
-    already carry assumptions -- the SDFG's own symbol table and its parent's, the data descriptors,
-    and the parameters of every map in the SDFG, not just this state's. Reusing a name that is
-    already a symbol elsewhere would give one string two meanings with two sets of assumptions,
-    which resolves differently depending on which one a later pass reaches for.
-    """
+    """A map label new to the state and a parameter new to every symbol, descriptor and map parameter in reach."""
     sdfg = state.sdfg
     taken: OrderedSet = OrderedSet()
     for node in state.nodes():

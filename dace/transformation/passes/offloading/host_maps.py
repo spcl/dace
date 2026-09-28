@@ -1,11 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Maps that stay on the HOST; the maps under them become the kernels.
-
-The offloading otherwise makes every top-level map a ``GPU_Device`` kernel. That is wrong for a map
-whose purpose is to LAUNCH work rather than do it -- ICON's shape, an ``nblks`` map over one nested
-SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller, or derived structurally; see :func:`host_maps`.
-"""
-from typing import Dict, List, Optional, Union
+"""Maps that stay on the host so the maps under them become the kernels (ICON's ``nblks`` over ``nproma``/``nlev``)."""
+import itertools
+from typing import Dict, Iterable, List, Optional, Union
 
 from ordered_set import OrderedSet
 
@@ -15,59 +11,38 @@ from dace.sdfg.state import SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
-#: What a caller may pass as ``host_maps``:
-#:
-#: * ``False`` (the default) -- run no host-map detection at all.
-#: * ``None`` or ``[]`` -- name no host maps; the same outcome, spelled for a caller that computes
-#:   the list and finds it empty.
-#: * ``True`` -- derive them with the built-in heuristics.
-#: * a list -- exactly these maps, each given as a map label or as the ``MapEntry`` itself.
+#: ``False``/``None``/``[]``: no host maps; ``True``: derive them; a list: these map labels or ``MapEntry`` nodes.
 HostMapSpec = Optional[Union[bool, List[Union[str, nodes.MapEntry]]]]
 
 
 def is_computation(node: nodes.Node) -> bool:
-    """Only these compute: access nodes stage, map scopes and nested SDFGs launch, and interstate
-    edges and control-flow blocks prepare symbols, which is why neither is ever looked at."""
+    """Access nodes stage and scopes launch; only tasklets and library nodes compute."""
     return isinstance(node, (nodes.Tasklet, nodes.LibraryNode))
 
 
-def sdfg_only_launches(sdfg: SDFG) -> bool:
-    """Every state computes only inside maps, and there is at least one.
+def only_launches(children: Iterable[nodes.Node]) -> bool:
+    """None of ``children`` computes, and at least one launches: a map or a nested SDFG that only launches."""
+    launches = False
+    for node in children:
+        if is_computation(node):
+            return False
+        if isinstance(node, nodes.NestedSDFG) and not sdfg_only_launches(node.sdfg):
+            return False
+        launches = launches or isinstance(node, (nodes.MapEntry, nodes.NestedSDFG))
+    return launches
 
-    ``states()`` recurses through regions and never yields an interstate edge.
-    """
-    found_map = False
-    for state in sdfg.states():
-        for node in state.scope_children()[None]:
-            if is_computation(node):
-                return False
-            if isinstance(node, nodes.MapEntry):
-                found_map = True
-            elif isinstance(node, nodes.NestedSDFG):
-                if not sdfg_only_launches(node.sdfg):
-                    return False
-                found_map = True
-    return found_map
+
+def sdfg_only_launches(sdfg: SDFG) -> bool:
+    return only_launches(itertools.chain.from_iterable(state.scope_children()[None] for state in sdfg.states()))
 
 
 def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) -> bool:
-    """An inner map whose extent mentions one of ``entry``'s own parameters.
-
-    Keeping such a map on the host is not a trade-off, it is broken: the extent has to reach the
-    launch configuration, where an outer parameter is not in scope. npbench correlation's
-    ``symmetrize_col(j: _[i + 1:M])`` emits ``dim3(((M - __i) - 1), 1, 1)`` and nvcc rejects the
-    program outright. So this refuses a map even when the caller named it.
-
-    The ICON shape this rule exists beside is unaffected: an ``nblks`` map over ``nproma``/``nlev``
-    bodies has extents that do not mention the block index.
-    """
+    """An inner map whose extent names one of ``entry``'s parameters, which a host launch cannot pass
+    (npbench correlation's ``dim3(((M - __i) - 1), 1, 1)``). Refused even for a map the caller named."""
     params = OrderedSet(entry.map.params)
     for node in scope_children.get(entry, ()):
         if isinstance(node, nodes.MapEntry):
-            # By NAME, through symbolic's own reader: the question is whether the inner extent
-            # mentions this map's parameter, which is a naming question. Comparing symbol objects
-            # would answer it differently for two symbols that share a name but not their
-            # assumptions, and either answer would be about the wrong thing.
+            # By name: two symbols that share a name but not their assumptions are one parameter.
             extent_names: OrderedSet = OrderedSet()
             for rng in node.map.range:
                 for bound in rng:
@@ -79,21 +54,6 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) ->
     return False
 
 
-def only_launches(state: SDFGState, entry: nodes.MapEntry, scope_children: Dict) -> bool:
-    """``entry``'s scope launches work rather than doing any itself."""
-    launches = False
-    for node in scope_children.get(entry, ()):
-        if is_computation(node):
-            return False
-        if isinstance(node, nodes.MapEntry):
-            launches = True
-        elif isinstance(node, nodes.NestedSDFG):
-            if not sdfg_only_launches(node.sdfg):
-                return False
-            launches = True
-    return launches
-
-
 def is_host_map(state: SDFGState,
                 entry: nodes.MapEntry,
                 scope_children: Dict,
@@ -102,42 +62,28 @@ def is_host_map(state: SDFGState,
                 pinned_entries: OrderedSet,
                 sdfg: SDFG = None,
                 callback_names: Optional[OrderedSet] = None) -> bool:
-    """``entry`` belongs on the host, so the maps under it become the kernels.
-
-    A map the caller NAMED is a host map whatever the structure looks like -- a caller who names a
-    map has looked at the kernel and these rules have not -- except where the lowering could not be
-    emitted at all (:func:`body_extents_depend_on_entry`).
-
-    ``auto`` adds the only other reason a map is kept on the host: a scope that launches work
-    rather than doing any of its own.
-    """
+    """A named map, a map holding a callback, or with ``auto`` a map that only launches, stays on the host."""
     named = entry in pinned_entries or entry.map.label in pinned_labels
     if named or auto:
         if body_extents_depend_on_entry(entry, scope_children):
             return False
     if named:
         return True
-    # A callback is host code whatever the shape around it: a Python callback needs the interpreter,
-    # and a GPU callback is itself a launch, so a kernel cannot issue one. Not gated on ``auto`` --
-    # a kernel around one would not run at all, which makes this a requirement rather than a
-    # preference, and no default behaviour depends on offloading one.
+    # A kernel cannot issue a callback, so this is a requirement and not gated on ``auto``.
     if sdfg is not None and helpers.scope_holds_callback(state, entry, scope_children, sdfg, callback_names):
         return True
     if not auto:
         return False
-    return only_launches(state, entry, scope_children)
+    return only_launches(scope_children.get(entry, ()))
 
 
 def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
     """The map entries in ``sdfg`` that must keep a host schedule.
 
     :param sdfg: the SDFG to scan, nested SDFGs included.
-    :param spec: see :data:`HostMapSpec`. ``False`` (the default), ``None`` and ``[]`` all name no
-        host maps and run no heuristics; ``True`` derives them; a list names them outright.
-    :return: the map entries to leave on the host, in a deterministic order.
-
-    A map holding a callback is returned whatever ``spec`` says: a kernel cannot issue one, so that
-    is a requirement rather than a scheduling opinion.
+    :param spec: see :data:`HostMapSpec`.
+    :return: the map entries to leave on the host, in a deterministic order. A map holding a callback
+        is among them whatever ``spec`` says.
     """
     auto = spec is True
     pinned_labels: OrderedSet = OrderedSet()
@@ -157,7 +103,6 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
 
     found: OrderedSet = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
-        # Once per SDFG: asked per tasklet, the callback test walks every nested symbol table.
         callback_names = helpers.callback_symbol_names(nested)
         for state in nested.states():
             scope_children = state.scope_children()

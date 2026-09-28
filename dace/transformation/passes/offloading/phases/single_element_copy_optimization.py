@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
-from ordered_set import OrderedSet
-
+"""Move a single-element copy into the map that alone reads it: ``A -> s -> Map`` becomes ``A -> Map -> s``."""
 from copy import deepcopy
 from typing import List
+
+from ordered_set import OrderedSet
 
 from dace import Memlet
 from dace.sdfg import nodes, SDFG
@@ -13,115 +13,64 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
 def drop_stale_other_subset(memlet: Memlet, src_node: nodes.Node, dst_node: nodes.Node) -> None:
-    """Clear ``other_subset`` when the rewired edge no longer runs between two data containers.
-
-    ``other_subset`` describes the SECOND container of a container-to-container copy. Moving an
-    access node through a map entry puts a scope node or a tasklet on one end, and the subset then
-    describes a node that is not on the edge any more: validation reads it against the surviving
-    node's descriptor and reports a dimension mismatch, or -- when that node is a tasklet, which has
-    no descriptor at all -- crashes reaching for ``.data`` on it.
-    """
+    """Clear ``other_subset`` once the edge no longer runs between two containers: it would describe
+    a node that is not on the edge any more."""
     if not isinstance(src_node, nodes.AccessNode) or not isinstance(dst_node, nodes.AccessNode):
         memlet.other_subset = None
 
 
-class SingleElementCopyOptimization():
+def single_element_copies_into_map(sdfg: SDFG) -> None:
+    changes = []
+    for state in sdfg.states():
+        for map_entry in state.nodes():
+            if not isinstance(map_entry, nodes.MapEntry):
+                continue
+            for access in OrderedSet(state.predecessors(map_entry)):
+                # Only a copy the map alone reads moves: another reader would be left reading a node
+                # inside this map's scope.
+                if (isinstance(access, nodes.AccessNode) and state.out_degree(access) == 1
+                        and (helpers.is_scalar(access.data, sdfg) or helpers.is_length1_array(access.data, sdfg))
+                        and state.in_degree(access) == 1
+                        and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)):
+                    changes.append((state, access, map_entry))
 
-    # pattern   A -> single access -> Map    becomes    A -> Map -> single access
-    def apply(self, sdfg: SDFG, verbose: bool = False) -> None:
-        self.verbose = verbose
-        self.single_element_copies_into_map(sdfg)
+    for state, access, map_entry in changes:
+        rewire_access_into_map(state, access, map_entry)
 
-    def single_element_copies_into_map(self, sdfg: SDFG) -> None:
-        changes = OrderedSet()
-        for state in sdfg.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.MapEntry):
-                    continue
-                map_entry: nodes.MapEntry = node
 
-                for input in helpers.get_predecessors(state, map_entry):
-                    if not isinstance(input, nodes.AccessNode):
-                        continue
-                    data_name = input.data
-                    if not helpers.is_scalar(data_name, sdfg) and not helpers.is_length1_array(data_name, sdfg):
-                        continue
-                    single_access = input
-                    preds = list(helpers.get_predecessors(state, single_access))
-                    if len(preds) != 1 or not isinstance(preds[0], nodes.AccessNode):
-                        continue
+def rewire_access_into_map(state: SDFGState, access: nodes.AccessNode, map_entry: nodes.MapEntry) -> None:
+    """Rewire ``B -> access -> map -> C`` into ``B -> map -> access -> C``."""
+    source_edge = state.in_edges(access)[0]
+    access_to_map = state.out_edges(access)[0]
 
-                    changes.add((state, input, map_entry))
+    connector = map_entry.next_connector(access.data)
+    in_conn, out_conn = f"IN_{connector}", f"OUT_{connector}"
+    map_entry.add_in_connector(in_conn)
+    map_entry.add_out_connector(out_conn)
+    state.remove_edge(source_edge)
+    outer, inner = deepcopy(source_edge.data), deepcopy(source_edge.data)
+    drop_stale_other_subset(outer, source_edge.src, map_entry)
+    drop_stale_other_subset(inner, map_entry, access)
+    state.add_edge(source_edge.src, source_edge.src_conn, map_entry, in_conn, outer)
+    state.add_edge(map_entry, out_conn, access, None, inner)
 
-        for state, access, map_entry in changes:
-            if self.verbose:
-                print(f"Phase 7: ingest single element copy {access} in state {state} into map {map_entry}")
-            self.rewire_access_into_map(state, access, map_entry)
+    # The access now feeds the map's readers directly.
+    passthrough = passthrough_out_connectors(access_to_map.dst_conn)
+    readers = [e for e in state.out_edges(map_entry) if e.src_conn in passthrough]
+    if access_to_map.dst_conn is not None:
+        map_entry.remove_in_connector(access_to_map.dst_conn)
+    for connector in passthrough:
+        map_entry.remove_out_connector(connector)
+    state.remove_edge(access_to_map)
+    for edge in readers:
+        memlet = deepcopy(edge.data)
+        drop_stale_other_subset(memlet, access, edge.dst)
+        state.add_edge(access, None, edge.dst, edge.dst_conn, memlet)
+        state.remove_edge(edge)
 
-    def rewire_access_into_map(self, state: SDFGState, access: nodes.AccessNode, map: nodes.MapEntry) -> None:
-        """
-        Move an access node from outside a map to inside the map entry boundary.
-        Rewires
-            B -> access -> map -> C
-        into
-            B -> map -> access -> C
-        for the connector path(s) that currently route through ``access`` into ``map``.
-        """
-        # 0) get all edges B -> access
-        incoming_to_access = list(state.in_edges(access))
-        access_to_map_edges = [edge for edge in state.out_edges(access) if edge.dst is map]
-        if not access_to_map_edges:
-            raise ValueError(f"Access node '{access.label}' does not feed map '{map.label}'.")
 
-        # 1) connect all inputs of access  to map:      B -> map;           access -> map -> C
-        # 2) then connect the new out connectors to access:  B -> map -> access; access -> map -> C
-        for idx, edge in enumerate(incoming_to_access):
-            src, src_conn = edge.src, edge.src_conn
-            ext_memlet = deepcopy(edge.data)
-            int_memlet = deepcopy(edge.data)
-            state.remove_edge(edge)
-
-            conn_idx = 0
-            in_conn = f"IN_REWIRE_ACCESS_{idx}_{conn_idx}"
-            out_conn = f"OUT_REWIRE_ACCESS_{idx}_{conn_idx}"
-            while in_conn in map.in_connectors or out_conn in map.out_connectors:
-                conn_idx += 1
-                in_conn = f"IN_REWIRE_ACCESS_{idx}_{conn_idx}"
-                out_conn = f"OUT_REWIRE_ACCESS_{idx}_{conn_idx}"
-
-            map.add_in_connector(in_conn)
-            map.add_out_connector(out_conn)
-
-            drop_stale_other_subset(ext_memlet, src, map)
-            drop_stale_other_subset(int_memlet, map, access)
-            state.add_edge(src, src_conn, map, in_conn, ext_memlet)  # B -> map
-            state.add_edge(map, out_conn, access, None, int_memlet)  # B -> map -> access
-
-        # 3) delete the edge and the in_connector of access: B -> map -> access; map -> C
-        accesses_to_map = [e for e in state.in_edges(map) if e.src is access]
-        assert len(accesses_to_map) == 1, "multiple edges between same two nodes"
-        access_to_map = accesses_to_map[0]
-
-        access_out_conns = self.get_corresponding_out_connectors(map, access_to_map.dst_conn)
-        map.remove_in_connector(access_to_map.dst_conn)
-        state.remove_edge(access_to_map)
-
-        # 4) delete the out_connectors of access and the edges to the output nodes: B -> map -> access; C
-        map_out_edges = [e for e in state.out_edges(map) if e.src_conn in access_out_conns]
-        for out_conn in access_out_conns:
-            map.remove_out_connector(out_conn)
-
-        # 5) connect the output nodes directly to acces: B -> map -> access -> C
-        for e in map_out_edges:
-            memlet = deepcopy(e.data)
-            drop_stale_other_subset(memlet, access, e.dst)
-            state.add_edge(access, None, e.dst, e.dst_conn, memlet)
-            state.remove_edge(e)
-
-    def get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> List[str]:
-        if not in_connector:
-            return []
-        suffix = in_connector[3:]  # connectors starts with "IN_"
-        return [
-            out_conn for out_conn in map_entry.out_connectors if out_conn.startswith("OUT_") and out_conn[4:] == suffix
-        ]
+def passthrough_out_connectors(in_connector: str) -> List[str]:
+    """``OUT_x`` for a map entry's ``IN_x``; none for a connector that is not a pass-through."""
+    if in_connector is None or not in_connector.startswith("IN_"):
+        return []
+    return ["OUT_" + in_connector[3:]]

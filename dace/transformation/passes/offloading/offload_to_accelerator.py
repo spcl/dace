@@ -1,30 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any, Dict, Optional, Tuple
 
 from ordered_set import OrderedSet
 
 from dace import properties
 from dace.sdfg import SDFG
+from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
-
-from dace.transformation.passes.offloading.phases.schedules import SchedulePhase
-from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysisPhase
-from dace.transformation.passes.offloading.phases.single_element_values import SingleElementValuePhase
-from dace.transformation.passes.offloading.phases.single_iteration_maps import SingleIterationMapPhase
-from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertionPhase
-from dace.transformation.passes.offloading.phases.single_element_copy_optimization import SingleElementCopyOptimization
-from dace.transformation.passes.offloading.offloading_helpers import (device_resident, get_sdfg_scope_dict,
-                                                                      refuse_by_value_scalars_the_device_writes,
-                                                                      register_kernel_local_transients,
-                                                                      remove_empty_return_entries,
-                                                                      separate_early_returns)
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-from dace.sdfg.utils import require_structured_control_flow
-
-from typing import Any, Dict, Optional
-
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
+from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
+from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
+from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
+from dace.transformation.passes.offloading.phases.schedules import assign_schedules
+from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
+    single_element_copies_into_map)
+from dace.transformation.passes.offloading.phases.single_element_values import change_single_element_containers
+from dace.transformation.passes.offloading.phases.single_iteration_maps import make_size1_map_wrappers
 
 
 @properties.make_properties
@@ -32,19 +27,16 @@ from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_ma
 class OffloadToAccelerator(ppl.Pass):
     """Decide what runs on the accelerator, and place the host/device copies that follow.
 
-    Phases 2-4 run to a fixpoint: phase 4 resolves hybrid states by wrapping host code in
-    single-iteration maps, and phase 3 rewrites single-element containers. Both consume what they
-    resolve -- a state stops being hybrid, a container is recorded in ``changed_containers`` and is
-    not revisited -- so the loop terminates in a number of rounds bounded by the graph. The counter
-    only stops a runaway from looping forever, so it is set far above what any real SDFG needs.
+    Top-level maps and library nodes become kernels; a control-flow IR records where each array is
+    wanted, so a copy is placed only where that location changes.
     """
 
     max_iterations = properties.Property(
         dtype=int,
         default=1000,
-        desc="Safety bound on the phase 2-4 fixpoint iteration. Reaching it is a bug, not a "
-        "workload property: the loop converges once no state is hybrid and no container changed.")
-    verbose = properties.Property(dtype=bool, default=False, desc="Print what each phase decided.")
+        desc="Safety bound on the placement fixpoint. Reaching it is a bug, not a workload property: the loop "
+        "converges once no state is hybrid and no container changed.")
+    verbose = properties.Property(dtype=bool, default=False, desc="Print the host maps, hybrid states and IR.")
     sequential_innermaps = properties.Property(
         dtype=bool,
         default=True,
@@ -58,17 +50,13 @@ class OffloadToAccelerator(ppl.Pass):
                  sequential_innermaps: Optional[bool] = None,
                  **kwargs: Any) -> None:
         """
-        :param host_maps: which maps keep a HOST schedule, so that the maps under them become the
-            kernels. ``False`` (the default), ``None`` and ``[]`` name none and run no heuristics;
-            ``True`` derives them with the built-in heuristics; a list names them outright, each
-            given as a map label or as the ``MapEntry`` node itself. Not a serialized ``Property``:
-            a ``MapEntry`` cannot round-trip through JSON, and a caller handing over node objects is
-            driving the pass in process anyway.
-        :param max_iterations: overrides the safety bound on the phase 2-4 fixpoint.
-        :param verbose: print what each phase decided.
+        :param host_maps: maps that keep a host schedule so the maps under them become the kernels; see
+            :data:`~dace.transformation.passes.offloading.host_maps.HostMapSpec`. Not a ``Property``: a
+            ``MapEntry`` cannot round-trip through JSON.
+        :param max_iterations: overrides the safety bound on the placement fixpoint.
+        :param verbose: print the host maps, hybrid states and IR.
         :param sequential_innermaps: overrides the ``sequential_innermaps`` property.
-        :note: a map enclosing a device-wide library node is kept on the host whatever this says --
-            a call only host code can issue is a requirement, not a preference.
+        :note: a map holding a callback is kept on the host whatever ``host_maps`` says.
         """
         super().__init__(**kwargs)
         if max_iterations is not None:
@@ -77,6 +65,7 @@ class OffloadToAccelerator(ppl.Pass):
             self.verbose = verbose
         if sequential_innermaps is not None:
             self.sequential_innermaps = sequential_innermaps
+        # make_properties allows a non-Property attribute only with a leading underscore.
         self._host_maps = host_maps
 
     def modifies(self) -> ppl.Modifies:
@@ -88,78 +77,54 @@ class OffloadToAccelerator(ppl.Pass):
     def depends_on(self) -> OrderedSet[type[ppl.Pass]]:
         return OrderedSet([ControlFlowRaising])
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
-        # The copy analysis reads each region as a line of blocks; callers run ControlFlowRaising first (depends_on).
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[OrderedSet[str]]:
+        """
+        :return: every container left in a GPU storage, qualified by its SDFG's id, or None if there is none.
+        """
         require_structured_control_flow(sdfg, 'OffloadToAccelerator')
         # An early return leaves before the end, so its copy-backs need a state of their own on its path.
-        entries = separate_early_returns(sdfg)
-        cached_scopes = get_sdfg_scope_dict(sdfg)  # cache the result of an expensive operation
+        entries = helpers.separate_early_returns(sdfg)
 
-        # Which maps stay on the host, so that what they launch becomes the kernels.
         host_map_entries = host_maps(sdfg, self._host_maps)
         if self.verbose and host_map_entries:
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
+        assign_schedules(sdfg, host_map_entries, self.sequential_innermaps)
 
-        # Phase 1: set sequential / GPU schedules
-        SchedulePhase().apply(sdfg,
-                              cached_scopes,
-                              verbose=self.verbose,
-                              host_map_entries=host_map_entries,
-                              sequential_innermaps=self.sequential_innermaps)
+        analysis, IR, wrapped = self.place(sdfg)
+        CopyInsertion(sdfg, analysis.scopes).apply(IR)
+        helpers.remove_empty_return_entries(entries)
 
-        # Fix Point Iteration of Phases 2 - 4
-        changed_containers = OrderedSet()
-        maps_changed = False
-        for _ in range(self.max_iterations):
+        if wrapped:
+            ppl.Pipeline([
+                FullMapFusion(strict_dataflow=True,
+                              perform_vertical_map_fusion=True,
+                              perform_horizontal_map_fusion=True)
+            ]).apply_pass(sdfg, {})
+        single_element_copies_into_map(sdfg)
 
-            # Phase 2: build intermediate representation and find hybrid states
-            hybrid_states = OrderedSet()
-            IRep = CopyAnalysisPhase().apply(sdfg, hybrid_states, cached_scopes, verbose=self.verbose)
-
-            # Phase 3: decide if single-element values are stored in Scalars or in length-one Arrays
-            new_changed_containers = SingleElementValuePhase().apply(sdfg,
-                                                                     exceptions=changed_containers,
-                                                                     verbose=self.verbose)
-            changed_containers |= new_changed_containers
-
-            # Phase 4: resolve hybrid states into pure GPU states by inserting single-iteration maps
-            if hybrid_states:
-                SingleIterationMapPhase().apply(sdfg, hybrid_states, verbose=self.verbose)
-                maps_changed = True
-
-            # Phase 5: iterate until the SDFG reaches a fixpoint
-            if hybrid_states or new_changed_containers:  # sdfg has been changed
-                cached_scopes = get_sdfg_scope_dict(sdfg)
-                continue  # repeat
-            break
-
-        else:
-            raise RuntimeError(f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} "
-                               "iterations. The phase 2-4 loop is expected to converge; treat this as a bug "
-                               "rather than raising the bound.")
-
-        # Phase 6: insert explicit host-device copies into the SDFG based on the IR
-        CopyInsertionPhase().apply(sdfg, IRep, verbose=self.verbose)
-        remove_empty_return_entries(entries)
-
-        # Phase 7: post-optimization
-        # post-optimization 1
-        if maps_changed:
-            mapfusion_pass = FullMapFusion(
-                strict_dataflow=True,
-                perform_vertical_map_fusion=True,
-                perform_horizontal_map_fusion=True,
-            )
-            mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
-            mapfusion_pipeline.apply_pass(sdfg, {})
-
-        # post-optimization 2
-        SingleElementCopyOptimization().apply(sdfg, verbose=self.verbose)
-
-        # A transient only device code touches is a register, not a host allocation the dispatcher
-        # would have to answer with an illegal copy.
-        register_kernel_local_transients(sdfg)
-        # A kernel writing a by-value scalar loses the write silently, so the placement is checked.
-        refuse_by_value_scalars_the_device_writes(sdfg)
+        helpers.register_kernel_local_transients(sdfg)
+        helpers.refuse_by_value_scalars_the_device_writes(sdfg)
         # A Pipeline reads the result as "did anything change": nothing on the device is None.
-        return device_resident(sdfg) or None
+        return helpers.device_resident(sdfg) or None
+
+    def place(self, sdfg: SDFG) -> Tuple[CopyAnalysis, OffloadingIRNode, bool]:
+        """Analyze, wrap hybrid states and re-type single elements to a fixpoint; also say if anything was wrapped."""
+        converted: OrderedSet[str] = OrderedSet()
+        wrapped = False
+        for _ in range(self.max_iterations):
+            analysis = CopyAnalysis(sdfg, helpers.get_sdfg_scope_dict(sdfg))
+            IR = analysis.build_ir()
+            changed = change_single_element_containers(sdfg, converted)
+            converted |= changed
+            if self.verbose and analysis.hybrid_states:
+                print(f"hybrid states: {[state.label for state in analysis.hybrid_states]}")
+            for state in analysis.hybrid_states:
+                make_size1_map_wrappers(sdfg, state)
+            if not analysis.hybrid_states and not changed:
+                if self.verbose:
+                    print(f"offloading IR:\n{IR}")
+                return analysis, IR, wrapped
+            wrapped = wrapped or bool(analysis.hybrid_states)
+        raise RuntimeError(f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} iterations. "
+                           "The placement loop is expected to converge; treat this as a bug rather than raising "
+                           "the bound.")

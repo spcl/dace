@@ -1,263 +1,112 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Build the offloading IR: per block, which arrays are wanted on the host and which on the device."""
+from typing import Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
 
 from dace import dtypes
-from typing import Dict, List, Optional, Tuple
-
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock,
+                             SDFGState)
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
+Locations = Tuple[OrderedSet[str], OrderedSet[str]]
 
-class CopyAnalysisPhase():
 
-    def apply(self,
-              sdfg: SDFG,
-              track_hybrid_states: Optional[OrderedSet] = None,
-              sdfg_scope_dict: Optional[Dict] = None,
-              verbose: bool = False) -> OffloadingIRNode:
-        self.verbose = verbose
-        self.hybrid_states = track_hybrid_states  # results passed back by values as long as track_hybrid_states is not None
+class CopyAnalysis:
+    """One analysis of ``sdfg``; ``hybrid_states`` collects the states that touch an array from both sides."""
 
-        if sdfg_scope_dict:
-            self.sdfg_scope_dict = sdfg_scope_dict
-        else:
-            self.sdfg_scope_dict = helpers.get_sdfg_scope_dict(sdfg)
+    def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]) -> None:
+        self.sdfg = sdfg
+        self.scopes = scopes
+        self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
 
-        return self.sdfg_to_IR(sdfg)
+    def build_ir(self) -> OffloadingIRNode:
+        sdfg = self.sdfg
+        # A view is placed with the container it aliases; a structure or container array is not placed.
+        non_transients = OrderedSet(name for name, desc in sdfg.arrays.items()
+                                    if not desc.transient and helpers.is_array(name, sdfg))
+        initially_on_gpu = OrderedSet(name for name in non_transients if helpers.is_array_stored_on_GPU(sdfg, name))
+        initially_on_cpu = non_transients - initially_on_gpu
 
-    def sdfg_to_IR(self, sdfg: SDFG) -> OffloadingIRNode:
-        # remember initial non-transient array locations
-        # A view is placed with the container it aliases, and a structure or container array is not
-        # placed at all, so neither belongs in the set of containers this decides a side for.
-        non_transients = OrderedSet(name for name in sdfg.arrays
-                                    if not sdfg.arrays[name].transient and not helpers.is_scalar(name, sdfg)
-                                    and not helpers.is_view(name, sdfg) and not helpers.is_unoffloadable(name, sdfg))
-        initially_on_gpu = OrderedSet()
-        initially_on_cpu = OrderedSet()
-
-        for array_name in non_transients:
-            if helpers.is_array_stored_on_GPU(sdfg, array_name):
-                initially_on_gpu.add(array_name)
-            else:
-                initially_on_cpu.add(array_name)
-
-        # create inital node (open node)
         IR = OffloadingIRNode.new_open_node(sdfg)
         IR.gpu_set = initially_on_gpu.copy()
-        IR.cpu_set = initially_on_cpu.copy()  # no copy -> may cause sideeffects
-
-        # parse entire graph
-        end = self._parse_to_IR(sdfg, sdfg, IR)
-        if self.verbose: print(f"Phase2: early IR\n{IR}\n")
-
-        # finish graph: tie the final node together with the inital close node
-        end.append_node(IR.close)
+        IR.cpu_set = initially_on_cpu.copy()
+        self.parse_region(sdfg, IR).append_node(IR.close)
         helpers.link_early_returns(IR)
+        # Arrays end up where they started.
         IR.close.gpu_set = initially_on_gpu
-        IR.close.cpu_set = initially_on_cpu  # arrays end up where they started
+        IR.close.cpu_set = initially_on_cpu
 
-        # Snapshot before propagation: afterwards a node holds names it never touched, and those
-        # are exactly the ones the hoist is allowed to move.
-        own_use = self.collect_own_use(IR)
-        self._propagate_arrays(IR)
-        self.hoist_device_copies(IR, own_use)
+        # Snapshot before propagation: the names a node inherits are the ones the hoist may move.
+        own_use: Dict[OffloadingIRNode, OrderedSet[str]] = {}
 
-        if self.verbose: print(f"Phase2: full IR \n{IR}\n\n")
+        def record(node: OffloadingIRNode) -> None:
+            own_use[node] = node.cpu_set | node.gpu_set
+
+        helpers.traverse_IR(IR, record)
+        self.propagate(IR)
+        hoist_device_copies(IR, own_use)
         return IR
 
-    #############################
-    ###       create IR       ###
-    #############################
-
-    def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
-        block: ControlFlowBlock
+    def parse_region(self, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
+        """Append the IR of ``cfr``'s blocks after ``curr_node``, as a line; return the last node."""
         for block in cfr.bfs_nodes():
-
-            # iterate through all (incoming) interstate edges
-            in_edge_arrays = OrderedSet()
+            in_edge_arrays: OrderedSet[str] = OrderedSet()
             for edge in cfr.in_edges(block):
-                arrays = OrderedSet(data_name for data_name in edge.data.used_arrays(sdfg.arrays)
-                                    if helpers.is_array(data_name, sdfg))
-                in_edge_arrays |= arrays
-
+                in_edge_arrays |= OrderedSet(name for name in edge.data.used_arrays(self.sdfg.arrays)
+                                             if helpers.is_array(name, self.sdfg))
             if in_edge_arrays:
-                edge_node = OffloadingIRNode.new_edge_node(block, in_edge_arrays)
-                curr_node.append_node(edge_node)
-                curr_node = edge_node
+                curr_node = append(curr_node, OffloadingIRNode.new_edge_node(block, in_edge_arrays))
 
-            # iterate through all nodes
-            # non-nested state
             if isinstance(block, SDFGState):
-                state: SDFGState = block
-                gpu_set, cpu_set = self.get_data_locations_of_state(sdfg,
-                                                                    state)  # beating heart of this entire function
-                state_node = OffloadingIRNode.new_state_node(state, cpu_set, gpu_set)
-                curr_node.append_node(state_node)
-                curr_node = state_node
-
-            # do nothing
-            elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
-                pass
-
-            # container node with outer wrapper
-            else:
-                # outer node
-                outer_node = OffloadingIRNode.new_open_node(block)
-                curr_node.append_node(outer_node)
-                curr_node = outer_node
-
-                # if else
-                if isinstance(block, ConditionalBlock):
-                    cond_block: ConditionalBlock = block
-
-                    # branch condition
-                    meta_data_node: OffloadingIRNode = None
-                    meta_data = OrderedSet(memlet.data for memlet in cond_block.get_meta_read_memlets()
-                                           if memlet.data in sdfg.arrays)
-                    if meta_data:
-                        meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=OrderedSet())
-                        curr_node.append_node(meta_data_node)
-                        curr_node = meta_data_node
-
-                    # parse branches and connect each branch to close node
-                    for _, branch in cond_block.branches:
-                        branch_end: OffloadingIRNode = self._parse_to_IR(sdfg, branch, curr_node)
-                        branch_end.append_node(outer_node.close)
-
-                # loop
-                elif isinstance(block, LoopRegion):
-                    loop: LoopRegion = block
-
-                    # add meta data node if needed
-                    meta_data_node: OffloadingIRNode = None
-                    meta_data = OrderedSet(memlet.data for memlet in loop.get_meta_read_memlets()
-                                           if memlet.data in sdfg.arrays)
-                    if meta_data:
-                        meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=OrderedSet())
-                        curr_node.append_node(meta_data_node)
-                        curr_node = meta_data_node
-
-                    # parse body and connect to loop close node
-                    curr_node = self._parse_to_IR(sdfg, loop,
-                                                  curr_node)  # linked list representing all internal nodes of loop
-                    curr_node.append_node(outer_node.close)
-
-                # nested region -> flatten
-                elif isinstance(block, ControlFlowRegion):
-                    curr_node = self._parse_to_IR(sdfg, block, curr_node)
-                    curr_node.append_node(outer_node.close)
-
-                elif isinstance(block, nodes.NestedSDFG):
-                    curr_node = self._parse_to_IR(block.sdfg, block.sdfg, curr_node)
-                    curr_node.append_node(outer_node.close)
-
-                else:
-                    raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
-
-                # finish container
-                self.__populate_open_node_sets(outer_node)
-                self.__populate_close_node_sets(outer_node)
-                curr_node = outer_node.close
-
+                gpu_set, cpu_set = self.locations_of_state(block)
+                curr_node = append(curr_node, OffloadingIRNode.new_state_node(block, cpu_set, gpu_set))
+            elif not isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
+                curr_node = self.parse_container(block, curr_node)
         return curr_node
 
-    def __populate_open_node_sets(self, IR: OffloadingIRNode):
-        assert IR.is_open_node(), str(IR)
+    def parse_container(self, block: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
+        outer_node = append(curr_node, OffloadingIRNode.new_open_node(block))
+        curr_node = outer_node
+        if isinstance(block, (ConditionalBlock, LoopRegion)):
+            # A condition or a loop header reads on the host.
+            meta_data = OrderedSet(memlet.data for memlet in block.get_meta_read_memlets()
+                                   if memlet.data in self.sdfg.arrays)
+            if meta_data:
+                curr_node = append(curr_node, OffloadingIRNode.new_state_node(block, meta_data, OrderedSet()))
+        if isinstance(block, ConditionalBlock):
+            for _, branch in block.branches:
+                self.parse_region(branch, curr_node).append_node(outer_node.close)
+        elif isinstance(block, ControlFlowRegion):
+            self.parse_region(block, curr_node).append_node(outer_node.close)
+        else:
+            raise RuntimeError(f"Unknown block type: {block} of type {type(block).__name__}")
 
-        # Behavior 1:
-        # if there are no or multiple direct children, leave the sets empty & propagate later
-        # there is no good heuristic which child to choose here, which copies to make and which not
-        # (not without significantly more analysis)
-        children = IR.next
-        if len(children) != 1:
-            return
+        # The first location of each array in the section opens it, the last one closes it. With
+        # several children or routes there is no single answer, and propagation fills the sets later.
+        if len(outer_node.next) == 1:
+            outer_node.gpu_set, outer_node.cpu_set = section_locations(outer_node, first=True)
+        if outer_node.has_one_route():
+            outer_node.close.gpu_set, outer_node.close.cpu_set = section_locations(outer_node, first=False)
+        return outer_node.close
 
-        # Behavior 2:
-        # if there is a single direct child, then analyse the section & find first known location of each used array
-        # if the graph splits later, the first of all possible paths is chosen for analysis
-        # this can lead to unnecessary copies in the other paths
-        location_on_gpu = {}
+    def propagate(self, IR: OffloadingIRNode) -> None:
+        """Hand every array a node does not use on to its successors where it last was."""
 
-        def gather_data(node: OffloadingIRNode) -> None:
-            if isinstance(node.block, nodes.NestedSDFG
-                          ):  # Nested SDFGs do not share namespace, array names should not leak to outer scope
-                return
-
-            for array_name in node.gpu_set:
-                if not array_name in location_on_gpu:
-                    location_on_gpu[array_name] = True
-
-            for array_name in node.cpu_set:
-                if not array_name in location_on_gpu:
-                    location_on_gpu[array_name] = False
-
-        # traverse graph
-        helpers.traverse_same_level(IR, gather_data)
-
-        # populate IR sets
-        IR.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
-        IR.cpu_set = OrderedSet(array_name for array_name in location_on_gpu if not location_on_gpu[array_name])
-
-    def __populate_close_node_sets(self, IR: OffloadingIRNode):
-        assert IR.is_open_node(), str(IR)
-
-        tails = IR.get_all_tails()
-        assert tails, f"{IR.debug_name} doesn't have any tails! {IR}"
-
-        # Behavior 1:
-        # if more than one route leads to this section's close node (a conditional inside it counts,
-        # even when its arms meet again before one tail), leave the sets empty & propagate later
-        if not IR.has_one_route():
-            return
-
-        # Behavior 2:
-        # if there is a single tail node (node that leads to this section's close node),
-        # then analyse the section & find last known location of each used array
-
-        # define data gathering function
-        location_on_gpu = {}
-
-        def gather_data(node: OffloadingIRNode) -> None:
-            if isinstance(node.block, nodes.NestedSDFG
-                          ):  # Nested SDFGs do not share namespace, array names should not leak to outer scope
-                return
-
-            for array_name in node.gpu_set:
-                location_on_gpu[array_name] = True
-
-            for array_name in node.cpu_set:
-                location_on_gpu[array_name] = False
-
-        # traverse graph
-        helpers.traverse_same_level(IR, gather_data)
-
-        # populate IR sets
-        IR.close.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
-        IR.close.cpu_set = OrderedSet(array_name for array_name in location_on_gpu if not location_on_gpu[array_name])
-
-    def _propagate_arrays(self, IR: OffloadingIRNode):
-        # all arrays which aren't used by this state retain their previous status
-        # ASSUMPTION: arrays are either gpu or cpu within a state
-        def propagate(node: OffloadingIRNode) -> None:
+        def forward(node: OffloadingIRNode) -> None:
             if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState):
                 self.place_copy_destinations(node)
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
-
-                for array in node.cpu_set:
-                    if not array in next_arrays:
-                        next.cpu_set.add(array)
-                for array in node.gpu_set:
-                    if not array in next_arrays:
-                        next.gpu_set.add(array)
+                next.cpu_set |= OrderedSet(name for name in node.cpu_set if name not in next_arrays)
+                next.gpu_set |= OrderedSet(name for name in node.gpu_set if name not in next_arrays)
 
         # A node forwards what it holds when visited, so a join must first hear from every arm.
-        helpers.traverse_IR_after_predecessors(IR, propagate)
+        helpers.traverse_IR_after_predecessors(IR, forward)
 
     def place_copy_destinations(self, node: OffloadingIRNode) -> None:
         """A top-level container-to-container copy writes its destination on its source's side.
@@ -266,331 +115,147 @@ class CopyAnalysisPhase():
         and a later reader on the other side got no copy in.
         """
         state = node.block
-        sdfg = state.sdfg
-        top = self.sdfg_scope_dict[state]
+        top = self.scopes[state]
         for edge in state.edges():
             src, dst = edge.src, edge.dst
             if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or edge.data.is_empty():
                 continue
-            if top[src] is not None or top[dst] is not None or dst.data in node.cpu_set or dst.data in node.gpu_set:
+            if top[src] is not None or top[dst] is not None or dst.data in node.cpu_set | node.gpu_set:
                 continue
-            if not helpers.is_array(dst.data, sdfg):
+            if not helpers.is_array(dst.data, self.sdfg):
                 continue
             if src.data in node.gpu_set:
                 node.gpu_set.add(dst.data)
             elif src.data in node.cpu_set:
                 node.cpu_set.add(dst.data)
 
-    def collect_own_use(self, IR: OffloadingIRNode) -> Dict[OffloadingIRNode, OrderedSet]:
-        """The containers each IR node accesses itself, before propagation adds the inherited ones."""
-        own_use: Dict[OffloadingIRNode, OrderedSet] = {}
-
-        def collect(node: OffloadingIRNode) -> None:
-            own_use[node] = node.cpu_set | node.gpu_set
-
-        helpers.traverse_IR(IR, collect)
-        return own_use
-
-    def hoist_device_copies(self, IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, OrderedSet]) -> None:
-        """Move a host-to-device copy above the states that do not touch the array.
-
-        :func:`_propagate_arrays` only walks forwards, so an array first used on the device late in
-        the program stays on the host until exactly that point and its copy is inserted there -- in
-        the middle of a run of device states. That is a host state between two kernels, and it is
-        the state a caller building one persistent kernel out of that run then has to swallow: a
-        host-to-device copy inside a kernel has no expansion (``MappedTasklet expansion cannot cross
-        the CPU/GPU boundary``).
-
-        A state that never touches the array cannot care which side the array is on, so the copy is
-        free to move above it, which merges it with whatever copy already sits at the device
-        region's entry. The move is only taken when EVERY successor wants the array on the device:
-        a branch that leaves it on the host is a branch that must not pay for a copy it never uses,
-        so the copy stays where the paths meet.
-        """
-        nodes_in_order: List[OffloadingIRNode] = []
-        helpers.traverse_IR(IR, nodes_in_order.append)
-
-        # Hoisting at one state can free the state above it, so this runs to a fixpoint. Each round
-        # moves at least one name and names never move back, so it terminates.
-        changed = True
-        while changed:
-            changed = False
-            for node in reversed(nodes_in_order):
-                if node.type != OffloadingIRNode.STATE or not node.next:
-                    continue
-                movable = OrderedSet(name for name in node.cpu_set if name not in own_use[node])
-                for name in movable:
-                    if all(name in next.gpu_set for next in node.next):
-                        node.cpu_set.remove(name)
-                        node.gpu_set.add(name)
-                        changed = True
-
-    #######################################################
-    ###  Helpers get Arrays Used by Edges & Nodes ###
-    #######################################################
-
-    def get_arrays_used_by_edge(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge,
-                                is_out_edge: bool) -> OrderedSet:
-        if edge.data and not edge.data.is_empty():
-            data_name = edge.data.data
-
-            if helpers.is_array(data_name, sdfg):  # array access on edge
-                return OrderedSet([data_name])
-
-            elif helpers.is_view(data_name,
-                                 sdfg):  # view -> we need to find the corresponding view access node by iteration.
-                for n in state.data_nodes():
-                    if n.data == data_name:
-                        if is_out_edge:
-                            return helpers.get_data_used_by_outgoing_access_nodes(sdfg, state, n)
-                        return helpers.get_data_used_by_incoming_access_nodes(sdfg, state, n)
-
-            elif helpers.is_scalar(data_name, sdfg):  # might be a scalar access of an array slice
-                if is_out_edge:
-                    if isinstance(edge.dst, nodes.AccessNode):
-                        return helpers.get_data_used_by_outgoing_access_nodes(sdfg, state, edge.dst)
-                else:
-                    if isinstance(edge.src, nodes.AccessNode):
-                        return helpers.get_data_used_by_incoming_access_nodes(sdfg, state, edge.src)
-
-            elif helpers.is_unoffloadable(data_name, sdfg):
-                return OrderedSet()  # a structure or container array has no single location to decide
-
-            elif helpers.is_stream(data_name, sdfg):
-                # A Stream is a queue with its own device-side push/pop protocol, not a buffer whose
-                # location this pass decides: there is nothing to place and nothing to copy, and the
-                # code generator allocates it where the kernel that pushes into it runs. Invisible to
-                # the analysis, which is what the transformation this pass replaced did with one too.
+    def arrays_used_by_edge(self, state: SDFGState, edge: MultiConnectorEdge, is_out_edge: bool) -> OrderedSet[str]:
+        sdfg = self.sdfg
+        if edge.data.is_empty():
+            return OrderedSet()
+        name = edge.data.data
+        if helpers.is_array(name, sdfg):
+            return OrderedSet([name])
+        if helpers.is_view(name, sdfg):
+            view = next((node for node in state.data_nodes() if node.data == name), None)
+            if view is None:
                 return OrderedSet()
+            return helpers.get_data_used_by_access_nodes(sdfg, state, view, downstream=is_out_edge)
+        if helpers.is_scalar(name, sdfg):  # might be a scalar access of an array slice
+            neighbor = edge.dst if is_out_edge else edge.src
+            if isinstance(neighbor, nodes.AccessNode):
+                return helpers.get_data_used_by_access_nodes(sdfg, state, neighbor, downstream=is_out_edge)
+            return OrderedSet()
+        # A structure or container array has no single location to decide, and a Stream is a queue with
+        # its own device-side protocol that the code generator allocates where its pusher runs.
+        if helpers.is_unoffloadable(name, sdfg) or helpers.is_stream(name, sdfg):
+            return OrderedSet()
+        raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) on edge {edge}: {edge.data}")
 
-            else:
-                raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) in get_arrays_used_by_edge. "
-                                   f"edge:{edge}, data:{edge.data}")
-
-        return OrderedSet()
-
-    def get_arrays_used_by_node(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> OrderedSet:
+    def arrays_used_by_node(self, state: SDFGState, node: nodes.Node) -> OrderedSet[str]:
         arrays: OrderedSet[str] = OrderedSet()
-
-        # edges
-        for e in state.in_edges(node):
-            arrays |= self.get_arrays_used_by_edge(sdfg, state, e, False)
-
-        for e in state.out_edges(node):
-            arrays |= self.get_arrays_used_by_edge(sdfg, state, e, True)
-
-        # neighbouring access nodes
-        arrays |= helpers.get_data_used_by_incoming_access_nodes(sdfg, state, node)
-        arrays |= helpers.get_data_used_by_outgoing_access_nodes(sdfg, state, node)
-
+        for edge in state.in_edges(node):
+            arrays |= self.arrays_used_by_edge(state, edge, False)
+        for edge in state.out_edges(node):
+            arrays |= self.arrays_used_by_edge(state, edge, True)
+        arrays |= helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=False)
+        arrays |= helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
         return arrays
 
-    ################################################################
-    ###  Recursive Analysis: Each SDFG Node has dedicated method ###
-    ################################################################
+    def locations_of_map(self, state: SDFGState, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
+                         cpu_set: OrderedSet[str], is_gpu: bool) -> None:
+        """Add what ``map_entry``'s scope accesses: on the device if it or an enclosing map is a kernel."""
+        is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES
+        boundary = (helpers.get_data_used_by_access_nodes(self.sdfg, state, map_entry, downstream=False)
+                    | helpers.get_data_used_by_access_nodes(
+                        self.sdfg, state, state.exit_node(map_entry), downstream=True))
+        (gpu_set if is_gpu else cpu_set).update(boundary)
 
-    def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState,
-                                  map_entry: nodes.MapEntry) -> Tuple[OrderedSet[str], OrderedSet[str]]:
-        # helper to validate data and add it to correct set
-        def _add_data(data_name: str, gpu_set: OrderedSet[str], cpu_set: OrderedSet[str],
-                      is_gpu: bool) -> tuple[OrderedSet[str], OrderedSet[str]]:
-            if data_name in gpu_set:  # has already been accessed on GPU
-                if not is_gpu:  # is now accessed on CPU
-                    raise RuntimeError(
-                        "GPU->CPU within map. This should never happen. If outer map is GPU then inner data must also be on GPU (seq map runs as kernel)"
-                    )
-
-            elif data_name in cpu_set:  # has already been accessed on CPU
-                if is_gpu:  # is now accessed on GPU
-                    gpu_set.add(data_name)
-
-            else:
-                assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
-                (gpu_set if is_gpu else cpu_set).add(data_name)
-
-        # main work horse, can recurse to nested maps
-        def _recursive_helper(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
-                              cpu_set: OrderedSet[str], is_gpu: bool):
-            is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES  # TODO Q: how not to hardcode?
-
-            # get all nodes within this map's scope
-            map_nodes = [n for n, parent in self.sdfg_scope_dict[state].items() if parent is map_entry]
-
-            # input & output nodes
-            input_and_output = helpers.get_data_used_by_incoming_access_nodes(
-                sdfg, state, map_entry) | helpers.get_data_used_by_outgoing_access_nodes(
-                    sdfg, state, state.exit_node(map_entry))
-            if is_gpu:
-                gpu_set |= input_and_output
-            else:
-                cpu_set |= input_and_output
-
-            # internal nodes
-            for node in map_nodes:
-                if isinstance(node, nodes.MapEntry):  # recurse on inner map
-                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
-
-                elif isinstance(node, nodes.AccessNode):  # find accessed arrays -> add
-                    for name in helpers.get_data_used_by_outgoing_access_nodes(sdfg, state, node):
-                        _add_data(name, gpu_set, cpu_set, is_gpu)
-
-                elif isinstance(node, nodes.Tasklet):  # find accessed arrays -> add
-                    for name in self.get_arrays_used_by_node(sdfg, state, node):
-                        _add_data(name, gpu_set, cpu_set, is_gpu)
-
-                elif isinstance(node, (ControlFlowRegion)):
-                    g, c = self.get_data_locations_of_cfregion(sdfg, node)
-                    if not is_gpu:
-                        gpu_set |= g
-                        cpu_set |= c
-                    else:
-                        gpu_set |= g | c
-
-                elif isinstance(node, (nodes.NestedSDFG, nodes.MapExit, nodes.LibraryNode)):
-                    pass  # nothing to do (do not analyse the arrays within a nested sdfg)
-
-                else:
-                    raise RuntimeError(
-                        f"Error: Unknown node type inside map {map_entry}: {node.label} of type {node.__class__.__name__} in state {state}"
-                    )
-
-        # function body, calls recursive helper
-        gpu_set: OrderedSet[str] = OrderedSet()
-        cpu_set: OrderedSet[str] = OrderedSet()
-        _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
-        return gpu_set, cpu_set
-
-    def get_data_locations_of_state(self,
-                                    sdfg: SDFG,
-                                    state: SDFGState,
-                                    recursive_call: bool = False) -> Tuple[OrderedSet[str], OrderedSet[str]]:
-        # iterate through all toplevel nodes of this state
-        #  - map entry -> give to get_data_locations_of_map, which handles all nodes inside scope
-        #  - control flow (nested) -> recurse
-        #  - non-nested toplevel scopes -> add accessed data to cpu set
-        gpu_set: OrderedSet[str] = OrderedSet()
-        cpu_set: OrderedSet[str] = OrderedSet()
-
-        top_level_nodes = state.scope_children()[None]
-        for node in top_level_nodes:
-
-            g, c = OrderedSet(), OrderedSet()
-
-            # process map and all nodes within -> may be on GPU
+        for node in [n for n, parent in self.scopes[state].items() if parent is map_entry]:
             if isinstance(node, nodes.MapEntry):
-                g, c = self.get_data_locations_of_map(sdfg, state, node)
-
-            elif isinstance(node, nodes.MapExit):
-                pass
-
-            # library nodes are usually GPU, can be CPU
-            elif isinstance(node, nodes.LibraryNode):
-                if helpers.has_GPU_schedule(node):
-                    g = self.get_arrays_used_by_node(sdfg, state, node)
-                else:
-                    c = self.get_arrays_used_by_node(sdfg, state, node)
-
-            # recurse if nested
-            elif isinstance(node, ControlFlowRegion):
-                g, c = self.get_data_locations_of_cfregion(sdfg, node)
-
-            # all else is definitely on CPU
-            elif isinstance(node, nodes.Tasklet):  # outside a map scope (else handled by locations_of_map) -> cpu
-                c = self.get_arrays_used_by_node(sdfg, state, node)
-
-            elif isinstance(node, nodes.AccessNode):
-                pass  # nothing to do; cannot be classified without context
-
-            # A nested SDFG is a graph of its own, reached here through its boundary. Its data is on
-            # the side its CONTENTS put it: a nested SDFG holding no GPU-scheduled node runs on the
-            # host whole, which is what a sequential scan in a loop region is -- classifying it by
-            # the state around it would make the state hybrid and hand its body to the size-1
-            # wrapper, turning one scan step into one kernel launch.
-            elif isinstance(node, nodes.NestedSDFG):
-                arrays = self.get_arrays_used_by_node(sdfg, state, node)
-                if helpers.sdfg_holds_gpu_schedule(node.sdfg):
-                    g = arrays
-                else:
-                    c = arrays
-
+                self.locations_of_map(state, node, gpu_set, cpu_set, is_gpu)
+                continue
+            if isinstance(node, nodes.AccessNode):
+                names = helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
+            elif isinstance(node, nodes.Tasklet):
+                names = self.arrays_used_by_node(state, node)
+            elif isinstance(node, (nodes.NestedSDFG, nodes.MapExit, nodes.LibraryNode)):
+                continue  # what it touches is at the boundary already
             else:
-                raise RuntimeError(f"Unknown node {node} of type {node.__class__.__name__} in state {state}.")
+                raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} inside map {map_entry}")
+            for name in names:
+                if name in gpu_set and not is_gpu:
+                    raise RuntimeError(f"{name} is used on the device and on the host inside map {map_entry}")
+                if is_gpu or name not in gpu_set:
+                    (gpu_set if is_gpu else cpu_set).add(name)
 
-            gpu_set |= g
-            cpu_set |= c
-
-        # Check for hybrid state configurations, where arrays are accessed on both CPU and GPU -> mark for future resolution
-        overlap = gpu_set & cpu_set
-        if overlap:
-            if self.hybrid_states is not None:
-                self.hybrid_states.add(state)
-            gpu_set |= cpu_set
-            cpu_set = OrderedSet()
-
-        return gpu_set, cpu_set
-
-    def get_data_locations_of_condblock(self, sdfg: SDFG,
-                                        block: ConditionalBlock) -> tuple[OrderedSet[str], OrderedSet[str]]:
+    def locations_of_state(self, state: SDFGState) -> Locations:
+        """Where the top-level nodes of ``state`` want each array; a hybrid state is recorded and put on the device."""
         gpu_set: OrderedSet[str] = OrderedSet()
         cpu_set: OrderedSet[str] = OrderedSet()
+        for node in state.scope_children()[None]:
+            if isinstance(node, nodes.MapEntry):
+                self.locations_of_map(state, node, gpu_set, cpu_set, False)
+            elif isinstance(node, nodes.LibraryNode):
+                on_gpu = helpers.has_GPU_schedule(node)
+                (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
+            elif isinstance(node, nodes.Tasklet):  # outside every map, so on the host
+                cpu_set |= self.arrays_used_by_node(state, node)
+            elif isinstance(node, nodes.NestedSDFG):
+                # Its data is on the side its contents put it: one with no device schedule runs on the host
+                # whole, and classifying it by the state around it would wrap one scan step into a kernel.
+                on_gpu = helpers.sdfg_holds_gpu_schedule(node.sdfg)
+                (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
+            elif not isinstance(node, (nodes.MapExit, nodes.AccessNode)):
+                raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} in state {state}.")
 
-        # get array accesses in condition
-        for memlet in block.get_meta_read_memlets():
-            if not memlet: continue
-            data_name = memlet.data
-            if memlet.data in sdfg.arrays and helpers.is_array(data_name, sdfg):
-                cpu_set.add(memlet.data)
-
-        # add array accesses in branches
-        for _, branch in block.branches:
-            g, c = self.get_data_locations_of_cfregion(sdfg, branch)
-            gpu_set |= g
-            cpu_set |= c
-
+        if gpu_set & cpu_set:
+            self.hybrid_states.add(state)
+            return gpu_set | cpu_set, OrderedSet()
         return gpu_set, cpu_set
 
-    def get_data_locations_of_loop(self, sdfg: SDFG, loop: LoopRegion) -> tuple[OrderedSet[str], OrderedSet[str]]:
-        # get array accesses in init_statement, update_statement, and loop_condition
-        cpu_set: OrderedSet[str] = OrderedSet()
-        for memlet in loop.get_meta_read_memlets():
-            if not memlet: continue
-            data_name = memlet.data
-            if data_name in sdfg.arrays and helpers.is_array(data_name, sdfg):
-                cpu_set.add(data_name)
 
-        # add array accesses in loop body
-        gpu_set, c = self.get_data_locations_of_cfregion(sdfg, loop)
-        cpu_set |= c
+def append(curr_node: OffloadingIRNode, node: OffloadingIRNode) -> OffloadingIRNode:
+    curr_node.append_node(node)
+    return node
 
-        return gpu_set, cpu_set
 
-    def get_data_locations_of_cfblock(self, sdfg: SDFG,
-                                      block: ControlFlowBlock) -> tuple[OrderedSet[str], OrderedSet[str]]:
-        if isinstance(block, SDFGState):
-            return self.get_data_locations_of_state(sdfg, block)
+def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
+    """The first (or last) location of each array along the section ``IR`` opens, on its own level."""
+    location_on_gpu: Dict[str, bool] = {}
 
-        elif isinstance(block, ConditionalBlock):
-            return self.get_data_locations_of_condblock(sdfg, block)
+    def gather(node: OffloadingIRNode) -> None:
+        for on_gpu, names in ((True, node.gpu_set), (False, node.cpu_set)):
+            for name in names:
+                if not first or name not in location_on_gpu:
+                    location_on_gpu[name] = on_gpu
 
-        elif isinstance(block, LoopRegion):
-            return self.get_data_locations_of_loop(sdfg, block)
+    helpers.traverse_same_level(IR, gather)
+    return (OrderedSet(name for name, on_gpu in location_on_gpu.items()
+                       if on_gpu), OrderedSet(name for name, on_gpu in location_on_gpu.items() if not on_gpu))
 
-        elif isinstance(block, ControlFlowRegion):
-            return self.get_data_locations_of_cfregion(sdfg, block)
 
-        elif isinstance(block, (nodes.NestedSDFG, ReturnBlock, ContinueBlock, BreakBlock)):
-            return OrderedSet(), OrderedSet()  # do nothing
+def hoist_device_copies(IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, OrderedSet[str]]) -> None:
+    """Move a host-to-device copy above the states that do not touch the array.
 
-        raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+    Propagation walks forwards, so an array first used on the device late stays on the host until
+    exactly that point, and its copy lands in the middle of a run of device states -- a host state a
+    caller fusing that run into one persistent kernel cannot swallow. A state that never touches the
+    array does not care where it is, so the copy moves above it, but only when every successor wants
+    the array on the device: a branch leaving it on the host must not pay for it.
+    """
+    nodes_in_order: List[OffloadingIRNode] = []
+    helpers.traverse_IR(IR, nodes_in_order.append)
 
-    def get_data_locations_of_cfregion(self, sdfg: SDFG,
-                                       cfr: ControlFlowRegion) -> tuple[OrderedSet[str], OrderedSet[str]]:
-        gpu_set: OrderedSet[str] = OrderedSet()
-        cpu_set: OrderedSet[str] = OrderedSet()
-
-        for block in cfr.bfs_nodes():
-            g, c = self.get_data_locations_of_cfblock(sdfg, block)
-            gpu_set |= g
-            cpu_set |= c
-
-        return gpu_set, cpu_set
+    # Hoisting can free the state above, so this runs to a fixpoint; names never move back.
+    changed = True
+    while changed:
+        changed = False
+        for node in reversed(nodes_in_order):
+            if node.type != OffloadingIRNode.STATE or not node.next:
+                continue
+            for name in OrderedSet(name for name in node.cpu_set if name not in own_use[node]):
+                if all(name in next.gpu_set for next in node.next):
+                    node.cpu_set.remove(name)
+                    node.gpu_set.add(name)
+                    changed = True

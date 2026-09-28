@@ -628,3 +628,36 @@ def test_a_graph_with_nothing_to_offload_reports_no_change():
     one = state.add_tasklet('one', {}, {'o'}, 'o = 1.0')
     state.add_edge(one, 'o', state.add_write('s'), None, dace.Memlet('s[0]'))
     assert OffloadToAccelerator().apply_pass(sdfg, {}) is None
+
+
+def one_element_read_by_two_maps() -> dace.SDFG:
+    """``s = A[3]`` on the host, then two maps that both read ``s``."""
+    sdfg = dace.SDFG('one_element_read_by_two_maps')
+    for name in 'ABC':
+        sdfg.add_array(name, [LENGTH], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    source = state.add_read('A')
+    element = state.add_access('s')
+    state.add_edge(source, None, element, None, dace.Memlet('A[3] -> [0]'))
+    for name in 'BC':
+        entry, exit_node = state.add_map(f'scale_{name}', {'i': f'0:{LENGTH}'})
+        tasklet = state.add_tasklet(f'times_{name}', {'x': None, 'y': None}, {'o': None}, 'o = x * y')
+        state.add_memlet_path(element, entry, tasklet, dst_conn='x', memlet=dace.Memlet('s[0]'))
+        state.add_memlet_path(source, entry, tasklet, dst_conn='y', memlet=dace.Memlet('A[i]'))
+        state.add_memlet_path(tasklet, exit_node, state.add_write(name), src_conn='o', memlet=dace.Memlet(f'{name}[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_single_element_two_maps_read_stays_outside_both():
+    """Moving the copy into the first map left the second reading a node inside the first one's scope,
+    and the scope tree put ``times_B`` under ``scale_C``."""
+    sdfg = one_element_read_by_two_maps()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    state = next(state for state in sdfg.states() if state.label == 'main')
+    scopes = state.scope_dict()
+    tasklets = {node.label: scopes[node].map.label for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)}
+    assert tasklets == {'times_B': 'scale_B', 'times_C': 'scale_C'}, tasklets
+    assert all(scopes[node] is None for node in state.data_nodes() if node.data == 's')

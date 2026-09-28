@@ -80,51 +80,6 @@ def conditional_branch_map_sdfg():
     return sdfg
 
 
-def scalar_to_gpu_within_loop_sdfg(num_iters: int = 4):
-    """
-    Build an SDFG where states `s1` and `s2` are executed in a sequential
-    interstate for-loop (`i = 0 .. num_iters-1`).
-
-    Body per iteration:
-        s1: in -> A      (A = in + 1)
-        s2: A  -> out    (out = A * 2) using a map inside s2
-
-    The loop control is interstate (sequential), not a map.
-    """
-    if num_iters < 1:
-        raise ValueError("num_iters must be >= 1")
-
-    sdfg = dace.SDFG("forloop_with_map")
-
-    sdfg.add_array("in", [1], dace.float64)
-    sdfg.add_array("A", [1], dace.float64)
-    sdfg.add_array("out", [1], dace.float64)
-
-    init = sdfg.add_state("loop_init", is_start_block=True)
-    s1 = sdfg.add_state("s1")
-    s2 = sdfg.add_state("s2")
-    after = sdfg.add_state("after_loop")
-
-    sdfg.add_edge(s1, s2, dace.InterstateEdge())
-    sdfg.add_loop(init, s1, after, "i", "0", f"i < {num_iters}", "i + 1", loop_end_state=s2)
-
-    in_node = s1.add_access("in")
-    a_s1 = s1.add_access("A")
-    t1 = s1.add_tasklet("t1", {"x"}, {"y"}, "y = x + 1")
-    s1.add_edge(in_node, None, t1, "x", dace.Memlet("in[0]"))
-    s1.add_edge(t1, "y", a_s1, None, dace.Memlet("A[0]"))
-
-    a_s2 = s2.add_access("A")
-    out_s2 = s2.add_access("out")
-    me, mx = s2.add_map("m", dict(j="0:1"))
-    t2 = s2.add_tasklet("t2", {"a"}, {"y"}, "y = a * 2")
-    s2.add_memlet_path(a_s2, me, t2, memlet=dace.Memlet("A[j]"), dst_conn="a")
-    s2.add_memlet_path(t2, mx, out_s2, memlet=dace.Memlet("out[j]"), src_conn="y")
-
-    sdfg.validate()
-    return sdfg
-
-
 def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     """
     Build an SDFG where `s1` and `s2` are enclosed in a LoopRegion-based

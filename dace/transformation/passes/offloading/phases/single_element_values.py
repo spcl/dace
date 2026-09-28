@@ -1,58 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
 from ordered_set import OrderedSet
 
 from dace import dtypes
-from typing import Optional
-
 from dace.sdfg import SDFG
-from dace.transformation.passes.length_one_array_scalar_conversion import (
-    ConvertLengthOneArraysToScalars,
-    ConvertScalarsToLengthOneArrays,
-)
+from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
+                                                                           ConvertScalarsToLengthOneArrays)
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
-class SingleElementValuePhase():
+def change_single_element_containers(sdfg: SDFG, exceptions: OrderedSet[str]) -> OrderedSet[str]:
+    """Device-written scalars become length-1 arrays (a kernel takes a scalar by value), the other length-1
+    arrays scalars; ``exceptions`` are not asked again. Return the names asked for."""
+    gpu_written = helpers.data_written_by_device_code(sdfg)
+    to_len1_arrays = OrderedSet(name for name in sdfg.arrays
+                                if helpers.is_scalar(name, sdfg) and name in gpu_written and name not in exceptions)
+    # ``__return`` stays by reference: the caller reads the result back through it.
+    to_scalars = OrderedSet(name for name in sdfg.arrays if helpers.is_length1_array(name, sdfg)
+                            and name not in gpu_written and name not in exceptions and not name.startswith("__return"))
 
-    def apply(self, sdfg: SDFG, exceptions: Optional[OrderedSet] = None, verbose: bool = False) -> OrderedSet:
-        self.verbose = verbose
-        self.exceptions = exceptions if exceptions is not None else OrderedSet(
-        )  # results passed back by values as long as track_hybrid_states is not None
-        return self.change_single_element_data_containers(sdfg)
-
-    def change_single_element_data_containers(self, sdfg: SDFG) -> OrderedSet:
-
-        all_scalars: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
-                                                  if helpers.is_scalar(data_name, sdfg))
-        all_len1arrays: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
-                                                     if helpers.is_length1_array(data_name, sdfg))
-
-        gpu_written = helpers.data_written_by_device_code(sdfg)
-
-        to_len1_arrays = all_scalars & gpu_written - self.exceptions  # don't apply double - shouldn't be an issue for arrays
-        to_scalars = all_len1arrays - gpu_written - self.exceptions  # but is an issue for non-transient scalars, because they add a copy state that still has the original
-        to_scalars = OrderedSet(
-            name for name in to_scalars if
-            not name.startswith("__return"))  # __return must always be by reference in case CPU/GPU reads results back
-
-        if to_len1_arrays:
-            if self.verbose: print(f"Phase3: to_len1_arrays:\n{to_len1_arrays}\n")
-            ConvertScalarsToLengthOneArrays(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_len1_arrays,
-            ).apply_pass(sdfg, {})
-
-            for data_name in to_len1_arrays:  # prevents frequent copies within busy loops
-                sdfg.arrays[data_name].lifetime = dtypes.AllocationLifetime.SDFG
-
-        if to_scalars:
-            if self.verbose: print(f"Phase3: to_scalars:\n{to_scalars}\n\n")
-            ConvertLengthOneArraysToScalars(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_scalars,
-            ).apply_pass(sdfg, {})
-
-        return to_scalars | to_len1_arrays
+    if to_len1_arrays:
+        ConvertScalarsToLengthOneArrays(recursive=True, preserve_abi=True, filter=to_len1_arrays).apply_pass(sdfg, {})
+        for name in to_len1_arrays:  # allocated once, not in every iteration of a busy loop
+            sdfg.arrays[name].lifetime = dtypes.AllocationLifetime.SDFG
+    if to_scalars:
+        ConvertLengthOneArraysToScalars(recursive=True, preserve_abi=True, filter=to_scalars).apply_pass(sdfg, {})
+    return to_scalars | to_len1_arrays

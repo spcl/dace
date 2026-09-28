@@ -61,9 +61,6 @@ class OffloadingIRNode:
     def is_open_node(self) -> bool:
         return self.type in (OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP, OffloadingIRNode.OPEN_COND)
 
-    def is_close_node(self) -> bool:
-        return self.type == OffloadingIRNode.CLOSE
-
     def append_node(self, node: 'OffloadingIRNode') -> None:
         self.next.append(node)
 
