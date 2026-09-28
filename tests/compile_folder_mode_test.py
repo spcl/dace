@@ -373,7 +373,11 @@ def test_folder_mode_file_is_never_observed_incomplete(tmp_path):
     assert [p.name for p in build_folder.iterdir() if p.name.startswith("FOLDER_MODE")] == ["FOLDER_MODE"]
 
 
-def test_already_loaded_and_comple_again():
+@pytest.mark.usefixtures('ctypes_interface')
+def test_already_loaded_and_comple_again(monkeypatch):
+    # See test_build_with_scheme_one_and_then_switch: the mode must not be
+    #  overridden by a CI env export.
+    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
         version2="development",
