@@ -236,7 +236,14 @@ RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 #: scan, and the rendered unit hands its reader a serial loop for a reduction the canonicalize
 #: pipeline itself parallelizes -- ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all
 #: measured 9-11x over numpy in the parallel form and rendered with no ``omp`` at all.
-RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
+#:
+#: ``sequential`` is the C++ single-loop lowering of the three nodes whose ``pure`` is built from SDFG components:
+#: the loop is what CPF rendered for them before, and it is faster than the component form.
+RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
+    'ArgReduce': ('OpenMP', 'sequential'),
+    'Scan': ('sequential', ),
+    'ScatterConflictCheck': ('sequential', ),
+}
 
 #: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a
 #: node that READS OR WRITES DEVICE MEMORY from host level. The criterion is the same one the two

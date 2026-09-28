@@ -72,7 +72,7 @@ def _numpy_exclusive(arr, op: ScanOp, identity):
     return out
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
 def test_scan_inclusive_matches_numpy(op: ScanOp, implementation: str):
     """Inclusive scan over float64 matches numpy's cum* / accumulate."""
@@ -90,7 +90,7 @@ def test_scan_inclusive_matches_numpy(op: ScanOp, implementation: str):
                                             f'max diff {np.max(np.abs(arr_out - expected))}.')
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 def test_scan_inclusive_sum_int32(implementation: str):
     """Integer dtype inclusive sum scan -- exact equality, no floating tolerance."""
     n = 50
@@ -101,7 +101,7 @@ def test_scan_inclusive_sum_int32(implementation: str):
     assert np.array_equal(arr_out, np.cumsum(arr_in))
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 def test_scan_exclusive_sum_with_seed(implementation: str):
     """Exclusive sum scan with a non-zero seed identity -- prefix-then-shift semantics."""
     n = 32
@@ -114,7 +114,7 @@ def test_scan_exclusive_sum_with_seed(implementation: str):
     assert np.allclose(arr_out, expected)
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 def test_scan_single_element(implementation: str):
     """A length-1 inclusive scan returns the single element; exclusive returns the seed.
     The libnode expansion degenerates to a copy / identity tasklet for this case."""
@@ -135,7 +135,7 @@ def test_scan_single_element(implementation: str):
     assert arr_out[0] == 7.0
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 def test_scan_two_elements(implementation: str):
     """A length-2 inclusive scan: ``out[0] = in[0], out[1] = in[0] + in[1]`` (smallest
     non-degenerate input). Scans of length 1 are a degenerate case the libnode does
@@ -188,7 +188,7 @@ def _build_multi_chain_sdfg(n: int,
     return sdfg
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
 @pytest.mark.parametrize('seeded', [False, True])
 def test_multi_chain_scan_matches_numpy(op: ScanOp, implementation: str, seeded: bool):

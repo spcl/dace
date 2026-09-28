@@ -82,7 +82,7 @@ def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> n
 @pytest.mark.parametrize('stride', [1, 2, 3, 4, 5])
 @pytest.mark.parametrize('n', [16, 33])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
-@pytest.mark.parametrize('implementation', ['CPU', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
 def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: ScanOp, implementation: str):
     """For each stride, dtype, and implementation, the libnode-produced output equals
     the per-residue-class sequential scan."""
@@ -146,7 +146,7 @@ _NEGATIVE_STRIDE_SCRIPT = textwrap.dedent("""
     node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
     # A negative literal stride trips the runtime ``s > 0`` check inside ``dace::scan``.
     node.stride = -2
-    node.implementation = 'pure'
+    node.implementation = {{implementation!r}}
     st.add_node(node)
     st.add_edge(a_in, None, node, INPUT_CONNECTOR_NAME, dace.Memlet('arr_in[0:%d]' % n))
     st.add_edge(node, OUTPUT_CONNECTOR_NAME, a_out, None, dace.Memlet('arr_out[0:%d]' % n))
@@ -158,10 +158,12 @@ _NEGATIVE_STRIDE_SCRIPT = textwrap.dedent("""
 """).format(repo=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def test_negative_stride_aborts_at_runtime():
+@pytest.mark.parametrize('implementation', ['sequential', 'pure'])
+def test_negative_stride_aborts_at_runtime(implementation):
     """A non-positive stride must abort the program before the scan runs. Spawned in
     a subprocess so the abort doesn't kill the test runner."""
-    proc = subprocess.run([sys.executable, '-c', _NEGATIVE_STRIDE_SCRIPT], capture_output=True, text=True, timeout=120)
+    script = _NEGATIVE_STRIDE_SCRIPT.replace('{implementation!r}', repr(implementation))
+    proc = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120)
     assert 'UNEXPECTEDLY_SURVIVED' not in proc.stdout, (
         f'Negative stride failed to abort. stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
     assert proc.returncode != 0, (f'Expected non-zero exit on abort; got returncode={proc.returncode}. '
@@ -398,7 +400,7 @@ def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_m
     np.testing.assert_allclose(cupy.asnumpy(device_out), oracle(host), rtol=1e-12)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'CPU'])
+@pytest.mark.parametrize('implementation', ['pure', 'sequential', 'CPU'])
 def test_a_symbolic_stride_survives_a_json_round_trip_of_the_scan(implementation: str):
     """An untyped stride property saved a symbol as the text ``symbol($K, ...)``, which no expansion could parse:
     a reloaded SDFG (the CPF canonical cache) failed with SyntaxError on scan_strided_sym and versioned_distance_update."""

@@ -79,7 +79,7 @@ def scan_sdfg(op: ScanOp, exclusive: bool, identity, source: dace.typeclass, tar
     sdfg.add_array('dst', [N], target)
     state = sdfg.add_state()
     node = Scan('scan', op=op, exclusive=exclusive, identity=identity)
-    node.implementation = 'pure'
+    node.implementation = 'sequential'
     state.add_node(node)
     state.add_edge(state.add_read('src'), None, node, Scan.INPUT_CONNECTOR_NAME, dace.Memlet('src[0:N]'))
     state.add_edge(node, Scan.OUTPUT_CONNECTOR_NAME, state.add_write('dst'), None, dace.Memlet('dst[0:N]'))
@@ -125,7 +125,7 @@ def duplicate_check_sdfg() -> dace.SDFG:
     sdfg.add_array('count', [1], dace.int64)
     state = sdfg.add_state()
     node = ScatterConflictCheck('check')
-    node.implementation = 'pure'
+    node.implementation = 'sequential'
     state.add_node(node)
     state.add_edge(state.add_read('ip'), None, node, ScatterConflictCheck.INPUT_CONNECTOR_NAME, dace.Memlet('ip[0:N]'))
     state.add_edge(node, ScatterConflictCheck.OUTPUT_CONNECTOR_NAME, state.add_write('count'), None,

@@ -22,7 +22,9 @@ Implementations (the ``_owner_out`` tag array is host memory in every backend; t
 expansion therefore uses a device scratch buffer of its own and reads ``_owner_out`` only for
 its size):
 
-- ``pure`` -- tagged-write + verify, serial.
+- ``sequential`` -- tagged-write + verify, serial.
+- ``pure`` -- the same serial check as SDFG components (loop regions and Python tasklets), for consumers
+  that read the SDFG rather than compile it; slower than ``sequential``, so nothing picks it for speed.
 - ``CPU``  -- tagged-write + verify, OpenMP-parallel.
 - ``CUDA`` -- the same tagged-write + verify run ON the device (``gpucub::BlockReduce`` fold, one
   atomic per block), with only the resulting flag copied back.
@@ -30,8 +32,10 @@ its size):
 from typing import Dict, Optional, Tuple
 
 import dace
-from dace import dtypes, library, nodes
+from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
+from dace.libraries.standard.pure_components import chain, counted_loop, operand_array, tasklet_state
+from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
 
@@ -124,7 +128,7 @@ def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]
 
 
 @library.expansion
-class ExpandPure(ExpandTransformation):
+class ExpandSequential(ExpandTransformation):
     """Tagged-write + verify (serial O(n))."""
 
     environments = []
@@ -139,6 +143,73 @@ class ExpandPure(ExpandTransformation):
                              _outputs(owner_desc),
                              "{\n" + body + "}",
                              language=dace.Language.CPP)
+
+
+#: Loop variable and runtime tag-array size of the ``pure`` check, symbols of its own nested SDFG.
+CHECK_INDEX = 'conflict_i'
+CAPACITY = 'conflict_capacity'
+#: The tag array the ``pure`` check allocates itself when no ``_owner_out`` is wired.
+OWN_TAGS = 'tags'
+
+
+def index_loop(label: str, n: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet],
+               nsdfg: dace.SDFG) -> dace.sdfg.state.LoopRegion:
+    """One pass over the index array: ``x`` is element ``CHECK_INDEX`` of ``_idx_in``."""
+    loop = counted_loop(label, CHECK_INDEX, '0', n)
+    body = tasklet_state(nsdfg, f'{label}_body', code, {
+        'x': Memlet(f'{INPUT_CONNECTOR_NAME}[{CHECK_INDEX}]'),
+        **reads
+    }, writes)
+    chain(loop, [body])
+    return loop
+
+
+def sized_tags(nsdfg: dace.SDFG, n: str) -> list:
+    """Blocks that size a tag array from ``max(idx)`` as the runtime does, ending on the edge that binds it."""
+    nsdfg.add_scalar('top', dtypes.int64, transient=True)
+    nsdfg.add_symbol(CAPACITY, dtypes.int64)
+    nsdfg.add_array(OWN_TAGS, [CAPACITY], dtypes.int64, transient=True)
+    start = tasklet_state(nsdfg, 'top_start', 'm = 0', {}, {'m': Memlet('top[0]')})
+    sweep = index_loop('top_sweep', n, 'v = x\nm = v if v > t else t', {'t': Memlet('top[0]')}, {'m': Memlet('top[0]')},
+                       nsdfg)
+    return [start, sweep]
+
+
+@library.expansion
+class ExpandPure(ExpandTransformation):
+    """The serial tagged-write + verify as SDFG components: tag every in-range slot with the last position that
+    names it, then flag a position whose slot carries another position's tag."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+        _validate(node, state, sdfg)
+        edges = {e.dst_conn: e for e in state.in_edges(node)}
+        edges.update({e.src_conn: e for e in state.out_edges(node)})
+        nsdfg = dace.SDFG(f'{node.label}_pure')
+        for conn, edge in edges.items():
+            operand_array(nsdfg, conn, edge, sdfg)
+        n = symbolic.symstr(edges[INPUT_CONNECTOR_NAME].data.subset.num_elements())
+        blocks = [] if SCRATCH_CONNECTOR_NAME in edges else sized_tags(nsdfg, n)
+        tags = SCRATCH_CONNECTOR_NAME if SCRATCH_CONNECTOR_NAME in edges else OWN_TAGS
+        capacity = symbolic.symstr(nsdfg.arrays[tags].total_size)
+        whole = Memlet(f'{tags}[0:{capacity}]', dynamic=True)
+        in_range = f'v >= 0 and v < {capacity}'
+        nsdfg.add_scalar('flag', dtypes.int64, transient=True)
+        tag = index_loop('tag', n, f'v = x\nif {in_range}:\n    t[v] = {CHECK_INDEX}', {}, {'t': whole}, nsdfg)
+        clear = tasklet_state(nsdfg, 'clear', 'f = 0', {}, {'f': Memlet('flag[0]')})
+        verify = index_loop('verify', n,
+                            f'v = x\nnf = f\nif {in_range}:\n    if t[v] != {CHECK_INDEX}:\n        nf = 1', {
+                                't': whole,
+                                'f': Memlet('flag[0]')
+                            }, {'nf': Memlet('flag[0]')}, nsdfg)
+        done = tasklet_state(nsdfg, 'write_back', 'c = f', {'f': Memlet('flag[0]')},
+                             {'c': Memlet(f'{OUTPUT_CONNECTOR_NAME}[0]')})
+        chain(nsdfg, [*blocks, tag, clear, verify, done])
+        if blocks:
+            nsdfg.edges_between(blocks[-1], tag)[0].data.assignments[CAPACITY] = 'top + 1'
+        return nsdfg
 
 
 @library.expansion
@@ -241,7 +312,7 @@ class ScatterConflictCheck(nodes.LibraryNode):
     #: :class:`ExpandCUDA`. Declared so an offloader does not move them with the rest of the state.
     host_connectors = frozenset({OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME})
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
+    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "sequential": ExpandSequential, "pure": ExpandPure}
     default_implementation = "CPU"
 
     def __init__(self, name: str = "ScatterConflictCheck", *args, **kwargs):

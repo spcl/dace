@@ -51,7 +51,7 @@ def contracting_inputs(n: int, seed_value: float = 0.25):
     return coef, delta, np.array([seed_value], dtype=np.float64)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'CPU'])
+@pytest.mark.parametrize('implementation', ['pure', 'sequential', 'CPU'])
 @pytest.mark.parametrize('n', [1, 2, 17, 40001])
 def test_affine_scan_matches_sequential_recurrence(implementation, n):
     """The libnode computes the recurrence, at every size the blocked lowering treats differently."""

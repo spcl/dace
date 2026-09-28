@@ -73,7 +73,7 @@ def strided_min_scan(n: int) -> dace.SDFG:
     state = sdfg.add_state('scan')
     node = Scan('Scan', op=ScanOp.MIN, exclusive=False)
     node.stride = 2
-    node.implementation = 'pure'
+    node.implementation = 'sequential'
     state.add_node(node)
     state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, dace.Memlet(f'arr_out[0:{n}]'))
