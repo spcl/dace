@@ -29,31 +29,48 @@ class SchedulePhase():
               sdfg: SDFG,
               sdfg_scope_dict: Optional[Dict] = None,
               verbose: bool = False,
-              host_map_entries: Optional[OrderedSet] = None) -> None:
+              host_map_entries: Optional[OrderedSet] = None,
+              sequential_innermaps: bool = True) -> None:
         self.verbose = verbose
         self.host_map_entries = host_map_entries if host_map_entries is not None else OrderedSet()
+        self.sequential_innermaps = sequential_innermaps
         self.assign_schedules(sdfg)
 
-    def assign_schedules(self, sdfg: SDFG, host_level: bool = True, via_host_map: bool = False) -> None:
+    def set_schedule(self, node: nodes.Node, host_level: bool, in_kernel: bool) -> None:
+        """``GPU_Device`` at a host level; below one ``Sequential``, except that inside a kernel the
+        schedule is left to the caller when ``sequential_innermaps`` is off."""
+        if host_level and not (isinstance(node, nodes.MapEntry) and node in self.host_map_entries):
+            schedule = dtypes.ScheduleType.GPU_Device
+        elif in_kernel and not self.sequential_innermaps:
+            return
+        else:
+            # Sequential specifically: Default can be lowered to CUDA in the wrong places.
+            schedule = dtypes.ScheduleType.Sequential
+        if isinstance(node, nodes.MapEntry):
+            node.map.schedule = schedule
+        else:
+            node.schedule = schedule
+        if self.verbose:
+            print(f"Phase1: set {node} to {schedule} schedule")
+
+    def assign_schedules(self,
+                         sdfg: SDFG,
+                         host_level: bool = True,
+                         via_host_map: bool = False,
+                         in_kernel: bool = False) -> None:
 
         def walk(state: SDFGState, scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
-                 entry: Optional[nodes.MapEntry], host_level: bool, via_host_map: bool) -> None:
+                 entry: Optional[nodes.MapEntry], host_level: bool, via_host_map: bool, in_kernel: bool) -> None:
             for node in scope_children.get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
+                    self.set_schedule(node, host_level, in_kernel)
                     is_kernel = host_level and node not in self.host_map_entries
-                    node.map.schedule = (dtypes.ScheduleType.GPU_Device
-                                         if is_kernel else dtypes.ScheduleType.Sequential)
-                    if self.verbose:
-                        print(f"Phase1: set map {node} to {'GPU' if is_kernel else 'sequential'} schedule")
                     # A host map does not consume the host level: what it launches is still host code.
                     is_host_map = host_level and not is_kernel
-                    walk(state, scope_children, node, is_host_map, via_host_map or is_host_map)
+                    walk(state, scope_children, node, is_host_map, via_host_map or is_host_map, in_kernel or is_kernel)
 
                 elif isinstance(node, nodes.LibraryNode):
-                    # Sequential specifically: Default can be lowered to CUDA in the wrong places.
-                    node.schedule = (dtypes.ScheduleType.GPU_Device if host_level else dtypes.ScheduleType.Sequential)
-                    if self.verbose:
-                        print(f"Phase1: set libnode {node} to {'GPU' if host_level else 'sequential'} schedule")
+                    self.set_schedule(node, host_level, in_kernel)
 
                 elif isinstance(node, nodes.NestedSDFG):
                     # A nested SDFG is a host level of its own ONLY when a host map put us here: that
@@ -62,7 +79,7 @@ class SchedulePhase():
                     # decides placement for the state around it, and promoting a map it has not
                     # reasoned about turns a nested gather into a kernel reading host memory
                     # (npbench spmv: 'Illegal copy! (from x to indirection)').
-                    self.assign_schedules(node.sdfg, host_level and via_host_map, via_host_map)
+                    self.assign_schedules(node.sdfg, host_level and via_host_map, via_host_map, in_kernel)
 
         for state in sdfg.states():
-            walk(state, state.scope_children(), None, host_level, via_host_map)
+            walk(state, state.scope_children(), None, host_level, via_host_map, in_kernel)

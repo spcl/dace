@@ -91,7 +91,7 @@ def test_different_block_sizes_nesting():
             nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
-    sdfg.apply_gpu_transformations()
+    sdfg.apply_gpu_transformations(sequential_innermaps=False)
     assert any(n.map.schedule == dace.ScheduleType.GPU_Device for n, _ in sdfg.all_nodes_recursive()
                if isinstance(n, dace.nodes.MapEntry))
     V = np.random.rand(130)
@@ -175,7 +175,7 @@ def test_block_thread_specialization():
                     a = 2
 
     sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
+    sdfg.apply_gpu_transformations(sequential_innermaps=False)
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive()
                    if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string)
     tasklet.location['gpu_thread'] = dace.subsets.Range.from_string('2:9:3')

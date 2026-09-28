@@ -45,11 +45,17 @@ class OffloadToAccelerator(ppl.Pass):
         desc="Safety bound on the phase 2-4 fixpoint iteration. Reaching it is a bug, not a "
         "workload property: the loop converges once no state is hybrid and no container changed.")
     verbose = properties.Property(dtype=bool, default=False, desc="Print what each phase decided.")
+    sequential_innermaps = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Make every map and library node inside a kernel Sequential. Off, their schedule is left as it is, "
+        "so a Default map inside a kernel becomes the thread-block level.")
 
     def __init__(self,
                  host_maps: HostMapSpec = False,
                  max_iterations: Optional[int] = None,
                  verbose: Optional[bool] = None,
+                 sequential_innermaps: Optional[bool] = None,
                  **kwargs: Any) -> None:
         """
         :param host_maps: which maps keep a HOST schedule, so that the maps under them become the
@@ -60,6 +66,7 @@ class OffloadToAccelerator(ppl.Pass):
             driving the pass in process anyway.
         :param max_iterations: overrides the safety bound on the phase 2-4 fixpoint.
         :param verbose: print what each phase decided.
+        :param sequential_innermaps: overrides the ``sequential_innermaps`` property.
         :note: a map enclosing a device-wide library node is kept on the host whatever this says --
             a call only host code can issue is a requirement, not a preference.
         """
@@ -68,6 +75,8 @@ class OffloadToAccelerator(ppl.Pass):
             self.max_iterations = max_iterations
         if verbose is not None:
             self.verbose = verbose
+        if sequential_innermaps is not None:
+            self.sequential_innermaps = sequential_innermaps
         self._host_maps = host_maps
 
     def modifies(self) -> ppl.Modifies:
@@ -92,7 +101,11 @@ class OffloadToAccelerator(ppl.Pass):
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
 
         # Phase 1: set sequential / GPU schedules
-        SchedulePhase().apply(sdfg, cached_scopes, verbose=self.verbose, host_map_entries=host_map_entries)
+        SchedulePhase().apply(sdfg,
+                              cached_scopes,
+                              verbose=self.verbose,
+                              host_map_entries=host_map_entries,
+                              sequential_innermaps=self.sequential_innermaps)
 
         # Fix Point Iteration of Phases 2 - 4
         changed_containers = OrderedSet()
