@@ -365,7 +365,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
@@ -446,7 +446,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -611,7 +611,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:

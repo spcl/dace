@@ -6,7 +6,7 @@ import dace
 from ordered_set import OrderedSet
 
 from dace import data as dt, Memlet
-from dace import dtypes, registry, symbolic
+from dace import dtypes, registry
 from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -20,12 +20,14 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
-from dace.codegen.targets.cuda import (chiplet_count, compute_pool_release, distribute_over_chiplets,
-                                       dynamic_map_input_args, gpu_cmake_options, gpu_runtime_code,
-                                       gpu_scope_maps_recursive, location_condition, location_index_exprs)
+from dace.codegen.targets.cuda import (_DYNAMIC_SHARED_MEMORY_SYMBOL, chiplet_count, compute_pool_release,
+                                       distribute_over_chiplets, dynamic_map_input_args, dynamic_shared_memory_request,
+                                       gpu_cmake_options, gpu_runtime_code, gpu_scope_maps_recursive,
+                                       location_condition, location_index_exprs, plan_shared_memory, reset_shared_code)
 from dace.codegen.target import TargetCodeGenerator
 
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
+from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (assigned_stream_expr, generate_sync_debug_call,
@@ -113,6 +115,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         pipeline_results: Dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
+        self._globalcode.write(plan_shared_memory(sdfg))
 
         # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
         # tiled; both are consulted when emitting kernel launches.
@@ -341,14 +344,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         return;
                     }}''', cfg, state_id, scope_entry)
 
+        # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
+        dynsmem_size = scope_entry._cuda_dynamic_shared_memory
+        self._localcode.write(dynamic_shared_memory_request(kernel_name, dynsmem_size), cfg, state_id, scope_entry)
         stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
         kargs = ', '.join(['(void *)&' + arg for arg in kernel_args_as_input])
         self._localcode.write(
             f'''
             void  *{kernel_name}_args[] = {{ {kargs} }};
-            gpuError_t __err = {self.backend}LaunchKernel(
-                (void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {0}, {stream_var_name}
-            );
+            gpuError_t __err = {self.backend}LaunchKernel((void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {sym2cpp(dynsmem_size)}, {stream_var_name});
             ''', cfg, state_id, scope_entry)
 
         self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});\n')
@@ -554,13 +558,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError(
                 "declare_array is only for variables that require separate declaration and allocation.")
 
-        if nodedesc.storage == dtypes.StorageType.GPU_Shared:
-            raise NotImplementedError("Dynamic shared memory unsupported")
+        dynamic_shared = gpu_shared_memory.is_dynamic_shared_memory_buffer(nodedesc)
+        if nodedesc.storage == dtypes.StorageType.GPU_Shared and not dynamic_shared:
+            raise NotImplementedError(f'Shared memory container "{node.data}" is placed in static shared memory, '
+                                      'which requires a size known before the kernel starts')
 
         if nodedesc.storage == dtypes.StorageType.Register:
             raise ValueError("Dynamic allocation of registers is not allowed")
 
-        if nodedesc.storage not in {dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned}:
+        if nodedesc.storage not in {dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
+                                    } and not dynamic_shared:
             raise NotImplementedError(f"CUDA: Unimplemented storage type {nodedesc.storage.name}.")
 
         if self._dispatcher.declared_arrays.has(ptrname):
@@ -588,8 +595,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError("allocate_stream not implemented in ExperimentalCUDACodeGen")
 
         elif isinstance(nodedesc, dace.data.View):
-            return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
-                                                   allocation_stream)
+            self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                            allocation_stream)
+            if node.setzero and nodedesc.storage == dtypes.StorageType.GPU_Shared:
+                # A container placed in dynamic shared memory is a view, zeroed where it is allocated
+                allocation_stream.write(reset_shared_code(dataname, nodedesc, self._current_kernel_spec.block_dims),
+                                        cfg, state_id, node)
+            return
         elif isinstance(nodedesc, dace.data.Reference):
             return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
                                                         declaration_stream, allocation_stream)
@@ -673,11 +685,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
 
+        if gpu_shared_memory.is_dynamic_shared_memory_buffer(nodedesc):
+            # The flat buffer of dynamic shared memory that the kernel's dynamic containers view
+            dataname = self.declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+            allocation_stream.write(f'{dataname} = {_DYNAMIC_SHARED_MEMORY_SYMBOL};\n', cfg, state_id, node)
+            return
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
         arrsize = nodedesc.total_size
-
-        if symbolic.issymbolic(arrsize, sdfg.constants):
-            raise NotImplementedError('Dynamic shared memory unsupported')
         if nodedesc.start_offset != 0:
             raise NotImplementedError('Start offset unsupported for shared memory')
 
@@ -689,9 +703,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
         if node.setzero:
-            allocation_stream.write(
-                f'dace::ResetShared<{nodedesc.dtype.ctype}, {", ".join(sym2cpp(self._current_kernel_spec.block_dims))}, {sym2cpp(arrsize)}, '
-                f'1, false>::Reset({dataname});\n', cfg, state_id, node)
+            allocation_stream.write(reset_shared_code(dataname, nodedesc, self._current_kernel_spec.block_dims), cfg,
+                                    state_id, node)
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -839,25 +852,9 @@ class KernelSpec:
         self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(kernel_map_entry, list(self.grid_dims),
                                                                       self.chiplets)
-        self.gpu_index_ctype: str = self.get_gpu_index_ctype()
+        self.index_types: Dict[str, dtypes.typeclass] = common.gpu_map_index_types(sdfg, kernel_parent_state,
+                                                                                   kernel_map_entry)
 
         if cudaCodeGen.backend not in ['cuda', 'hip']:
             raise ValueError(f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
                              "Only 'cuda' and 'hip' are supported.")
-
-        warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
-        self.warpSize: int = Config.get('compiler', 'cuda', warp_size_key)
-
-    def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
-        """Return the C type string for the configured DaCe dtype under
-        ``compiler.cuda.<config_key>``. Raises if the name does not resolve
-        to a DaCe ``typeclass``."""
-        type_name = Config.get('compiler', 'cuda', config_key)
-        # Resolve against the typeclass registry ("dace::int32" -> int32) rather than the module namespace.
-        dtype = next((t for t, s in dtypes.TYPECLASS_TO_STRING.items() if s.rsplit('::', 1)[-1] == type_name), None)
-        if not isinstance(dtype, dtypes.typeclass):
-            raise ValueError(
-                f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '
-                'no matching DaCe data type found.\n'
-                'Please use a valid type from dace.dtypes (e.g., "int32", "uint64").')
-        return dtype.ctype

@@ -465,6 +465,17 @@ required:
                             only on its tasks (potential load imbalance).
                         default: true
 
+                    max_static_shared_memory:
+                        type: int
+                        default: 0
+                        title: Maximum static shared memory per thread-block
+                        description: >
+                            The number of bytes of shared memory a thread-block may declare statically. Shared
+                            memory whose placement is left to the code generator (``StorageType.GPU_Shared``) stays
+                            static while it fits, and is moved to dynamic shared memory otherwise; dynamic shared
+                            memory beyond this size is requested from the device at kernel launch. If 0, the
+                            limit of the GPU backend is used (48 KiB on CUDA, 64 KiB on HIP).
+
                     persistent_map_SM_fraction:
                         type: float
                         title: Fraction of SMs to use for persistent GPU map
@@ -576,38 +587,6 @@ required:
                             explicitly copy the data around. If this value is ``false`` the code generator
                             will raise an exception if such a Memlet is encountered. This allows the user
                             to have full control over all Maps in the SDFG.
-
-                    gpu_index_type:
-                        type: str
-                        title: Thread/block/warp index data type
-                        default: int32
-                        description: >
-                            Defines the data type for a thread, block and warp index in the generated code.
-                            The type is based on the type-classes in ``dace.dtypes``. For example,
-                            ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
-                            index types are needed to address memory offsets that are beyond the 32-bit
-                            range, or to reduce memory usage. This replaces ``thread_id_type`` in
-                            ``ExperimentalCUDACodeGen`` , as the new name more accurately reflects its broader
-                            usage.
-
-                    cuda_warp_size:
-                        type: int
-                        title: CUDA warp size
-                        description: >
-                            Defines the warp size used during CUDA code generation. The default and current
-                            standard value for CUDA is 32. This should only be changed if future CUDA
-                            architectures explicitly alter the warp size. Modifying this value arbitrarily may
-                            result in incorrect or unknown behavior, and is therefore strongly discouraged.
-                        default: 32
-
-                    hip_warp_size:
-                        type: int
-                        title: HIP warp size
-                        description: >
-                            Specifies the warp size (also known as wavefront size) for HIP code generation.
-                            The default value for AMD GPUs is typically 64. This setting should only be modified
-                            if you have a clear understanding of what you are doing.
-                        default: 64
 
                     auto_syncthreads_insertion:
                         type: bool

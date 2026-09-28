@@ -8,9 +8,8 @@ import sympy
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.codegen.targets.cuda import default_block_size, gpu_scope_maps_recursive, thread_block_extent
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import gpu_helpers, pass_pipeline as ppl
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
-from ordered_set import OrderedSet
 
 
 class InferGPUGridAndBlockSize(ppl.Pass):
@@ -35,16 +34,8 @@ class InferGPUGridAndBlockSize(ppl.Pass):
                   block_dimensions)``.
         :raises ValueError: if explicit and inferred block sizes conflict.
         """
-        kernel_maps: Set[Tuple[
-            nodes.MapEntry,
-            SDFGState,
-        ]] = OrderedSet()
-        for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.MapEntry) and node.schedule == dtypes.ScheduleType.GPU_Device:
-                kernel_maps.add((node, state))
-
         kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = dict()
-        for map_entry, state in kernel_maps:
+        for _, state, map_entry in gpu_helpers.gpu_kernels(sdfg):
             raw_grid = map_entry.map.range.size(True)[::-1]
             grid_size = to_3d_dims(raw_grid)
 

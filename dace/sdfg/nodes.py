@@ -26,6 +26,25 @@ import warnings
 # -----------------------------------------------------------------------------
 
 
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
+
+
 @make_properties
 class Node(object):
     """ Base node class. """
@@ -871,7 +890,7 @@ class MapEntry(EntryNode):
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         # Add map params
-        known = {**symbols, **result}
+        known = {**symbols, **_constant_types(sdfg), **result}
         for p, rng in zip(self._map.params, self._map.range):
             result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
 
@@ -1200,7 +1219,11 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes, symbols=symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes,
+                                                                     symbols={
+                                                                         **symbols,
+                                                                         **_constant_types(sdfg)
+                                                                     })
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))

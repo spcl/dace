@@ -10,7 +10,6 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
                                                                                  GPUStreamSchedulingStrategy)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
-from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
 
 
 class GPUStreamPipeline(Pipeline):
@@ -70,7 +69,6 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             strategy,
             GPUStreamWiring(strategy),
             SynchronizeStreamUnawareGPUCallbacks(),
-            LiftSharedOutOfNestedSDFG(),
             AddThreadBlockMaps(),
             DemoteKernelInternalArraysToScalars(),
             ReinferConnectorTypes(),
