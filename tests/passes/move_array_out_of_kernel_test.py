@@ -181,6 +181,19 @@ def test_small_transient_is_demoted_to_registers_instead():
     assert tuple(sdfg.arrays['buf'].shape) == (8, ), 'a demoted array keeps its own shape'
 
 
+def test_a_small_persistent_transient_is_lifted_not_demoted():
+    """A register cannot outlive the invocation a persistent array is kept across."""
+    sdfg = kernel_with_internal_transient()
+    sdfg.arrays['buf'].set_shape((8, ))
+    sdfg.arrays['buf'].lifetime = dace.AllocationLifetime.Persistent
+    with pytest.warns(UserWarning, match='will be lifted outside the kernel'):
+        assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == 1
+
+    assert sdfg.arrays['buf'].storage == dace.dtypes.StorageType.GPU_Global
+    assert tuple(sdfg.arrays['buf'].shape) == (128, 8)
+    sdfg.validate()
+
+
 def test_lifted_transient_is_renamed_around_a_colliding_descriptor():
     """An unrelated outer descriptor already holds the name, so the lifted one takes a fresh one."""
     inner = transient_body()
