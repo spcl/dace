@@ -104,7 +104,7 @@ class ReinferConnectorTypes(ppl.Pass):
         return False
 
     @staticmethod
-    def _connector_types(sdfg: SDFG) -> Dict[Any, Any]:
+    def connector_types(sdfg: SDFG) -> Dict[Any, Any]:
         """Snapshot every dataflow-node connector type, keyed by ``(node, direction, connector)``.
 
         Re-inference is the only signal of change available -- neither
@@ -128,11 +128,11 @@ class ReinferConnectorTypes(ppl.Pass):
         """
         from dace.sdfg import infer_types
         from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
-        before = self._connector_types(sdfg)
+        before = self.connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():
             infer_types.infer_connector_types(nsdfg)
-        after = self._connector_types(sdfg)
+        after = self.connector_types(sdfg)
 
         # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
         # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``

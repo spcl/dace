@@ -15,8 +15,8 @@ from dace.codegen.targets.cuda import _named_idx, kernel_launch_qualifiers
 from dace.transformation.dataflow.add_threadblock_map import product
 
 
-def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
-                                state_id: int, anchor_node, dispatcher: TargetDispatcher):
+def emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
+                               state_id: int, anchor_node, dispatcher: TargetDispatcher):
     """Emit ``{ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
 
     ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
@@ -52,7 +52,7 @@ class ScopeGenerationStrategy(ABC):
 
     Subclasses set ``SCHEDULE`` (matched by ``applicable()`` against the source MapEntry's
     schedule) and ``SCOPE_COMMENT``, implement ``generate()``, and reuse the
-    ``_dispatch_and_deallocate`` tail.
+    ``dispatch_and_deallocate`` tail.
     """
 
     SCHEDULE: dtypes.ScheduleType = None
@@ -72,9 +72,9 @@ class ScopeGenerationStrategy(ABC):
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         raise NotImplementedError('Abstract class')
 
-    def _dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                 entry_node: nodes.MapEntry, function_stream: CodeIOStream,
-                                 callsite_stream: CodeIOStream):
+    def dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                entry_node: nodes.MapEntry, function_stream: CodeIOStream,
+                                callsite_stream: CodeIOStream):
         """Common tail of every ``generate``: dispatch the inner subgraph,
         then deallocate scope-local arrays."""
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -95,7 +95,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        self._generate_kernel_signature(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+        self.generate_kernel_signature(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
         with ScopeManager(frame_codegen=self.codegen._frame,
                           sdfg=sdfg,
@@ -111,16 +111,16 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
             # Without an inner ThreadBlock map the kernel-map variables bind
             # to thread indices instead -- same blockIdx-based formulas.
-            _emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype,
-                                        callsite_stream, cfg, state_id, kernel_entry_node, self._dispatcher)
+            emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype, callsite_stream,
+                                       cfg, state_id, kernel_entry_node, self._dispatcher)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
-                                          callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
+                                         callsite_stream)
 
-    def _generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
-                                   state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         kernel_name = self._current_kernel_spec.kernel_name
         kernel_args = self._current_kernel_spec.args_typed
@@ -154,7 +154,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             scope_map = node.map
             kernel_block_dims = self._current_kernel_spec.block_dims
 
-            map_range, symbolic_indices, _sym_coords = _emit_dim_index_definitions(
+            map_range, symbolic_indices, _sym_coords = emit_dim_index_definitions(
                 scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
                 self._dispatcher)
 
@@ -190,7 +190,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 if len(condition) > 0:
                     scope_manager.open(condition=condition)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
@@ -228,8 +228,8 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             ids_ctype = kernel_spec.gpu_index_ctype
 
-            self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
-                                               callsite_stream, scope_manager)
+            self.handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
+                                              callsite_stream, scope_manager)
 
             flat_thread_idx_expr = flat_thread_index_expr(block_dims)
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id,
@@ -260,11 +260,11 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                 if condition:
                     scope_manager.open(condition)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
-    def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
-                                      warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
-                                      scope_manager: 'ScopeManager'):
+    def handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
+                                     warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
+                                     scope_manager: 'ScopeManager'):
 
         warpSize = self._current_kernel_spec.warpSize
 

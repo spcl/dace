@@ -45,7 +45,7 @@ class GPUStreamWiring(ppl.Pass):
                              f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}').")
         if is_stream_wiring_applied(sdfg):
             return None
-        assignments = _collect_assignments(sdfg)
+        assignments = collect_assignments(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1
 
         allocate_stream_array(sdfg, num_streams)
@@ -54,7 +54,7 @@ class GPUStreamWiring(ppl.Pass):
         return num_streams
 
 
-def _collect_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+def collect_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
     """Transient dict view of every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy.
 
     The per-node property is the durable source of truth; this view is rebuilt on demand.

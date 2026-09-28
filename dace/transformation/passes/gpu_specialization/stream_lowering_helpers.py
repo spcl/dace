@@ -29,17 +29,17 @@ def allocate_stream_array(sdfg: SDFG, num_streams: int):
     (non-transient) into every nested SDFG that hosts a stream consumer."""
     name = get_gpu_stream_array_name()
     if name not in sdfg.arrays:
-        _add_stream_array(sdfg, name, num_streams, transient=True)
+        add_stream_array(sdfg, name, num_streams, transient=True)
     elif sdfg.arrays[name].dtype is not dace.dtypes.gpuStream_t:
         raise NameError(f'Data descriptor name "{name}" is reserved for GPU stream scheduling.')
 
-    for child_sdfg in _find_child_sdfgs_requiring_gpu_stream(sdfg):
+    for child_sdfg in find_child_sdfgs_requiring_gpu_stream(sdfg):
         if name in child_sdfg.arrays:
             continue
-        _propagate_stream_array_up(child_sdfg, name, num_streams)
+        propagate_stream_array_up(child_sdfg, name, num_streams)
 
 
-def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool):
+def add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, transient: bool):
     desc = dace.data.Array(dtype=dace.dtypes.gpuStream_t,
                            shape=(num_streams, ),
                            transient=transient,
@@ -47,22 +47,22 @@ def _add_stream_array(target_sdfg: SDFG, stream_name: str, num_streams: int, *, 
     target_sdfg.add_datadesc(stream_name, desc)
 
 
-def _propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):
+def propagate_stream_array_up(child_sdfg: SDFG, stream_name: str, num_streams: int):
     """Add ``stream_name`` to ``child_sdfg`` and every parent up to the first
     ancestor that already has it, wiring the NestedSDFG connector at each
     level."""
-    _add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
+    add_stream_array(child_sdfg, stream_name, num_streams, transient=False)
     slice_str = f"{stream_name}[0:{num_streams}]"
 
     cur = child_sdfg
     while stream_name not in cur.parent_sdfg.arrays:
-        _add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
-        _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+        add_stream_array(cur.parent_sdfg, stream_name, num_streams, transient=False)
+        wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
         cur = cur.parent_sdfg
-    _wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
+    wire_stream_into_parent(cur, stream_name, dace.Memlet(slice_str))
 
 
-def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> OrderedSet:
+def find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> OrderedSet:
     """Nested SDFGs that need the GPU stream array (host-side stream-bound
     calls); device-code NestedSDFGs are skipped."""
     requiring = OrderedSet()
@@ -87,7 +87,7 @@ def _find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> OrderedSet:
     return requiring
 
 
-def _wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
+def wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
     nsdfg_node = level.parent_nsdfg_node
     parent_state = level.parent
     add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
@@ -111,10 +111,10 @@ def wire_stream_connectors(sdfg: SDFG, assignments: Dict[Node, int]):
         if is_inside_gpu_device_kernel(sub_sdfg):
             continue
         for state in sub_sdfg.states():
-            _connect_streams_in_state(state, assignments, stream_array_name)
+            connect_streams_in_state(state, assignments, stream_array_name)
 
 
-def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], stream_array_name: str):
+def connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], stream_array_name: str):
     topo_index: Dict[Node, int] = {
         n: i
         for i, n in enumerate(dfs_topological_sort(state, sources=state.source_nodes()))
@@ -137,15 +137,15 @@ def _connect_streams_in_state(state: SDFGState, assignments: Dict[Node, int], st
 
     for stream_id, stream_users in per_stream.items():
         stream_users.sort(key=lambda n: topo_index[n])
-        _build_chain(state, stream_id, stream_users, stream_array_name)
+        build_chain(state, stream_id, stream_users, stream_array_name)
 
 
-def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], stream_array_name: str):
+def build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], stream_array_name: str):
     accessed_slot = f"{stream_array_name}[{stream_id}]"
     prev_access: Optional[nodes.AccessNode] = None
 
     for node in stream_users:
-        entry, exit_ = _entry_exit(state, node)
+        entry, exit_ = entry_exit(state, node)
         in_conn = STREAM_CONNECTOR
 
         if has_stream_connector(entry):
@@ -155,15 +155,15 @@ def _build_chain(state: SDFGState, stream_id: int, stream_users: List[Node], str
 
         scope_chain = enclosing_map_chain(state, entry, dtypes.ScheduleType.Sequential)
         if scope_chain:
-            _route_through_seq_scope(state, scope_chain, entry, in_conn, accessed_slot, stream_array_name)
+            route_through_seq_scope(state, scope_chain, entry, in_conn, accessed_slot, stream_array_name)
             continue
 
-        prev_access = _link_top_level_consumer(state, entry, exit_, in_conn, accessed_slot, stream_array_name,
-                                               prev_access)
+        prev_access = link_top_level_consumer(state, entry, exit_, in_conn, accessed_slot, stream_array_name,
+                                              prev_access)
 
 
-def _link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn: str, accessed_slot: str,
-                             stream_array_name: str, prev_access: Optional[nodes.AccessNode]) -> nodes.AccessNode:
+def link_top_level_consumer(state: SDFGState, entry: Node, exit_: Node, in_conn: str, accessed_slot: str,
+                            stream_array_name: str, prev_access: Optional[nodes.AccessNode]) -> nodes.AccessNode:
     if prev_access is None:
         prev_access = state.add_access(stream_array_name)
     state.add_edge(prev_access, None, entry, in_conn, dace.Memlet(accessed_slot))
@@ -199,8 +199,8 @@ def thread_stream_through_seq_scope(state: SDFGState, scope_chain: List[nodes.Ma
     state.add_edge(scope_chain[-1], out_conn, target, target_conn, memlet_factory())
 
 
-def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
-                             accessed_slot: str, stream_array_name: str):
+def route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry], target: Node, target_conn: str,
+                            accessed_slot: str, stream_array_name: str):
     """Top-level seq-scope routing: source is a fresh ``gpu_streams[<i>]``
     AccessNode, memlet is the matching slice on the chain edges."""
     thread_stream_through_seq_scope(
@@ -213,7 +213,7 @@ def _route_through_seq_scope(state: SDFGState, scope_chain: List[nodes.MapEntry]
     )
 
 
-def _entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
+def entry_exit(state: SDFGState, node: Node) -> Tuple[Node, Node]:
     if isinstance(node, nodes.MapEntry):
         return node, state.exit_node(node)
     return node, node
@@ -242,7 +242,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, OrderedSet], 
             if (not isinstance(node, nodes.AccessNode) or node.data != stream_array_name
                     or state.out_degree(node) != 0):
                 continue
-            sid = _stream_for_access_node(state, node, assignments)
+            sid = stream_for_access_node(state, node, assignments)
             if sid is not None and sid not in stream_sinks:
                 stream_sinks[sid] = node
 
@@ -259,7 +259,7 @@ def insert_state_end_syncs(sdfg: SDFG, sync_state: Dict[SDFGState, OrderedSet], 
 
         for stream in sorted_streams:
             src_access = stream_sinks.get(stream) or state.add_access(stream_array_name)
-            state.add_edge(src_access, None, tasklet, _stream_connector_name(stream),
+            state.add_edge(src_access, None, tasklet, stream_connector_name(stream),
                            dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
@@ -277,11 +277,11 @@ def insert_per_node_syncs(sdfg: SDFG, sync_node: Dict[Node, SDFGState], assignme
         for succ in list(state.successors(node)):
             state.add_nedge(tasklet, succ, Memlet())
         state.add_nedge(node, tasklet, Memlet())
-        state.add_edge(state.add_access(stream_array_name), None, tasklet, _stream_connector_name(stream),
+        state.add_edge(state.add_access(stream_array_name), None, tasklet, stream_connector_name(stream),
                        dace.Memlet(f"{stream_array_name}[{stream}]"))
 
 
-def _stream_connector_name(stream_id: int) -> str:
+def stream_connector_name(stream_id: int) -> str:
     """Connector name on a sync tasklet for stream ``<stream_id>``; the suffix
     is the ``gpu_streams`` offset bound by the matching memlet."""
     return f"{STREAM_CONNECTOR}_{stream_id}"
@@ -294,7 +294,7 @@ def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
     the matching ``gpu_streams[<id>]`` AccessNode after construction.
     """
     backend: str = common.get_gpu_backend()
-    sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({_stream_connector_name(sid)}));" for sid in stream_ids]
+    sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({stream_connector_name(sid)}));" for sid in stream_ids]
     sync_code = "\n".join(sync_lines)
     tasklet = state.add_tasklet(name=name,
                                 inputs={},
@@ -303,11 +303,11 @@ def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
                                 language=dtypes.Language.CPP,
                                 side_effects=True)
     for sid in stream_ids:
-        tasklet.add_in_connector(_stream_connector_name(sid), dtypes.gpuStream_t)
+        tasklet.add_in_connector(stream_connector_name(sid), dtypes.gpuStream_t)
     return tasklet
 
 
-def _stream_for_access_node(state: SDFGState, access: nodes.AccessNode, assignments: Dict[Node, int]) -> Optional[int]:
+def stream_for_access_node(state: SDFGState, access: nodes.AccessNode, assignments: Dict[Node, int]) -> Optional[int]:
     for e in state.in_edges(access):
         src = e.src
         if src in assignments:

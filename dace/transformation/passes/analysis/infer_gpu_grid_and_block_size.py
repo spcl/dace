@@ -50,9 +50,9 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             grid_size = to_3d_dims(raw_grid)
 
             if map_entry in kernels_with_added_tb_maps:
-                block_size = self._get_inserted_gpu_block_size(map_entry)
+                block_size = self.get_inserted_gpu_block_size(map_entry)
             else:
-                block_size = self._infer_gpu_block_size(state, map_entry)
+                block_size = self.infer_gpu_block_size(state, map_entry)
 
             block_size = to_3d_dims(block_size)
             validate_block_size_limits(map_entry, block_size)
@@ -61,7 +61,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         return kernel_dimensions_map
 
-    def _get_inserted_gpu_block_size(self, kernel_map_entry: nodes.MapEntry) -> List:
+    def get_inserted_gpu_block_size(self, kernel_map_entry: nodes.MapEntry) -> List:
         """Return the block size of a kernel whose thread-block map was inserted by ``AddThreadBlockMap``
         (its ``gpu_block_size`` attribute is assumed set)."""
         gpu_block_size = kernel_map_entry.map.gpu_block_size
@@ -72,7 +72,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         return gpu_block_size
 
-    def _infer_gpu_block_size(self, state: SDFGState, kernel_map_entry: nodes.MapEntry) -> List:
+    def infer_gpu_block_size(self, state: SDFGState, kernel_map_entry: nodes.MapEntry) -> List:
         """Infer the GPU block size from nested ``GPU_ThreadBlock`` maps.
 
         A set ``gpu_block_size`` is treated as user-defined and all nested thread-block maps must fit

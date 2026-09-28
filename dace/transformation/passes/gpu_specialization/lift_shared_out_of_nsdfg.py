@@ -59,13 +59,13 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
                 if desc.transient and desc.storage == dtypes.StorageType.GPU_Shared
             ]
             for name in shared_names:
-                if self._lift_one(name, inner_sdfg, nsdfg_node, outer_sdfg, outer_state, kernel_entry):
+                if self.lift_one(name, inner_sdfg, nsdfg_node, outer_sdfg, outer_state, kernel_entry):
                     lifted += 1
 
         return {'lifted': lifted} if lifted > 0 else None
 
-    def _lift_one(self, name: str, inner_sdfg: SDFG, nsdfg_node: nodes.NestedSDFG, outer_sdfg: SDFG,
-                  outer_state: SDFGState, kernel_entry: nodes.MapEntry) -> bool:
+    def lift_one(self, name: str, inner_sdfg: SDFG, nsdfg_node: nodes.NestedSDFG, outer_sdfg: SDFG,
+                 outer_state: SDFGState, kernel_entry: nodes.MapEntry) -> bool:
         """Promote ``name`` and wire it through ``nsdfg_node``::
 
             MapEntry --(empty, dep)--> AN_read --(in:name)--> NSDFG
@@ -115,7 +115,7 @@ class LiftSharedOutOfNestedSDFG(ppl.Pass):
         if is_written and not is_read:
             outer_state.add_nedge(kernel_entry, an_write, Memlet())
 
-        # Topology changed: drop the scope cache so a sibling ``_lift_one`` in
+        # Topology changed: drop the scope cache so a sibling ``lift_one`` in
         # the same state doesn't read it stale.
         outer_state._clear_scopedict_cache()
         return True

@@ -31,7 +31,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     is_inside_gpu_device_kernel, is_stream_wiring_applied, weakly_connected_node_sets)
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (make_sync_tasklet,
-                                                                                   _stream_connector_name,
+                                                                                   stream_connector_name,
                                                                                    insert_per_node_syncs,
                                                                                    insert_state_end_syncs)
 
@@ -122,13 +122,13 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
         assignments: Dict[nodes.Node, int] = dict()
         for state in sdfg.states():
-            self._assign_in_state(sdfg, False, state, assignments, 0)
+            self.assign_in_state(sdfg, False, state, assignments, 0)
         return assignments
 
-    def _assign_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assignments: Dict[nodes.Node, int],
-                         gpu_stream: int):
+    def assign_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assignments: Dict[nodes.Node, int],
+                        gpu_stream: int):
         for component in weakly_connected_node_sets(state):
-            if not self._requires_gpu_stream(state, component):
+            if not self.requires_gpu_stream(state, component):
                 continue
             # Idempotency: if any node already carries a stream id (prior run or deserialised
             # state), the component is settled. The counter still advances past it so a later
@@ -138,7 +138,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 for node in component:
                     assignments[node] = preassigned
                 if not in_nested_sdfg:
-                    gpu_stream = self._next_stream(max(gpu_stream, preassigned))
+                    gpu_stream = self.next_stream(max(gpu_stream, preassigned))
                 continue
             assigned_before = len(assignments)
             for node in component:
@@ -146,11 +146,11 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
                 node.gpu_stream_id = gpu_stream
                 if isinstance(node, nodes.NestedSDFG):
                     for nested_state in node.sdfg.states():
-                        self._assign_in_state(node.sdfg, True, nested_state, assignments, gpu_stream)
+                        self.assign_in_state(node.sdfg, True, nested_state, assignments, gpu_stream)
             if not in_nested_sdfg and len(assignments) > assigned_before:
-                gpu_stream = self._next_stream(gpu_stream)
+                gpu_stream = self.next_stream(gpu_stream)
 
-    def _next_stream(self, gpu_stream: int) -> int:
+    def next_stream(self, gpu_stream: int) -> int:
         if self._max_concurrent_streams == 0:
             return gpu_stream + 1
         if self._max_concurrent_streams == -1:
@@ -159,7 +159,7 @@ class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
             return 0
         return (gpu_stream + 1) % self._max_concurrent_streams
 
-    def _requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
+    def requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
         sdfg = state.parent
         for node in component:
             if isinstance(node, nodes.NestedSDFG):
@@ -235,7 +235,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for node in state.nodes():
-                    why = self._not_acceptable_reason(node, nsdfg, state)
+                    why = self.not_acceptable_reason(node, nsdfg, state)
                     if why is not None:
                         offenders.append(f"{type(node).__name__} '{node.label}' in state "
                                          f"'{state.label}' (SDFG '{nsdfg.name}'): {why}")
@@ -248,7 +248,7 @@ class MonolithicSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         return pin_to_stream_zero([node for node, _, _ in find_inner_gpu_consumers(sdfg)])
 
     @staticmethod
-    def _not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
+    def not_acceptable_reason(node, nsdfg: SDFG, state: SDFGState) -> Optional[str]:
         """One-line reason ``node`` violates the all-on-GPU contract, or ``None`` if acceptable."""
         if isinstance(node, nodes.Tasklet):
             if is_devicelevel_gpu(nsdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
@@ -448,7 +448,7 @@ def make_state_end_sync_state(parent_region, gpu_streams_name: str, label_hint: 
     sync_state = parent_region.add_state(label)
     tasklet = make_sync_tasklet(sync_state, "gpu_streams_synchronization", [0])
     access = sync_state.add_access(gpu_streams_name)
-    sync_state.add_edge(access, None, tasklet, _stream_connector_name(0), Memlet(f"{gpu_streams_name}[0]"))
+    sync_state.add_edge(access, None, tasklet, stream_connector_name(0), Memlet(f"{gpu_streams_name}[0]"))
     return sync_state
 
 
@@ -533,7 +533,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
     def __init__(self, synchronize_on_exit: Optional[bool] = None):
         # ``None`` (the default, and the codegen path) defers to
         # ``compiler.cuda.synchronize_on_exit`` so the host app controls it from outside; an
-        # explicit value overrides. See :meth:`_should_synchronize_on_exit`.
+        # explicit value overrides. See :meth:`should_synchronize_on_exit`.
         self._synchronize_on_exit: Optional[bool] = synchronize_on_exit
         # Analysis below is per-instance, rebuilt every ``assign_streams`` call (one SDFG per run).
         self._fell_back: bool = False
@@ -541,7 +541,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         self._state_kinds: Dict[SDFGState, NodeKind] = {}
         self._gpu_written: OrderedSet[str] = OrderedSet()
 
-    def _should_synchronize_on_exit(self) -> bool:
+    def should_synchronize_on_exit(self) -> bool:
         """Whether to keep the SDFG-exit ``cudaStreamSynchronize`` for GPU-resident outputs.
 
         Explicit constructor argument wins, else the config value. Disabling is only safe when the
@@ -638,16 +638,16 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 else:
                     host_consumes_gpu = (iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written)
                                          or block_reads_gpu_written(dst, self._gpu_written))
-                    if not host_consumes_gpu and not self._should_synchronize_on_exit():
+                    if not host_consumes_gpu and not self.should_synchronize_on_exit():
                         continue
                 edges_to_splice.append((region, edge))
 
         for region, edge in edges_to_splice:
             splice_sync_state_on_edge(region, edge, sdfg, stream_array_name)
 
-        self._add_sync_state(sdfg, stream_array_name)
+        self.add_sync_state(sdfg, stream_array_name)
 
-    def _add_sync_state(self, sdfg: dace.SDFG, stream_array_name: str):
+    def add_sync_state(self, sdfg: dace.SDFG, stream_array_name: str):
         for state in list(sdfg.states()):
             scope_dict = state.scope_dict()
 
@@ -657,12 +657,12 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
                 if scope_dict[node] is None:
                     # Top-level nested SDFG: recurse into it.
-                    self._add_sync_state(node.sdfg, stream_array_name)
+                    self.add_sync_state(node.sdfg, stream_array_name)
 
                 else:
                     # Nested inside a Map: descend only when NOT inside a GPU kernel scope.
                     if not in_scope_of(state, node, dtypes.GPU_SCHEDULES):
-                        self._add_sync_state(node.sdfg, stream_array_name)
+                        self.add_sync_state(node.sdfg, stream_array_name)
 
             # Append a program-end sync only at GPU *sink* states (no out-edges in their parent
             # region). Non-sink GPU states are already covered by the edge-splicing loop; a
@@ -675,6 +675,6 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             # Host-visible-output sinks always sync; GPU-resident-only sinks skip the exit sync
             # when synchronize_on_exit=False (see :func:`sink_writes_host_visible_output`),
             # removing the per-SDFG host stall that dominates launch-bound stencils.
-            if (not sink_writes_host_visible_output(state) and not self._should_synchronize_on_exit()):
+            if (not sink_writes_host_visible_output(state) and not self.should_synchronize_on_exit()):
                 continue
             append_program_end_sync_state(state.parent_graph, state, stream_array_name)
