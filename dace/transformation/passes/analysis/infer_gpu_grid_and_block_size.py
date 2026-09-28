@@ -5,9 +5,10 @@ from typing import Dict, List, Set, Tuple
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, symbolic
+from dace import SDFG, SDFGState, dtypes
+from dace.codegen.targets.cuda import gpu_scope_maps_recursive, thread_block_extent
 from dace.sdfg import nodes
-from dace.transformation import helpers, pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 from ordered_set import OrderedSet
 
@@ -78,7 +79,10 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         within it; otherwise the block size over-approximates the range sizes of all inner
         ``GPU_ThreadBlock`` maps.
         """
-        threadblock_maps = self._get_internal_threadblock_maps(state, kernel_map_entry)
+        # Thread-block maps in nested SDFGs too, their ranges in the kernel SDFG's symbols
+        threadblock_maps = [(tb_map, sym_map)
+                            for tb_map, sym_map in gpu_scope_maps_recursive(state.scope_subgraph(kernel_map_entry))
+                            if tb_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
         if not threadblock_maps:
             raise ValueError(f"{self.__class__.__name__} expects at least one explicit nested GPU_ThreadBlock map, "
@@ -93,11 +97,8 @@ class InferGPUGridAndBlockSize(ppl.Pass):
         if block_size is not None:
             block_size = to_3d_dims(list(block_size))
         detected_block_sizes = [block_size] if block_size is not None else []
-        for tb_map in threadblock_maps:
-
-            # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-            tb_size = [symbolic.overapproximate(s) for s in tb_map.range.size()[::-1]]
-            tb_size = to_3d_dims(tb_size)
+        for tb_map, sym_map in threadblock_maps:
+            tb_size = thread_block_extent(tb_map, sym_map)
 
             if block_size is None:
                 block_size = tb_size
@@ -133,14 +134,3 @@ class InferGPUGridAndBlockSize(ppl.Pass):
                               'If this was not the intent, try tiling one of the thread-block maps to match.')
 
         return block_size
-
-    def _get_internal_threadblock_maps(self, state: SDFGState,
-                                       kernel_map_entry: nodes.MapEntry) -> List[nodes.MapEntry]:
-        """Return the ``GPU_ThreadBlock`` ``MapEntry`` nodes nested within ``kernel_map_entry``."""
-        threadblock_maps = []
-
-        for _, scope in helpers.get_internal_scopes(state, kernel_map_entry):
-            if isinstance(scope, nodes.MapEntry) and scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                threadblock_maps.append(scope)
-
-        return threadblock_maps

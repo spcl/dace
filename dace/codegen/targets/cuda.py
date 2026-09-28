@@ -1735,25 +1735,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
 
-    def get_tb_maps_recursive(self, subgraph):
-        res = []
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    tbmaps = self.get_tb_maps_recursive(state)
-                    for map, sym_map in tbmaps:
-                        for k in sym_map.values():
-                            for kk, vv in node.symbol_mapping.items():
-                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
-                        res.append((map, sym_map))
-            elif isinstance(node, nodes.MapEntry) and node.schedule in (
-                    dtypes.ScheduleType.GPU_Device,
-                    dtypes.ScheduleType.GPU_ThreadBlock,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-            ):
-                res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
-        return res
-
     def detected_chiplet_count(self) -> int:
         """
         Returns the number of chiplets of the GPU of this machine, or 1 if it cannot be determined.
@@ -1864,7 +1845,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Obtain thread-block maps from nested SDFGs
         subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        sub_maps = self.get_tb_maps_recursive(subgraph)
+        sub_maps = gpu_scope_maps_recursive(subgraph)
 
         # Introduce extra grid dimensions based on device sub-maps
         extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
@@ -1960,20 +1941,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Find all thread-block maps to determine overall block size
             detected_block_sizes = [block_size] if block_size is not None else []
             for tbmap, sym_map in tb_maps_sym_map:
-                tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
-
-                # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-                # The partial trailing thread-block is emitted as an if-condition
-                # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-                # Linearize (flatten) rest of dimensions to third
-                if len(tbsize) > 3:
-                    tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
-                    del tbsize[3:]
-
-                # Extend to 3 dimensions if necessary
-                tbsize = tbsize + [1] * (3 - len(tbsize))
+                tbsize = thread_block_extent(tbmap, sym_map)
 
                 if len(detected_block_sizes) == 0:
                     block_size = tbsize
@@ -3397,3 +3365,35 @@ def kernel_launch_qualifiers(node: nodes.MapEntry, block_dims) -> Tuple[str, str
     if any(symbolic.issymbolic(b) for b in block_dims):
         return '', ''
     return '', f'__launch_bounds__({_topy(prod(block_dims))}{min_warps})'
+
+
+def gpu_scope_maps_recursive(subgraph) -> List[Tuple[nodes.Map, Dict]]:
+    """``GPU_Device`` and thread-block maps in ``subgraph`` and the nested SDFGs within it, each with the
+    substitution that expresses its range in the outermost SDFG's symbols."""
+    res = []
+    for node in subgraph.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            for state in node.sdfg.states():
+                for map, sym_map in gpu_scope_maps_recursive(state):
+                    for k in sym_map.values():
+                        for kk, vv in node.symbol_mapping.items():
+                            sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
+                    res.append((map, sym_map))
+        elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                dtypes.ScheduleType.GPU_Device,
+                dtypes.ScheduleType.GPU_ThreadBlock,
+                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+        ):
+            res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
+    return res
+
+
+def thread_block_extent(tbmap: nodes.Map, sym_map: Dict) -> List:
+    """A thread-block map's size in three dimensions, overapproximated (``min(N,(i+1)*32)-i*32`` is 32), so a
+    partial trailing block becomes a guard rather than a smaller block."""
+    tbsize = [symbolic.overapproximate(s.subs(list(sym_map.items()))) for s in tbmap.range.size()[::-1]]
+    # Linearize (flatten) rest of dimensions to third
+    if len(tbsize) > 3:
+        tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
+        del tbsize[3:]
+    return tbsize + [1] * (3 - len(tbsize))
