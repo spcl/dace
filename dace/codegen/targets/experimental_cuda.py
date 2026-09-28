@@ -120,7 +120,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
-        self._rebuild_frame_symbol_cache(sdfg)
+        self._frame.resolve_symbols_and_constants(sdfg)
 
         # Stream assignment is persisted per node via ``Node.gpu_stream_id``
         # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
@@ -139,27 +139,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
-
-    def _rebuild_frame_symbol_cache(self, sdfg: SDFG):
-        """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
-
-        Needed whenever ``preprocess`` adds new nested SDFGs -- the cache is keyed
-        by ``cfg_id`` and populated once in the framecode's constructor.
-        """
-        frame = self._frame
-        frame._symbols_and_constants = {}
-        sdfg.reset_cfg_list()
-        frame._symbols_and_constants[sdfg.cfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
-        for nested, state in sdfg.all_nodes_recursive():
-            if isinstance(nested, nodes.NestedSDFG):
-                nsdfg = nested.sdfg
-                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
-                parent_constants = frame._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
-                result |= parent_constants
-                for edge in state.in_edges(nested):
-                    if edge.data.data in parent_constants:
-                        result.add(edge.dst_conn)
-                frame._symbols_and_constants[nsdfg.cfg_id] = result
 
     def compute_pool_release(self, top_sdfg: SDFG):
         """Find the point at which each pooled array should be released (``cudaFreeAsync``).

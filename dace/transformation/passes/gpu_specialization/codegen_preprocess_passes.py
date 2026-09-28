@@ -2,11 +2,10 @@
 """Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
 members so codegen-preprocess ordering is declarative and testable."""
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from dace import SDFG, SDFGState, dtypes, nodes, properties
+from dace import SDFG, Memlet, dtypes, nodes, properties
 from dace.codegen import common
-from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -150,33 +149,6 @@ class ReinferConnectorTypes(ppl.Pass):
 DEVICE_SYNC_TASKLET_LABEL = 'gpu_callback_device_synchronization'
 
 
-def is_host_callback(node: nodes.Node) -> bool:
-    """A ``dace.callback`` invocation: a side-effecting tasklet that is not one of the pipeline's own syncs."""
-    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
-    return (isinstance(node, nodes.Tasklet) and node.side_effects is True and not is_pipeline_sync_tasklet(node)
-            and node.label != DEVICE_SYNC_TASKLET_LABEL)
-
-
-def stream_unaware_gpu_callbacks(sdfg: SDFG) -> List[Tuple[SDFGState, nodes.Tasklet]]:
-    """Host callbacks touching GPU memory without naming the stream, and not fenced yet."""
-    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import STREAM_CONNECTOR
-    found = []
-    for cursdfg in sdfg.all_sdfgs_recursive():
-        for state in cursdfg.states():
-            for node in state.nodes():
-                if not is_host_callback(node) or STREAM_CONNECTOR in node.code.as_string:
-                    continue
-                if is_devicelevel_gpu(cursdfg, state, node):
-                    continue
-                touches_gpu = any(not e.data.is_empty()
-                                  and cursdfg.arrays[e.data.data].storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
-                                  for e in state.all_edges(node))
-                fenced = any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))
-                if touches_gpu and not fenced:
-                    found.append((state, node))
-    return found
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
@@ -194,8 +166,10 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import dependency_edge
-        targets = stream_unaware_gpu_callbacks(sdfg)
+        from dace.codegen.targets.cuda import stream_unaware_gpu_callbacks  # Avoid import loop
+        # A callback fenced by an earlier run is already ordered.
+        targets = [(state, node) for state, node, _ in stream_unaware_gpu_callbacks(sdfg)
+                   if not any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))]
         backend = common.get_gpu_backend()
         for state, node in targets:
             warnings.warn(
@@ -207,6 +181,6 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
                                       language=dtypes.Language.CPP,
                                       side_effects=True)
             for succ in list(state.successors(node)):
-                state.add_edge(fence, None, succ, None, dependency_edge())
-            state.add_edge(node, None, fence, None, dependency_edge())
+                state.add_nedge(fence, succ, Memlet())
+            state.add_nedge(node, fence, Memlet())
         return len(targets) or None

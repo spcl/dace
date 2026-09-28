@@ -3288,9 +3288,9 @@ def _get_const_params(dfg_scope):
     return input_params - (output_params | toplevel_params | dynamic_inputs)
 
 
-def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
-    """Warn about every stream-unaware GPU-touching callback and return the GPU arrays it touches."""
-    seeds: List[Tuple[SDFG, str]] = []
+def stream_unaware_gpu_callbacks(top_sdfg: SDFG) -> List[Tuple[SDFGState, nodes.Tasklet, OrderedSet]]:
+    """Host callbacks that touch ``GPU_Global`` data without naming ``__dace_current_stream``, with that data."""
+    found = []
     for sd in top_sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -3299,14 +3299,21 @@ def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
                 touched = OrderedSet(
                     e.data.data for e in state.all_edges(node)
                     if not e.data.is_empty() and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global)
-                if not touched or '__dace_current_stream' in node.code.as_string:
-                    continue
-                warnings.warn(
-                    f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
-                    'movement is forced onto the default stream. This is only correct if the callback uses '
-                    'the default stream; for any other stream, add a "dace.current_stream" argument to the '
-                    'callback and use it (e.g. cupy ExternalStream).', UserWarning)
-                seeds.extend((sd, name) for name in touched)
+                if touched and '__dace_current_stream' not in node.code.as_string:
+                    found.append((state, node, touched))
+    return found
+
+
+def stream_unaware_gpu_callback_data(top_sdfg: SDFG) -> List[Tuple[SDFG, str]]:
+    """Warn about every stream-unaware GPU-touching callback and return the GPU arrays it touches."""
+    seeds: List[Tuple[SDFG, str]] = []
+    for state, node, touched in stream_unaware_gpu_callbacks(top_sdfg):
+        warnings.warn(
+            f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
+            'movement is forced onto the default stream. This is only correct if the callback uses '
+            'the default stream; for any other stream, add a "dace.current_stream" argument to the '
+            'callback and use it (e.g. cupy ExternalStream).', UserWarning)
+        seeds.extend((state.sdfg, name) for name in touched)
     return seeds
 
 
