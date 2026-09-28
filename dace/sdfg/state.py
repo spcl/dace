@@ -342,6 +342,15 @@ class BlockGraphView(object):
         pass
 
 
+def memlet_path_is_the_edge(edge: MultiConnectorEdge[mm.Memlet], state: 'SDFGState') -> bool:
+    """Whether ``edge`` alone is its memlet path: an empty memlet, or a ``GPU_Device`` map exit handing the
+    kernel's stream to a ``gpuStream_t`` access node (explicit stream handling), which moves no data."""
+    if edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty():
+        return True
+    return (isinstance(edge.src, nd.MapExit) and edge.src.map.schedule == dtypes.ScheduleType.GPU_Device
+            and isinstance(edge.dst, nd.AccessNode) and edge.dst.desc(state).dtype == dtypes.gpuStream_t)
+
+
 @make_properties
 class DataflowGraphView(BlockGraphView, abc.ABC):
 
@@ -409,15 +418,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Obtain the full state (to work with paths that trace beyond a scope)
         state = self._graph
 
-        # If empty memlet, return itself as the path
-        if (edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty()):
-            return result
-
-        # For the explicit (new) gpu stream handling we can have dynamic out connectors, e.g.
-        # KernelExit: stream ->  None: AccessNode, where AccessNode accesses a Stream array
-        # Memlets are used but its not about seing how data flows
-        if (isinstance(edge.src, nd.MapExit) and edge.src.map.schedule == dtypes.ScheduleType.GPU_Device
-                and isinstance(edge.dst, nd.AccessNode) and edge.dst.desc(state).dtype == dtypes.gpuStream_t):
+        # An empty memlet, or a kernel handing its stream on, is a path of its own
+        if memlet_path_is_the_edge(edge, state):
             return result
 
         # Prepend incoming edges until reaching the source node
