@@ -367,6 +367,20 @@ required:
                             performs, so an empty memlet ordering that write has nothing to point
                             at; giving the copy a node is what makes it orderable.
 
+                    implementation:
+                        type: str
+                        default: legacy
+                        title: CPU code generator implementation
+                        description: >
+                            Selects the CPU code generator. ``legacy`` uses the classic
+                            connector-based tasklet codegen (copy-in / compute / copy-out
+                            blocks). ``experimental_readable`` emits human-readable code: one
+                            ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
+                            function per array, connector-free tasklets that access arrays
+                            directly, and ``const``/``constexpr`` initialization for
+                            write-once data. This flag also governs GPU-kernel tasklets,
+                            which are emitted through the shared CPU generator instance.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:

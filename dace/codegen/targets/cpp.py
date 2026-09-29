@@ -340,6 +340,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
+            # A read-only scalar is passed by const REFERENCE (``const T& x``) -- the default binding,
+            # shared with the legacy generator. Forming the reference never copies, and this is the
+            # convention the extended integration branch settles on (const_scalar_abi defaults to
+            # by_ref there); keeping it always-on here means readable and legacy stay identical on
+            # this axis rather than diverging to a by-value copy.
             ref = '&'
         else:
             # constexpr arrays
@@ -351,6 +356,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        # A read-only scalar binds by const reference (the default, shared with legacy -- see above).
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
@@ -936,7 +942,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
+            callsite_stream.write(codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # ``synchronize_streams`` is a legacy-codegen helper.
@@ -995,14 +1001,14 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
+    callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared

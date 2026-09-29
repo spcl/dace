@@ -231,6 +231,37 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
+    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
+    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
+    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.mark_const_init import MarkConstInit
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
+        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+        sdfg.apply_transformations_repeated(InlineSDFG)
+        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+        InlineTaskletConnectors().apply_pass(sdfg, {})
+        # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
+        # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
+        sdfg.validate()
+
+        # The readable ``<arr>_idx`` / ``<arr>_size`` helpers are ``constexpr``; when they are reached
+        # from device code, nvcc needs ``--expt-relaxed-constexpr`` to evaluate a host/device constexpr
+        # in a constant context. Ensure it is on the CUDA flags (idempotent) so a GPU build under the
+        # readable generator compiles without a manual config edit.
+        cuda_args = config.Config.get('compiler', 'cuda', 'args')
+        if '--expt-relaxed-constexpr' not in cuda_args:
+            config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
+
     frame = framecode.DaCeCodeGenerator(sdfg)
 
     # Test for undefined symbols in SDFG arguments
@@ -246,6 +277,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # If another target has already been registered as CPU, use it instead
         if v['name'] == 'cpu':
             default_target = k
+    # The experimental readable CPU generator is opt-in and selected explicitly
+    # (it is not registered with the target registry), so it wins over any 'cpu'
+    # extension picked above.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.codegen.targets import experimental_cpu
+        default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {'cpu': default_target(frame, sdfg)}
 
     disabled_cuda_target = unselected_cuda_target()
