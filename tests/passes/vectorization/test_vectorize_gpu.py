@@ -185,6 +185,23 @@ def test_gpu_half2_compiles(name, prog):
     sdfg.compile()  # raises CompilationError on failure
 
 
+def test_the_device_file_defines_each_index_helper_once():
+    """An allocation inside a kernel is dispatched to the CPU codegen directly; it must still register its
+    index helpers against the device file, or a later nest in the same kernel file defines them again
+    (``function "s_idx" has already been defined``). Checked on the text, so no nvcc is needed."""
+    import collections
+    import re
+    sdfg = _prep(_vsum16)
+    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
+    sdfg.expand_library_nodes()
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        device = [obj.clean_code for obj in sdfg.generate_code() if 'cuda' in obj.target.target_name]
+    assert device, 'no device file was generated'
+    helpers = collections.Counter(re.findall(r'constexpr int64_t (\w+_idx)\(', device[0]))
+    assert helpers, 'no index helper in the device file, so this asserts nothing'
+    assert all(count == 1 for count in helpers.values()), helpers
+
+
 def test_gpu_reduction_uses_gpu_expansion():
     """A top-level fp16 scalar reduction (``out = sum(A)``) is kept as a
     GPU-scheduled map-exit WCR (``... -[CR:+]-> MapExit -[CR:+]-> out``), NOT lifted

@@ -193,13 +193,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             kernel_function_stream = self._globalcode
 
             self._in_device_code = True
+            # Everything the CPU codegen emits for this kernel (allocations included, which it is
+            # dispatched for directly) goes into the device file, so it keys its per-file helpers here.
+            host_calling_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
 
             kernel_scope_generator = KernelScopeGenerator(codegen=self)
-            if kernel_scope_generator.applicable(sdfg, cfg, dfg_scope, state_id, kernel_function_stream, kernel_stream):
+            try:
+                if not kernel_scope_generator.applicable(sdfg, cfg, dfg_scope, state_id, kernel_function_stream,
+                                                         kernel_stream):
+                    raise ValueError("Invalid kernel configuration: This strategy is only applicable if the "
+                                     "outermost GPU schedule is of type GPU_Device (most likely cause).")
                 kernel_scope_generator.generate(sdfg, cfg, dfg_scope, state_id, kernel_function_stream, kernel_stream)
-            else:
-                raise ValueError("Invalid kernel configuration: This strategy is only applicable if the "
-                                 "outermost GPU schedule is of type GPU_Device (most likely cause).")
+            finally:
+                self._cpu_codegen.calling_codegen = host_calling_codegen
 
             self._localcode.write(scope_entry_stream.getvalue())
             self._localcode.write(kernel_stream.getvalue() + '\n')

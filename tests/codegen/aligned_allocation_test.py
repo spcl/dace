@@ -16,7 +16,7 @@ from dace.config import set_temporary
 #: The array extent inside a ``new`` expression. The legacy CPU codegen prints the literal (``[2]``),
 #: the experimental readable one a generated size helper (``[tmp_size()]``). The alignment contract
 #: under test is the same either way, so match both rather than pinning one code generator.
-_EXTENT = r'\[[^\]]+\]'
+ARRAY_EXTENT = r'\[[^\]]+\]'
 
 
 def _heap_transient_sdfg(name: str) -> dace.SDFG:
@@ -34,7 +34,7 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
 
 def test_aligned_allocation_property():
     """Checks if the `.alignment` property is honored."""
-    new_code = r'new\s*\(std::align_val_t\({alignment}\)\)\s*double\s*' + _EXTENT + r'\s*;'
+    new_code = r'new\s*\(std::align_val_t\({alignment}\)\)\s*double\s*' + ARRAY_EXTENT + r'\s*;'
     del_code = r'::operator\s+delete\[\]\(tmp,\s*std::align_val_t\({alignment}\)\)\s*;'
     for alignment in [-1, 0, 64, 128]:
         name_suffix = str(alignment) if alignment >= 0 else f"m{str(abs(alignment))}"
@@ -44,7 +44,7 @@ def test_aligned_allocation_property():
         code = sdfg.generate_code()[0].clean_code
 
         if alignment < 0:
-            assert re.search(r'tmp\s+=\s*new\s+double\s*' + _EXTENT + r'\s*;', code)
+            assert re.search(r'tmp\s+=\s*new\s+double\s*' + ARRAY_EXTENT + r'\s*;', code)
             assert re.search(r'delete\[\]\s+tmp\s*;', code)
 
         elif alignment == 0:
@@ -59,7 +59,7 @@ def test_aligned_allocation_property():
 def test_heap_allocation_aligned_new():
     """Heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg('aligned_new_probe').generate_code()[0].clean_code
-    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*' + _EXTENT, code)
+    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*' + ARRAY_EXTENT, code)
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
     assert 'DACE_ALIGN(64)[' not in code  # the attribute is invalid in a new expression
     assert 'delete[] tmp' not in code  # would pair the unaligned deallocation function
@@ -73,7 +73,7 @@ def test_heap_allocation_plain_new_without_alignment():
     sdfg = _heap_transient_sdfg('plain_new_probe')
     sdfg.arrays['tmp'].alignment = -1
     code = sdfg.generate_code()[0].clean_code
-    assert re.search(r'new\s+double\s*' + _EXTENT, code)
+    assert re.search(r'new\s+double\s*' + ARRAY_EXTENT, code)
     assert 'delete[] tmp' in code
     assert 'align_val_t' not in code
     assert 'DACE_ALIGN(64)[' not in code
@@ -83,7 +83,7 @@ def test_aligned_new_does_not_depend_on_cpp_standard():
     """The emitted form follows the descriptor alone; the standard is assumed recent."""
     with set_temporary('compiler', 'cpp_standard', value='14'):
         code = _heap_transient_sdfg('standard_probe').generate_code()[0].clean_code
-    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*' + _EXTENT, code)
+    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*' + ARRAY_EXTENT, code)
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
 
 

@@ -87,7 +87,9 @@ def test_extended():
 
     sdfg = independent_copies.to_sdfg()
     sdfg.apply_gpu_transformations()
-    gpu_stream_pipeline.apply_pass(sdfg, {})
+    # Two components get two streams only when concurrency is unbounded; the scheduler reads the limit when built.
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
+        GPUStreamPipeline(scheduling_strategy=NaiveGPUStreamScheduler()).apply_pass(sdfg, {})
 
     state = sdfg.states()[0]
 
