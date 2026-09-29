@@ -16,6 +16,7 @@ import shutil
 import shlex
 import subprocess
 import tempfile
+import uuid
 from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 from functools import lru_cache
@@ -150,8 +151,8 @@ def generate_program_folder(
     # Write cachedir tag
     cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
     if not os.path.exists(cachedir_tag):
-        with open(cachedir_tag, "w") as f:
-            f.write("\n".join([
+        _write_file_atomically(
+            cachedir_tag, "\n".join([
                 "Signature: 8a477f597d28d172789f06886806bc55",
                 "# This file is a cache directory tag created by DaCe.",
                 "# For information about cache directory tags, see:",
@@ -160,9 +161,6 @@ def generate_program_folder(
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
-        # NOTE: There is a bug here, as this only saves they keys inside the configuration
-        #   `dict`. It ignores the configuration values set through environment variables.
-        #   instead it will store the ones in the `dict`.
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.
@@ -174,10 +172,18 @@ def generate_program_folder(
         os.makedirs(os.path.join(out_path, 'perf'), exist_ok=True)
 
     # The folder mode file is always generated. In case it is missing we assume the old version.
-    with open(os.path.join(out_path, "FOLDER_MODE"), "w") as version_file:
-        version_file.write(folder_mode)
+    #  Concurrent processes probe it, e.g. through `get_binary_name()`, thus it must never be observed incomplete.
+    _write_file_atomically(os.path.join(out_path, "FOLDER_MODE"), folder_mode)
 
     return out_path
+
+
+def _write_file_atomically(path: str, content: str) -> None:
+    # Not PID based, as the folder may be on a file system shared by hosts with colliding PIDs.
+    staging = f'{path}.{uuid.uuid4().hex}'
+    with open(staging, 'x') as fp:
+        fp.write(content)
+    os.replace(staging, path)
 
 
 #: Untested on Windows.
@@ -654,6 +660,9 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
     if (object_folder / 'FOLDER_MODE').exists():
         with open(object_folder / 'FOLDER_MODE', 'rt') as F:
             folder_mode = F.readline().strip()
+        if probe and folder_mode not in ('development', 'production'):
+            # E.g. an older DaCe version, which does not write the file atomically, might have left it empty.
+            return None
         return folder_mode
     else:
         # This is to check an old style folder, i.e. a cache folder that was generated
