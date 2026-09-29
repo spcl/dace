@@ -3,7 +3,7 @@
 Equivalence + inspection tests for native (C++ / library-node) tasklet connector
 inlining in the experimental (readable) code generator.
 
-Native tasklets (BLAS/cuBLAS gemm, memset, small ternary tasklets) are emitted
+Native tasklets (BLAS/cuBLAS gemm, fill, small ternary tasklets) are emitted
 by ``ExperimentalCPUCodeGen`` with their connectors inlined at codegen time:
 
 * scalar connectors become direct ``<array>_idx(...)`` accesses, and
@@ -19,6 +19,7 @@ call, cuBLAS device call, and the pure/naive nested-tasklet expansion).
 import copy
 import ctypes.util
 import re
+import os
 import shutil
 
 import numpy as np
@@ -28,7 +29,7 @@ import dace
 import dace.libraries.blas as blas
 from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 from dace.config import Config
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
 
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY
@@ -58,7 +59,7 @@ def _join_code(programs):
     return '\n'.join(p.clean_code for p in programs)
 
 
-# -- SDFG builders ------------------------------------------------------------
+# SDFG builders
 
 
 def _build_ternary(name):
@@ -134,16 +135,16 @@ def _build_offset_ptr(name):
     return sdfg
 
 
-def _build_memset(name):
-    """ A ``MemsetLibraryNode`` expanded to a CPP ``memset(...)`` tasklet. """
+def _build_fill(name):
+    """ A ``FillLibraryNode`` expanded to a CPP ``std::fill_n(...)`` tasklet. """
     sdfg = dace.SDFG(name)
     sdfg.add_array('out', [8], dace.float64)
     st = sdfg.add_state('main')
-    node = MemsetLibraryNode('memzero')
+    node = FillLibraryNode('memzero')
     node.implementation = 'CPU'
     st.add_node(node)
     wout = st.add_access('out')
-    st.add_edge(node, MemsetLibraryNode.OUTPUT_CONNECTOR_NAME, wout, None, dace.Memlet('out[0:8]'))
+    st.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, wout, None, dace.Memlet('out[0:8]'))
     sdfg.validate()
     sdfg.expand_library_nodes()
     return sdfg
@@ -220,7 +221,7 @@ def _gemm_equiv(blas_impl, gpu=False):
     return cl
 
 
-# -- tests --------------------------------------------------------------------
+# tests
 
 
 def test_cpp_ternary_scalar_inline():
@@ -313,26 +314,28 @@ def test_offset_pointer_connector_is_parenthesized_before_subscript():
     assert np.array_equal(exp['dst'], np.array([0.0, 4.0, 6.0, 8.0, 10.0]))
 
 
-def test_memset_pointer_connector():
-    # The memset output pointer connector stays a base pointer.
+def test_fill_pointer_connector():
+    # The fill output pointer connector stays a base pointer. The CPU expansion spells the fill
+    # as ``std::fill_n`` (both gcc and clang lower it to a memset when the value allows it).
     _set_impl(EXPERIMENTAL)
-    code = _build_memset('memset_codegen').generate_code()[0].clean_code
-    calls = [l.strip() for l in code.splitlines() if l.strip().startswith('memset(')]
-    assert calls, 'no memset call emitted'
+    code = _build_fill('fill_codegen').generate_code()[0].clean_code
+    calls = [l.strip() for l in code.splitlines() if l.strip().startswith('std::fill_n(')]
+    assert calls, 'no fill call emitted'
     call = calls[0]
-    assert MemsetLibraryNode.OUTPUT_CONNECTOR_NAME not in call, 'pointer connector not inlined: %s' % call
+    assert FillLibraryNode.OUTPUT_CONNECTOR_NAME not in call, 'pointer connector not inlined: %s' % call
     assert '_idx(' not in call, 'pointer connector wrongly turned into single-element index: %s' % call
-    assert re.search(r'memset\(\s*out\b', call), call
+    assert re.search(r'std::fill_n\(\s*out\b', call), call
 
     # Bit-exact legacy vs experimental.
     base = dict(out=np.arange(8, dtype=np.float64) + 1.0)
     _set_impl(LEGACY)
     leg = copy.deepcopy(base)
-    _build_memset('memset_legacy').compile()(**leg)
+    _build_fill('fill_legacy').compile()(**leg)
     _set_impl(EXPERIMENTAL)
     exp = copy.deepcopy(base)
-    _build_memset('memset_experimental').compile()(**exp)
+    _build_fill('fill_experimental').compile()(**exp)
     assert np.array_equal(leg['out'], exp['out'])
+    assert np.array_equal(exp['out'], np.zeros(8))
 
 
 def _defined_index_functions(code):
@@ -427,7 +430,8 @@ def test_gemm_cublas_gpu():
 
     _set_impl(EXPERIMENTAL)
     try:
-        code = _join_code(_build_gemm(EXPERIMENTAL, 'cuBLAS', 'mm_cub_codegen', gpu=True).generate_code())
+        sdfg = _build_gemm(EXPERIMENTAL, 'cuBLAS', 'mm_cub_codegen', gpu=True)
+        code = _join_code(sdfg.generate_code())
     except (CompilationError, CompilerConfigurationError) as e:
         pytest.skip('cuBLAS codegen unavailable: %s' % e)
     match = re.search(r'cublas\w*[Gg]emm\w*\([^;]*\);', code, re.DOTALL)
@@ -436,22 +440,32 @@ def test_gemm_cublas_gpu():
     assert '_idx(' not in call, 'pointer connector wrongly turned into single-element index: %s' % call
     for conn in ('_a', '_b', '_c'):
         assert not re.search(r'\b%s\b' % conn, call), 'connector %s not inlined into base pointer: %s' % (conn, call)
-    assert 'gpu_A' in call and 'gpu_B' in call and 'gpu_C' in call, call
+    # The two offloaders spell a device copy differently -- OffloadToAccelerator names it ``A_gpu``,
+    # the transformation that preceded the offloading named it ``gpu_A`` -- and this assertion is about the connector
+    # being inlined to a base pointer, not about which one ran. Read the names off the SDFG.
+    for operand in ('A', 'B', 'C'):
+        copies = [n for n in sdfg.arrays if n != operand and n.replace('_gpu', '').replace('gpu_', '') == operand]
+        assert copies, f'no device copy of {operand} in {list(sdfg.arrays)}'
+        assert any(re.search(r'\b%s\b' % re.escape(c), call) for c in copies), (operand, copies, call)
 
-    # Compile + run bit-exact (requires a GPU device).
+    # Compile + run bit-exact (requires a GPU device). The driver being installed is not the same
+    # as a device being VISIBLE -- a CPU-only run sets CUDA_VISIBLE_DEVICES empty, and then the
+    # build succeeds and the runtime raises on init instead.
     if shutil.which('nvidia-smi') is None:
         pytest.skip('no GPU device (nvidia-smi missing)')
+    if os.environ.get('CUDA_VISIBLE_DEVICES', None) == '':
+        pytest.skip('no GPU device (CUDA_VISIBLE_DEVICES is empty)')
     try:
         _gemm_equiv('cuBLAS', gpu=True)
-    except (CompilationError, CompilerConfigurationError) as e:
-        pytest.skip('cuBLAS build/link unavailable: %s' % e)
+    except (CompilationError, CompilerConfigurationError, RuntimeError) as e:
+        pytest.skip('cuBLAS build/run unavailable: %s' % e)
 
 
 if __name__ == '__main__':
     test_cpp_ternary_scalar_inline()
     test_cpp_body_declaration_blocks_inlining()
     test_cpp_pointer_and_scalar_unit()
-    test_memset_pointer_connector()
+    test_fill_pointer_connector()
     test_index_functions_defined_in_every_file()
     test_gemm_pure_naive()
     test_gemm_openblas_pointers()

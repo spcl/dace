@@ -38,15 +38,15 @@ def loop_lines(code):
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
 def test_defaults_emit_the_historical_loop(implementation):
-    """The default spelling must be byte-identical to the pre-knob emitter: `for (auto i = ...; i <
-    end + 1; i += ...)`. This is what keeps legacy unaffected."""
+    """The default spelling is the legacy emitter's scope-typed one, `for (int i = ...; i < end + 1; i += ...)`:
+    the counter keeps the type its map parameter has. This is what keeps legacy unaffected."""
     lines = loop_lines(generate(double_it, implementation))
     assert lines, 'no loop emitted'
-    assert any(line.startswith('for (auto ') and ' < ' in line for line in lines)
+    assert any(line.startswith('for (int ') and ' < ' in line for line in lines)
     assert not any('<=' in line or '!=' in line for line in lines)
 
 
-@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'for (auto '), ('int64', 'for (int64_t '),
+@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'for (int '), ('int64', 'for (int64_t '),
                                                        ('int32', 'for (int32_t ')])
 def test_loop_index_type(loop_index_type, expected):
     lines = loop_lines(generate(double_it, loop_index_type=loop_index_type))
@@ -118,14 +118,14 @@ def test_loop_decl_style_hoisted_on_a_sequential_map(implementation):
     code = generate_sdfg(sequential_map_sdfg(), implementation, loop_decl_style='hoisted')
     assert any(line.startswith('for (;') for line in loop_lines(code)), loop_lines(code)
     # The declaration moved ahead of the loop (emitted lines carry trailing ////__DACE debug comments).
-    assert any(stripped.startswith('auto i = 0;')
+    assert any(stripped.startswith('int i = 0;')
                for stripped in (l.strip() for l in code.splitlines())), 'hoisted declaration not emitted'
 
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
 def test_loop_decl_style_for_init_is_the_default(implementation):
     lines = loop_lines(generate_sdfg(sequential_map_sdfg(), implementation))
-    assert any(line.startswith('for (auto i = ') for line in lines), lines
+    assert any(line.startswith('for (int i = ') for line in lines), lines
     assert not any(line.startswith('for (;') for line in lines), lines
 
 
@@ -134,7 +134,7 @@ def test_openmp_map_never_hoists():
     induction variable; hoisting it is rejected outright ("loop nest expected"). So a CPU_Multicore
     map keeps for_init even when the knob asks for hoisted."""
     lines = loop_lines(generate(double_it, loop_decl_style='hoisted'))  # dace.map => CPU_Multicore
-    assert any(line.startswith('for (auto i = ') for line in lines), lines
+    assert any(line.startswith('for (int i = ') for line in lines), lines
     assert not any(line.startswith('for (;') for line in lines), lines
 
 

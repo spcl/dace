@@ -36,6 +36,16 @@ from dace.symbolic import evaluate
 from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
                                              use_implementation)
 
+
+@pytest.fixture(autouse=True)
+def fp_contract_off():
+    """GCC fuses multiply-adds per expression shape, so two equivalent spellings of one kernel can differ in the last
+    ulp under ``-ffast-math``; turning the contraction off keeps the bit-exact comparison about the code generators."""
+    previous = dace.config.Config.get('compiler', 'cpu', 'args')
+    with dace.config.set_temporary('compiler', 'cpu', 'args', value=previous + ' -ffp-contract=off'):
+        yield
+
+
 #: Small square extent bound to every free symbol -- keeps the compile+run fast while
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
 SYMBOL_SIZE = 13
