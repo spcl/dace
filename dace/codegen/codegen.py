@@ -237,7 +237,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
     if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.mark_const_init import MarkConstInit
+        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
         from dace.transformation.interstate.sdfg_nesting import InlineSDFG
@@ -263,11 +263,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization pass and belongs in
         # the caller's pipeline, before WCR memlets exist: by codegen time an accumulator chain has been rewritten to
         # WCR, and fissioning a read-modify-write into a fresh SSA version drops the running value.
-        # ``const_init``: classify write-once-then-read-only transients so they are emitted as
-        # ``constexpr T x[N] = {...}`` / ``const T x = expr;`` instead of a runtime-filled buffer.
-        # Default 'on': this pass ALREADY runs today, so 'on' keeps the output byte-identical; 'off' takes it out.
+        # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
-            Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+            PromoteConstantTransients().apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.

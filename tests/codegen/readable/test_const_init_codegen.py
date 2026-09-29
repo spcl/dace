@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Codegen-integration tests for const / constexpr initialization in the
-experimental (readable) code generator. Verify that write-once data is emitted
-as a ``const``/``constexpr`` initializer and that NO redundant runtime
-initialization (``memset`` / ``new`` / ``= {0}`` allocation) is emitted for it,
-and that results stay bit-exact vs legacy.
+Codegen-integration tests for constexpr initialization in the experimental
+(readable) code generator. Verify that literal-only data is emitted as a
+``constexpr`` initializer with NO redundant runtime initialization (``memset`` /
+``new`` / ``= {0}`` allocation), and that results stay bit-exact vs legacy.
 """
 import re
 
@@ -12,7 +11,7 @@ import numpy as np
 import dace
 from dace.config import set_temporary
 
-#: The constexpr binding a write-once single-value transient gets. The readable pipeline
+#: The constexpr binding a literal-only single-value transient gets. The readable pipeline
 #: normalizes the length-1 transient to a by-value Scalar and binds it as
 #: ``constexpr double s = 3.0;``. Matching keeps these tests pinned on what they are about --
 #: the value is bound at compile time rather than written at runtime.
@@ -89,12 +88,10 @@ def _no_redundant_init(code, name):
 
 
 def test_const_init_flag_off_keeps_the_runtime_write():
-    """``codegen_params.const_init = off`` takes MarkConstInit out of the readable pipeline.
+    """``codegen_params.const_init = off`` takes PromoteConstantTransients out of the readable pipeline.
 
-    Unlike most of this group, the default is ``on``: the pass already runs today, so ``on`` is what
-    reproduces today's output byte-for-byte and ``off`` is the deviation. With it off the write-once
-    scalar stays a mutable buffer written at runtime instead of a ``constexpr`` initializer, and the
-    result must be unchanged either way.
+    With it off the literal-only scalar stays a mutable buffer written at runtime instead of a
+    ``constexpr`` initializer, and the result must be unchanged either way.
     """
     with set_temporary('compiler', 'cpu', 'codegen_params', 'const_init', value='off'):
         sdfg_off, code_off = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_flag_off')
@@ -168,8 +165,8 @@ def test_array_constexpr_partial_zerofill():
 
 
 def _scalar_constant_subscript_sdfg(name):
-    """A 0-d scalar SDFG constant read via a subscript ``C[0]`` in a tasklet body. MarkConstInit
-    promotes a write-once scalar to exactly such a constant (emitted as bare ``constexpr T C = v;``),
+    """A 0-d scalar SDFG constant read via a subscript ``C[0]`` in a tasklet body. PromoteConstantTransients
+    promotes a literal-only scalar to exactly such a constant (emitted as bare ``constexpr T C = v;``),
     so a subscript on it must lower to the bare name -- the classic path trips on the scalar's empty
     stride list (``Missing dimensions in expression (expected one, got 0)``)."""
     from dace import data as dt
@@ -196,17 +193,13 @@ def test_scalar_constant_subscript_lowered_to_bare_name():
 
 
 def const_chain_sdfg(name, n=4, m=3):
-    """A partial-sum chain of write-once scalars, one link of which keeps a connector.
+    """A partial-sum chain of scalars, one link of which keeps a connector.
 
     ``res[j] = ((((0 + X[0, j]) + X[1, j]) + ...))``, each partial sum its own scope-local scalar, as a
     reduction split into per-element tasklets produces. The seed ``p0`` is a compile-time constant, so
-    ``MarkConstInit`` promotes it to an SDFG constant -- and a read of an SDFG constant is exactly what
+    ``PromoteConstantTransients`` promotes it to an SDFG constant -- and a read of an SDFG constant is exactly what
     ``InlineTaskletConnectors`` refuses to inline, so the tasklet consuming it keeps its ``a`` connector
     and is emitted in its own ``{ }`` block while the rest of the chain is brace-free.
-
-    ``p0`` is declared LAST on purpose: ``MarkConstInit`` classifies descriptors in declaration order,
-    so this is the order in which ``p1`` is classified (and its writer predicted brace-free) BEFORE
-    ``p0`` becomes the constant that keeps that writer's connector alive.
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array('X', [n, m], dace.float64)
@@ -267,10 +260,9 @@ def assert_declared_in_readers_scope(code, names):
                                  '\n'.join(lines[decl_lines[0]:max(uses) + 1]))
 
 
-def test_const_binding_stays_in_scope_of_its_readers():
-    """A write-once scalar whose producing tasklet needs its own ``{ }`` block must NOT get its
-    ``const T x = expr;`` binding folded into that block -- the readers live in the enclosing scope.
-    Before the fix this emitted C++ that does not compile ("'p1' was not declared in this scope")."""
+def test_chain_scalar_stays_in_scope_of_its_readers():
+    """A scalar whose producing tasklet needs its own ``{ }`` block must NOT be declared inside that
+    block -- the readers live in the enclosing scope ("'p1' was not declared in this scope")."""
     sdfg, code = _gen(const_chain_sdfg, 'experimental_readable', 'const_chain_exp')
     assert '{  // acc0' in code, 'the connector-keeping link no longer needs its own block; test is vacuous'
     assert_declared_in_readers_scope(code, ['p1', 'p2', 'p3'])
@@ -327,6 +319,6 @@ if __name__ == '__main__':
     test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
     test_scalar_constant_subscript_lowered_to_bare_name()
-    test_const_binding_stays_in_scope_of_its_readers()
+    test_chain_scalar_stays_in_scope_of_its_readers()
     test_constexpr_table_passed_through_two_nested_sdfg_levels()
     print('ok')

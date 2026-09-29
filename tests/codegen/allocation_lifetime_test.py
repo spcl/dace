@@ -605,11 +605,9 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
-
 def add_map_scoped_mutable_scalar(sdfg: dace.SDFG, state: dace.SDFGState) -> None:
     """``B[i] = ((A[i] * 2) + 1) * 3`` computed through a transient scalar ``zqe`` that is written
-    TWICE inside the map, so it stays a mutable scalar (a single write would be marked ``const_init``
-    and take the ``const T x = expr;`` path instead of the deferred-declaration one under test)."""
+    TWICE inside the map, so it stays a mutable scalar."""
     me, mx = state.add_map('m', dict(i='0:16'))
     ra = state.add_read('A')
     tw = state.add_tasklet('w', {'a'}, {'o'}, 'o = a * 2.0')

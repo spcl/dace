@@ -46,12 +46,6 @@ class InlineTaskletConnectors(ppl.Pass):
         classic emits a name nothing declares. So a container is inlined only where every tasklet
         touching it can be, and one tasklet left classic keeps its containers classic everywhere.
 
-        Exposed because :func:`tasklet_emits_brace_free` has to answer the SAME question: a
-        predicate that models only whether one tasklet's connectors are individually inlinable
-        promises an inlining this pass then declines, and its caller
-        (:class:`~dace.transformation.passes.mark_const_init.MarkConstInit`) skips a declaration on
-        the strength of that promise. One rule, computed here, rather than two that can drift.
-
         :param sdfg: the SDFG to plan over.
         :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
                   every toucher of which can be inlined.
@@ -138,8 +132,8 @@ class InlineTaskletConnectors(ppl.Pass):
         # WCR outputs must go through the atomic resolve path.
         if is_output and memlet.wcr is not None:
             return None
-        # A scalar that another pass has promoted to an SDFG constant (e.g. MarkConstInit's
-        # constexpr_static) is emitted inline as that constant; rewriting a read of it to
+        # A scalar that another pass has promoted to an SDFG constant (e.g.
+        # PromoteConstantTransients) is emitted inline as that constant; rewriting a read of it to
         # ``<name>[<idx>]`` would subscript a 0-stride scalar the classic lowering cannot express.
         # Leave it classic -- the connector copy-in reads the constant directly.
         if memlet.data in osdfg.constants:
@@ -252,48 +246,6 @@ def _binds_base_pointer(node: nodes.Tasklet, edge, is_output: bool) -> bool:
         return False
     conntype = node.out_connectors.get(conn) if is_output else node.in_connectors.get(conn)
     return isinstance(conntype, dtypes.pointer)
-
-
-def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet, safe: Optional[Set[str]] = None) -> bool:
-    """True iff ``InlineTaskletConnectors`` will inline EVERY connector of ``tasklet``,
-    so the readable code generator emits it as a single brace-free statement with no
-    copy-in/out local.
-
-    ``MarkConstInit`` uses this to decide whether a fused ``const T x = <expr>;`` binding
-    lands at the enclosing scope (visible to the reads) or is trapped inside the tasklet's
-    ``{ }`` block (a use-before-declaration miscompile).
-
-    Individually inlinable connectors are NOT sufficient, which is what this used to check:
-    :meth:`InlineTaskletConnectors.plan` decides per CONTAINER, so a container one other tasklet
-    cannot inline stays classic everywhere -- including here. Predicting True there promised an
-    inlining the pass declined, ``MarkConstInit`` marked the target ``const_runtime`` on the
-    strength of it, ``allocate_array`` skipped the declaration, and no binding was ever emitted:
-    the name reached the compiler undeclared. Every ``LoopToScan`` seed landed in that shape,
-    because the carrier array it is copied from is also read by tasklets that stay classic.
-
-    :param safe: the container set from :meth:`InlineTaskletConnectors.plan`, computed here when
-                 not supplied. A caller asking about many tasklets should compute it ONCE -- the
-                 plan walks the whole SDFG.
-    """
-    if tasklet.language != dtypes.Language.Python:
-        return False
-    if set(tasklet.in_connectors) & set(tasklet.out_connectors):  # inout -> may stay classic
-        return False
-    # A connector a nested scope rebinds stays classic (see _rewrite_python).
-    if _rebound_names(ast.parse(tasklet.code.as_string)) & (set(tasklet.in_connectors) | set(tasklet.out_connectors)):
-        return False
-    checker = InlineTaskletConnectors()
-    if safe is None:
-        _plans, safe = checker.plan(sdfg)
-    for is_output, edges in ((False, state.in_edges(tasklet)), (True, state.out_edges(tasklet))):
-        for edge in edges:
-            if edge.data.is_empty():
-                continue
-            access = checker._connector_access(sdfg, state, tasklet, edge, is_output=is_output)
-            # ``(conn, data, indices)`` -- the CONTAINER is what the safe set is keyed on.
-            if access is None or access[1] not in safe:
-                return False
-    return True
 
 
 def _rebound_names(tree: ast.AST) -> Set[str]:
