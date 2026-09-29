@@ -428,7 +428,10 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if used_symbols & set(self.params) and any(s not in defined_names for s in node_range.free_symbols):
+        # By name: a memlet and a re-parsed parameter may carry one name at two dtypes.
+        param_names = {str(p) for p in self.params}
+        if (any(str(s) in param_names for s in used_symbols)
+                and any(s not in defined_names for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False

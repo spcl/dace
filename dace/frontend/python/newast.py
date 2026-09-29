@@ -2717,15 +2717,19 @@ class ProgramVisitor(ExtNodeVisitor):
             eoff = -1
             if (step < 0) == True:
                 eoff = 1
-            sym_obj = symbolic.symbol(
-                indices[0],
-                infer_iteration_symbol_type(ranges[0][0], ranges[0][1], ranges[0][2], symbols=self.sdfg.symbols),
-                **assumptions)
+            sym_dtype = infer_iteration_symbol_type(ranges[0][0], ranges[0][1], ranges[0][2], symbols=self.sdfg.symbols)
+            loop_var = indices[0]
+            # A symbol already declared at another dtype gets a fresh name: one name, one dtype.
+            if self.sdfg.symbols.get(loop_var, sym_dtype) != sym_dtype:
+                loop_var = self.sdfg.add_symbol(loop_var, sym_dtype, find_new_name=True)
+            sym_obj = symbolic.symbol(loop_var, sym_dtype, **assumptions)
 
-            if sym_name not in self.sdfg.symbols:
-                sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
-
-            extra_syms = {sym_name: sym_obj}
+            if loop_var != indices[0]:
+                extra_syms = {indices[0]: sym_obj}
+            else:
+                if sym_name not in self.sdfg.symbols:
+                    sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
+                extra_syms = {sym_name: sym_obj}
 
             self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
@@ -2748,13 +2752,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
-            loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
-            incr = {indices[0]: '%s = %s + %s' % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
+            loop_cond_expr = '%s %s %s' % (loop_var, loop_cond, astutils.unparse(ast_ranges[0][1]))
             loop_region = self._add_loop_region(loop_cond_expr,
                                                 label=f'for_{node.lineno}',
-                                                loop_var=indices[0],
-                                                init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
-                                                update_expr=incr[indices[0]],
+                                                loop_var=loop_var,
+                                                init_expr='%s = %s' % (loop_var, astutils.unparse(ast_ranges[0][0])),
+                                                update_expr='%s = %s + %s' %
+                                                (loop_var, loop_var, astutils.unparse(ast_ranges[0][2])),
                                                 inverted=False)
             _, first_subblock, _, _ = self._recursive_visit(node.body,
                                                             loop_region.label,

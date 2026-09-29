@@ -8,6 +8,8 @@ import warnings
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
+import sympy
+
 from dace import dtypes, graphlib as nx, subsets, symbolic
 from dace.dtypes import DebugInfo
 from dace.sdfg.graph import NodeNotFoundError
@@ -498,6 +500,20 @@ def may_end_a_memlet_path(node: 'nd.Node') -> bool:
     return isinstance(node, nd.Tasklet) and not node.in_connectors and not node.out_connectors
 
 
+def mixed_symbol_dtypes(subset: subsets.Subset) -> Optional[str]:
+    """A name ``subset`` carries at two dtypes, described; the two are distinct sympy symbols, so ``N - N``
+    never cancels and bound comparisons silently fail."""
+    seen: Dict[str, dtypes.typeclass] = {}
+    for bound in (b for rng in subset.ndrange() for b in rng):
+        exprs = (bound.expr, bound.approx) if isinstance(bound, symbolic.SymExpr) else (bound, )
+        for sym in (f for e in exprs if isinstance(e, sympy.Basic) for f in e.free_symbols
+                    if isinstance(f, symbolic.symbol)):
+            first = seen.setdefault(sym.name, sym.dtype)
+            if first != sym.dtype:
+                return f'symbol {sym.name} appears with dtypes {first} and {sym.dtype}'
+    return None
+
+
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
@@ -630,6 +646,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                     cfg=cfg)
+
+        if isinstance(node, nd.MapEntry):
+            clash = mixed_symbol_dtypes(node.map.range)
+            if clash is not None:
+                raise InvalidSDFGNodeError(f'Map range: {clash}', sdfg, state_id, nid, cfg=cfg)
 
         if isinstance(node, (nd.EntryNode, nd.ExitNode)):
             for iconn in node.in_connectors:
@@ -837,6 +858,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     eid,
                     cfg=cfg)
             references.add(id(subset))
+            clash = mixed_symbol_dtypes(subset)
+            if clash is not None:
+                raise InvalidSDFGEdgeError(f'Memlet: {clash}', sdfg, state_id, eid, cfg=cfg)
 
         # Edge validation
         try:
