@@ -21,7 +21,7 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 import abc
 import copy
 import inspect
-from dace import serialize
+from dace import serialize, symbolic
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
@@ -720,7 +720,9 @@ class ExpandTransformation(PatternTransformation):
 
     def apply(self, state, sdfg, *args, **kwargs):
         node = state.node(self.subgraph[type(self)._match_node])
-        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        # Expansions build their graphs from strings; parse the parent's symbols at their declared dtypes.
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+            expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
                                               node.in_connectors,
