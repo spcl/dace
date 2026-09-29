@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections.abc
 from collections import OrderedDict
 import copy
 import itertools
@@ -1103,6 +1104,67 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+#: What ``DefinedNames.lookup`` returns for a name that is not defined.
+MISSING = object()
+
+
+class DefinedNames(collections.abc.Mapping):
+    """The names a :class:`ProgramVisitor` can resolve, as a view over its tables.
+
+    A lookup walks the sources in reverse merge order and stops at the first hit, so it never
+    builds the merged dict; :meth:`materialize` builds it for the sites that spread every name.
+    """
+
+    __slots__ = ('pv', )
+
+    def __init__(self, pv: 'ProgramVisitor') -> None:
+        self.pv = pv
+
+    def lookup(self, name: str) -> Any:
+        pv = self.pv
+        arrays = pv.sdfg.arrays
+        value = pv.globals.get(name)
+        if value is not None and preprocessing.mpi4py_is_usable():
+            from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
+            if isinstance(value, MPI.Comm):
+                return value
+        # `get`, not `in`: the NestedDict's `in` also resolves struct members, which the merge does not copy.
+        desc = arrays.get(name)
+        if desc is not None:
+            return desc
+        sdfg_name = pv.variables.get(name)
+        if sdfg_name in pv.sdfg.symbols:
+            return pv.sdfg.symbols[sdfg_name]
+        if '.' in name and name in arrays and name in pv.variables.values():
+            return arrays[name]
+        if sdfg_name in arrays:
+            return arrays[sdfg_name]
+        scope_name = pv.scope_vars.get(name)
+        if scope_name in pv.scope_arrays:
+            return pv.scope_arrays[scope_name]
+        if scope_name in arrays:
+            return arrays[scope_name]
+        return value if isinstance(value, symbolic.symbol) else MISSING
+
+    def __getitem__(self, name: str) -> Any:
+        value = self.lookup(name)
+        if value is MISSING:
+            raise KeyError(name)
+        return value
+
+    def __contains__(self, name: str) -> bool:
+        return self.lookup(name) is not MISSING
+
+    def __iter__(self) -> Iterable[str]:
+        return iter(self.materialize())
+
+    def __len__(self) -> int:
+        return len(self.materialize())
+
+    def materialize(self) -> Dict[str, Any]:
+        return self.pv.defined_dict()
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1366,7 +1428,11 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
+    def defined(self) -> DefinedNames:
+        return DefinedNames(self)
+
+    def defined_dict(self) -> Dict[str, Any]:
+        """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
         result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
@@ -1380,11 +1446,6 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
@@ -1660,10 +1721,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) in (1, 3):
-                    bounds = values[:1]
-                elif len(values) == 2:
-                    bounds = values
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "

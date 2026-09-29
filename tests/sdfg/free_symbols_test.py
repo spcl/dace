@@ -197,6 +197,18 @@ def test_array_used_only_in_a_guard_keeps_its_stride_symbol():
     assert 'S' in sdfg.init_signature()
 
 
+def test_descriptor_free_symbols_follow_a_reassigned_extent():
+    stream = dace.data.Stream(dace.float64, buffer_size=N, transient=True)
+    assert stream.free_symbols == {N}
+    stream.buffer_size = M
+    assert stream.free_symbols == {M}
+
+    array = dace.data.Array(dace.float64, [N])
+    assert array.free_symbols == {N}
+    array.set_shape([K])
+    assert array.free_symbols == {K}
+
+
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
@@ -207,3 +219,4 @@ if __name__ == '__main__':
     test_unused_array_does_not_leak_shape_symbol()
     test_used_array_keeps_symbolic_extent()
     test_array_used_only_in_a_guard_keeps_its_stride_symbol()
+    test_descriptor_free_symbols_follow_a_reassigned_extent()
