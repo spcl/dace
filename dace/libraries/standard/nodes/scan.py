@@ -43,7 +43,7 @@ op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
 
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy
 
@@ -1169,6 +1169,25 @@ def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
 BLOCK_COLLECTIVE_THREADS = 256
 
 
+def block_refusal(node: "Scan") -> Optional[str]:
+    """Why :class:`ExpandCUDABlock` cannot lower ``node``, or ``None`` if it can.
+
+    The affine, multi-chain, exclusive and explicit-init shapes have another lowering rather than an
+    approximation here; ``min``/``max`` have no universal identity for the out-of-range lanes to read.
+    """
+    if node.op is ScanOp.AFFINE:
+        return "op=AFFINE is not supported."
+    if node.chains != 1:
+        return "multi-chain scans are not supported."
+    if node.exclusive:
+        return "exclusive scans are not supported."
+    if _has_init(node):
+        return "an explicit ``_scan_init`` is not supported."
+    if _OP_TO_IDENTITY_CPP[node.op] is None:
+        return f"op {node.op.value!r} has no identity to pad the final partial chunk with."
+    return None
+
+
 @library.expansion
 class ExpandCUDABlock(ExpandTransformation):
     """One thread BLOCK scans the whole range: ``gpucub::BlockScan`` fed by a block-strided loop.
@@ -1202,14 +1221,9 @@ class ExpandCUDABlock(ExpandTransformation):
             from dace.libraries.sort.environments.cub import BlockCollectives
             ExpandCUDABlock.environments = [BlockCollectives]
         in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
-        if node.op is ScanOp.AFFINE:
-            raise NotImplementedError("Scan(CUDA (block)): op=AFFINE is not supported.")
-        if node.chains != 1:
-            raise NotImplementedError("Scan(CUDA (block)): multi-chain scans are not supported.")
-        if node.exclusive:
-            raise NotImplementedError("Scan(CUDA (block)): exclusive scans are not supported.")
-        if _has_init(node):
-            raise NotImplementedError("Scan(CUDA (block)): an explicit ``_scan_init`` is not supported.")
+        reason = block_refusal(node)
+        if reason is not None:
+            raise NotImplementedError(f"Scan(CUDA (block)): {reason}")
         # The collective accumulates in ONE type, the array's; a widening scan would accumulate at
         # the input's width and lose the range the wider output was asked for.
         refuse_widening(node, in_desc, out_desc, 'the CUDA (block) expansion')
@@ -1219,11 +1233,6 @@ class ExpandCUDABlock(ExpandTransformation):
         ctype = out_desc.dtype.base_type.ctype
         op_functor = f'::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>'
         identity = _OP_TO_IDENTITY_CPP[node.op]
-        if identity is None:
-            # min/max have no universal identity, so the out-of-range lanes have nothing safe to
-            # read. Refusing sends the node to ``pure``, which is slow rather than wrong.
-            raise NotImplementedError(f"Scan(CUDA (block)): op {node.op.value!r} has no identity to pad "
-                                      "the final partial chunk with.")
 
         n_sym = in_edge.data.subset.num_elements()
         nsdfg = dace.SDFG(node.label + '_block')

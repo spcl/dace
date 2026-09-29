@@ -8,6 +8,7 @@
 from typing import Optional
 
 from dace import SDFG
+from dace.sdfg import nodes
 from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
@@ -22,14 +23,26 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     :returns: The same ``sdfg`` instance.
     """
     from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
+    from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels
     from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
+    from dace.transformation.passes.gpu_specialization.promote_host_maps_to_kernels import PromoteHostMapsToKernels
     from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
         SequentializeNestedDeviceScopes)
     # A loop around a single-iteration kernel launches it once per trip; running the loop inside is one launch.
     MoveLoopIntoMapGated(target='gpu', single_iteration_only=True).apply_pass(sdfg, {})
+    # A ``specialize`` node (MatMul) becomes the node it stands for during implementation selection;
+    # becoming it here lets the promotion below see what will actually run.
+    for node, state in list(sdfg.all_nodes_recursive()):
+        if isinstance(node, nodes.LibraryNode) and (node.implementation or node.default_implementation) == 'specialize':
+            node.expand(state)
+    # A host map that only launches device work is the kernel; everything below resolves its nesting.
+    PromoteHostMapsToKernels().apply_pass(sdfg, {})
     # For ``map JK { work; map JL }``, ContiguousAxisToThreads makes JL a thread dimension. It runs first
     # because SequentializeNestedDeviceScopes would otherwise pin JL sequential.
     ContiguousAxisToThreads().apply_pass(sdfg, {})
+    # What stays nested gets a block per outer iteration and its inner maps across the lanes, where
+    # running the body once per lane is sound; the rest is pinned sequential below.
+    BlockTileKernels().apply_pass(sdfg, {})
     SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     return sdfg
 

@@ -12,6 +12,8 @@ produces an element (``_in[i*s]`` against ``_x[i*sx] * _y[i*sy]``). Duplicating 
 loop, the shared-memory declaration and the broadcast is how two copies drift apart on the barrier
 placement, which is the part that goes silently wrong rather than loudly broken.
 """
+from typing import Optional
+
 from dace import dtypes
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
@@ -39,19 +41,36 @@ def block_reduce_code(idstr: str, ctype: str, lanes: int, count_expr: str, eleme
     # ``redop`` is called UNPARENTHESISED. Wrapping it, as ``(redop)(a, b)``, is read as a C-style
     # cast of the comma expression ``(a, b)`` to the function type ``redop``, and the fold never
     # compiles -- which is what kept every ``CUDA (block strided)`` reduce off the device.
+    fold = block_allreduce_code(idstr, ctype, lanes, f'__bracc_{idstr}', redop, out_expr)
     return f'''{{
-    typedef gpucub::BlockReduce<{ctype}, {lanes}> BlockReduceT_{idstr};
-    __shared__ typename BlockReduceT_{idstr}::TempStorage tmp_{idstr};
-    __shared__ {ctype} bcast_{idstr};
     const long __brn_{idstr} = (long)({count_expr});
     {ctype} __bracc_{idstr} = {identity};
     for (long __bri = (long)threadIdx.x; __bri < __brn_{idstr}; __bri += {lanes}) {{
         __bracc_{idstr} = {redop}(__bracc_{idstr}, ({element_expr}));
     }}
-    {ctype} __brtot_{idstr} = BlockReduceT_{idstr}(tmp_{idstr}).Reduce(__bracc_{idstr}, {redop});
-    // BlockReduce leaves the total on thread 0 ONLY. Everything downstream in this block reads the
-    // result, so it is broadcast through shared memory; the barrier after the store is what makes
-    // it visible, and the one before it keeps a second collective from reusing ``tmp`` unfenced.
+{fold}
+}}'''
+
+
+def block_allreduce_code(idstr: str, ctype: str, lanes: int, value_expr: str, redop: str, out_expr: str) -> str:
+    """C++ that folds every thread's ``value_expr`` across the block and hands EVERY thread the total.
+
+    ``gpucub::BlockReduce`` leaves the total on thread 0 only, so it is broadcast through shared
+    memory: the barrier after the store makes it visible, and the one after the read keeps a second
+    collective from reusing the temporary storage unfenced. Every thread must reach this code.
+
+    :param idstr: Unique suffix for the emitted type and shared-storage names.
+    :param ctype: The value's C type.
+    :param lanes: Threads in the block; must match the enclosing thread-block map.
+    :param value_expr: This thread's partial.
+    :param redop: A CUB-compatible binary functor EXPRESSION, called unparenthesised.
+    :param out_expr: The C++ lvalue every thread receives the total in.
+    """
+    return f'''{{
+    typedef gpucub::BlockReduce<{ctype}, {lanes}> BlockReduceT_{idstr};
+    __shared__ typename BlockReduceT_{idstr}::TempStorage tmp_{idstr};
+    __shared__ {ctype} bcast_{idstr};
+    {ctype} __brtot_{idstr} = BlockReduceT_{idstr}(tmp_{idstr}).Reduce(({value_expr}), {redop});
     if (threadIdx.x == 0) bcast_{idstr} = __brtot_{idstr};
     __syncthreads();
     {out_expr} = bcast_{idstr};
@@ -85,12 +104,22 @@ def add_block_lane_map(state, label: str, lanes: int = BLOCK_COLLECTIVE_THREADS)
 GPU_BLOCK_IMPLEMENTATIONS = ('CUDA (block strided)', 'CUDA (block)')
 
 
-def gpu_block_implementation(node) -> str:
-    """The block lowering ``node`` registers, or ``None`` when it has none.
+def gpu_block_implementation(node, state=None, sdfg=None) -> Optional[str]:
+    """The block lowering ``node`` registers and can take, or ``None`` when it has none.
 
     ``Reduce`` registers both keys and they are NOT interchangeable: ``'CUDA (block)'`` is the
     one-element-per-thread form (register in, register out, ``M == B``), which the in-kernel shape
-    does not satisfy. Most specific first is what picks the general one.
+    does not satisfy. Most specific first is what picks the general one. Given the node's ``state``
+    and ``sdfg``, a lowering that would refuse the node's shape is not offered.
     """
+    from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
+    from dace.libraries.standard.nodes.scan import Scan, block_refusal
     impls = type(node).implementations
-    return next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
+    block = next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
+    if block is None or state is None:
+        return block
+    if isinstance(node, Reduce) and block_strided_refusal(node, state, sdfg) is not None:
+        return None
+    if isinstance(node, Scan) and block_refusal(node) is not None:
+        return None
+    return block

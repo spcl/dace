@@ -1,11 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
 from dace.sdfg.graph import SubgraphView
 from dace import properties, nodes, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
 from dace.transformation import transformation as xf, helpers as xfh
 from dace.sdfg import utils as sdutil
+from dace.libraries.standard.block_reduce import block_allreduce_code
+
+
+def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:
+    """``identity`` as a C++ literal of ``dtype``; integers stay integers (a 64-bit extreme through
+    ``float`` rounds out of range)."""
+    if np.issubdtype(dtype.type, np.integer):
+        return f'{dtype.ctype}({int(identity)})'
+    return f'{dtype.ctype}({float(identity)!r})'
 
 
 @properties.make_properties
@@ -116,18 +127,23 @@ class WarpTiling(xf.SingleStateTransformation):
                         raise NotImplementedError
                     credtype = ('dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:])
 
-                    # One element: tasklet
+                    # One element: each lane folds its strided share into a private partial that
+                    # starts at the op's IDENTITY (starting it at the accumulator's value would count
+                    # that value once per lane), then every lane folds the lanes' total into its copy.
                     if out_edge.data.subset.num_elements() == 1:
-                        # Add local access between thread-local and warp reduction
+                        acc_desc = nsdfg.arrays[out_edge.data.data]
+                        identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
+                        if identity is None:
+                            continue
                         name = nsdfg._find_new_name(out_edge.data.data)
-                        nsdfg.add_scalar(name, nsdfg.arrays[out_edge.data.data].dtype, transient=True)
+                        nsdfg.add_scalar(name, acc_desc.dtype, transient=True)
 
-                        # Initialize thread-local to global value
-                        read = nstate.add_read(out_edge.data.data)
                         write = nstate.add_write(name)
-                        edge = nstate.add_nedge(read, write, copy.deepcopy(out_edge.data))
-                        edge.data.wcr = None
-                        xfh.state_fission(SubgraphView(nstate, [read, write]))
+                        seed = nstate.add_tasklet('lane_partial_seed', {}, {'__out'},
+                                                  f'__out = {lane_identity_literal(acc_desc.dtype, identity)};',
+                                                  dtypes.Language.CPP)
+                        nstate.add_edge(seed, '__out', write, None, Memlet(name))
+                        xfh.state_fission(SubgraphView(nstate, [seed, write]))
 
                         newnode = nstate.add_access(name)
                         nstate.remove_edge(out_edge)
@@ -137,10 +153,19 @@ class WarpTiling(xf.SingleStateTransformation):
                             e.data.data = name
                             e.data.subset = subsets.Range([(0, 0, 1)])
 
-                        wrt = nstate.add_tasklet('warpreduce', {'__a'}, {'__out'},
-                                                 f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
-                                                 dtypes.Language.CPP)
+                        functor = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
+                        if self.warp_size == 32:
+                            code = f'__out = {functor}(__acc, dace::warpReduce<{credtype}, {ctype}>::reduce(__a));'
+                        else:
+                            total = f'__lanes_{name}'
+                            code = (f'{ctype} {total};\n' +
+                                    block_allreduce_code(name, ctype, self.warp_size, '__a', functor, total) +
+                                    f'\n__out = {functor}(__acc, {total});')
+                        wrt = nstate.add_tasklet('lanereduce', {'__a', '__acc'}, {'__out'}, code, dtypes.Language.CPP)
                         nstate.add_edge(newnode, None, wrt, '__a', Memlet(name))
+                        acc_memlet = copy.deepcopy(out_edge.data)
+                        acc_memlet.wcr = None
+                        nstate.add_edge(nstate.add_read(out_edge.data.data), None, wrt, '__acc', acc_memlet)
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None, out_edge.data)
                     else:  # More than one element: mapped tasklet

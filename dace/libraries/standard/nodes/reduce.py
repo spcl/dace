@@ -2,6 +2,7 @@
 """ File defining the reduction library node. """
 
 import ast
+from typing import Optional
 from copy import deepcopy as dcpy
 import dace
 import functools
@@ -1026,6 +1027,29 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         return tnode
 
 
+def block_strided_refusal(node: 'Reduce', state: SDFGState, sdfg: SDFG) -> Optional[str]:
+    """Why :class:`ExpandReduceCUDABlockStrided` cannot lower ``node``, or ``None`` if it can.
+
+    The reduced region must be ONE run for a strided walk to cover it exactly (``squeeze`` drops the
+    axes the subset pins to a point, and one axis must remain), the output one element, and the op a
+    built-in with an identity to pad the final partial chunk with.
+    """
+    redtype = detect_reduction_type(node.wcr)
+    if redtype == dtypes.ReductionType.Custom:
+        return 'a Custom WCR is not supported.'
+    if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
+        return f'{redtype} is not supported.'
+    if state.out_edges(node)[0].data.subset.num_elements() != 1:
+        return 'only a full reduction to a scalar.'
+    kept = dcpy(state.in_edges(node)[0].data.subset).squeeze()
+    if len(kept) != 1:
+        return f'the reduced region is not a single 1-D run (kept axes: {kept}).'
+    dtype = sdfg.arrays[state.out_edges(node)[0].data.data].dtype.base_type
+    if node.identity is None and dtypes.reduction_identity(dtype, redtype) is None:
+        return f'{redtype} has no identity to pad the final partial chunk with.'
+    return None
+
+
 @dace.library.expansion
 class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
     """Reduce ``M`` elements with the ``B`` threads of ONE block: block-strided loop into CUB.
@@ -1054,40 +1078,21 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
                                                           block_reduce_code)
 
         node.validate(sdfg, state)
+        reason = block_strided_refusal(node, state, sdfg)
+        if reason is not None:
+            raise NotImplementedError(f'Reduce(CUDA (block strided)): {reason}')
         in_edge = state.in_edges(node)[0]
         out_edge = state.out_edges(node)[0]
         in_desc = sdfg.arrays[in_edge.data.data]
         out_desc = sdfg.arrays[out_edge.data.data]
-
         redtype = detect_reduction_type(node.wcr)
-        if redtype == dtypes.ReductionType.Custom:
-            raise NotImplementedError('Reduce(CUDA (block strided)): a Custom WCR is not supported.')
-        if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
-            raise NotImplementedError(f'Reduce(CUDA (block strided)): {redtype} is not supported.')
-        if out_edge.data.subset.num_elements() != 1:
-            raise NotImplementedError('Reduce(CUDA (block strided)): only a full reduction to a scalar.')
-
-        # The reduced region has to be ONE run for a strided walk to cover it exactly. ``squeeze``
-        # drops the axes the subset already pinned to a point, and what is left must be a single
-        # axis -- anything else would need a nested walk this emitter does not do.
         insubset = dcpy(in_edge.data.subset)
         kept = insubset.squeeze()
-        if len(kept) != 1:
-            raise NotImplementedError('Reduce(CUDA (block strided)): the reduced region is not a single '
-                                      f'1-D run (kept axes: {kept}).')
         count = insubset.num_elements()
         stride = in_desc.strides[kept[0]]
-
         dtype = out_desc.dtype.base_type
         ctype = dtype.ctype
-        identity = node.identity
-        if identity is None:
-            # A Reduce built from a WCR carries no identity of its own; the op's is well known and
-            # is what the out-of-range lanes must fold.
-            identity = dtypes.reduction_identity(dtype, redtype)
-        if identity is None:
-            raise NotImplementedError(f'Reduce(CUDA (block strided)): {redtype} has no identity to pad the '
-                                      'final partial chunk with.')
+        identity = node.identity if node.identity is not None else dtypes.reduction_identity(dtype, redtype)
         credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
         redop = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
 

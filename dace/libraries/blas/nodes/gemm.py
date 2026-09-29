@@ -13,6 +13,7 @@ from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts, _matrix_operand,
                                               _matrix_subset_size)
 from .. import environments
+from dace.libraries.standard.environments.cuda import CUDA
 import numpy as np
 import warnings
 
@@ -347,6 +348,91 @@ class ExpandGemmPure(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
+
+
+@dace.library.expansion
+class ExpandGemmCUDABlock(ExpandTransformation):
+    """In-kernel GEMM by ONE thread block: each element of C is one ``gpucub::BlockReduce`` over K.
+
+    CUB has no GEMM, and the device-wide vendor call cannot be issued from inside a kernel, so the
+    block walks C and folds each dot product along K with the collective the in-kernel ``Reduce``
+    and ``Dot`` use (:func:`block_reduce_code`). A broadcast C or a runtime coefficient takes the
+    ``pure`` expansion instead: slower, never wrong.
+    """
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import global_code_id
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+                                                          block_reduce_code)
+        adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
+        desc_a, shape_a, strides_a = _matrix_operand(adata)[1:]
+        desc_b, shape_b, strides_b = _matrix_operand(bdata)[1:]
+        desc_c, shape_c, strides_c = _matrix_operand(cdata)[1:]
+        op_a = list(reversed(shape_a)) if node.transA else list(shape_a)
+        op_b = list(reversed(shape_b)) if node.transB else list(shape_b)
+        runtime_coefficients = _coeff_conn_descs(node, parent_state, parent_sdfg)
+        if (len(op_a) != 2 or len(op_b) != 2 or len(shape_c) != 2 or runtime_coefficients
+                or equal(op_a[0], shape_c[0]) is not True or equal(op_b[1], shape_c[1]) is not True):
+            return ExpandGemmPure.expansion(node, parent_state, parent_sdfg)
+        M, K, N = op_a[0], op_a[1], op_b[1]
+        ctype = desc_c.dtype.base_type.ctype
+
+        def element(strides, row: str, col: str, transposed: bool) -> str:
+            first, second = (col, row) if transposed else (row, col)
+            return f'{first} * ({symstr(strides[0])}) + {second} * ({symstr(strides[1])})'
+
+        a_at = element(strides_a, '__gi', '__bri', node.transA)
+        b_at = element(strides_b, '__bri', '__gj', node.transB)
+        c_at = element(strides_c, '__gi', '__gj', False)
+        result = '__gacc' if equal_valued(1, node.alpha) else f'{_cast_to_dtype_str(node.alpha, desc_c.dtype)} * __gacc'
+        if not equal_valued(0, node.beta):
+            scale = '' if equal_valued(1, node.beta) else f'{_cast_to_dtype_str(node.beta, desc_c.dtype)} * '
+            result = f'{result} + {scale}__c[{c_at}]'
+        fold = block_reduce_code(idstr=global_code_id(parent_sdfg, parent_state, node),
+                                 ctype=ctype,
+                                 lanes=BLOCK_COLLECTIVE_THREADS,
+                                 count_expr=symstr(K),
+                                 element_expr=f'__a[{a_at}] * __b[{b_at}]',
+                                 redop=f'dace::_wcr_fixed<dace::ReductionType::Sum, {ctype}>()',
+                                 identity=f'static_cast<{ctype}>(0)',
+                                 out_expr='__gacc')
+        code = (f'{ctype} __gacc;\n'
+                f'for (long __gi = 0; __gi < (long)({symstr(M)}); ++__gi) {{\n'
+                f'    for (long __gj = 0; __gj < (long)({symstr(N)}); ++__gj) {{\n'
+                f'{fold}\n'
+                f'        if (threadIdx.x == 0) __c[{c_at}] = {result};\n'
+                f'    }}\n'
+                f'}}\n'
+                f'__syncthreads();')
+
+        sdfg = dace.SDFG(node.label + "_block")
+        sdfg.add_array("_a", shape_a, desc_a.dtype, strides=strides_a, storage=desc_a.storage)
+        sdfg.add_array("_b", shape_b, desc_b.dtype, strides=strides_b, storage=desc_b.storage)
+        sdfg.add_array("_c", shape_c, desc_c.dtype, strides=strides_c, storage=desc_c.storage)
+        state = sdfg.add_state(node.label + "_block_state")
+        tasklet = state.add_tasklet(node.label + "_block_gemm", {
+            '__a': dace.pointer(desc_a.dtype.base_type),
+            '__b': dace.pointer(desc_b.dtype.base_type)
+        }, {'__c': dace.pointer(desc_c.dtype.base_type)},
+                                    code,
+                                    language=dace.Language.CPP)
+        entry, exit_node = add_block_lane_map(state, node.label + '_block_lanes')
+        for conn, name in (('__a', '_a'), ('__b', '_b')):
+            state.add_memlet_path(state.add_read(name),
+                                  entry,
+                                  tasklet,
+                                  dst_conn=conn,
+                                  memlet=dace.Memlet.from_array(name, sdfg.arrays[name]))
+        state.add_memlet_path(tasklet,
+                              exit_node,
+                              state.add_write('_c'),
+                              src_conn='__c',
+                              memlet=dace.Memlet.from_array('_c', sdfg.arrays['_c']))
+        return sdfg
 
 
 @dace.library.expansion
@@ -826,6 +912,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,
+        "CUDA (block strided)": ExpandGemmCUDABlock,
         "rocBLAS": ExpandGemmRocBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }

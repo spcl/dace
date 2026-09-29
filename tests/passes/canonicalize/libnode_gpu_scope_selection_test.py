@@ -77,11 +77,14 @@ def test_a_sequential_node_at_a_host_level_calls_the_device_library():
     assert node.implementation != 'pure', 'a host-level node kept the in-kernel lowering'
 
 
-def test_a_sequential_node_inside_a_kernel_keeps_the_pure_expansion():
-    """A device call cannot be issued from inside a kernel, so this one must stay ``pure``."""
+def test_a_sequential_node_inside_a_kernel_takes_its_block_collective():
+    """A device call cannot be issued from inside a kernel; the block collective is device code, and the
+    kernel it sits in runs one block per row, so its declared block size is released."""
     sdfg, node = in_kernel_sequential_reduce()
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
-    assert node.implementation == 'pure', node.implementation
+    assert node.implementation == 'CUDA (block strided)', node.implementation
+    kernel = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    assert kernel.map.gpu_block_size is None
 
 
 def vendor_blas() -> str:

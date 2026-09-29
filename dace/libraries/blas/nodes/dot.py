@@ -9,6 +9,7 @@ from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 
 
@@ -67,6 +68,65 @@ class ExpandDotPure(ExpandTransformation):
                                  external_edges=True,
                                  output_nodes=None)
 
+        return sdfg
+
+
+@dace.library.expansion
+class ExpandDotCUDABlock(ExpandTransformation):
+    """In-kernel DOT by ONE thread block: a block-strided multiply folded by ``gpucub::BlockReduce``.
+
+    The same collective the in-kernel ``Reduce`` lowers to (:func:`block_reduce_code`), with the product
+    as the element. Every lane reads the whole run; the lane map only supplies the threads.
+    """
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        from dace.codegen.common import global_code_id
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+                                                          block_reduce_code)
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
+        if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n=n, **kwargs)
+        n = n or node.n or sz
+        ctype = desc_res.dtype.base_type.ctype
+        x_element = f'__x[__bri * ({symbolic.symstr(stride_x)})]'
+        if node.conjugate and desc_x.dtype.is_complex():
+            x_element = f'dace::math::conj({x_element})'
+        code = block_reduce_code(idstr=global_code_id(parent_sdfg, parent_state, node),
+                                 ctype=ctype,
+                                 lanes=BLOCK_COLLECTIVE_THREADS,
+                                 count_expr=symbolic.symstr(n),
+                                 element_expr=f'{x_element} * __y[__bri * ({symbolic.symstr(stride_y)})]',
+                                 redop=f'dace::_wcr_fixed<dace::ReductionType::Sum, {ctype}>()',
+                                 identity=f'static_cast<{ctype}>(0)',
+                                 out_expr='__res[0]')
+
+        sdfg = dace.SDFG(node.label + "_block")
+        sdfg.add_array("_x", [n], desc_x.dtype, strides=[stride_x], storage=desc_x.storage)
+        sdfg.add_array("_y", [n], desc_y.dtype, strides=[stride_y], storage=desc_y.storage)
+        sdfg.add_array("_result", [1], desc_res.dtype, storage=desc_res.storage)
+        state = sdfg.add_state(node.label + "_block_state")
+        tasklet = state.add_tasklet(node.label + "_block_dot", {
+            '__x': dace.pointer(desc_x.dtype.base_type),
+            '__y': dace.pointer(desc_y.dtype.base_type)
+        }, {'__res': dace.pointer(desc_res.dtype.base_type)},
+                                    code,
+                                    language=dace.Language.CPP)
+        entry, exit_node = add_block_lane_map(state, node.label + '_block_lanes')
+        for conn, name in (('__x', '_x'), ('__y', '_y')):
+            state.add_memlet_path(state.add_read(name),
+                                  entry,
+                                  tasklet,
+                                  dst_conn=conn,
+                                  memlet=dace.Memlet.from_array(name, sdfg.arrays[name]))
+        state.add_memlet_path(tasklet,
+                              exit_node,
+                              state.add_write('_result'),
+                              src_conn='__res',
+                              memlet=dace.Memlet('_result[0]'))
         return sdfg
 
 
@@ -219,6 +279,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "CUDA (block strided)": ExpandDotCUDABlock,
         "rocBLAS": ExpandDotRocBLAS,
     }
     default_implementation = None

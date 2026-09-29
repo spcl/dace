@@ -38,6 +38,7 @@ from dace.transformation.passes.canonicalize.shrink_map_local_transients import 
 from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
+from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
@@ -138,6 +139,15 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     return prio
 
 
+def release_kernel_block_size(node: nodes.Node, state: SDFGState, sdfg: SDFG) -> None:
+    """Clear the declared block size of the kernel enclosing ``node``: a thread-block level inside it
+    (a block collective's lane map, or a thread-block map) sizes the block, and two sizes conflict."""
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+    for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+            scope.map.gpu_block_size = None
+
+
 def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
 
@@ -184,6 +194,15 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # forbids. Pinning it single-core keeps the whole expanded subtree serial.
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
+
+        # Inside a kernel a node that can run as a BLOCK collective does (``Reduce``, ``Dot``, ``Gemm``,
+        # ``Scan``): the kernel gets one block per outer iteration, not a per-thread serial loop.
+        if device == dtypes.DeviceType.GPU and libnode_is_device_code(node, state, sdfg):
+            block = gpu_block_implementation(node, state, state.sdfg)
+            if block is not None:
+                node.implementation = block
+                release_kernel_block_size(node, state, sdfg)
+                continue
 
         # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
         if isinstance(node, Gemm) and not blas_addresses(node, state):
