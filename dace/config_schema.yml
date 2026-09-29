@@ -465,6 +465,17 @@ required:
                             only on its tasks (potential load imbalance).
                         default: true
 
+                    max_static_shared_memory:
+                        type: int
+                        default: 0
+                        title: Maximum static shared memory per thread-block
+                        description: >
+                            The number of bytes of shared memory a thread-block may declare statically. Shared
+                            memory whose placement is left to the code generator (``StorageType.GPU_Shared``) stays
+                            static while it fits, and is moved to dynamic shared memory otherwise; dynamic shared
+                            memory beyond this size is requested from the device at kernel launch. If 0, the
+                            limit of the GPU backend is used (48 KiB on CUDA, 64 KiB on HIP).
+
                     persistent_map_SM_fraction:
                         type: float
                         title: Fraction of SMs to use for persistent GPU map

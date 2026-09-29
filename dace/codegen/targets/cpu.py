@@ -350,7 +350,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
@@ -431,7 +431,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -613,7 +613,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
@@ -1998,6 +1998,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result.write(map_header, cfg, state_id, node)
 
+        # Declare each map parameter with its inferred type rather than ``auto``, which would take the type of
+        # the range start alone (e.g., ``int`` for a literal ``0`` even when the end is a 64-bit symbol)
+        param_types = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node))
+
+        def param_ctype(param: str) -> str:
+            dtype = param_types.get(param)
+            return dtype.ctype if dtype is not None else 'auto'
+
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write('{\n', cfg, state_id, node)
 
@@ -2015,7 +2023,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
-                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                result.write(f'{param_ctype(node.map.params[0])} {node.map.params[0]} = omp_get_thread_num();', cfg,
+                             state_id, node)
             if ntid_is_used:
                 result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
         else:
@@ -2031,8 +2040,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
-                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s %s = %s; %s < %s; %s += %s) {\n" %
+                    (param_ctype(var), var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
@@ -2124,16 +2133,19 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
+        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
             "{num_pes}, {condition}"
-            "[&](int {pe_index}, {element_or_chunk}) {{".format(
+            "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
                 cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,
                 num_pes=cpp.sym2cpp(node.consume.num_pes),
+                pe_type=pe_type.ctype if pe_type is not None else 'int',
                 pe_index=node.consume.pe_index,
             ),
             cfg,
