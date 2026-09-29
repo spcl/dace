@@ -1156,10 +1156,11 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
 
 
-def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
+def test_copy_competing_with_a_downstream_write_is_lifted_and_lands_first():
     """Nothing orders two writes to one region that reach a node on separate edges. Plain copy-edge
     codegen emits the copy when its SOURCE access node is visited, so it lands before the tasklet
-    that supersedes it; lifting it to a node would re-sort it after and flip which write survives."""
+    that supersedes it (npbench ``vadv``). The lifted copy keeps that order with an empty memlet
+    rather than being left implicit."""
     sdfg = dace.SDFG("competing_writer")
     sdfg.add_array("A", [4], dace.float64)
     sdfg.add_array("B", [4], dace.float64)
@@ -1173,9 +1174,106 @@ def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
     sdfg.validate()
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
 
     lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
-    assert not lifted, "a copy competing with another write to B was lifted"
+    assert len(lifted) == 1, "a copy competing with another write to B was left implicit"
+    ordered_before = [e.dst for e in state.out_edges(lifted[0]) if e.data.is_empty()]
+    assert ordered_before == [tasklet], "the lifted copy is not ordered before the write that supersedes it"
+
+    A = np.arange(4, dtype=np.float64)
+    B = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, [1.0, 1.0, 2.0, 3.0]), f"the superseded copy survived: got {B}"
+
+
+def test_cpu_copy_with_an_undecidable_competing_write_is_lifted():
+    """A copy is lifted even when ``intersects`` cannot rule out an overlap with another write. The
+    map writing ``B`` does not read the copy's source, so the implicit copy was never ordered with it,
+    and the lifted one is not either."""
+    sdfg = dace.SDFG("cpu_undecidable_competing_writer")
+    for name in "ABC":
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+    b = state.add_access("B")
+    me, mx = state.add_map("k", {"i": "0:Min(K, N)"})
+    tasklet = state.add_tasklet("double", {"i_"}, {"o"}, "o = i_ * 2.0")
+    state.add_memlet_path(state.add_access("C"), me, tasklet, dst_conn="i_", memlet=Memlet("C[i]"))
+    state.add_memlet_path(tasklet, mx, b, src_conn="o", memlet=Memlet("B[i]"))
+    state.add_nedge(state.add_access("A"), b, Memlet("A[Max(K, 0):N] -> [Max(K, 0):N]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(lifted) == 1, "the copy with an undecidable competing write was left implicit"
+    assert not [e for e in state.out_edges(lifted[0]) if e.data.is_empty()], \
+        "the copy was ordered against a write it was never ordered with"
+
+    N, K = 8, 3
+    A, C = np.arange(N, dtype=np.float64), np.arange(N, dtype=np.float64) + 10
+    B = np.zeros(N, dtype=np.float64)
+    sdfg(A=A, B=B, C=C, N=N, K=K)
+    assert np.array_equal(B, np.concatenate([C[:K] * 2, A[K:]]))
+
+
+def test_copies_out_of_one_source_into_one_region_keep_their_order():
+    """Copies out of one source land when the source is visited, in the order of its out-edges: the
+    later one wins. Lifted, the earlier copy is ordered before the later one."""
+    sdfg = dace.SDFG("same_source_same_region")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    a = state.add_access("A")
+    b = state.add_access("B")
+    state.add_nedge(a, b, Memlet("A[0:4] -> [0:4]"))
+    state.add_nedge(a, b, Memlet("A[4:8] -> [0:4]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    first, second = [e.dst for e in state.out_edges(a)]
+    assert isinstance(first, CopyLibraryNode) and isinstance(second, CopyLibraryNode)
+    assert [e.dst for e in state.out_edges(first) if e.data.is_empty()] == [second], \
+        "the copies out of A are not kept in the order they were emitted in"
+
+    A = np.arange(8, dtype=np.float64)
+    B = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A[4:8]), f"the earlier copy survived: got {B}"
+
+
+def test_copy_whose_competing_write_is_already_ordered_before_it_is_lifted_without_a_cycle():
+    """An ordering edge into the destination moves onto the lifted copy (``_carry_write_ordering``).
+    When the competing write reaches that edge, the graph already orders the write before the copy:
+    ordering the copy first as well would be a cycle, so the existing order stands and the copy is
+    still lifted."""
+    sdfg = dace.SDFG("competing_write_already_ordered")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+    tasklet = state.add_tasklet("write_both", {"i"}, {"o", "p"}, "o = i + 1.0\np = i")
+    state.add_nedge(a, b, Memlet("A[0:4] -> [0:4]"))
+    state.add_edge(a, None, tasklet, "i", Memlet("A[0]"))
+    state.add_edge(tasklet, "o", b, None, Memlet("B[0]"))
+    state.add_edge(tasklet, "p", c, None, Memlet("C[0]"))
+    state.add_nedge(c, b, Memlet())  # B is written after C
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(lifted) == 1, "the copy was left implicit"
+    assert c in [e.src for e in state.in_edges(lifted[0]) if e.data.is_empty()]
+    assert not [e for e in state.out_edges(lifted[0]) if e.data.is_empty()], "ordering the copy first is a cycle"
 
 
 def test_device_copy_competing_with_another_write_is_lifted_ahead_of_the_source_consumers():
