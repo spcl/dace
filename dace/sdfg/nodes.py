@@ -945,7 +945,7 @@ class MapEntry(EntryNode):
         # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
         # its names untyped, while deserialization rebuilds them from the declared table. The same
         # map would then report two different parameter types across a save/load round trip.
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
