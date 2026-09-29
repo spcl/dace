@@ -247,20 +247,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
-        # ``ssa_loop_scalars``: version a scalar reassigned several times in a scope/loop nest into
-        # single-assignment names, so each write-once version below becomes a ``const T nx_0 = expr;``
-        # binding. Reuses the existing ScalarFission pass (the SSA renaming simplify already uses), run
-        # BEFORE MarkConstInit so the versioned single writes are seen as write-once and marked const.
-        # Default 'off' -> pass not run -> byte-identical output.
-        if config.Config.get('compiler', 'cpu', 'codegen_params', 'ssa_loop_scalars') == 'on':
-            from dace.transformation.passes.scalar_fission import PrivatizeScalars
-            PrivatizeScalars().apply_pass(sdfg, {})
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization pass and belongs in
+        # the caller's pipeline, before WCR memlets exist: by codegen time an accumulator chain has been rewritten to
+        # WCR, and fissioning a read-modify-write into a fresh SSA version drops the running value.
         # ``const_init``: classify write-once-then-read-only transients so they are emitted as
         # ``constexpr T x[N] = {...}`` / ``const T x = expr;`` instead of a runtime-filled buffer.
-        # Default 'on' -- unlike ``ssa_loop_scalars`` above, this pass ALREADY runs today, so 'on' is
-        # the value that keeps the output byte-identical; 'off' takes it out.
+        # Default 'on': this pass ALREADY runs today, so 'on' keeps the output byte-identical; 'off' takes it out.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
             Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
