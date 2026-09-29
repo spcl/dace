@@ -8,6 +8,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import networkx as nx
+import sympy
 
 from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
@@ -399,14 +400,17 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
     return True
 
 
-def misdeclared_symbol(sdfg: 'dace.sdfg.SDFG', subset: subsets.Subset) -> Optional[str]:
-    """A symbol of ``subset`` whose dtype differs from its declaration in ``sdfg.symbols``, described; one name
-    carried by two dtypes is two different sympy symbols, which no longer compare or cancel."""
+def mixed_symbol_dtypes(subset: subsets.Subset) -> Optional[str]:
+    """A name ``subset`` carries at two dtypes, described; the two are distinct sympy symbols, so ``N - N``
+    never cancels and bound comparisons silently fail."""
+    seen: Dict[str, dtypes.typeclass] = {}
     for bound in (b for rng in subset.ndrange() for b in rng):
-        for sym in symbolic.symlist(bound).values():
-            declared = sdfg.symbols.get(sym.name)
-            if declared is not None and sym.dtype != declared:
-                return f'symbol {sym.name} has dtype {sym.dtype}, but {sdfg.name} declares {declared}'
+        exprs = (bound.expr, bound.approx) if isinstance(bound, symbolic.SymExpr) else (bound, )
+        for sym in (f for e in exprs if isinstance(e, sympy.Basic) for f in e.free_symbols
+                    if isinstance(f, symbolic.symbol)):
+            first = seen.setdefault(sym.name, sym.dtype)
+            if first != sym.dtype:
+                return f'symbol {sym.name} appears with dtypes {first} and {sym.dtype}'
     return None
 
 
@@ -507,7 +511,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
 
         if isinstance(node, nd.MapEntry):
-            clash = misdeclared_symbol(sdfg, node.map.range)
+            clash = mixed_symbol_dtypes(node.map.range)
             if clash is not None:
                 raise InvalidSDFGNodeError(f'Map range: {clash}', sdfg, state_id, nid)
 
@@ -700,7 +704,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     f'Duplicate subset detected in memlet "{e.data}". Please copy objects '
                     'rather than using multiple references to the same one', sdfg, state_id, eid)
             references.add(id(subset))
-            clash = misdeclared_symbol(sdfg, subset)
+            clash = mixed_symbol_dtypes(subset)
             if clash is not None:
                 raise InvalidSDFGEdgeError(f'Memlet: {clash}', sdfg, state_id, eid)
 
