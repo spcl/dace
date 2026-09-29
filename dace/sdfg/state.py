@@ -910,7 +910,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Add data arguments from memlets, if do not appear in any of the nodes (i.e., originate externally)
         #  TODO: Investigate is scanning the adjacent edges of the input and output connectors is better.
-        graph = self.graph if isinstance(self, SubgraphView) else self
         for edge in self.edges():
             if edge.data.is_empty():
                 continue
@@ -927,7 +926,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 #  to where it originates from.
                 # NOTE: We have to use a memlet path, because we have to go "against the flow"
                 #   Furthermore, in a valid SDFG the data will only come from one source anyway.
-                top_source_edge = graph.memlet_path(edge)[0]
+                top_source_edge = self.graph.memlet_path(edge)[0]
                 if not isinstance(top_source_edge.src, nd.AccessNode):
                     continue
                 additional_descs = ({
@@ -935,16 +934,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets. The whole tree, not one hop out of
-                # the exit: with a nested scope (an inserted thread-block map) the next hop still
-                # carries the inner Memlet, and only the edge leaving the outermost exit names the
-                # data. Branches are why this is the tree and not the path -- one write can leave
-                # through several exits.
-                additional_descs = {
-                    oedge.data.data: sdfg.arrays[oedge.data.data]
-                    for oedge in graph.memlet_tree(edge) if not isinstance(oedge.dst, nd.ExitNode)
-                    and not oedge.data.is_empty() and oedge.data.data not in descs
-                }
+                # Outgoing counterpart of the above. A source-relative Memlet's .data names the
+                # inner transient, not the written array, so resolve the real destination via the
+                # memlet-tree root -- else its shape/stride symbols drop from the kernel signature.
+                additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
                     if oedge.data.is_empty():
@@ -1381,35 +1374,6 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         return self.parent_graph.node_id(self)
 
 
-def sdfg_scope_symbols(sdfg) -> Dict[str, dtypes.typeclass]:
-    """Symbols visible at ``sdfg`` scope: its own symbols, array extents, and interstate edges."""
-    symbols = collections.OrderedDict(sdfg.symbols)
-    for desc in sdfg.arrays.values():
-        symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-    try:
-        for e in sdfg.predecessor_state_transitions(sdfg.start_state):
-            symbols.update(e.data.new_symbols(sdfg, symbols))
-    except ValueError:  # starting state ambiguous (some interstate edges may not exist yet)
-        for e in sdfg.edges():
-            symbols.update(e.data.new_symbols(sdfg, symbols))
-    return symbols
-
-
-def enclosing_region_symbols(state, base: Dict[str, dtypes.typeclass]) -> Dict[str, dtypes.typeclass]:
-    """``base`` plus what the control-flow regions enclosing ``state`` bind, outermost first (a
-    LoopRegion binds its iterator; ``new_symbols`` returns {} otherwise). Without it a node in a loop
-    body does not see the loop variable and memlet propagation widens a jk-indexed access to the whole array."""
-    symbols = collections.OrderedDict(base)
-    enclosing_regions = []
-    cfg = state.parent_graph
-    while cfg is not None:
-        enclosing_regions.append(cfg)
-        cfg = cfg.parent_graph
-    for region in reversed(enclosing_regions):
-        symbols.update(region.new_symbols(symbols))
-    return symbols
-
-
 @make_properties
 class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlock, DataflowGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
@@ -1744,11 +1708,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                               computed here if not given.
         :return: A dictionary mapping symbol names to their types.
         """
+        from dace.sdfg.sdfg import SDFG
+
         if node is None:
             return collections.OrderedDict()
 
-        sdfg = self.sdfg
-        symbols = enclosing_region_symbols(self, sdfg_scope_symbols(sdfg))
+        sdfg: SDFG = self.sdfg
+
+        symbols = collections.OrderedDict(self.symbols_defined_at_state() if state_symbols is None else state_symbols)
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()

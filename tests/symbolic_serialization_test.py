@@ -661,6 +661,8 @@ def test_typed_symbol_survives_a_poisoned_sympy_cache():
     expr = sympy.Mod(symbolic.symbol('cached_i'), symbolic.TypedConstant(np.int16(3)), evaluate=False)
 
     assert symbolic.serialize_symbolic(expr) == 'Mod($cached_i, 3i16)'
+
+
 def test_operator_derived_int_floor_roundtrip_preserves_integerness():
     """The ``__int_floor`` class that Python ``//`` parses to must survive
     ``serialize_symbolic`` -> ``deserialize_symbolic`` with its ``is_integer``

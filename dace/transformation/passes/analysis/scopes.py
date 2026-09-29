@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Set
 from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState, enclosing_region_symbols, sdfg_scope_symbols
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.analysis import StateReachability
@@ -35,10 +35,12 @@ class SymbolScopes(ppl.Pass):
         """
         result: Dict[int, StateSymbolScopes] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            base = sdfg_scope_symbols(sdfg)
+            base = None  # resolved from the first state; identical for every state of the SDFG
             per_sdfg: StateSymbolScopes = {}
             for state in sdfg.states():
-                per_scope = {None: enclosing_region_symbols(state, base)}
+                if base is None:
+                    base = state.sdfg_symbols()
+                per_scope = {None: state.symbols_defined_at_state(sdfg_symbols=base)}
                 children = state.scope_children()
                 stack: List[Optional[nodes.EntryNode]] = [None]
                 while stack:  # outer to inner: each entry inherits its parent's finished table
