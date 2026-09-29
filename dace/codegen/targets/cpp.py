@@ -851,7 +851,8 @@ def current_stream_declaration(sdfg: SDFG, state_dfg: SDFGState, node: nodes.Tas
         return None
     backend = common.get_gpu_backend()
     stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t), None)
-    if stream_conn is not None and '__dace_current_stream' in node.code.as_string:
+    # A whole identifier: ``__dace_current_stream_0``, a per-stream connector name, contains the legacy name.
+    if stream_conn is not None and re.search(r'\b__dace_current_stream\b', node.code.as_string):
         if stream_conn == '__dace_current_stream':
             return None
         return f'{backend}Stream_t __dace_current_stream = {stream_conn};'
