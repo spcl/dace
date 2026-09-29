@@ -308,12 +308,13 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 alpha = f'{dtype.ctype}({node.alpha})'
 
             # Set pointer mode to host
-            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            call_prefix += f'''dace::blas::CheckCublasError(
+                cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
                 {dtype.ctype} alpha = {alpha};
                 {dtype.ctype} beta = 0;
                 '''
             call_suffix += '''
-    cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+    dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
                 '''
             beta = f'({cdtype} *)&beta'
             alpha = f'({cdtype} *)&alpha'
@@ -327,7 +328,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-            call = '''cublas{func}StridedBatched(__dace_cublas_handle,
+            call = '''dace::blas::CheckCublasError(cublas{func}StridedBatched(__dace_cublas_handle,
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
                 {alpha},
@@ -335,7 +336,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
                 {beta},
                 ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
-                {BATCH});'''.format_map(opt)
+                {BATCH}));'''.format_map(opt)
         else:
             if node.compute_type is not None:
                 acctype = node.compute_type
@@ -350,7 +351,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 algorithm = node.algorithm
 
             call = f'''
-            cublasGemmStridedBatchedEx(__dace_cublas_handle,
+            dace::blas::CheckCublasError(cublasGemmStridedBatchedEx(__dace_cublas_handle,
                 CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
                 {opt['M']}, {opt['N']}, {opt['K']},
                 {alpha},
@@ -365,7 +366,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 {dtype_to_cudadatatype(opt['cdtype'])},
                 {opt['ldc']}, {opt['stride_c']},
                 {opt['BATCH']},
-                {acctype}, {algorithm});
+                {acctype}, {algorithm}));
             '''
 
         code = call_prefix + call + call_suffix

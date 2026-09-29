@@ -226,7 +226,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 2:
+        # NOTE: Some instrumentation providers (e.g. GPU_TX_MARKERS) never write to
+        # __state->report, so skip the report machinery unless at least one active provider does.
+        if any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()):
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -256,7 +258,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -314,6 +316,15 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
             if target.has_initializer:
                 callsite_stream.write(
                     '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
+        # A failed target initializer leaves its part of the state struct unset, and everything below
+        # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
+        # __dace_init_cuda never constructs when it bails out on a missing device. Leave here first.
+        callsite_stream.write(f"""
+    if (__result) {{
+        delete __state;
+        return nullptr;
+    }}
+""", sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -357,7 +368,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -418,7 +429,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         for storage, arrays in ext_arrays.items():
             size = 0
             for subsdfg, aname, arr in arrays:
-                size += arr.total_size * arr.dtype.bytes
+                size += arr.total_size_in_bytes
 
             # Size query functions
             callsite_stream.write(
@@ -439,7 +450,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for subsdfg, aname, arr in arrays:
                 allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
-                offset += arr.total_size * arr.dtype.bytes
+                offset += arr.total_size_in_bytes
 
             # Footer
             callsite_stream.write('}', sdfg)
@@ -551,6 +562,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG]) -> bool:
+        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
+        if isinstance(desc, data.View):
+            return True
+
         schedule = self._get_schedule(scope)
         # if not dtypes.can_allocate(desc.storage, schedule):
         #     return False
@@ -722,7 +737,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break

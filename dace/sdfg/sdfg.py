@@ -138,6 +138,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    # Keys are names, but a replacement may be given as a symbolic expression
+    old = str(old)
+    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
@@ -443,17 +446,16 @@ class InterstateEdge(object):
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
 
+        # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace(repl).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+            replacer = astutils.ASTFindReplace(repl)
+            vast = replacer.visit(ast.parse(v))
+            if replacer.replace_count > 0:
+                self.assignments[k] = astutils.unparse(vast)
+        replacer = astutils.ASTFindReplace(repl)
+        condition = replacer.visit(ast.parse(self.condition.as_string))
+        if replacer.replace_count > 0:
+            self.condition.as_string = astutils.unparse(condition)
             self._uncond = None
             self._cond_sympy = None
 
@@ -523,6 +525,24 @@ class InterstateEdge(object):
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
+
+
+class _UsedNames:
+    """Membership view over the names an SDFG already uses.
+
+    :func:`dace.utils.find_new_name` only ever asks whether a candidate is taken, so this
+    answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
+    arrays, constants and symbols on every mint. Not a container in any other sense --
+    it is deliberately not iterable, because there is no cheap order to iterate in.
+    """
+
+    __slots__ = ('sdfg', )
+
+    def __init__(self, sdfg: 'SDFG') -> None:
+        self.sdfg = sdfg
+
+    def __contains__(self, name: str) -> bool:
+        return self.sdfg.is_name_used(name)
 
 
 @make_properties
@@ -1511,20 +1531,15 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand array-descriptor stride/shape/offset symbols into the free
-        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
-        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
-        # out of the computed free-symbol set, causing
-        # ``generate_nsdfg_header`` to emit a nested function signature
-        # missing those symbols, ceating an invalid SDFG.
+        # A used array needs its stride/shape/offset symbols in the free set; a merely-declared one
+        # must not leak its shape symbol into the signature (issue #2382). ``read_and_write_sets``
+        # counts an array referenced only by a code-block guard as used.
         res_free, res_defined, res_before = result
         if with_contents:
-            for desc in self.arrays.values():
-                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            read_set, write_set = self.read_and_write_sets()
+            for name in (read_set | write_set) & self.arrays.keys():
+                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
@@ -1893,8 +1908,10 @@ class SDFG(ControlFlowRegion):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
-        return dt.find_new_name(name, names)
+        # ``find_new_name`` only ever tests membership, so the union set never has to be built:
+        # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
+        # instead of one set the size of every name in the SDFG per call.
+        return dt.find_new_name(name, _UsedNames(self))
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""

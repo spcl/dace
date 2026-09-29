@@ -9,8 +9,9 @@ import ml_dtypes
 import re
 from sympy import Float, Integer
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from dace.config import Config
 
@@ -37,11 +38,38 @@ class StorageType(ExtensibleAttributeEnum):
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
     GPU_Global = auto()  #: GPU global memory
-    GPU_Shared = auto()  #: On-GPU shared memory
+
+    @dataclass(frozen=True)
+    class GPU_Shared:
+        """
+        On-GPU shared memory.
+
+        ``StorageType.GPU_Shared`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to choose how the memory is allocated, e.g., ``StorageType.GPU_Shared(dynamic=True)``.
+        """
+        #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
+        #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
+        dynamic: Optional[bool] = None
+
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
+
+
+def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
+    """
+    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
+
+    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
+    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
+             the case for the bare template).
+    """
+    if storage != StorageType.GPU_Shared:
+        raise ValueError(f'Expected a GPU_Shared storage type, got {storage}')
+    if storage._is_template:
+        return None
+    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
@@ -538,6 +566,14 @@ def result_type_of(lhs, *rhs):
     if numpy.issubdtype(rhs_, numpy.integer):
         return lhs
     # Both sides are floating point numbers
+    # A complex type is not simply a wider float: half its width is the imaginary part, so its real
+    # component is only ``itemsize // 2``. Comparing byte widths alone therefore ties complex64 with
+    # float64 and lets argument order settle it -- ``result_type_of(complex64, double)`` answered
+    # ``double`` and dropped the imaginary part, while the same two the other way round answered
+    # ``complex64`` and dropped half the real precision. Where exactly one side is complex, take
+    # numpy's rule: the result is complex and wide enough for the other side's precision.
+    if numpy.issubdtype(lhs_, numpy.complexfloating) != numpy.issubdtype(rhs_, numpy.complexfloating):
+        return typeclass(numpy.promote_types(lhs_, rhs_).type)
     if size_lhs > size_rhs:
         return lhs
     return rhs  # RHS is bigger

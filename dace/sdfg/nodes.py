@@ -19,11 +19,30 @@ from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_expr_type
+from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
 
 # -----------------------------------------------------------------------------
+
+
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
 
 
 @make_properties
@@ -565,25 +584,6 @@ class Tasklet(CodeNode):
             return self.label
 
 
-@make_properties
-class RTLTasklet(Tasklet):
-    """ A specialized tasklet, which is a functional computation procedure
-        that can only access external data specified using connectors.
-
-        This tasklet is specialized for tasklets implemented in System Verilog
-        in that it adds support for adding metadata about the IP cores in use.
-    """
-    # TODO to be replaced when enums have embedded properties
-    ip_cores = DictProperty(key_type=str, value_type=dict, desc="A set of IP cores used by the tasklet.")
-
-    @property
-    def __jsontype__(self):
-        return 'Tasklet'
-
-    def add_ip_core(self, module_name, name, vendor, version, params):
-        self.ip_cores[module_name] = {'name': name, 'vendor': vendor, 'version': version, 'params': params}
-
-
 # ------------------------------------------------------------------------------
 
 
@@ -891,6 +891,11 @@ class MapEntry(EntryNode):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
+        # Add map params
+        known = {**symbols, **_constant_types(sdfg), **result}
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
+
         return result
 
     def new_symbol_names(self, state) -> Set[str]:
@@ -1079,6 +1084,13 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
     def __init__(self,
                  label,
                  params,
@@ -1214,7 +1226,11 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes,
+                                                                     symbols={
+                                                                         **symbols,
+                                                                         **_constant_types(sdfg)
+                                                                     })
 
         # Add dynamic inputs
         dyn_inputs = self.dynamic_input_connectors
@@ -1373,6 +1389,11 @@ class LibraryNode(CodeNode):
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty(allow_none=True)
+    # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
+    # node, and expansion carries this onto whatever the node expands into.
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)

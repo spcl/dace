@@ -395,7 +395,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        arrsize_bytes = arrsize * nodedesc.dtype.bytes
+        arrsize_bytes = nodedesc.total_size_in_bytes
         alloc_name = self.ptr(name, nodedesc, sdfg)
         dbg('  arrsize "{}" arrsize_bytes "{}" alloc_name "{}" nodedesc "{}"'.format(
             arrsize, arrsize_bytes, alloc_name, nodedesc))

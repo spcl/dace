@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections.abc
 from collections import OrderedDict
 import copy
 import itertools
@@ -31,7 +32,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 from dace.utils import until
 
@@ -317,6 +318,14 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 # Parsing functions
 ###############################################################
+
+
+def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
+    for n, ostep in enumerate(orng.strides()):
+        if ostep == 1:
+            continue
+        rb, re, rs = irng.ranges[n]
+        irng.ranges[n] = (symbolic.int_floor(rb, ostep), symbolic.int_floor(re, ostep), symbolic.int_floor(rs, ostep))
 
 
 def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
@@ -710,8 +719,8 @@ class TaskletTransformer(ExtNodeTransformer):
             self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
-                                   set(self.inputs.keys()),
-                                   set(self.outputs.keys()),
+                                   self.inputs.keys(),
+                                   self.outputs.keys(),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
@@ -1095,6 +1104,67 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+#: What ``DefinedNames.lookup`` returns for a name that is not defined.
+MISSING = object()
+
+
+class DefinedNames(collections.abc.Mapping):
+    """The names a :class:`ProgramVisitor` can resolve, as a view over its tables.
+
+    A lookup walks the sources in reverse merge order and stops at the first hit, so it never
+    builds the merged dict; :meth:`materialize` builds it for the sites that spread every name.
+    """
+
+    __slots__ = ('pv', )
+
+    def __init__(self, pv: 'ProgramVisitor') -> None:
+        self.pv = pv
+
+    def lookup(self, name: str) -> Any:
+        pv = self.pv
+        arrays = pv.sdfg.arrays
+        value = pv.globals.get(name)
+        if value is not None and preprocessing.mpi4py_is_usable():
+            from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
+            if isinstance(value, MPI.Comm):
+                return value
+        # `get`, not `in`: the NestedDict's `in` also resolves struct members, which the merge does not copy.
+        desc = arrays.get(name)
+        if desc is not None:
+            return desc
+        sdfg_name = pv.variables.get(name)
+        if sdfg_name in pv.sdfg.symbols:
+            return pv.sdfg.symbols[sdfg_name]
+        if '.' in name and name in arrays and name in pv.variables.values():
+            return arrays[name]
+        if sdfg_name in arrays:
+            return arrays[sdfg_name]
+        scope_name = pv.scope_vars.get(name)
+        if scope_name in pv.scope_arrays:
+            return pv.scope_arrays[scope_name]
+        if scope_name in arrays:
+            return arrays[scope_name]
+        return value if isinstance(value, symbolic.symbol) else MISSING
+
+    def __getitem__(self, name: str) -> Any:
+        value = self.lookup(name)
+        if value is MISSING:
+            raise KeyError(name)
+        return value
+
+    def __contains__(self, name: str) -> bool:
+        return self.lookup(name) is not MISSING
+
+    def __iter__(self) -> Iterable[str]:
+        return iter(self.materialize())
+
+    def __len__(self) -> int:
+        return len(self.materialize())
+
+    def materialize(self) -> Dict[str, Any]:
+        return self.pv.defined_dict()
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1358,7 +1428,11 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
+    def defined(self) -> DefinedNames:
+        return DefinedNames(self)
+
+    def defined_dict(self) -> Dict[str, Any]:
+        """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
         result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
@@ -1372,11 +1446,6 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
@@ -1652,24 +1721,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 1:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
-                elif len(values) == 2:
-                    result[name] = symbolic.symbol(
-                        name,
-                        dtypes.result_type_of(infer_expr_type(values[0], {
-                            **self.defined,
-                            **dyn_inputs
-                        }), infer_expr_type(values[1], {
-                            **self.defined,
-                            **dyn_inputs
-                        })))
-                elif len(values) == 3:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
                         "You may use up to 3 arguments (start:stop:step).")
+                result[name] = symbolic.symbol(
+                    name, infer_iteration_symbol_type(*bounds, symbols={
+                        **self.defined,
+                        **dyn_inputs
+                    }))
 
         return result
 
@@ -2204,6 +2267,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         memlet = Memlet.simple(vname, str(irng))
@@ -2223,6 +2287,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         orig_shape = orng.size()
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]
@@ -2295,6 +2360,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if self._find_access(memlet.data, scope_memlet.subset, 'w'):
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
@@ -2314,6 +2380,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = [d for d in orig_shape if d != 1]
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]
@@ -2482,9 +2549,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
 
             sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
+                                      infer_iteration_symbol_type(ranges[0][0],
+                                                                  ranges[0][1],
+                                                                  ranges[0][2],
+                                                                  symbols=self.sdfg.symbols),
                                       integer=integer,
                                       nonnegative=nonnegative,
                                       positive=positive)
@@ -2597,7 +2665,45 @@ class ProgramVisitor(ExtNodeVisitor):
         cond = astutils.unparse(parsed_node)
         cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
 
+        # Register any free symbols used in the condition (e.g., ``dace.symbol`` objects that appear nowhere else in
+        # the program) so that they become part of the SDFG's symbols and thus of its argument list.
+        self._add_symbols_from_condition(node, cond)
+
         return cond, cond_else, test_region
+
+    def _add_symbols_from_condition(self, node: ast.AST, cond: str) -> None:
+        """
+        Adds the free symbols of a (loop or branch) condition string to the SDFG symbols, if they are not already
+        defined as symbols, variables, or data containers.
+
+        :param node: The AST node of the condition (used for error reporting).
+        :param cond: The condition as a Python expression string.
+        """
+        try:
+            symcond = pystr_to_symbolic(cond)
+        except Exception:
+            # Conditions that cannot be represented symbolically (e.g., involving callbacks or attributes)
+            # do not introduce new symbols.
+            return
+        if not symbolic.issymbolic(symcond):
+            return
+        for atom in symcond.free_symbols:
+            if not symbolic.issymbolic(atom, self.sdfg.constants):
+                continue
+            astr = str(atom)
+            # ``None`` is represented by a placeholder symbol in symbolic expressions (e.g., ``B is None``)
+            if astr == 'NoneSymbol':
+                continue
+            # Check for undefined variables
+            if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+                raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
+            # Add to global SDFG symbols if not a scalar
+            if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
+                # Prefer the dtype of the originally-declared symbol object (if any), since re-parsing the condition
+                # string creates a fresh symbol with the default dtype.
+                defined = self.defined.get(astr, None)
+                dtype = defined.dtype if isinstance(defined, symbolic.symbol) else atom.dtype
+                self.sdfg.add_symbol(astr, dtype)
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2640,19 +2746,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
-
-        # Add symbols from test as necessary
-        symcond = pystr_to_symbolic(loop_cond)
-        if symbolic.issymbolic(symcond):
-            for atom in symcond.free_symbols:
-                if symbolic.issymbolic(atom, self.sdfg.constants):
-                    astr = str(atom)
-                    # Check for undefined variables
-                    if astr not in self.defined:
-                        raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
-                    # Add to global SDFG symbols if not a scalar
-                    if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
-                        self.sdfg.add_symbol(astr, atom.dtype)
 
         # Handle else clause
         if node.orelse:
@@ -4369,6 +4462,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Create an output entry for the connectors
                 outputs[arrname] = dace.Memlet.from_array(new_arrname, newarr)
                 rets.append(new_arrname)
+
+        # A callee cannot be given fewer elements than it declares (differently-shaped arguments are allowed)
+        size_mapping = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            for k, v in (mapping or {}).items() if isinstance(v, (str, int, sympy.Basic))
+        }
+        for a, m in itertools.chain(inputs.items(), outputs.items()):
+            if not isinstance(m, Memlet) or a not in sdfg.arrays or a.startswith('__return'):
+                continue
+            inner_desc = sdfg.arrays[a]
+            if not isinstance(inner_desc, data.Array) or inner_desc.transient:
+                continue
+            inner_size = sympy.Integer(1)
+            for s in inner_desc.shape:
+                inner_size *= symbolic.pystr_to_symbolic(s)
+            if size_mapping:
+                inner_size = inner_size.subs(size_mapping, simultaneous=True)
+            outer_size = symbolic.pystr_to_symbolic(m.subset.num_elements())
+            if (inner_size > outer_size) == True:
+                raise DaceSyntaxError(
+                    self, node, f'Argument "{a}" in call to "{funcname}" is declared with {inner_size} elements '
+                    f'(shape {tuple(inner_desc.shape)}), but the given argument only has {outer_size} elements '
+                    f'(shape {tuple(self.sdfg.arrays[m.data].shape)})')
 
         # Update strides
         inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}

@@ -210,9 +210,9 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
         _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
 
-        code = (blas_environments.cublas.cuBLAS.handle_setup_code(node) + f"""cublas{func}(
+        code = (blas_environments.cublas.cuBLAS.handle_setup_code(node) + f"""dace::blas::CheckCublasError(cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m});
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m}));
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
