@@ -15,17 +15,22 @@ dataflow.warp_tiling.WarpTiling` wraps the kernel body in a ``GPU_ThreadBlock`` 
 parallel maps across the lanes (lane ``t`` takes ``j = t, t + B, ...``, so adjacent lanes read
 adjacent elements), and folds each lane's partial of a scalar reduction with ``gpucub::BlockReduce``.
 
-Everything outside the strided maps runs once per LANE, not once per iteration. That is only sound
-when running it several times changes nothing, so a kernel is left alone when its body outside the
-strided maps accumulates (a write-conflict-resolved memlet), updates a container it also reads, holds
-a library node (its own lowering may need the block), or when a strided map leaves a lane-private
-container other code reads afterwards (each lane would hold only its own share of it).
+Everything outside the strided maps runs once per LANE, not once per iteration. That is sound when
+running it several times changes nothing. A tasklet that updates a shared container it also reads
+(``b[i] -= s``, lu's ``A[i, j] -= s``) would apply once per lane, so it runs on lane 0 alone, between
+two ``__syncthreads()`` every lane reaches: the first keeps lane 0 from writing what other lanes still
+read, the second publishes the write. A kernel is left alone when its body outside the strided maps
+accumulates (a write-conflict-resolved memlet), holds a library node (its own lowering may need the
+block), or when a strided map leaves a lane-private container other code reads afterwards (each lane
+would hold only its own share of it).
 """
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, Memlet, SDFGState, dtypes, properties
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import helpers as xfh, pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
 
@@ -78,32 +83,38 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return True
 
 
-def redundant_node_is_safe(node: nodes.Node, state: SDFGState) -> bool:
-    """A node every lane executes: no library node, no update of a shared container it reads."""
-    if isinstance(node, nodes.LibraryNode):
-        return False
-    if not isinstance(node, nodes.Tasklet):
-        return True
+def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
+    """Whether ``node`` writes a shared (not lane-private) container it also reads: once per lane is wrong."""
     read = {edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()}
-    return not any(edge.data.data in read and not lane_private(state.sdfg, edge.data.data)
-                   for edge in state.out_edges(node) if not edge.data.is_empty())
+    return any(edge.data.data in read and not lane_private(state.sdfg, edge.data.data) for edge in state.out_edges(node)
+               if not edge.data.is_empty())
 
 
 def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bool:
-    """Whether a write-conflict-resolved edge leaves a node outside the strided maps: every lane would add."""
-    return any(edge.data.wcr is not None and edge.src not in skipped for edge in edges)
+    """Whether a write-conflict-resolved edge leaves a node outside the strided maps: every lane would add.
+    In canonical form a WCR is ``tasklet -wcr-> MapExit* -wcr-> access node``, so a map exit only relays
+    the tasklet's write (checked where the tasklet is); any other source accumulates here."""
+    return any(edge.data.wcr is not None and edge.src not in skipped and not isinstance(edge.src, nodes.MapExit)
+               for edge in edges)
 
 
-def lanes_are_safe(state: SDFGState, kernel: nodes.MapEntry, strided: List[Tuple[SDFGState, nodes.MapEntry]]) -> bool:
-    """Whether running the kernel body once per lane, with ``strided`` split across the lanes, is sound."""
+def single_lane_nodes(state: SDFGState, kernel: nodes.MapEntry,
+                      strided: List[Tuple[SDFGState, nodes.MapEntry]]) -> Optional[List[nodes.Tasklet]]:
+    """The tasklets that must run on lane 0 alone for the kernel body to run once per lane, with ``strided``
+    split across the lanes; ``None`` if no such split is sound."""
     if not strided or not all(strided_map_is_safe(s, entry) for s, entry in strided):
-        return False
+        return None
+    # Nesting the lane body follows every edge into it back to its source; an ordering edge off the
+    # kernel entry has no connector to follow.
+    if any(edge.data.is_empty() for edge in state.out_edges(kernel)):
+        return None
     skipped: Set[nodes.Node] = set()
     for s, entry in strided:
         skipped |= set(s.scope_subgraph(entry).nodes())
     scope = state.scope_subgraph(kernel)
     if accumulates_outside(state, scope.edges(), skipped):
-        return False
+        return None
+    single: List[nodes.Tasklet] = []
     pending = [(state, scope.nodes())]
     while pending:
         current, nodes_in_scope = pending.pop()
@@ -113,11 +124,43 @@ def lanes_are_safe(state: SDFGState, kernel: nodes.MapEntry, strided: List[Tuple
             if isinstance(node, nodes.NestedSDFG):
                 for inner in node.sdfg.all_states():
                     if accumulates_outside(inner, inner.edges(), skipped):
-                        return False
+                        return None
                     pending.append((inner, inner.nodes()))
-            elif not redundant_node_is_safe(node, current):
-                return False
-    return True
+            elif isinstance(node, nodes.LibraryNode):
+                return None
+            elif isinstance(node, nodes.Tasklet) and updates_shared(node, current):
+                if any(edge.data.is_empty() for edge in current.all_edges(node)):
+                    return None
+                single.append(node)
+    return single
+
+
+def barrier(state: SDFGState) -> nodes.Tasklet:
+    """A ``__syncthreads()`` tasklet (CUDA and HIP spell it alike)."""
+    return state.add_tasklet('lane_barrier', {}, {}, '__syncthreads();', dtypes.Language.CPP)
+
+
+def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
+    """Nest ``tasklet`` under ``if (__tid == 0)``, fenced by barriers every lane reaches."""
+    wrapper = xfh.nest_state_subgraph(state.sdfg, state, SubgraphView(state, [tasklet]), name='lane_zero')
+    inner = wrapper.sdfg
+    body = inner.start_state
+    inner.remove_node(body)
+    branch = ControlFlowRegion('lane_zero_body', sdfg=inner)
+    branch.add_node(body, is_start_block=True)
+    guard = ConditionalBlock('lane_zero_guard', sdfg=inner)
+    guard.add_branch('__tid == 0', branch)
+    inner.add_node(guard, is_start_block=True)
+    inner.add_symbol('__tid', dtypes.int32)
+    wrapper.symbol_mapping['__tid'] = '__tid'
+    inner.reset_cfg_list()
+    before, after = barrier(state), barrier(state)
+    for pred in state.predecessors(wrapper):
+        state.add_edge(pred, None, before, None, Memlet())
+    for succ in state.successors(wrapper):
+        state.add_edge(after, None, succ, None, Memlet())
+    state.add_edge(before, None, wrapper, None, Memlet())
+    state.add_edge(wrapper, None, after, None, Memlet())
 
 
 @properties.make_properties
@@ -133,7 +176,7 @@ class BlockTileKernels(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Tile every kernel :func:`lanes_are_safe` accepts.
+        """Tile every kernel :func:`single_lane_nodes` accepts.
 
         :param sdfg: the offloaded SDFG, in place.
         :param pipeline_results: unused.
@@ -146,7 +189,8 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
-            if not lanes_are_safe(state, kernel, strided):
+            single = single_lane_nodes(state, kernel, strided)
+            if single is None:
                 continue
             # WarpTiling strides the non-serial maps; the serial pinning re-applies to each lane's loop.
             for inner in [entry for owner, entry in strided]:
@@ -158,6 +202,10 @@ class BlockTileKernels(ppl.Pass):
                                 },
                                 verify=False,
                                 mapentry=kernel)
+            # WarpTiling nests the body, so each tasklet is found again by identity.
+            owners = {node: owner for node, owner in sdfg.all_nodes_recursive() if node in single}
+            for node in single:
+                run_on_lane_zero(node, owners[node])
             # The lane map sizes the block now; a declared block size beside it is a conflict.
             kernel.map.gpu_block_size = None
             tiled += 1

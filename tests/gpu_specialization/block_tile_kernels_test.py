@@ -64,6 +64,15 @@ def batched_gemm(A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], C: dace.f
 
 
 @dace.program
+def subtract_rowsum(A: dace.float64[M, N], b: dace.float64[M]):
+    for i in dace.map[0:M]:
+        s = 0.0
+        for j in dace.map[0:N]:
+            s += A[i, j]
+        b[i] -= s
+
+
+@dace.program
 def accumulate_outside(A: dace.float64[M, N], total: dace.float64[1]):
     for i in dace.map[0:M]:
         s = 0.0
@@ -119,6 +128,23 @@ def test_a_library_node_inside_a_kernel_takes_its_block_collective(program, node
     assert library_nodes(sdfg)[node].implementation == implementation
 
 
+def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers():
+    """``b[i] -= s`` read-modify-writes shared memory: once per lane would subtract ``s`` 256 times."""
+    sdfg = canonical_gpu(subtract_rowsum)
+    assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
+    guards = [
+        b for nested in sdfg.all_sdfgs_recursive() for b in nested.all_control_flow_blocks()
+        if isinstance(b, dace.sdfg.state.ConditionalBlock)
+    ]
+    assert [c.as_string for g in guards for c, body in g.branches] == ['(__tid == 0)']
+    barriers = [
+        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == 'lane_barrier'
+    ]
+    assert len(barriers) == 2
+    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    assert code.count('__syncthreads();') >= 2
+
+
 def test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration():
     """Every lane runs what lies outside the strided maps; ``total += s`` there would add ``s`` once per lane."""
     sdfg = canonical_gpu(accumulate_outside)
@@ -140,6 +166,11 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     y = cp.zeros(m)
     canonical_gpu(matvec_plus)(A=cp.asarray(A), x=cp.asarray(x), b=cp.asarray(b), y=y, M=m, N=n)
     np.testing.assert_allclose(y.get(), b + A @ x, rtol=1e-12)
+
+    # The in-place update subtracts the row total once.
+    y = cp.asarray(b)
+    canonical_gpu(subtract_rowsum)(A=cp.asarray(A), b=y, M=m, N=n)
+    np.testing.assert_allclose(y.get(), b - A.sum(axis=1), rtol=1e-12)
 
     out = cp.zeros(m)
     canonical_gpu(rowsum)(A=cp.asarray(A), out=out, M=m, N=n)

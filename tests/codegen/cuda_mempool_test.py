@@ -242,7 +242,7 @@ def test_pooled_array_is_freed_once(lifetime):
 
     frees = [m.start() for m in re.finditer(r'(cuda|hip)Free(Async)?\((__state->__\d+_)?tmp\b', code)]
     assert len(frees) == 1, code
-    launch = re.search(r'__dace_runkernel_triple\w*\(__state, A[,)]', code).start()
+    launch = re.search(r'__dace_runkernel_\w*triple\w*\(__state, A[,)]', code).start()
     if lifetime == dace.AllocationLifetime.Global:
         assert frees[0] < launch, 'the global pooled array is released only after a state that no longer uses it'
     else:

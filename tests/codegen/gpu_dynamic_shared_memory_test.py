@@ -337,7 +337,7 @@ def test_kernels_do_not_share_containers():
     sdfg = _two_kernel_sdfg(storage=S.GPU_Shared(dynamic=True))
     code, _ = _generate(sdfg)
     assert _placement(sdfg, 's') is True and _placement(sdfg, 's_0') is True
-    kernels = re.findall(r'__global__ void .*? (first|second)_\w+\((.*?)\) \{', code)
+    kernels = re.findall(r'__global__ void .*? \w*?(first|second)_\w+\((.*?)\) \{', code)
     assert len(kernels) == 2
     # Shared memory is not passed to either kernel, which would mean it was allocated outside of them
     assert all('__dace_dynsmem' not in args and ' s' not in args for _, args in kernels)
