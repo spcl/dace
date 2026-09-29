@@ -1,10 +1,29 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
 members so codegen-preprocess ordering is declarative and testable."""
+import warnings
 from typing import Any, Dict, Optional
 
-from dace import SDFG, dtypes, nodes, properties
+from dace import SDFG, Memlet, dtypes, nodes, properties
+from dace.codegen import common
 from dace.transformation import pass_pipeline as ppl, transformation
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class InferDefaultSchedulesAndStorages(ppl.Pass):
+    """:func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types` as a Pipeline Pass: the GPU
+    passes after it read final schedules and storages."""
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+        from dace.sdfg import infer_types
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
 
 @properties.make_properties
@@ -67,7 +86,7 @@ class AddThreadBlockMaps(ppl.Pass):
 class ReinferConnectorTypes(ppl.Pass):
     """Clear and re-derive NestedSDFG connector types from their inner descriptors.
 
-    Earlier passes mutate descriptors (e.g. ``PromoteGPUScalarsToArrays`` widens a ``Scalar`` to a
+    Earlier passes mutate descriptors (e.g. ``PromoteScalarOutputsToArrays`` widens a ``Scalar`` to a
     length-1 ``Array``), leaving stale scalar-typed connectors that miscompile (``T name`` vs.
     ``name[0]``). Re-inference makes them pointer-typed.
     """
@@ -85,7 +104,7 @@ class ReinferConnectorTypes(ppl.Pass):
         return False
 
     @staticmethod
-    def _connector_types(sdfg: SDFG) -> Dict[Any, Any]:
+    def connector_types(sdfg: SDFG) -> Dict[Any, Any]:
         """Snapshot every dataflow-node connector type, keyed by ``(node, direction, connector)``.
 
         Re-inference is the only signal of change available -- neither
@@ -108,12 +127,12 @@ class ReinferConnectorTypes(ppl.Pass):
         :returns: Number of connectors whose type changed, or ``None`` if none did.
         """
         from dace.sdfg import infer_types
-        from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
-        before = self._connector_types(sdfg)
+        from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
+        before = self.connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():
             infer_types.infer_connector_types(nsdfg)
-        after = self._connector_types(sdfg)
+        after = self.connector_types(sdfg)
 
         # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
         # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``
@@ -124,3 +143,44 @@ class ReinferConnectorTypes(ppl.Pass):
                       if before.get(key, missing) is not after.get(key, missing)
                       and before.get(key, missing) != after.get(key, missing))
         return changed or None
+
+
+#: Label of the device-wide fence placed after a stream-unaware host callback.
+DEVICE_SYNC_TASKLET_LABEL = 'gpu_callback_device_synchronization'
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
+    """Fence host callbacks that touch GPU memory without being stream-aware.
+
+    Such a callback issues its device work on a stream the SDFG does not know, so the asynchronous
+    work scheduled around it on ``gpu_streams`` is unordered against it. A device-wide synchronization
+    after the callback orders it against every stream. A callback naming the stream is left alone.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        from dace.codegen.targets.cuda import stream_unaware_gpu_callbacks  # Avoid import loop
+        # A callback fenced by an earlier run is already ordered.
+        targets = [(state, node) for state, node, _ in stream_unaware_gpu_callbacks(sdfg)
+                   if not any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))]
+        backend = common.get_gpu_backend()
+        for state, node in targets:
+            warnings.warn(
+                f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so a full device '
+                'synchronization is emitted after it. Add a "dace.current_stream" argument to the callback '
+                'and use it (e.g. cupy ExternalStream) to keep the work asynchronous.', UserWarning)
+            fence = state.add_tasklet(DEVICE_SYNC_TASKLET_LABEL, {}, {},
+                                      f'DACE_GPU_CHECK({backend}DeviceSynchronize());',
+                                      language=dtypes.Language.CPP,
+                                      side_effects=True)
+            for succ in list(state.successors(node)):
+                state.add_nedge(fence, succ, Memlet())
+            state.add_nedge(node, fence, Memlet())
+        return len(targets) or None

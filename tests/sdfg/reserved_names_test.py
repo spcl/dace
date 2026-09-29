@@ -4,7 +4,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import allocate_stream_array
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import allocate_stream_array
 
 
 def test_reserved_name_collision_rejected():

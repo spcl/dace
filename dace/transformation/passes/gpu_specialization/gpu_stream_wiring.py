@@ -9,12 +9,12 @@ scheduling pass stays idempotent via the per-node Property.
 from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG
-from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import GPUStreamSchedulingStrategy
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_stream_wiring_applied
-from dace.transformation.passes.gpu_specialization.stream_lowering_helpers import (allocate_stream_array,
-                                                                                   wire_stream_connectors)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
+                                                                                 allocate_stream_array,
+                                                                                 wire_stream_connectors)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
+                                                                               persisted_stream_assignments)
 
 
 @transformation.explicit_cf_compatible
@@ -45,24 +45,10 @@ class GPUStreamWiring(ppl.Pass):
                              f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}').")
         if is_stream_wiring_applied(sdfg):
             return None
-        assignments = _collect_assignments(sdfg)
+        assignments = persisted_stream_assignments(sdfg)
         num_streams = max(assignments.values(), default=-1) + 1
 
         allocate_stream_array(sdfg, num_streams)
         wire_stream_connectors(sdfg, assignments)
         self._strategy.insert_sync_tasklets(sdfg, assignments)
         return num_streams
-
-
-def _collect_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
-    """Transient dict view of every persisted ``Node.gpu_stream_id`` across the SDFG hierarchy.
-
-    The per-node property is the durable source of truth; this view is rebuilt on demand.
-    """
-    out: Dict[nodes.Node, int] = {}
-    for sub_sdfg in sdfg.all_sdfgs_recursive():
-        for state in sub_sdfg.states():
-            for node in state.nodes():
-                if node.gpu_stream_id is not None:
-                    out[node] = node.gpu_stream_id
-    return out

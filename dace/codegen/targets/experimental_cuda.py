@@ -1,13 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
-import networkx as nx
 
 import dace
 from ordered_set import OrderedSet
 
 from dace import data as dt, Memlet
-from dace import dtypes, registry, symbolic, subsets
+from dace import dtypes, registry
 from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -21,16 +20,20 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.cpp import (codeblock_to_cpp, mangle_dace_state_struct_name, ptr, sym2cpp)
-from dace.codegen.target import TargetCodeGenerator, make_absolute
+from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
+from dace.codegen.targets.cuda import (_DYNAMIC_SHARED_MEMORY_SYMBOL, chiplet_count, compute_pool_release,
+                                       distribute_over_chiplets, dynamic_map_input_args, dynamic_shared_memory_request,
+                                       gpu_cmake_options, gpu_runtime_code, gpu_scope_maps_recursive,
+                                       location_condition, location_index_exprs, plan_shared_memory, reset_shared_code)
+from dace.codegen.target import TargetCodeGenerator
 
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
+from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
-from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (generate_sync_debug_call, host_read_device_copies)
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (assigned_stream_expr, generate_sync_debug_call,
+                                                                      host_read_device_copies, num_gpu_streams)
 
 from dace.codegen.targets import cpp
 
@@ -38,10 +41,9 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
 
-# Allocation lifetimes that place an array in the program-global scope (declared
-# once and freed at teardown) rather than transiently inside a state or scope.
-_GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                     dtypes.AllocationLifetime.External)
+#: Lifetimes that allocate an array for the whole program rather than inside a state or scope.
+GLOBAL_LIFETIMES = (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                    dtypes.AllocationLifetime.External)
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -77,6 +79,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._toplevel_schedule = None
 
         self.pool_release: Dict[Tuple[SDFG, str], Tuple[SDFGState, Set[nodes.Node]]] = {}
+        # Every pooled array released early, which the end of its lifetime must not free again
+        self.pool_released_early: Set[Tuple[SDFG, str]] = OrderedSet()
         self.has_pool = False
 
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
@@ -93,7 +97,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 self._dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
 
         self._current_kernel_spec: Optional[KernelSpec] = None
-        self._gpu_stream_manager: Optional[GPUStreamManager] = None
+        self._num_gpu_streams: int = 0
         self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
         self._tb_inserted_kernels: Set[nodes.MapEntry] = OrderedSet()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
@@ -113,6 +117,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         pipeline_results: Dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
+        self._globalcode.write(plan_shared_memory(sdfg))
 
         # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
         # tiled; both are consulted when emitting kernel launches.
@@ -122,17 +127,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
-        self._rebuild_frame_symbol_cache(sdfg)
+        self._frame.resolve_symbols_and_constants(sdfg)
 
-        # Stream assignment is persisted per node via ``Node.gpu_stream_id``
-        # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
-        # directly so a deserialised SDFG round-trips without re-scheduling.
-        self._gpu_stream_manager = GPUStreamManager(sdfg)
+        # Streams are read off ``Node.gpu_stream_id``, so a deserialized SDFG needs no re-scheduling.
+        self._num_gpu_streams = num_gpu_streams(sdfg)
 
         if Config.get('compiler', 'cuda', 'auto_syncthreads_insertion'):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
 
-        self._compute_pool_release(sdfg)
+        if compute_pool_release(sdfg, self.pool_release):
+            self.has_pool = True
+        self.pool_released_early = OrderedSet(self.pool_release)
 
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
@@ -141,100 +146,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
-
-    def _rebuild_frame_symbol_cache(self, sdfg: SDFG):
-        """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
-
-        Needed whenever ``preprocess`` adds new nested SDFGs -- the cache is keyed
-        by ``cfg_id`` and populated once in the framecode's constructor.
-        """
-        frame = self._frame
-        frame._symbols_and_constants = {}
-        sdfg.reset_cfg_list()
-        frame._symbols_and_constants[sdfg.cfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
-        for nested, state in sdfg.all_nodes_recursive():
-            if isinstance(nested, nodes.NestedSDFG):
-                nsdfg = nested.sdfg
-                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
-                parent_constants = frame._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
-                result |= parent_constants
-                for edge in state.in_edges(nested):
-                    if edge.data.data in parent_constants:
-                        result.add(edge.dst_conn)
-                frame._symbols_and_constants[nsdfg.cfg_id] = result
-
-    def _compute_pool_release(self, top_sdfg: SDFG):
-        """Find the point at which each pooled array should be released (``cudaFreeAsync``).
-
-        :raises ValueError: if the backend does not support memory pools.
-        """
-        reachability = access_nodes = None
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            pooled = OrderedSet(
-                aname for aname, arr in sdfg.arrays.items()
-                if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
-            if not pooled:
-                continue
-            self.has_pool = True
-            if self.backend != 'cuda':
-                raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
-
-            # Kept as a lazy ``filter`` to mirror the legacy ``cuda`` target bug-for-bug:
-            # materializing it would populate ``pool_release``, but ``deallocate_array`` keys
-            # that dict by ``ptr()``-resolved names while these are raw names, so a
-            # Persistent/External pooled array would be double-freed (generate_state +
-            # deallocate_array). A coupled pre-existing issue to fix in both targets together.
-            pooled = filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled)
-
-            if reachability is None:
-                reachability = ap.StateReachability().apply_pass(top_sdfg, {})
-                access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
-
-            reachable = reachability[sdfg.cfg_id]
-            access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.states():
-                last_state_arrays: Set[str] = OrderedSet(
-                    s for s in access_sets
-                    if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
-
-                anodes = list(state.data_nodes())
-                for aname in last_state_arrays:
-                    ans = [an for an in anodes if an.data == aname]
-                    terminator = None
-                    for an1 in ans:
-                        if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1):
-                            terminator = an1
-                            break
-
-                    # If the terminator sits inside a scope, defer release to the
-                    # end of state (empty set); otherwise release at the common
-                    # descendant following the ends of all memlet paths
-                    # (e.g., (a)->...->[tasklet]-->...->(b)).
-                    terminators = OrderedSet()
-                    if terminator is not None and state.entry_node(terminator) is None:
-                        for e in state.out_edges(terminator):
-                            if isinstance(e.dst, nodes.EntryNode):
-                                terminators.add(state.exit_node(e.dst))
-                            else:
-                                terminators.add(e.dst)
-
-                    self.pool_release[(sdfg, aname)] = (state, terminators)
-
-            # Release anything still live at SDFG sink.
-            unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
-            if unfreed:
-                sinks = sdfg.sink_nodes()
-                if len(sinks) == 1:
-                    sink = sinks[0]
-                elif len(sinks) > 1:
-                    sink = sdfg.add_state()
-                    for s in sinks:
-                        sdfg.add_edge(s, sink)
-                else:
-                    raise ValueError('End state not found when trying to free pooled memory')
-
-                for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, OrderedSet())
+                self._kernel_arglists[node].update(dynamic_map_input_args(state, node))
 
     @property
     def has_initializer(self) -> bool:
@@ -272,9 +184,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             kernel_spec = KernelSpec(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id)
             self._current_kernel_spec = kernel_spec
 
-            self._define_variables_in_kernel_scope(sdfg, self._dispatcher)
-            self._synchronize_host_reads(cfg, state_id, scope_entry, callsite_stream, launch_arguments=True)
-            self._declare_and_invoke_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            self.define_variables_in_kernel_scope(sdfg, self._dispatcher)
+            self.synchronize_host_reads(cfg, state_id, scope_entry, callsite_stream, launch_arguments=True)
+            self.declare_and_invoke_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
             kernel_stream = CodeIOStream()
             kernel_function_stream = self._globalcode
@@ -294,7 +206,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             self._in_device_code = False
 
-            self._generate_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            self.generate_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
             self._dispatcher.defined_vars.exit_scope(scope_entry)
 
@@ -323,7 +235,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             f"Scope generation for schedule type '{schedule_type}' is not implemented in ExperimentalCUDACodeGen. "
             "Please check for supported schedule types or implement the corresponding strategy.")
 
-    def _define_variables_in_kernel_scope(self, sdfg: SDFG, dispatcher: TargetDispatcher):
+    def define_variables_in_kernel_scope(self, sdfg: SDFG, dispatcher: TargetDispatcher):
         """Register every kernel argument in the dispatcher under its device-side pointer name.
 
         Persistent/external data that lives in ``__state`` cannot be referenced directly from
@@ -343,7 +255,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._in_device_code = False
             host_ptrname = cpp.ptr(name, data_desc, sdfg, self._frame)
 
-            is_global: bool = data_desc.lifetime in _GLOBAL_LIFETIMES
+            is_global: bool = data_desc.lifetime in GLOBAL_LIFETIMES
             defined_type, ctype = dispatcher.defined_vars.get(host_ptrname, is_global=is_global)
 
             self._in_device_code = True
@@ -356,8 +268,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._in_device_code = restore_in_device_code
 
-    def _declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
-                                           state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
+                                          state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -378,6 +290,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', cfg, state_id, scope_entry)
 
         for e in dyn_inputs:
+            if e.data.data == e.dst_conn:
+                continue  # Already in scope under that name; redefining it would self-initialize.
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
@@ -388,8 +302,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if has_dyn_inputs:
             callsite_stream.write('}', cfg, state_id, scope_entry)
 
-    def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -432,14 +346,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         return;
                     }}''', cfg, state_id, scope_entry)
 
+        # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
+        dynsmem_size = scope_entry._cuda_dynamic_shared_memory
+        self._localcode.write(dynamic_shared_memory_request(kernel_name, dynsmem_size), cfg, state_id, scope_entry)
         stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
         kargs = ', '.join(['(void *)&' + arg for arg in kernel_args_as_input])
         self._localcode.write(
             f'''
             void  *{kernel_name}_args[] = {{ {kargs} }};
-            gpuError_t __err = {self.backend}LaunchKernel(
-                (void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {0}, {stream_var_name}
-            );
+            gpuError_t __err = {self.backend}LaunchKernel((void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {sym2cpp(dynsmem_size)}, {stream_var_name});
             ''', cfg, state_id, scope_entry)
 
         self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});\n')
@@ -466,12 +381,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                'memory from the host.')
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
-    def _synchronize_host_reads(self,
-                                cfg: ControlFlowRegion,
-                                state_id: int,
-                                consumer: nodes.Node,
-                                callsite_stream: CodeIOStream,
-                                launch_arguments: bool = False) -> None:
+    def synchronize_host_reads(self,
+                               cfg: ControlFlowRegion,
+                               state_id: int,
+                               consumer: nodes.Node,
+                               callsite_stream: CodeIOStream,
+                               launch_arguments: bool = False) -> None:
         """Block the host on the copy stream before ``consumer`` reads a device-to-host copy.
 
         Emitted lazily at the first host consumer instead of at the copy, and only once per
@@ -491,11 +406,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if key in self._synchronized_d2h:
                 continue
             self._synchronized_d2h.add(key)
-            gpu_stream = self._gpu_stream_manager.get_stream_node(producer)
+            gpu_stream = assigned_stream_expr(producer)
             callsite_stream.write(f'DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n', cfg, state_id,
                                   consumer)
 
-    def _reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
+    def reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
         """Whether ``node`` is a host node whose first read of a device-to-host copy is still unsynced."""
         if not isinstance(node, (nodes.Tasklet, nodes.NestedSDFG)):
             return False
@@ -529,7 +444,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             return True
         # Host node reading a device-to-host copy: claimed to place the copy's synchronization
         # right before it, then generated by the CPU codegen as usual.
-        return self._reads_unsynchronized_device_copy(state, node)
+        return self.reads_unsynchronized_device_copy(state, node)
 
     def generate_state(self,
                        sdfg: SDFG,
@@ -574,7 +489,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
         if not self._in_device_code:
-            self._synchronize_host_reads(cfg, state_id, node, callsite_stream)
+            self.synchronize_host_reads(cfg, state_id, node, callsite_stream)
 
         # Exact type, not isinstance: subclasses (e.g. RTLTasklet) belong to the CPU codegen. Host
         # nodes reach this dispatch only for their synchronization and are generated by the CPU one.
@@ -633,54 +548,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                           brackets_on_enter=False) as scope_manager:
 
             # ``location`` guards run the tasklet on a specific slice of threads/warps/blocks.
-            for name, index_fn in (('gpu_thread', self._get_thread_id), ('gpu_warp', self._get_warp_id),
-                                   ('gpu_block', self._get_block_id)):
+            for name, index_expr in location_index_exprs(self._current_kernel_spec.block_dims):
                 if name in tasklet.location:
-                    cond = self._generate_condition_from_location(name, index_fn(), tasklet.location[name])
-                    scope_manager.open(condition=cond)
+                    scope_manager.open(condition=location_condition(name, index_expr, tasklet.location[name]))
 
             self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-
-    def _generate_condition_from_location(self, name: str, index_expr: str, location: Union[int, str,
-                                                                                            subsets.Range]) -> str:
-        if isinstance(location, str) and ':' in location:
-            location = subsets.Range.from_string(location)
-            if len(location) != 1:
-                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
-        elif symbolic.issymbolic(location):
-            location = sym2cpp(location)
-
-        if isinstance(location, subsets.Range):
-            begin, end, stride = location[0]
-            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
-            cond = f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
-            if stride != 1:
-                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
-        else:
-            cond = f'({index_expr}) == {location}'
-
-        return cond
-
-    def _get_thread_id(self) -> str:
-        kernel_block_dims: List = self._current_kernel_spec.block_dims
-        result = 'threadIdx.x'
-        if kernel_block_dims[1] != 1:
-            result += f' + ({sym2cpp(kernel_block_dims[0])}) * threadIdx.y'
-        if kernel_block_dims[2] != 1:
-            result += f' + ({sym2cpp(kernel_block_dims[0] * kernel_block_dims[1])}) * threadIdx.z'
-        return result
-
-    def _get_warp_id(self) -> str:
-        return f'(({self._get_thread_id()}) / warpSize)'
-
-    def _get_block_id(self) -> str:
-        kernel_block_dims: List = self._current_kernel_spec.block_dims
-        result = 'blockIdx.x'
-        if kernel_block_dims[1] != 1:
-            result += f' + gridDim.x * blockIdx.y'
-        if kernel_block_dims[2] != 1:
-            result += f' + gridDim.x * gridDim.y * blockIdx.z'
-        return result
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -696,13 +568,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError(
                 "declare_array is only for variables that require separate declaration and allocation.")
 
-        if nodedesc.storage == dtypes.StorageType.GPU_Shared:
-            raise NotImplementedError("Dynamic shared memory unsupported")
+        dynamic_shared = gpu_shared_memory.is_dynamic_shared_memory_buffer(nodedesc)
+        if nodedesc.storage == dtypes.StorageType.GPU_Shared and not dynamic_shared:
+            raise NotImplementedError(f'Shared memory container "{node.data}" is placed in static shared memory, '
+                                      'which requires a size known before the kernel starts')
 
         if nodedesc.storage == dtypes.StorageType.Register:
             raise ValueError("Dynamic allocation of registers is not allowed")
 
-        if nodedesc.storage not in {dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned}:
+        if nodedesc.storage not in {dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
+                                    } and not dynamic_shared:
             raise NotImplementedError(f"CUDA: Unimplemented storage type {nodedesc.storage.name}.")
 
         if self._dispatcher.declared_arrays.has(ptrname):
@@ -730,8 +605,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError("allocate_stream not implemented in ExperimentalCUDACodeGen")
 
         elif isinstance(nodedesc, dace.data.View):
-            return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
-                                                   allocation_stream)
+            self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                            allocation_stream)
+            if node.setzero and nodedesc.storage == dtypes.StorageType.GPU_Shared:
+                # A container placed in dynamic shared memory is a view, zeroed where it is allocated
+                allocation_stream.write(reset_shared_code(dataname, nodedesc, self._current_kernel_spec.block_dims),
+                                        cfg, state_id, node)
+            return
         elif isinstance(nodedesc, dace.data.Reference):
             return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
                                                         declaration_stream, allocation_stream)
@@ -744,19 +624,19 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            self._prepare_GPU_Global_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
-                                           declaration_stream, allocation_stream)
+            self.prepare_GPU_Global_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                                          allocation_stream)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            self._prepare_CPU_Pinned_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
-                                           declaration_stream, allocation_stream)
+            self.prepare_CPU_Pinned_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                                          allocation_stream)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
-            self._prepare_GPU_Shared_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
-                                           declaration_stream, allocation_stream)
+            self.prepare_GPU_Shared_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                                          allocation_stream)
         else:
             raise NotImplementedError(f'CUDA: Unimplemented storage type {nodedesc.storage}')
 
-    def _declare_pointer_if_needed(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, node: nodes.AccessNode,
-                                   nodedesc: dt.Data, declaration_stream: CodeIOStream) -> str:
+    def declare_pointer_if_needed(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, node: nodes.AccessNode,
+                                  nodedesc: dt.Data, declaration_stream: CodeIOStream) -> str:
         """Emit ``T* {name};`` once and register the host pointer in ``defined_vars``.
 
         Hoist the binding above ``SDFGState`` scopes (which are popped between
@@ -776,14 +656,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype, ancestor=ancestor)
         return dataname
 
-    def _prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-        dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+    def prepare_GPU_Global_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                 node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                                 declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+        dataname = self.declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
         arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
         if nodedesc.pool:
-            gpu_stream = self._gpu_stream_manager.get_stream_node(node)
+            gpu_stream = assigned_stream_expr(node)
             allocation_stream.write(
                 f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n',
                 cfg, state_id, node)
@@ -798,10 +678,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             allocation_stream.write(f'{dataname} += {sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
 
-    def _prepare_CPU_Pinned_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-        dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+    def prepare_CPU_Pinned_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                 node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                                 declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+        dataname = self.declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
         arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
         allocation_stream.write(f'DACE_GPU_CHECK({self.backend}MallocHost(&{dataname}, {arrsize_malloc}));\n', cfg,
@@ -811,15 +691,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.start_offset != 0:
             allocation_stream.write(f'{dataname} += {sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
 
-    def _prepare_GPU_Shared_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                  node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                                  declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+    def prepare_GPU_Shared_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                 node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                                 declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
 
+        if gpu_shared_memory.is_dynamic_shared_memory_buffer(nodedesc):
+            # The flat buffer of dynamic shared memory that the kernel's dynamic containers view
+            dataname = self.declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
+            allocation_stream.write(f'{dataname} = {_DYNAMIC_SHARED_MEMORY_SYMBOL};\n', cfg, state_id, node)
+            return
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
         arrsize = nodedesc.total_size
-
-        if symbolic.issymbolic(arrsize, sdfg.constants):
-            raise NotImplementedError('Dynamic shared memory unsupported')
         if nodedesc.start_offset != 0:
             raise NotImplementedError('Start offset unsupported for shared memory')
 
@@ -831,9 +713,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
         if node.setzero:
-            allocation_stream.write(
-                f'dace::ResetShared<{nodedesc.dtype.ctype}, {", ".join(sym2cpp(self._current_kernel_spec.block_dims))}, {sym2cpp(arrsize)}, '
-                f'1, false>::Reset({dataname});\n', cfg, state_id, node)
+            allocation_stream.write(reset_shared_code(dataname, nodedesc, self._current_kernel_spec.block_dims), cfg,
+                                    state_id, node)
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -845,7 +726,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             dataname = f'({dataname} - {sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(dataname):
-            is_global = nodedesc.lifetime in _GLOBAL_LIFETIMES
+            is_global = nodedesc.lifetime in GLOBAL_LIFETIMES
             self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
@@ -856,10 +737,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
-                # Pooled arrays whose release point was picked up by _compute_pool_release are
+                # Pooled arrays whose release point was picked up by compute_pool_release are
                 # freed in generate_state; everything else is freed here.
-                if (sdfg, dataname) not in self.pool_release:
-                    gpu_stream = self._gpu_stream_manager.get_stream_node(node)
+                if (sdfg, node.data) not in self.pool_released_early:
+                    gpu_stream = assigned_stream_expr(node)
                     callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeAsync({dataname}, {gpu_stream}));\n', cfg,
                                           state_id, node)
             else:
@@ -877,187 +758,20 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError(f'Deallocation not implemented for storage type: {nodedesc.storage.name}')
 
     def get_generated_codeobjects(self):
-        fileheader = CodeIOStream()
-
-        self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
-
-        # The GPU stream array has a persistent allocation lifetime and is declared in the state
-        # struct under an SDFG-id-prefixed name by the frame codegen; resolve the prefixed name so
-        # our backend initialization can refer to the same storage.
-        cnt = 0
-        init_gpu_stream_vars = ""
-        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
-        for csdfg, name, desc in self._global_sdfg.arrays_recursive(include_nested_data=True):
-            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
-                init_gpu_stream_vars = f"__state->__{csdfg.cfg_id}_{name}"
-                break
-
-        initcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            if 'cuda' in sd.init_code:
-                initcode.write(codeblock_to_cpp(sd.init_code['cuda']), sd)
-        initcode.write(self._initcode.getvalue())
-
-        exitcode = CodeIOStream()
-        for sd in self._global_sdfg.all_sdfgs_recursive():
-            if None in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            if 'cuda' in sd.exit_code:
-                exitcode.write(codeblock_to_cpp(sd.exit_code['cuda']), sd)
-        exitcode.write(self._exitcode.getvalue())
-
-        if self.backend == 'cuda':
-            backend_header = 'cuda_runtime.h'
-        elif self.backend == 'hip':
-            backend_header = 'hip/hip_runtime.h'
-        else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
-
-        params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
-        if params_comma:
-            params_comma = ', ' + params_comma
-
-        pool_header = ''
-        if self.has_pool:
-            poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
-            pool_header = f'''
-    {self.backend}MemPool_t mempool;
-    {self.backend}DeviceGetDefaultMemPool(&mempool, 0);
-    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    {self.backend}MemPoolSetAttribute(mempool, {self.backend}MemPoolAttrReleaseThreshold, &threshold);
-'''
-        # Depending on `max_concurrent_streams` we decide how to allocate the streams
+        stream_create = stream_destroy = None
         if int(Config.get("compiler", "cuda", "max_concurrent_streams")) == -1:
-            stream_alloc_call = "__state->gpu_context->internal_streams[i] = nullptr"
-            stream_free_call = "{ /* no action needed */ }"
-            assert self._gpu_stream_manager.num_gpu_streams == 1
-            assert self._gpu_stream_manager.num_gpu_events == 0
-        else:
-            stream_alloc_call = f"DACE_GPU_CHECK({self.backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {self.backend}StreamNonBlocking))"
-            stream_free_call = f"DACE_GPU_CHECK({self.backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
-
-        self._codeobject.code = """
-#include <{backend_header}>
-#include <dace/dace.h>
-
-{file_header}
-
-DACE_EXPORTED int __dace_init_experimental_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_experimental_cuda({sdfg_state_name} *__state);
-
-{other_globalcode}
-
-int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
-    int count;
-
-    // Check that we are able to run {backend} code
-    if ({backend}GetDeviceCount(&count) != {backend}Success)
-    {{
-        printf("ERROR: GPU drivers are not configured or {backend}-capable device "
-               "not found\\n");
-        return 1;
-    }}
-    if (count == 0)
-    {{
-        printf("ERROR: No {backend}-capable devices found\\n");
-        return 2;
-    }}
-
-    // Initialize {backend} before we run the application
-    float *dev_X;
-    DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
-    DACE_GPU_CHECK({backend}Free(dev_X));
-
-    __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
-
-    {pool_header}
-
-    // Create {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        {stream_alloc_call};
-        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
-    }}
-    {initcode}
-
-    return 0;
-}}
-
-int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
-    {exitcode}
-
-    // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>({backend}DeviceSynchronize());
-
-    // Destroy {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        {stream_free_call};
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
-    }}
-
-    delete __state->gpu_context;
-    return __err;
-}}
-
-
-{localcode}
-""".format(params=params_comma,
-           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           initcode=initcode.getvalue(),
-           exitcode=exitcode.getvalue(),
-           other_globalcode=self._globalcode.getvalue(),
-           localcode=self._localcode.getvalue(),
-           file_header=fileheader.getvalue(),
-           nstreams=self._gpu_stream_manager.num_gpu_streams,
-           nevents=self._gpu_stream_manager.num_gpu_events,
-           backend=self.backend,
-           backend_header=backend_header,
-           pool_header=pool_header,
-           stream_alloc_call=stream_alloc_call,
-           stream_free_call=stream_free_call,
-           sdfg=self._global_sdfg)
-
+            # Every stream is the default (null) stream.
+            stream_create = "__state->gpu_context->internal_streams[i] = nullptr"
+            stream_destroy = "{ /* no action needed */ }"
+        self._codeobject.code = gpu_runtime_code(self._frame, self._global_sdfg, 'experimental_cuda', self.backend,
+                                                 self.has_pool, self._initcode, self._exitcode,
+                                                 self._globalcode.getvalue(), self._localcode.getvalue(),
+                                                 self._num_gpu_streams, 0, stream_create, stream_destroy)
         return [self._codeobject]
 
     @staticmethod
     def cmake_options():
-        options = []
-
-        if Config.get('compiler', 'cuda', 'path'):
-            options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
-                Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
-
-        backend = common.get_gpu_backend()
-        if backend == 'cuda':
-            cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
-            cuda_arch = ';'.join(cuda_arch)
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
-            flags = Config.get("compiler", "cuda", "args")
-            options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
-
-        if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
-            flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
-                for arch in hip_arch)
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
-
-        if Config.get('compiler', 'cpu', 'executable'):
-            host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
-            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
-
-        return options
+        return gpu_cmake_options()
 
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet],
@@ -1141,25 +855,16 @@ class KernelSpec:
         cudaCodeGen._in_device_code = restore_in_device_code
 
         self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
-        self.gpu_index_ctype: str = self.get_gpu_index_ctype()
+        # Without a thread-block map, a kernel's own map spans the threads rather than the blocks
+        self.per_thread: bool = not any(
+            m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry)))
+        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(kernel_map_entry, list(self.grid_dims),
+                                                                      self.chiplets)
+        self.index_types: Dict[str, dtypes.typeclass] = common.gpu_map_index_types(sdfg, kernel_parent_state,
+                                                                                   kernel_map_entry)
 
         if cudaCodeGen.backend not in ['cuda', 'hip']:
             raise ValueError(f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
                              "Only 'cuda' and 'hip' are supported.")
-
-        warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
-        self.warpSize: int = Config.get('compiler', 'cuda', warp_size_key)
-
-    def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
-        """Return the C type string for the configured DaCe dtype under
-        ``compiler.cuda.<config_key>``. Raises if the name does not resolve
-        to a DaCe ``typeclass``."""
-        type_name = Config.get('compiler', 'cuda', config_key)
-        # Resolve against the typeclass registry ("dace::int32" -> int32) rather than the module namespace.
-        dtype = next((t for t, s in dtypes.TYPECLASS_TO_STRING.items() if s.rsplit('::', 1)[-1] == type_name), None)
-        if not isinstance(dtype, dtypes.typeclass):
-            raise ValueError(
-                f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '
-                'no matching DaCe data type found.\n'
-                'Please use a valid type from dace.dtypes (e.g., "int32", "uint64").')
-        return dtype.ctype

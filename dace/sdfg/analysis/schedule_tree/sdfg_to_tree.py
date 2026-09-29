@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 from collections import defaultdict
 import copy
 from typing import Dict, List, Set
@@ -8,7 +9,9 @@ from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
                              UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
+from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.replace import replace_datadesc_names
+from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.transformation.passes.analysis import StateReachability
@@ -24,6 +27,75 @@ NODE_TO_SCOPE_TYPE = {
     dace.nodes.MapEntry: tn.MapScope,
     dace.nodes.ConsumeEntry: tn.ConsumeScope,
 }
+
+
+class _InterstateMemletReplacer(MemletReplacer):
+    """
+    Rewrites reads of nested-SDFG data containers inside inter-state edge code (conditions and assignment values)
+    to the corresponding accesses of the parent SDFG, as given by the memlets connected to the nested SDFG node.
+
+    Subscripts (``A[2]``) and bare scalar reads (``s``) are both replaced by the unsqueezed external access
+    (e.g., ``B[4]`` or ``cstarr[i]``). A bare reference to a non-scalar container (e.g., in ``A is not None``)
+    is only renamed, since it has no subset to offset.
+    """
+
+    def __init__(self, arrays: Dict[str, data.Data], mapping: Dict[str, Memlet]) -> None:
+        """
+        :param arrays: The nested SDFG's data descriptors.
+        :param mapping: A mapping from nested container names to the external memlets they are connected to.
+        """
+        super().__init__(arrays, self._unsqueeze, set(mapping.keys()) & set(arrays.keys()))
+        self.mapping = mapping
+        self.replace_count = 0
+
+    def _unsqueeze(self, memlet: Memlet) -> Memlet:
+        self.replace_count += 1
+        return unsqueeze_memlet(memlet, self.mapping[memlet.data])
+
+    def _rename(self, node: ast.Name) -> ast.Name:
+        self.replace_count += 1
+        return ast.copy_location(ast.Name(id=self.mapping[node.id].data, ctx=node.ctx), node)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id not in self.array_filter:
+            return node
+        if isinstance(self.arrays[node.id], data.Scalar):
+            return self._replace(node)
+        return self._rename(node)
+
+    def visit_Compare(self, node: ast.Compare):
+        # ``arr is [not] None`` refers to the container itself and must keep a bare name
+        if (len(node.ops) == 1 and isinstance(node.ops[0], (ast.Is, ast.IsNot)) and len(node.comparators) == 1
+                and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None
+                and isinstance(node.left, ast.Name)):
+            if node.left.id in self.array_filter:
+                node.left = self._rename(node.left)
+            return node
+        return self.generic_visit(node)
+
+
+def _replace_interstate_edge_reads(sdfg: SDFG, mapping: Dict[str, Memlet]) -> None:
+    """
+    Replaces all reads of the given data containers in the inter-state edges of an SDFG with the corresponding
+    accesses to the external memlets (see ``_InterstateMemletReplacer``).
+
+    :param sdfg: The (nested) SDFG whose inter-state edges are rewritten in-place.
+    :param mapping: A mapping from internal data container names to external memlets.
+    """
+    if not mapping:
+        return
+    for e in sdfg.all_interstate_edges():
+        for k, v in e.data.assignments.items():
+            replacer = _InterstateMemletReplacer(sdfg.arrays, mapping)
+            vast = replacer.visit(ast.parse(v))
+            if replacer.replace_count > 0:
+                e.data.assignments[k] = astutils.unparse(vast)
+        replacer = _InterstateMemletReplacer(sdfg.arrays, mapping)
+        cond = replacer.visit(ast.parse(e.data.condition.as_string))
+        if replacer.replace_count > 0:
+            e.data.condition.as_string = astutils.unparse(cond)
+            e.data._uncond = None
+            e.data._cond_sympy = None
 
 
 def _dealias_sdfg(sdfg: SDFG) -> None:
@@ -100,6 +172,12 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
                 elif isinstance(parent_arr, data.ContainerView):
                     parent_arr = copy.deepcopy(parent_arr.stype)
                 child_names = inv_replacements[parent_name]
+                # Rewrite inter-state edge reads while the child descriptors still have their original
+                # (e.g., scalar) shapes, so that bare scalar reads are offset like the memlets below.
+                _replace_interstate_edge_reads(
+                    nsdfg,
+                    {name: parent_edges_inputs[name].data
+                     for name in child_names if name in parent_edges_inputs})
                 for name in child_names:
                     child_arr = copy.deepcopy(parent_arr)
                     child_arr.transient = False
@@ -143,21 +221,6 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
                         elif e.data.data == dst_data:
                             e.data.data = new_dst_memlet.data
 
-                for e in nsdfg.all_interstate_edges():
-                    repl_dict = dict()
-                    syms = e.data.read_symbols()
-                    for memlet in e.data.get_read_memlets(nsdfg.arrays, include_scalars=True):
-                        if memlet.data in child_names:
-                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges_inputs[memlet.data].data)
-                            if memlet.data in syms:
-                                syms.remove(memlet.data)
-                    for s in syms:
-                        if s in parent_edges_inputs:
-                            if s in nsdfg.arrays:
-                                repl_dict[s] = parent_edges_inputs[s].data.data
-                            else:
-                                repl_dict[s] = str(parent_edges_inputs[s].data)
-                    e.data.replace_dict(repl_dict)
                 for name in child_names:
                     for edge in [parent_edges_inputs.get(name, None), parent_edges_outputs.get(name, None)]:
                         if edge is None:
@@ -276,37 +339,9 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
                 elif memlet.data == dst_data:
                     memlet.data = dst_memlet.data
 
-    for e in sdfg.all_interstate_edges():
-        repl_dict = dict()
-        syms = e.data.read_symbols()
-        for memlet in e.data.get_read_memlets(sdfg.arrays, include_scalars=True):
-            if memlet.data in input_mapping or memlet.data in output_mapping:
-                # If array name is both in the input connectors and output connectors with different
-                # memlets, this is undefined behavior. Prefer output
-                if memlet.data in input_mapping:
-                    mapping = input_mapping
-                if memlet.data in output_mapping:
-                    mapping = output_mapping
-
-                repl_dict[str(memlet)] = str(unsqueeze_memlet(memlet, mapping[memlet.data]))
-                if memlet.data in syms:
-                    syms.remove(memlet.data)
-        for s in syms:
-            if s in input_mapping:
-                if s in sdfg.arrays:
-                    repl_dict[s] = input_mapping[s].data
-                else:
-                    repl_dict[s] = str(input_mapping[s])
-
-        # Manual replacement with strings
-        # TODO(later): Would be MUCH better to use MemletReplacer / e.data.replace_dict(repl_dict, replace_keys=False)
-        for find, replace in repl_dict.items():
-            for k, v in e.data.assignments.items():
-                if find in v:
-                    e.data.assignments[k] = v.replace(find, replace)
-            condstr = e.data.condition.as_string
-            if find in condstr:
-                e.data.condition.as_string = condstr.replace(find, replace)
+    # If a container name is both in the input connectors and output connectors with different memlets, this is
+    # undefined behavior. Prefer output.
+    _replace_interstate_edge_reads(sdfg, {**input_mapping, **output_mapping})
 
 
 def _remove_name_collisions(sdfg: SDFG) -> None:

@@ -1,4 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import re
+
 import dace
 import pytest
 
@@ -208,6 +210,43 @@ def test_memory_pool_if_states(cnd):
     a_expected = cp.full(N, cnd, dtype=cp.float64)
     sdfg(A=a, cnd=cnd)
     assert cp.allclose(a, a_expected)
+
+
+def pooled_through_two_states(lifetime: dace.AllocationLifetime) -> dace.SDFG:
+    """``A`` is copied to a pooled ``tmp`` and back in two states; a third state (map ``triple``) does not use it."""
+    N = 20
+    sdfg = dace.SDFG(f'pool_release_{lifetime.name.lower()}')
+    sdfg.add_array('A', [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    _, tmp_desc = sdfg.add_transient('tmp', [N], dace.float64, storage=dace.StorageType.GPU_Global, lifetime=lifetime)
+    tmp_desc.pool = True
+    stages = (('fill', 'A[i]', 'tmp[i]', '_o = _i'), ('drain', 'tmp[i]', 'A[i]', '_o = _i + 1.0'),
+              ('triple', 'A[i]', 'A[i]', '_o = _i * 3.0'))
+    previous = None
+    for label, src, dst, code in stages:
+        state = sdfg.add_state(label, is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        state.add_mapped_tasklet(label, {'i': f'0:{N}'}, {'_i': dace.Memlet(src)},
+                                 code, {'_o': dace.Memlet(dst)},
+                                 schedule=dace.ScheduleType.GPU_Device,
+                                 external_edges=True)
+        previous = state
+    return sdfg
+
+
+@pytest.mark.parametrize('lifetime', (dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent))
+def test_pooled_array_is_freed_once(lifetime):
+    """A global pooled array is released right after its last use, and every pooled array exactly once: a
+    persistent one outlives the call, so it is only freed on exit."""
+    code = ''.join(obj.clean_code for obj in pooled_through_two_states(lifetime).generate_code())
+
+    frees = [m.start() for m in re.finditer(r'(cuda|hip)Free(Async)?\((__state->__\d+_)?tmp\b', code)]
+    assert len(frees) == 1, code
+    launch = re.search(r'__dace_runkernel_triple\w*\(__state, A[,)]', code).start()
+    if lifetime == dace.AllocationLifetime.Global:
+        assert frees[0] < launch, 'the global pooled array is released only after a state that no longer uses it'
+    else:
+        assert frees[0] > code.index('__dace_exit_'), 'a persistent pooled array is released before exit'
 
 
 if __name__ == '__main__':

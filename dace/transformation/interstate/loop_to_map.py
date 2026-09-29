@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -54,6 +54,30 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
 def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
     """ Keeps the indices or ranges of subsets that are in `indices`. """
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
+
+
+def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> Optional[Set[str]]:
+    """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
+    symbols_that_may_be_used: Set[str] = {itervar}
+    used_before_assignment: Set[str] = set()
+    # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
+    for block in cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False):
+        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
+        used_before_assignment |= ({str(s) for s in block.free_symbols} - symbols_that_may_be_used)
+        for e in block.parent_graph.out_edges(block):
+            used_before_assignment |= e.data.read_symbols() - symbols_that_may_be_used
+            assigned_symbols = set()
+            for k, v in e.data.assignments.items():
+                try:
+                    fsyms = symbolic.pystr_to_symbolic(v).free_symbols
+                except AttributeError:
+                    fsyms = set()
+                if k not in fsyms:
+                    assigned_symbols.add(k)
+            if assigned_symbols & used_before_assignment:
+                return None
+            symbols_that_may_be_used |= e.data.assignments.keys()
+    return symbols_that_may_be_used
 
 
 @properties.make_properties
@@ -107,35 +131,9 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return False
 
-        # Collect symbol reads and writes from inter-state assignments
-        in_order_loop_blocks = list(
-            cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
-        symbols_that_may_be_used: Set[str] = {itervar}
-        used_before_assignment: Set[str] = set()
-        for block in in_order_loop_blocks:
-            # A symbol read in the block's own dataflow (e.g. a memlet subset ``b[im]``) is read
-            # before anything the block assigns on its out-edges, so a later reassignment makes it
-            # loop-carried. ``read_symbols()`` below only sees interstate-edge reads.
-            used_before_assignment |= ({str(s) for s in block.free_symbols} - symbols_that_may_be_used)
-            for e in block.parent_graph.out_edges(block):
-                # Collect read-before-assigned symbols (this works because the states are always in order,
-                # see above call to `blockorder_topological_sort`)
-                read_symbols = e.data.read_symbols()
-                read_symbols -= symbols_that_may_be_used
-                used_before_assignment |= read_symbols
-                # If symbol was read before it is assigned, the loop cannot be parallel
-                assigned_symbols = set()
-                for k, v in e.data.assignments.items():
-                    try:
-                        fsyms = symbolic.pystr_to_symbolic(v).free_symbols
-                    except AttributeError:
-                        fsyms = set()
-                    if not k in fsyms:
-                        assigned_symbols.add(k)
-                if assigned_symbols & used_before_assignment:
-                    return False
-
-                symbols_that_may_be_used |= e.data.assignments.keys()
+        symbols_that_may_be_used = symbols_assigned_before_use(self.loop, itervar)
+        if symbols_that_may_be_used is None:
+            return False
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()

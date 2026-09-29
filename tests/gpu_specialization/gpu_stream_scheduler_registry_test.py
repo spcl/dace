@@ -14,7 +14,6 @@ from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
                                                                                  GPUStreamSchedulingStrategy,
-                                                                                 MonolithicSingleStreamGPUScheduler,
                                                                                  NaiveGPUStreamScheduler)
 
 # Pipeline-level config.
@@ -28,7 +27,7 @@ def test_pipeline_default_strategy_is_auto():
 
 
 def test_pipeline_accepts_explicit_strategy_instance():
-    strategy = MonolithicSingleStreamGPUScheduler()
+    strategy = AutoSingleStreamGPUScheduler(monolithic=True)
     pipe = GPUStreamPipeline(scheduling_strategy=strategy)
     assert pipe._scheduling_strategy is strategy
 

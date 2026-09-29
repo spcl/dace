@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 
 from dace import dtypes, subsets, symbolic
+from dace.codegen import common
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion
 from dace.codegen.prettycode import CodeIOStream
@@ -11,13 +12,14 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
+from dace.codegen.targets.cuda import (_named_idx, chiplet_padding_condition, kernel_grid_conditions,
+                                       kernel_index_definitions, kernel_launch_qualifiers)
 from dace.transformation.dataflow.add_threadblock_map import product
 
 
-def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
-                                state_id: int, anchor_node, dispatcher: TargetDispatcher):
-    """Emit ``{ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
+def emit_dim_index_definitions(scope_map, axis: str, index_types, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
+                               state_id: int, anchor_node, dispatcher: TargetDispatcher):
+    """Emit ``{type} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
 
     ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
     three dims map directly to ``axis.{x|y|z}``; further dims delinearize off ``axis.z``.
@@ -33,7 +35,7 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
     for dim in range(dimensions):
         var_name = scope_map.params[-dim - 1]  # reversed
         if dim < 3:
-            expr = f"{axis}.{get_cuda_dim(dim)}"
+            expr = f"{axis}.{_named_idx(dim)}"
             if dim == 2 and dimensions > 3:
                 tail = product(dim_sizes[3:])
                 expr = f"({expr} / ({sym2cpp(tail)}))"
@@ -41,6 +43,7 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
             tail = product(dim_sizes[dim + 1:])
             expr = f"(({axis}.z / ({sym2cpp(tail)})) % ({sym2cpp(dim_sizes[dim])}))"
         var_def = sym2cpp(sym_coords[dim]).replace(f'__SYM_IDX{dim}', expr)
+        ctype = index_types[var_name].ctype
         callsite_stream.write(f'{ctype} {var_name} = {var_def};', cfg, state_id, anchor_node)
         dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
 
@@ -52,7 +55,7 @@ class ScopeGenerationStrategy(ABC):
 
     Subclasses set ``SCHEDULE`` (matched by ``applicable()`` against the source MapEntry's
     schedule) and ``SCOPE_COMMENT``, implement ``generate()``, and reuse the
-    ``_dispatch_and_deallocate`` tail.
+    ``dispatch_and_deallocate`` tail.
     """
 
     SCHEDULE: dtypes.ScheduleType = None
@@ -72,9 +75,9 @@ class ScopeGenerationStrategy(ABC):
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         raise NotImplementedError('Abstract class')
 
-    def _dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                 entry_node: nodes.MapEntry, function_stream: CodeIOStream,
-                                 callsite_stream: CodeIOStream):
+    def dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                entry_node: nodes.MapEntry, function_stream: CodeIOStream,
+                                callsite_stream: CodeIOStream):
         """Common tail of every ``generate``: dispatch the inner subgraph,
         then deallocate scope-local arrays."""
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -95,8 +98,6 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        self._generate_kernel_signature(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
-
         with ScopeManager(frame_codegen=self.codegen._frame,
                           sdfg=sdfg,
                           cfg=cfg,
@@ -104,43 +105,42 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           state_id=state_id,
                           function_stream=function_stream,
                           callsite_stream=callsite_stream,
-                          comment=self.SCOPE_COMMENT) as scope_manager:
+                          comment=self.SCOPE_COMMENT,
+                          brackets_on_enter=False) as scope_manager:
+            scope_manager.open(prefix=self.kernel_signature(dfg_scope))
 
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
-            # Without an inner ThreadBlock map the kernel-map variables bind
-            # to thread indices instead -- same blockIdx-based formulas.
-            _emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype,
-                                        callsite_stream, cfg, state_id, kernel_entry_node, self._dispatcher)
+            for var_name, expr in kernel_index_definitions(kernel_spec.kernel_map, kernel_spec.block_dims,
+                                                           kernel_spec.per_thread, kernel_spec.chiplets,
+                                                           kernel_spec.chiplet_chunk, kernel_spec.index_types):
+                ctype = kernel_spec.index_types[var_name].ctype
+                callsite_stream.write(f'{ctype} {var_name} = {expr};', cfg, state_id, kernel_entry_node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
+            # Without a thread-block map every thread handles one iteration and masks the trailing blocks
+            if kernel_spec.per_thread:
+                conditions = kernel_grid_conditions(kernel_spec.kernel_map, kernel_spec.block_dims,
+                                                    kernel_spec.chiplets)
+            else:
+                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if kernel_spec.chiplets > 1 else []
+            for condition in filter(None, conditions):
+                scope_manager.open(condition=condition)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
-                                          callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
+                                         callsite_stream)
 
-    def _generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
-                                   state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-
+    def kernel_signature(self, dfg_scope: ScopeSubgraphView) -> str:
         kernel_name = self._current_kernel_spec.kernel_name
         kernel_args = self._current_kernel_spec.args_typed
         block_dims = self._current_kernel_spec.block_dims
         node = dfg_scope.source_nodes()[0]
 
-        # Conditionally add __launch_bounds__ for block size optimization.
-        min_warps_per_eu = ''
-        if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
-            min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
-        launch_bounds = ''
-        if node.gpu_launch_bounds != '-1':
-            if node.gpu_launch_bounds == "0":
-                if not any(symbolic.issymbolic(b) for b in block_dims):
-                    launch_bounds = f'__launch_bounds__({product(block_dims)}{min_warps_per_eu})'
-            else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{min_warps_per_eu})'
+        maxnreg, launch_bounds = kernel_launch_qualifiers(node, block_dims)
 
-        callsite_stream.write(f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ', cfg,
-                              state_id, node)
+        return f'__global__ void {maxnreg} {launch_bounds} {kernel_name}({", ".join(kernel_args)}) '
 
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
@@ -164,9 +164,9 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             scope_map = node.map
             kernel_block_dims = self._current_kernel_spec.block_dims
 
-            map_range, symbolic_indices, _sym_coords = _emit_dim_index_definitions(
-                scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
-                self._dispatcher)
+            map_range, symbolic_indices, _sym_coords = emit_dim_index_definitions(
+                scope_map, 'threadIdx', common.gpu_map_index_types(sdfg, cfg.state(state_id), node), callsite_stream,
+                cfg, state_id, node, self._dispatcher)
 
             symbolic_index_bounds = [
                 idx + (block_dim * rng[2]) - 1
@@ -200,7 +200,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 if len(condition) > 0:
                     scope_manager.open(condition=condition)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
@@ -222,7 +222,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             kernel_spec = self._current_kernel_spec
             block_dims = kernel_spec.block_dims
-            warpSize = kernel_spec.warpSize
+            warpSize = common.gpu_warp_size()
 
             state_dfg = cfg.state(state_id)
             node = dfg_scope.source_nodes()[0]
@@ -236,27 +236,12 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
             warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
             num_warps = product(warp_dim_bounds)
 
-            ids_ctype = kernel_spec.gpu_index_ctype
+            ids_ctype = common.gpu_thread_id_type().ctype
 
-            self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
-                                               callsite_stream, scope_manager)
+            self.handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
+                                              callsite_stream, scope_manager)
 
-            # Define the flat thread ID within the block.
-            flattened_terms = []
-
-            for i, dim_size in enumerate(block_dims):
-
-                if dim_size == 1:
-                    continue
-
-                dim = get_cuda_dim(i)
-                stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
-                idx_expr = " * ".join(stride + [f"threadIdx.{get_cuda_dim(i)}"]) if stride else f"threadIdx.{dim}"
-                flattened_terms.append(idx_expr)
-
-            joined_terms = " + ".join(flattened_terms)
-            flat_thread_idx_expr = f"({joined_terms})" if len(flattened_terms) > 1 else joined_terms
-
+            flat_thread_idx_expr = flat_thread_index_expr(block_dims)
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id,
                                                       state_dfg.node_id(node))
 
@@ -264,17 +249,10 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                   state_id, node)
             self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, ids_ctype)
 
-            # Compute the map indices (the warp indices).
+            # Compute the map indices (the warp indices), in reverse parameter order.
             for i in range(warp_dim):
-                var_name = scope_map.params[-i - 1]  # reverse order
-                previous_sizes = warp_dim_bounds[:i]
-
-                if len(previous_sizes) > 0:
-                    divisor = product(previous_sizes)
-                    expr = f"(({threadID_name} / {divisor}) % ({warp_dim_bounds[i]}))"
-                else:
-                    expr = f"({threadID_name} % ({warp_dim_bounds[i]}))"
-
+                var_name = scope_map.params[-i - 1]
+                expr = warp_index_expr(threadID_name, warp_dim_bounds, i)
                 callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
 
@@ -287,28 +265,18 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             warp_range = [(start, end + 1, stride) for start, end, stride in map_range.ranges]
 
-            for dim, (var_name, (start, _, stride)) in enumerate(zip(scope_map.params[::-1], warp_range)):
-
-                condition_terms = []
-
-                if start != 0:
-                    condition_terms.append(f"{var_name} >= {start}")
-
-                if stride != 1:
-                    expr = var_name if start == 0 else f"({var_name} - {start})"
-                    condition_terms.append(f'{expr} % {stride} == 0')
-
-                if condition_terms:
-                    condition = " && ".join(condition_terms)
+            for var_name, (start, _, stride) in zip(scope_map.params[::-1], warp_range):
+                condition = strided_range_guard(var_name, start, stride)
+                if condition:
                     scope_manager.open(condition)
 
-            self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
 
-    def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
-                                      warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
-                                      scope_manager: 'ScopeManager'):
+    def handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
+                                     warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
+                                     scope_manager: 'ScopeManager'):
 
-        warpSize = self._current_kernel_spec.warpSize
+        warpSize = common.gpu_warp_size()
 
         parent_map, _ = helpers.get_parent_map(state_dfg, node)
         if parent_map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
@@ -414,10 +382,40 @@ class ScopeManager:
                 line += f" // {self.comment} (close {i + 1})"
             self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
 
-    def open(self, condition: str = None):
-        """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{``."""
-        line = f"if ({condition}) {{" if condition else "{"
+    def open(self, condition: str = None, prefix: str = ''):
+        """Open a bracket, emitting ``if (condition) {`` when ``condition`` is given else ``{prefix}{``."""
+        line = f"if ({condition}) {{" if condition else f"{prefix}{{"
         if self.debug:
             line += f" // {self.comment} (open {self._opened + 1})"
         self.callsite_stream.write(line, self.cfg, self.state_id, self.entry_node)
         self._opened += 1
+
+
+def flat_thread_index_expr(block_dims) -> str:
+    """The thread's flat index within its block, skipping unit block dimensions."""
+    terms = []
+    for i, dim_size in enumerate(block_dims):
+        if dim_size == 1:
+            continue
+        stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
+        terms.append(" * ".join(stride + [f"threadIdx.{_named_idx(i)}"]))
+    joined = " + ".join(terms)
+    return f"({joined})" if len(terms) > 1 else joined
+
+
+def warp_index_expr(warp_id: str, warp_dim_bounds, i: int) -> str:
+    """Index of warp dimension ``i`` within the flat warp id."""
+    if i == 0:
+        return f"({warp_id} % ({warp_dim_bounds[0]}))"
+    return f"(({warp_id} / {product(warp_dim_bounds[:i])}) % ({warp_dim_bounds[i]}))"
+
+
+def strided_range_guard(var_name: str, start, stride) -> str:
+    """Condition selecting the iterations of ``start::stride`` among ``start, start + 1, ...``; empty if all."""
+    terms = []
+    if start != 0:
+        terms.append(f"{var_name} >= {start}")
+    if stride != 1:
+        expr = var_name if start == 0 else f"({var_name} - {start})"
+        terms.append(f'{expr} % {stride} == 0')
+    return " && ".join(terms)

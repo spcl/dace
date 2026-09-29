@@ -180,7 +180,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             graph.validate()
 
 
-def _map_touches_gpu_global(state, mapentry: nodes.MapEntry, sdfg: SDFG) -> bool:
+def map_touches_gpu_global(state, mapentry: nodes.MapEntry, sdfg: SDFG) -> bool:
     """Whether the scope rooted at ``mapentry`` reads or writes a ``GPU_Global`` array."""
     mapexit = state.exit_node(mapentry)
     for boundary_edge in itertools.chain(state.in_edges(mapentry), state.out_edges(mapexit)):
@@ -190,6 +190,18 @@ def _map_touches_gpu_global(state, mapentry: nodes.MapEntry, sdfg: SDFG) -> bool
                     if sdfg.arrays[endpoint.data].storage == dtypes.StorageType.GPU_Global:
                         return True
     return False
+
+
+def make_small_map_sequential(state, mapentry: nodes.MapEntry, sdfg: SDFG, debugprint: bool) -> None:
+    """Schedule a map smaller than a tile sequentially, unless it touches ``GPU_Global`` data, which a
+    sequential (host) loop cannot."""
+    if map_touches_gpu_global(state, mapentry, sdfg):
+        if debugprint:
+            print(f'Keeping map "{mapentry}" device-scheduled (touches GPU_Global data)')
+        return
+    if debugprint:
+        print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
+    mapentry.map.schedule = dtypes.ScheduleType.Sequential
 
 
 def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_partial_parallelism: bool = None) -> None:
@@ -288,15 +300,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         # NOTE: The test "(x < y) == True" below is crafted for SymPy
         # to be "definitely True"
         if all((s < tile_size) == True for s in mapentry.map.range.size()):
-            # If smaller than tile size, don't transform and instead make map sequential -- but a
-            # Sequential schedule emits a host loop, which cannot touch GPU_Global data.
-            if _map_touches_gpu_global(graph, mapentry, sdfg):
-                if debugprint:
-                    print(f'Keeping map "{mapentry}" device-scheduled (touches GPU_Global data)')
-                continue
-            if debugprint:
-                print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
-            mapentry.map.schedule = dtypes.ScheduleType.Sequential
+            # If smaller than tile size, don't transform and instead make map sequential
+            make_small_map_sequential(graph, mapentry, sdfg, debugprint)
             continue
 
         # MapTiling -> AccumulateTransient / AccumulateStream

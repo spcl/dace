@@ -31,7 +31,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 from dace.utils import until
 
@@ -1660,24 +1660,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 1:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
-                elif len(values) == 2:
-                    result[name] = symbolic.symbol(
-                        name,
-                        dtypes.result_type_of(infer_expr_type(values[0], {
-                            **self.defined,
-                            **dyn_inputs
-                        }), infer_expr_type(values[1], {
-                            **self.defined,
-                            **dyn_inputs
-                        })))
-                elif len(values) == 3:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
                         "You may use up to 3 arguments (start:stop:step).")
+                result[name] = symbolic.symbol(
+                    name, infer_iteration_symbol_type(*bounds, symbols={
+                        **self.defined,
+                        **dyn_inputs
+                    }))
 
         return result
 
@@ -2494,9 +2488,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
 
             sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
+                                      infer_iteration_symbol_type(ranges[0][0],
+                                                                  ranges[0][1],
+                                                                  ranges[0][2],
+                                                                  symbols=self.sdfg.symbols),
                                       integer=integer,
                                       nonnegative=nonnegative,
                                       positive=positive)
@@ -2609,7 +2604,45 @@ class ProgramVisitor(ExtNodeVisitor):
         cond = astutils.unparse(parsed_node)
         cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
 
+        # Register any free symbols used in the condition (e.g., ``dace.symbol`` objects that appear nowhere else in
+        # the program) so that they become part of the SDFG's symbols and thus of its argument list.
+        self._add_symbols_from_condition(node, cond)
+
         return cond, cond_else, test_region
+
+    def _add_symbols_from_condition(self, node: ast.AST, cond: str) -> None:
+        """
+        Adds the free symbols of a (loop or branch) condition string to the SDFG symbols, if they are not already
+        defined as symbols, variables, or data containers.
+
+        :param node: The AST node of the condition (used for error reporting).
+        :param cond: The condition as a Python expression string.
+        """
+        try:
+            symcond = pystr_to_symbolic(cond)
+        except Exception:
+            # Conditions that cannot be represented symbolically (e.g., involving callbacks or attributes)
+            # do not introduce new symbols.
+            return
+        if not symbolic.issymbolic(symcond):
+            return
+        for atom in symcond.free_symbols:
+            if not symbolic.issymbolic(atom, self.sdfg.constants):
+                continue
+            astr = str(atom)
+            # ``None`` is represented by a placeholder symbol in symbolic expressions (e.g., ``B is None``)
+            if astr == 'NoneSymbol':
+                continue
+            # Check for undefined variables
+            if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+                raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
+            # Add to global SDFG symbols if not a scalar
+            if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
+                # Prefer the dtype of the originally-declared symbol object (if any), since re-parsing the condition
+                # string creates a fresh symbol with the default dtype.
+                defined = self.defined.get(astr, None)
+                dtype = defined.dtype if isinstance(defined, symbolic.symbol) else atom.dtype
+                self.sdfg.add_symbol(astr, dtype)
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2652,19 +2685,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
-
-        # Add symbols from test as necessary
-        symcond = pystr_to_symbolic(loop_cond)
-        if symbolic.issymbolic(symcond):
-            for atom in symcond.free_symbols:
-                if symbolic.issymbolic(atom, self.sdfg.constants):
-                    astr = str(atom)
-                    # Check for undefined variables
-                    if astr not in self.defined:
-                        raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
-                    # Add to global SDFG symbols if not a scalar
-                    if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
-                        self.sdfg.add_symbol(astr, atom.dtype)
 
         # Handle else clause
         if node.orelse:

@@ -376,12 +376,12 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
-    input_arrays = set()
+    input_arrays = {}
     output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
             if node.has_reads(state):
-                input_arrays.add(node.data)
+                input_arrays[node.data] = None
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
@@ -394,7 +394,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays.keys()):
+    for name in dict.fromkeys([*input_arrays, *output_arrays]):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -497,9 +497,8 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg,
-                                        set(input_names.values()) | input_arrays,
-                                        set(output_names.values()) | output_arrays.keys())
+    nested_sdfg = state.add_nested_sdfg(nsdfg, dict.fromkeys([*input_names.values(), *input_arrays]),
+                                        dict.fromkeys([*output_names.values(), *output_arrays]))
 
     # Reconnect memlets to nested SDFG
     reconnected_in = set()
@@ -1554,31 +1553,6 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return None
-
-
-def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
-    """
-    Checks if the given node is enclosed within a Map whose schedule type
-    matches any in the ``schedules`` set.
-
-    :param state: The state where the node resides.
-    :param node: The node to check.
-    :param schedules: Schedule types to match, e.g. ``{dtypes.ScheduleType.GPU_Device}``.
-    :return: True if the node is enclosed by a Map with a schedule type in ``schedules``.
-    """
-    current = node
-
-    while current is not None:
-        if isinstance(current, nodes.MapEntry):
-            if current.map.schedule in schedules:
-                return True
-
-        parent = get_parent_map(state, current)
-        if parent is None:
-            return False
-        current, state = parent
-
-    return False
 
 
 def redirect_edge(state: SDFGState,

@@ -1858,6 +1858,7 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     assert stream_decl < memcpy_call
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     """A grid barrier releases only once EVERY thread reaches it. The copy expansion runs inside a
     single-thread component of a persistent kernel, so a barrier at its own state boundary is
@@ -1891,6 +1892,7 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     assert '__gbar.Sync();' in cuda[end:]
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
     """A nested SDFG with several states below the kernel map is a state machine, and its states
     still need grid barriers between them -- the lone-state narrowing must not eat those."""

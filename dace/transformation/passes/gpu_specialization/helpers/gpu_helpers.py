@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared utilities for the GPU-specialization passes: stream names, node and connector
 predicates, and the stream-wiring idempotency signal."""
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ordered_set import OrderedSet
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.scope import is_in_scope
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
 # Imported from the libnode layer so producers and the scheduler cannot drift. Named after the
@@ -16,28 +17,6 @@ STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"
-
-
-def dependency_edge():
-    """Return a fresh empty ``Memlet`` used as a control-dependency edge."""
-    from dace.memlet import Memlet
-    return Memlet()
-
-
-def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
-    """Whether ``name`` is written across a GPU-scheduled map's ``MapExit``, i.e. is a kernel output."""
-    for state in sdfg.states():
-        for node in state.nodes():
-            if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                continue
-            for in_edge in state.in_edges(node):
-                src = in_edge.src
-                if not isinstance(src, nodes.ExitNode):
-                    continue
-                entry = state.entry_node(src)
-                if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                    return True
-    return False
 
 
 def is_stream_wiring_applied(sdfg: SDFG) -> bool:
@@ -72,12 +51,15 @@ def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
 
 def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
     """Whether ``sub_sdfg`` is, transitively, the body of a GPU_Device map."""
-    cur = sub_sdfg
-    while cur.parent_nsdfg_node is not None:
-        if innermost_enclosing_map(cur.parent, cur.parent_nsdfg_node, dtypes.ScheduleType.GPU_Device) is not None:
-            return True
-        cur = cur.parent_sdfg
-    return False
+    return is_in_scope(sub_sdfg.parent_sdfg, sub_sdfg.parent, sub_sdfg.parent_nsdfg_node,
+                       [dtypes.ScheduleType.GPU_Device])
+
+
+def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
+    """Whether ``node`` is, or is enclosed by, a map with one of ``schedules``, across nested SDFGs."""
+    if isinstance(node, nodes.MapEntry) and node.map.schedule in schedules:
+        return True
+    return is_in_scope(state.sdfg, state, node, schedules)
 
 
 def weakly_connected_node_sets(graph) -> List[OrderedSet]:
@@ -169,3 +151,11 @@ def find_inner_gpu_consumers(sdfg: SDFG):
             for node in state.nodes():
                 if is_gpu_stream_consumer(node, nsdfg, state):
                     yield node, nsdfg, state
+
+
+def persisted_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+    """Every ``Node.gpu_stream_id`` set across the hierarchy; the per-node property is the durable record."""
+    return {
+        n: n.gpu_stream_id
+        for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
+    }

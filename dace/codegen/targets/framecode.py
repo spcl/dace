@@ -48,10 +48,17 @@ class DaCeCodeGenerator(object):
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
+        self.resolve_symbols_and_constants(sdfg)
+
+    def resolve_symbols_and_constants(self, sdfg: SDFG) -> None:
+        """(Re)build the per-``cfg_id`` cache of the symbols and constants each SDFG in the hierarchy sees.
+
+        A target that adds nested SDFGs while preprocessing rebuilds it, as their ``cfg_id``s are new.
+        """
+        self._symbols_and_constants: Dict[int, Set[str]] = {}
         # resolve all symbols and constants
         # first handle root
         sdfg.reset_cfg_list()
@@ -271,7 +278,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         gpu_drain_decl = ''
         gpu_drain_call = ''
         # getattr: a user-registered code generator need not define target_name.
-        if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
+        if any(
+                getattr(target, 'target_name', None) in ('cuda', 'experimental_cuda')
+                for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')
             gpu_drain_call = '    __dace_gpu_drain_error(__state);\n'
@@ -425,7 +434,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         for storage, arrays in ext_arrays.items():
             size = 0
             for subsdfg, aname, arr in arrays:
-                size += arr.total_size * arr.dtype.bytes
+                size += arr.total_size_in_bytes
 
             # Size query functions
             callsite_stream.write(
@@ -446,7 +455,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for subsdfg, aname, arr in arrays:
                 allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
-                offset += arr.total_size * arr.dtype.bytes
+                offset += arr.total_size_in_bytes
 
             # Footer
             callsite_stream.write('}', sdfg)
@@ -757,7 +766,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break

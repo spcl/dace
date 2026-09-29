@@ -1,29 +1,36 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
-from typing import Any, Dict, List, Optional, Tuple
+import ast
 import copy
+import logging
 import warnings
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
 
 from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import is_devicelevel_gpu, nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from ordered_set import OrderedSet
 
 # Deliberately NOT ``dtypes.GPU_SCHEDULES``: that also includes dynamic/persistent thread-block
 # schedules this pass does not lift.
+logger = logging.getLogger(__name__)
+
 GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock)
+
+#: A map scope together with the state holding it.
+Scope = Tuple[nodes.MapEntry, SDFGState]
 
 
 def tile_extent(max_elem, min_elem):
-    """Per-iteration extent of an inner-map range.
-
-    For a tile pattern ``i = start : Min(X, start+Y) + 1`` the extent is the static tile width
-    ``Y + 1``, independent of the outer symbol ``start``, which is not host-visible at the lift
-    destination. Otherwise fall back to the symbolic ``max_elem + 1 - min_elem``.
-    """
+    """Per-iteration extent of an inner-map range."""
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
             diff = symbolic.simplify(arg - min_elem)
@@ -33,12 +40,12 @@ def tile_extent(max_elem, min_elem):
 
 
 def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
-    """True if ``desc`` is safe and worth demoting to per-thread ``Register``.
+    """True if ``desc`` has a literal shape of at most ``max_elements`` elements, so it fits in registers.
 
-    Every shape dimension must be a concrete positive integer -- a symbol would leak into a
-    host-side ``cudaMalloc`` and cannot size a per-thread array -- and the element count must
-    stay within ``max_elements``. Anything larger is hoisted instead.
+    A persistent or external array outlives an invocation, which a per-thread register cannot.
     """
+    if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+        return False
     if any(symbolic.issymbolic(dim) for dim in desc.shape):
         return False
     try:
@@ -49,10 +56,151 @@ def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
 
 
 def has_wcr_incoming(sdfg: SDFG, data_name: str) -> bool:
-    """True if any memlet writes ``data_name`` with a WCR. Demoting such an array to a
-    per-thread ``Register`` would silently break the accumulation."""
+    """True if any memlet accumulates into ``data_name``, which a per-thread register would break."""
     return any(e.data.wcr is not None and e.data.data == data_name for nsdfg in sdfg.all_sdfgs_recursive()
                for state in nsdfg.states() for e in state.edges())
+
+
+def enclosing_maps(state: SDFGState, node: nodes.Node) -> List[Scope]:
+    """Map scopes enclosing ``node``, innermost first, continuing through enclosing nested SDFGs."""
+    scopes: List[Scope] = []
+    parent = helpers.get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = helpers.get_parent_map(parent[1], parent[0])
+    return scopes
+
+
+def gpu_levels(state: SDFGState, node: nodes.Node) -> Optional[List[Scope]]:
+    """GPU hierarchy maps enclosing ``node`` up to its innermost kernel, outermost first; ``None`` outside kernels."""
+    levels: List[Scope] = []
+    for entry, entry_state in enclosing_maps(state, node):
+        if entry.map.schedule in GPU_HIERARCHY_SCHEDULES:
+            levels.append((entry, entry_state))
+        if entry.map.schedule == dtypes.ScheduleType.GPU_Device:
+            return levels[::-1]
+    return None
+
+
+def encloses(scope: Scope, state: SDFGState, src: nodes.Node) -> bool:
+    """Whether an edge leaving ``src`` in ``state`` runs inside ``scope``."""
+    entry, entry_state = scope
+    if entry_state is not state:
+        # A scope in another state of the same SDFG is a sibling; one in an ancestor SDFG encloses it.
+        return entry_state.sdfg is not state.sdfg
+    if src is entry:
+        return True
+    if src is state.exit_node(entry):
+        return False
+    parent = state.entry_node(src)
+    while parent is not None and parent is not entry:
+        parent = state.entry_node(parent)
+    return parent is entry
+
+
+def lift_prefix(levels: List[Scope], state: SDFGState, src: nodes.Node) -> List[Tuple]:
+    """Leading subset an edge leaving ``src`` gains: its own iteration inside a level, the whole level outside it."""
+    prefix = []
+    for scope in levels:
+        entry = scope[0]
+        inside = encloses(scope, state, src)
+        for param, (start, end, step), origin in zip(entry.map.params, entry.map.range, entry.map.range.min_element()):
+            if inside:
+                index = symbolic.symbol(param) - origin
+                prefix.append((index, index, 1))
+            else:
+                prefix.append((start - origin, end - origin, step))
+    return prefix
+
+
+def assigns_symbol(sdfg: SDFG, name: str) -> bool:
+    """Whether ``sdfg`` gives ``name`` its own value rather than reading one from its caller."""
+    if any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions()):
+        return True
+    return any(name in edge.data.assignments for edge in sdfg.all_interstate_edges())
+
+
+class SubscriptPrefixer(ast.NodeTransformer):
+    """Prepend fixed leading index expressions to every subscript of one array name."""
+
+    __slots__ = ('array_name', 'prefix', 'changed')
+
+    def __init__(self, array_name: str, prefix: List[str]):
+        self.array_name = array_name
+        self.prefix = [ast.parse(expr, mode='eval').body for expr in prefix]
+        self.changed = False
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        self.generic_visit(node)
+        if isinstance(node.value, ast.Name) and node.value.id == self.array_name:
+            existing = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+            node.slice = ast.Tuple(elts=copy.deepcopy(self.prefix) + existing, ctx=ast.Load())
+            self.changed = True
+        return node
+
+
+def prepend_subscript_indices(code: str, array_name: str, prefix: List[str]) -> str:
+    """``code`` with ``prefix`` prepended to each ``array_name`` subscript; code that is not Python stays."""
+    if array_name not in code:
+        return code
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    prefixer = SubscriptPrefixer(array_name, prefix)
+    tree = prefixer.visit(tree)
+    return ast.unparse(ast.fix_missing_locations(tree)) if prefixer.changed else code
+
+
+def free_symbol_names(exprs) -> OrderedSet:
+    return OrderedSet(str(sym) for expr in exprs for sym in symbolic.pystr_to_symbolic(expr).free_symbols)
+
+
+def sdfg_chain(inner: SDFG, outer: SDFG) -> List[SDFG]:
+    """``inner`` and its ancestors up to and including ``outer``, innermost first."""
+    chain = [inner]
+    while chain[-1] is not outer:
+        chain.append(chain[-1].parent_sdfg)
+    return chain
+
+
+def binding_conflict(hierarchy: List[SDFG], needed: OrderedSet) -> Optional[Tuple[SDFG, str]]:
+    """A nest between the kernel and the owner that means something else by one of ``needed``, if any."""
+    for sdfg in reversed(hierarchy[:-1]):
+        nsdfg_node = sdfg.parent_nsdfg_node
+        defined = sdfg.parent.symbols_defined_at(nsdfg_node)
+        for name in needed:
+            bound = nsdfg_node.symbol_mapping.get(name)
+            if name in defined and ((bound is not None and str(bound) != name) or
+                                    (bound is None and assigns_symbol(sdfg, name))):
+                return sdfg, name
+    return None
+
+
+def bind_symbols(hierarchy: List[SDFG], needed: OrderedSet) -> None:
+    """Bind each of ``needed`` by name into every nest from the kernel's SDFG down to the owner."""
+    for sdfg in reversed(hierarchy[:-1]):
+        nsdfg_node = sdfg.parent_nsdfg_node
+        defined = sdfg.parent.symbols_defined_at(nsdfg_node)
+        # A name missing here is defined further down, by a map inside this SDFG.
+        for name in (n for n in needed if n in defined):
+            if name not in sdfg.symbols:
+                sdfg.add_symbol(name, defined[name])
+            nsdfg_node.symbol_mapping[name] = name
+
+
+@dataclass(slots=True)
+class LiftPlan:
+    """What lifting one transient rewrites, computed before anything changes."""
+    name: str
+    owner: SDFG
+    desc: dt.Array
+    levels: List[Scope]
+    accesses: List[Tuple[nodes.AccessNode, SDFGState]]
+    prefixes: List[Tuple[MultiConnectorEdge, List[Tuple]]]
+    shape_info: Tuple
+    hierarchy: List[SDFG]
+    needed: OrderedSet
 
 
 @properties.make_properties
@@ -79,80 +227,59 @@ class MoveArrayOutOfKernel(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    #: SDFG the node-to-state map below was built from; a different root discards it.
-    _root: Optional[SDFG] = None
-    _node_to_state: Dict[nodes.Node, SDFGState] = {}
-
-    def state_of(self, node: nodes.Node) -> SDFGState:
-        """State holding ``node``.
-
-        The map is rebuilt on a miss: the pass adds access nodes as it lifts, and a stale map
-        would answer for the graph as it was before the current array was moved.
-
-        :param node: Node to locate.
-        :returns: The state ``node`` belongs to.
-        """
-        if node not in self._node_to_state:
-            self._node_to_state = {
-                n: parent
-                for n, parent in self._root.all_nodes_recursive() if isinstance(parent, SDFGState)
-            }
-        return self._node_to_state[node]
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Demote or hoist every transient ``GPU_Global`` array defined inside a kernel.
 
         :returns: Number of arrays handled, or ``None`` if there were none.
+        :raises NotImplementedError: An array cannot be given one disjoint slice per kernel iteration.
         """
         handled = 0
-        for data_name, desc, kernel_entry in self.kernel_internal_gpu_global_transients(sdfg):
-            if (is_register_demotable(desc, self.register_demotion_max_elements)
-                    and not has_wcr_incoming(sdfg, data_name)):
+        for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(sdfg):
+            if is_register_demotable(desc, self.register_demotion_max_elements) and not has_wcr_incoming(sdfg, name):
                 desc.storage = dtypes.StorageType.Register
-            else:
-                warnings.warn(f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel "
-                              f"{kernel_entry}. GPU_Global memory cannot be allocated within GPU kernels; the array "
-                              f"will be lifted outside the kernel as a non-transient GPU_Global array.")
-                self.move_array(sdfg, kernel_entry, data_name)
+                handled += 1
+                continue
+            plan = self.plan_lift(name, owner, kernel_state)
+            if plan is None:
+                continue
+            warnings.warn(f"Transient array '{name}' with storage type GPU_Global detected inside kernel "
+                          f"{kernel}. GPU_Global memory cannot be allocated within GPU kernels; the array "
+                          f"will be lifted outside the kernel as a non-transient GPU_Global array.")
+            self.move_array(plan, kernel, kernel_state)
             handled += 1
         self.fail_on_in_kernel_global_global(sdfg)
         return handled or None
 
     @staticmethod
-    def kernel_internal_gpu_global_transients(sdfg: SDFG) -> OrderedSet:
-        """Transient ``GPU_Global`` arrays that only ever appear inside a ``GPU_Device`` map.
-
-        A ``(name, desc)`` pair that also appears outside a kernel is left alone: the inner
-        access is then a pass-through of an array the host already owns.
-        """
-        inside, outside = OrderedSet(), OrderedSet()
-        for node, parent in sdfg.all_nodes_recursive():
-            if not isinstance(node, nodes.AccessNode):
+    def kernel_internal_gpu_global_transients(
+            sdfg: SDFG) -> List[Tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
+        """Transient ``GPU_Global`` arrays accessed only inside one ``GPU_Device`` map."""
+        kernels: Dict[Tuple[SDFG, str], OrderedSet] = {}
+        for owner in sdfg.all_sdfgs_recursive():
+            for state in owner.states():
+                for node in state.data_nodes():
+                    desc = owner.arrays[node.data]
+                    if (isinstance(desc, dt.Array) and desc.transient
+                            and desc.storage is dtypes.StorageType.GPU_Global):
+                        for entry, entry_state in enclosing_maps(state, node):
+                            if entry.map.schedule == dtypes.ScheduleType.GPU_Device:
+                                kernels.setdefault((owner, node.data), OrderedSet()).add((entry, entry_state))
+                                break
+                        else:
+                            kernels.setdefault((owner, node.data), OrderedSet()).add(None)
+        result = []
+        for (owner, name), users in kernels.items():
+            if None in users:
                 continue
-            desc = node.desc(parent)
-            if not (isinstance(desc, dt.Array) and desc.transient and desc.storage is dtypes.StorageType.GPU_Global):
-                continue
-
-            kernel_entry = None
-            parent_map_info = helpers.get_parent_map(state=parent, node=node)
-            while parent_map_info is not None:
-                map_entry, map_state = parent_map_info
-                if isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule is dtypes.ScheduleType.GPU_Device:
-                    kernel_entry = map_entry
-                    break
-                parent_map_info = helpers.get_parent_map(map_state, map_entry)
-
-            if kernel_entry is None:
-                outside.add((node.data, desc))
-            else:
-                inside.add((node.data, desc, kernel_entry))
-
-        return OrderedSet([(name, desc, entry) for name, desc, entry in inside if (name, desc) not in outside])
+            if len(users) > 1:
+                raise NotImplementedError(f"Transient '{name}' is shared by the kernels {[k for k, _ in users]}")
+            kernel, kernel_state = users[0]
+            result.append((name, owner.arrays[name], owner, kernel, kernel_state))
+        return result
 
     @staticmethod
     def fail_on_in_kernel_global_global(sdfg: SDFG) -> None:
-        """Raise if a transient ``GPU_Global`` copy survives inside a kernel scope: the codegen
-        has no host-side allocator there. Non-transient through-flows are connector-bound and fine."""
+        """Raise if a transient ``GPU_Global`` copy survives inside a kernel, where nothing can allocate it."""
         offenders: List[str] = []
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -175,196 +302,135 @@ class MoveArrayOutOfKernel(ppl.Pass):
             raise ValueError("Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" +
                              "\n".join(offenders))
 
-    def move_array_out_of_kernel_flat(self, kernel_entry: nodes.MapEntry, array_name: str,
-                                      access_nodes: List[nodes.AccessNode]):
-        """Move a transient ``GPU_Global`` array out of a kernel (flat case).
+    def plan_lift(self, name: str, owner: SDFG, kernel_state: SDFGState) -> Optional['LiftPlan']:
+        """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
+        accesses = [(node, state) for state in owner.all_states() for node in state.data_nodes() if node.data == name]
+        levels = self.slice_levels(name, accesses)
+        prefixes = [(edge, lift_prefix(levels, state, edge.src)) for state in owner.all_states()
+                    for edge in state.edges() if self.touches(edge, name)]
+        desc = owner.arrays[name]
+        shape_info = self.get_new_shape_info(desc, [entry for entry, _ in reversed(levels)])
+        needed = free_symbol_names(bound for _, prefix in prefixes for rng in prefix for bound in rng)
+        needed |= free_symbol_names(shape_info[0][:len(shape_info[0]) - len(desc.shape)])
+        hierarchy = sdfg_chain(owner, kernel_state.sdfg)
+        conflict = binding_conflict(hierarchy, needed)
+        if conflict is not None:
+            logger.debug("Not lifting '%s': %s gives '%s' its own meaning", name, conflict[0].name, conflict[1])
+            return None
+        return LiftPlan(name, owner, desc, levels, accesses, prefixes, shape_info, hierarchy, needed)
 
-        Flat = all access nodes share the kernel map's SDFG/state, so no
-        nested SDFGs or naming conflicts; the array is reshaped to a disjoint
-        slice per map iteration (see :meth:`get_new_shape_info`).
+    def move_array(self, plan: 'LiftPlan', kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
+        """Give the planned transient one slice per kernel iteration and allocate it outside the kernel."""
+        name = self.free_name(plan.name, plan.hierarchy)
+        for edge, prefix in plan.prefixes:
+            self.prefix_memlet(edge, name, prefix)
+        new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
+        plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
 
-        :param access_nodes: Access nodes referring to the array inside the map.
-        """
-        parent_state = self.state_of(kernel_entry)
-        kernel_exit: nodes.MapExit = parent_state.exit_node(kernel_entry)
-        closest_an = self.get_nearest_access_node(access_nodes, kernel_exit)
-        array_desc = closest_an.desc(parent_state)
+        if len(plan.hierarchy) == 1:
+            self.carry_out_of_kernel(name, plan.desc, plan.levels, plan.accesses, kernel, kernel_state)
+            return
+        # Control flow runs outside the owner's own maps, so only levels above the owner give it an index.
+        point = None
+        if all(state.sdfg is not plan.owner for _, state in plan.levels):
+            node, state = plan.accesses[0]
+            point = [symbolic.symstr(begin) for begin, _, _ in lift_prefix(plan.levels, state, node)]
+        self.prefix_control_flow(plan.owner, name, point)
+        bind_symbols(plan.hierarchy, plan.needed)
+        plan.desc.transient = False
+        self.lift_array_through_nested_sdfgs(name, kernel, plan.hierarchy)
 
-        map_entry_chain = self.get_maps_between(kernel_entry, closest_an)
+    @staticmethod
+    def free_name(name: str, hierarchy: List[SDFG]) -> str:
+        """``name``, or a fresh one renamed into the owner if an enclosing SDFG already uses it."""
+        taken = OrderedSet(n for sdfg in hierarchy[1:] for n in (*sdfg.arrays, *sdfg.symbols))
+        if name not in taken:
+            return name
+        owner = hierarchy[0]
+        new_name = utils.find_new_name(name, taken | OrderedSet(owner.arrays) | OrderedSet(owner.symbols))
+        owner.replace(name, new_name)
+        return new_name
 
-        new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
-        array_desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
+    @staticmethod
+    def touches(edge, name: str) -> bool:
+        return edge.data.data == name or any(
+            isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
 
-        self.update_memlets(kernel_entry, array_name, closest_an, access_nodes)
+    @staticmethod
+    def slice_levels(name: str, accesses: List[Tuple[nodes.AccessNode, SDFGState]]) -> List[Scope]:
+        """GPU levels that get a dimension: the deepest access's, which every other access's must prefix."""
+        chains = [gpu_levels(state, node) for node, state in accesses]
+        deepest = max(chains, key=len)
+        for chain in chains:
+            if [entry for entry, _ in chain] != [entry for entry, _ in deepest[:len(chain)]]:
+                raise NotImplementedError(f"Cannot lift '{name}': it is accessed under sibling GPU maps")
+        return deepest
 
-        # ``map_entry_chain`` runs inner to outer, which is the order the path leaves the scopes in.
-        parent_state.add_memlet_path(closest_an,
-                                     *(parent_state.exit_node(me) for me in map_entry_chain),
-                                     parent_state.add_access(array_name),
-                                     memlet=Memlet.from_array(array_name, array_desc))
+    @staticmethod
+    def prefix_memlet(edge, name: str, prefix: List[Tuple]) -> None:
+        memlet = edge.data
+        if memlet.data == name:
+            memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
+        elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name and memlet.dst_subset is not None:
+            memlet.dst_subset = subsets.Range(prefix + memlet.dst_subset.ndrange())
+        elif isinstance(edge.src, nodes.AccessNode) and edge.src.data == name and memlet.src_subset is not None:
+            memlet.src_subset = subsets.Range(prefix + memlet.src_subset.ndrange())
 
-    def move_array(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
-        """Move a transient ``GPU_Global`` array out of a ``GPU_Device`` map.
+    @staticmethod
+    def prefix_control_flow(sdfg: SDFG, name: str, point: Optional[List[str]]) -> None:
+        """Prepend ``point`` to the subscripts of ``name`` that interstate edges, loops and branches read."""
 
-        Each descriptor the array is known by is handled on its own: one living in the kernel's own
-        SDFG only needs reshaping, while one behind a nested SDFG is additionally lifted through
-        every boundary between it and the kernel, renaming on a descriptor-name conflict.
+        def rewrite(code: str) -> str:
+            new_code = prepend_subscript_indices(code, name, point or ['0'])
+            if point is None and new_code != code:
+                raise NotImplementedError(f"Control flow of {sdfg.name} reads '{name}', which varies per GPU thread")
+            return new_code
 
-        :param root_sdfg: Outermost SDFG, which the node-to-state map is keyed on.
-        :param kernel_entry: Kernel the array is moved out of.
-        :param array_name: Transient array to move; all same-named arrays are lifted.
-        """
-        if self._root is not root_sdfg:
-            self._root, self._node_to_state = root_sdfg, {}
-        original_array_name = array_name
-        kernel_parent_sdfg = self.state_of(kernel_entry).sdfg
+        rewrite_code_slots(sdfg, rewrite)
 
-        for array_desc, outermost_sdfg, sdfg_defined, access_nodes in self.collect_array_descriptor_usage(
-                kernel_entry, array_name):
+    def carry_out_of_kernel(self, name: str, desc: dt.Array, levels: List[Scope], accesses: List[Tuple[nodes.AccessNode,
+                                                                                                       SDFGState]],
+                            kernel: nodes.MapEntry, state: SDFGState) -> None:
+        """Route the array from its access nearest the kernel exit out through every map exit, one slice per edge."""
+        exit_node = state.exit_node(kernel)
+        source = self.get_nearest_access_node([node for node, _ in accesses], exit_node, state)
+        entries = [entry for entry, _ in enclosing_maps(state, source)]
+        exits = [state.exit_node(entry) for entry in entries[:entries.index(kernel) + 1]]
+        whole = subsets.Range.from_array(desc).ndrange()
+        for src, dst in zip([source] + exits[:-1], exits):
+            prefix = lift_prefix(levels, state, src)
+            conn = f'IN_{name}'
+            dst.add_in_connector(conn)
+            dst.add_out_connector(f'OUT_{name}')
+            src_conn = None if src is source else f'OUT_{name}'
+            state.add_edge(src, src_conn, dst, conn,
+                           Memlet(data=name, subset=subsets.Range(prefix + whole[len(prefix):])))
+        state.add_edge(exit_node, f'OUT_{name}', state.add_access(name), None, Memlet.from_array(name, desc))
 
-            if outermost_sdfg == kernel_parent_sdfg:
-                # Descriptor lives in the kernel's own SDFG, so the flat algorithm suffices.
-                self.move_array_out_of_kernel_flat(kernel_entry, original_array_name, list(access_nodes))
-                continue
+    def lift_array_through_nested_sdfgs(self, name: str, kernel: nodes.MapEntry, hierarchy: List[SDFG]) -> None:
+        """Declare the array at every level from the owner up to the kernel's SDFG and connect it outward."""
+        for inner, outer in zip(hierarchy, hierarchy[1:]):
+            nsdfg_node = inner.parent_nsdfg_node
+            state = inner.parent
+            new_desc = copy.deepcopy(inner.arrays[name])
+            symbolic.safe_replace(nsdfg_node.symbol_mapping, lambda repl: replace_properties_dict(new_desc, repl))
+            outer.add_datadesc(name, new_desc)
 
-            nsdfg_node = outermost_sdfg.parent_nsdfg_node
-            map_entry_chain = self.get_maps_between(kernel_entry, nsdfg_node)
-
-            new_shape, new_strides, new_total_size, new_offsets = self.get_new_shape_info(array_desc, map_entry_chain)
-            array_desc.set_shape(new_shape=new_shape,
-                                 strides=new_strides,
-                                 total_size=new_total_size,
-                                 offset=new_offsets)
-            array_desc.transient = False
-
-            self.update_memlets(kernel_entry, original_array_name, nsdfg_node, access_nodes)
-
-            required, array_name = self.new_name_required(kernel_entry, original_array_name, sdfg_defined)
-            if required:
-                self.replace_array_name(sdfg_defined, original_array_name, array_name, array_desc)
-
-            self.update_symbols(map_entry_chain, kernel_parent_sdfg)
-
-            sdfg_hierarchy: List[SDFG] = [outermost_sdfg]
-            current_sdfg = outermost_sdfg
-            while current_sdfg != kernel_parent_sdfg:
-                current_sdfg = current_sdfg.parent_sdfg
-                sdfg_hierarchy.append(current_sdfg)
-
-            if any(sdfg is None for sdfg in sdfg_hierarchy):
-                raise ValueError("Invalid SDFG hierarchy: contains 'None' entries. This should not happen.")
-
-            if len(sdfg_hierarchy) < 2:
-                raise ValueError(f"Invalid SDFG hierarchy: only one SDFG found. "
-                                 f"Expected at least two levels, since {outermost_sdfg} is not equal to "
-                                 "the kernel map's SDFG and is contained within it -- the last entry should "
-                                 "be the kernel's parent SDFG.")
-
-            self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy)
-
-    def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry,
-                                        sdfg_hierarchy: List[SDFG]):
-        """Lift a transient array out through each nested SDFG up to the kernel boundary.
-
-        :param sdfg_hierarchy: Nested SDFGs ordered inner->outer.
-        """
-        outer_sdfg = sdfg_hierarchy.pop(0)
-        while sdfg_hierarchy:
-            inner_sdfg = outer_sdfg
-            outer_sdfg = sdfg_hierarchy.pop(0)
-            nsdfg_node = inner_sdfg.parent_nsdfg_node
-            nsdfg_parent_state = self.state_of(nsdfg_node)
-
-            old_desc = inner_sdfg.arrays[array_name]
-            new_desc = copy.deepcopy(old_desc)
-            outer_sdfg.add_datadesc(array_name, new_desc)
-
-            parent_scopes: List[nodes.MapEntry] = []
-            current_parent_scope = nsdfg_node
-            scope_dict = nsdfg_parent_state.scope_dict()
-            while scope_dict[current_parent_scope] is not None and current_parent_scope is not kernel_entry:
-                parent_scopes.append(scope_dict[current_parent_scope])
-                current_parent_scope = scope_dict[current_parent_scope]
-
-            # ``add_memlet_path`` names and creates the scope connectors along the way. Propagation
-            # stays ON: with it off the loop reuses ONE Memlet object for every edge of the path,
-            # which validation rejects as a duplicate reference.
-            # ``add_memlet_path`` creates the connectors of the scope nodes it passes, but only
-            # VERIFIES the two endpoints', so the nested SDFG's own has to exist first.
-            nsdfg_node.add_out_connector(array_name)
-            nsdfg_parent_state.add_memlet_path(nsdfg_node,
-                                               *(nsdfg_parent_state.exit_node(s) for s in parent_scopes),
-                                               nsdfg_parent_state.add_access(array_name),
-                                               src_conn=array_name,
-                                               memlet=Memlet.from_array(array_name, new_desc))
-
-        # Re-mark transient at the outermost SDFG so codegen allocates it instead of expecting a kernel input.
+            exits = []
+            for entry, entry_state in enclosing_maps(state, nsdfg_node):
+                if entry_state is not state:
+                    break
+                exits.append(state.exit_node(entry))
+                if entry is kernel:
+                    break
+            nsdfg_node.add_out_connector(name)
+            state.add_memlet_path(nsdfg_node,
+                                  *exits,
+                                  state.add_access(name),
+                                  src_conn=name,
+                                  memlet=Memlet.from_array(name, new_desc))
+        # Transient at the outermost SDFG, so codegen allocates it instead of expecting a kernel input.
         new_desc.transient = True
-
-    def get_memlet_subset(self, map_chain: List[nodes.MapEntry], node: nodes.Node):
-        """Memlet subset for accessing an array given a node's position in
-        nested GPU maps.
-
-        Per ``GPU_Device``/``GPU_ThreadBlock`` map in the chain: a node
-        strictly inside the map yields the single symbolic map-param index;
-        otherwise the full map-dimension range. This makes memlets represent
-        per-thread/per-block slices when lifting arrays out of kernels.
-
-        :param map_chain: Nested MapEntry nodes, outermost to innermost.
-        :returns: List of ``(start, end, stride)`` tuples per map dimension.
-        """
-        subset = []
-        for next_map in map_chain:
-            if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
-                continue
-
-            map_parent_state = self.state_of(next_map)
-            for param, (start, end, stride) in zip(next_map.map.params, next_map.map.range.ndrange()):
-
-                node_is_map = ((isinstance(node, nodes.MapEntry) and node == next_map)
-                               or (isinstance(node, nodes.MapExit) and map_parent_state.exit_node(next_map) == node))
-                node_state = self.state_of(node)
-                if helpers.contained_in(node_state, node, next_map) and not node_is_map:
-                    index = symbolic.symbol(param)
-                    subset.append((index, index, 1))
-                else:
-                    subset.append((start, end, stride))
-
-        return subset
-
-    def update_memlets(self, kernel_entry: nodes.MapEntry, array_name: str, outermost_node: nodes.Node,
-                       access_nodes: OrderedSet):
-        """Rewrite every memlet of a transient array for correct data movement
-        after lifting it out of the kernel.
-
-        Maps enclosing ``outermost_node`` also enclose all access nodes; they
-        determine which maps sit strictly above and thus the extra GPU-hierarchy
-        dimensions to prepend to each subset.
-
-        :param access_nodes: AccessNodes inside the kernel referencing the array.
-        """
-        map_entry_chain = self.get_maps_between(kernel_entry, outermost_node)
-        params_as_ranges = self.get_memlet_subset(map_entry_chain, outermost_node)
-
-        # edge_bfs visits each edge once, linearly, unlike the old per-path enumeration which
-        # was exponential in fan-in/out.
-        visited: OrderedSet = OrderedSet()
-        for access_node in access_nodes:
-            state = self.state_of(access_node)
-            incoming = [(edge, True) for edge in state.edge_bfs(access_node, reverse=True)]
-            outgoing = [(edge, False) for edge in state.edge_bfs(access_node)]
-            for edge, is_incoming in incoming + outgoing:
-                if edge in visited:
-                    continue
-                if edge.data.data == array_name:
-                    edge.data.subset = subsets.Range(params_as_ranges + edge.data.subset.ndrange())
-                    visited.add(edge)
-                elif is_incoming and edge.dst is access_node and edge.data.dst_subset is not None:
-                    edge.data.dst_subset = subsets.Range(params_as_ranges + edge.data.dst_subset.ndrange())
-                    visited.add(edge)
-                elif not is_incoming and edge.src is access_node and edge.data.src_subset is not None:
-                    edge.data.src_subset = subsets.Range(params_as_ranges + edge.data.src_subset.ndrange())
-                    visited.add(edge)
 
     def get_new_shape_info(self, array_desc: dt.Array, map_exit_chain: List[nodes.MapEntry]):
         """New shape, strides, total size and offsets for a transient array lifted out of a kernel.
@@ -374,7 +440,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         The prepended dimensions are made the slowest-varying ones while the original dimensions
         keep their own layout, so a packed-Fortran array stays packed-Fortran on its own axes.
 
-        :param map_exit_chain: MapEntry nodes between array and kernel exit.
+        :param map_exit_chain: MapEntry nodes between array and kernel exit, innermost first.
         :returns: ``(new_shape, new_strides, new_total_size, new_offsets)``.
         :raises NotImplementedError: The array is neither packed-C nor packed-Fortran.
         """
@@ -406,229 +472,21 @@ class MoveArrayOutOfKernel(ppl.Pass):
         new_strides, new_total_size = lifted.strides_from_layout(*layout)
         return list(lifted.shape), list(new_strides), new_total_size, new_offsets
 
-    def replace_array_name(self, sdfgs: OrderedSet, old_name: str, new_name: str, array_desc: dt.Array):
-        """Rename an array across ``sdfgs`` -- descriptor, memlets, connectors and access nodes.
-
-        ``SDFG.replace`` reaches the descriptor, the access nodes and the memlets, but not the
-        ``IN_``/``OUT_`` scope connectors named after the data, which are renamed here.
-
-        :param sdfgs: SDFGs declaring the descriptor.
-        :param old_name: Name to rename from.
-        :param new_name: Name to rename to.
-        :param array_desc: Descriptor to re-register under ``new_name``.
-        """
-        renamed = {f"OUT_{old_name}": f"OUT_{new_name}", f"IN_{old_name}": f"IN_{new_name}"}
-        for sdfg in sdfgs:
-            sdfg.remove_data(old_name, False)
-            sdfg.add_datadesc(new_name, array_desc)
-            sdfg.replace(old_name, new_name)
-
-            for state in sdfg.states():
-                for edge in state.edges():
-                    if edge.src_conn in renamed:
-                        edge.src.remove_out_connector(edge.src_conn)
-                        edge.src_conn = renamed[edge.src_conn]
-                        edge.src.add_out_connector(edge.src_conn)
-                    if edge.dst_conn in renamed:
-                        edge.dst.remove_in_connector(edge.dst_conn)
-                        edge.dst_conn = renamed[edge.dst_conn]
-                        edge.dst.add_in_connector(edge.dst_conn)
-
-    def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG):
-        """Propagate GPU-map symbols (e.g. map indices) into every nested SDFG
-        under ``top_sdfg`` so lifted memlets referencing them stay valid.
-
-        :param map_entry_chain: GPU MapEntry nodes whose symbols are relevant.
-        """
-        all_symbols = OrderedSet()
-        for next_map in map_entry_chain:
-            if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
-                continue
-            all_symbols = all_symbols | next_map.used_symbols_within_scope(self.state_of(next_map))
-
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            nsdfg_node = sdfg.parent_nsdfg_node
-            if nsdfg_node is None:
-                continue
-
-            for sym in all_symbols:
-                name = str(sym)
-                if name not in sdfg.symbols:
-                    sdfg.add_symbol(name, symbolic.DEFAULT_SYMBOL_TYPE)
-                if name not in nsdfg_node.symbol_mapping:
-                    # The resolved instance, never a fresh ``symbol(name)``: symbol identity is
-                    # name-based, so a re-mint silently aliases another dtype's same-named symbol.
-                    nsdfg_node.symbol_mapping[name] = sym
-
     @staticmethod
-    def binds(nsdfg_node: Optional[nodes.NestedSDFG], array_name: str) -> bool:
-        """Whether ``nsdfg_node`` carries ``array_name`` across its boundary.
+    def get_nearest_access_node(access_nodes: List[nodes.AccessNode], node: nodes.Node,
+                                state: SDFGState) -> nodes.AccessNode:
+        """Closest of ``access_nodes`` to ``node`` in ``state``, by undirected graph distance.
 
-        :param nsdfg_node: Nested SDFG node to test; ``None`` for a top-level SDFG.
-        :param array_name: Descriptor name to look for.
-        :returns: True if the name is one of the node's connectors.
+        :raises RuntimeError: No candidate is connected to ``node``.
         """
-        return nsdfg_node is not None and (array_name in nsdfg_node.in_connectors
-                                           or array_name in nsdfg_node.out_connectors)
-
-    def collect_array_descriptor_usage(self, map_entry: nodes.MapEntry,
-                                       array_name: str) -> List[Tuple[dt.Array, SDFG, OrderedSet, OrderedSet]]:
-        """Track usage of a transient array across nested SDFGs within a map scope.
-
-        "Same array" means same name connected via memlets -- several
-        ``dt.Array`` descriptor objects may exist across SDFGs for one
-        logical array.
-
-        :returns: ``(descriptor, outermost SDFG, all involved SDFGs,
-            all referencing AccessNodes)`` tuples.
-        """
-        access_nodes_info: List[Tuple[nodes.AccessNode, SDFGState,
-                                      SDFG]] = self.get_access_nodes_within_map(map_entry, array_name)
-
-        last_sdfg: SDFG = self.state_of(map_entry).sdfg
-
-        result: List[Tuple[dt.Array, SDFG, OrderedSet, OrderedSet]] = []
-        visited_sdfgs: OrderedSet[SDFG] = OrderedSet()
-
-        for access_node, state, sdfg in access_nodes_info:
-
-            if sdfg in visited_sdfgs:
-                continue
-
-            # Any one descriptor copy suffices -- we only read metadata from it.
-            array_desc = access_node.desc(state)
-
-            sdfg_set: OrderedSet[SDFG] = OrderedSet()
-            access_nodes_set: OrderedSet[nodes.AccessNode] = OrderedSet()
-            access_nodes_set.add(access_node)
-
-            # Upwards while the name keeps crossing a connector: that is how far one descriptor reaches.
-            outermost_sdfg = sdfg
-            while True:
-                sdfg_set.add(outermost_sdfg)
-                if outermost_sdfg is last_sdfg or not self.binds(outermost_sdfg.parent_nsdfg_node, array_name):
-                    break
-                outermost_sdfg = outermost_sdfg.parent_sdfg
-
-            queue = [sdfg]
-            while queue:
-                for nested in (n for st in queue.pop(0).states() for n in st.nodes()
-                               if isinstance(n, nodes.NestedSDFG) and self.binds(n, array_name)):
-                    queue.append(nested.sdfg)
-                    sdfg_set.add(nested.sdfg)
-
-            access_nodes_set.update(node for sub in sdfg_set for sub_state in sub.states()
-                                    for node in sub_state.data_nodes() if node.data == array_name)
-
-            visited_sdfgs.update(sdfg_set)
-
-            result.append((array_desc, outermost_sdfg, sdfg_set, access_nodes_set))
-
-        return result
-
-    def new_name_required(self, map_entry: nodes.MapEntry, array_name: str,
-                          sdfg_defined: OrderedSet) -> Tuple[bool, str]:
-        """Detect whether ``array_name`` collides with a different descriptor
-        in an SDFG outside ``sdfg_defined``, and suggest a free name if so.
-
-        :param map_entry: Kernel map bounding the search.
-        :param array_name: Name to test.
-        :param sdfg_defined: SDFGs where the descriptor is defined.
-        :returns: ``(rename_required, name)`` -- ``name`` is the original when
-            no rename is needed, else a fresh suggestion.
-        """
-        map_parent_sdfg = self.state_of(map_entry).sdfg
-        taken_names = OrderedSet()
-
-        for sdfg in map_parent_sdfg.all_sdfgs_recursive():
-
-            nsdfg_node = sdfg.parent_nsdfg_node
-            state = self.state_of(nsdfg_node) if nsdfg_node else None
-
-            if not ((nsdfg_node and state and helpers.contained_in(state, nsdfg_node, map_entry))
-                    or sdfg is map_parent_sdfg):
-                continue
-
-            # Taken names exclude SDFGs that already define this descriptor -- renaming only avoids real conflicts.
-            if sdfg not in sdfg_defined:
-                taken_names.update(sdfg.arrays.keys())
-                taken_names.update(sdfg.used_symbols(True))
-
-        new_name = utils.find_new_name(array_name, taken_names)
-        return new_name != array_name, new_name
-
-    def get_access_nodes_within_map(self, map_entry: nodes.MapEntry,
-                                    data_name: str) -> List[Tuple[nodes.AccessNode, SDFGState, SDFG]]:
-        """All AccessNodes for ``data_name`` inside ``map_entry``'s scope.
-
-        :returns: ``(AccessNode, SDFGState, parent SDFG)`` tuples.
-        """
-        starting_sdfg = self.state_of(map_entry).sdfg
-        matching_access_nodes = []
-
-        for node, parent_state in starting_sdfg.all_nodes_recursive():
-
-            if (isinstance(node, nodes.AccessNode) and node.data == data_name
-                    and helpers.contained_in(parent_state, node, map_entry)):
-
-                parent_sdfg = self.state_of(node).sdfg
-                matching_access_nodes.append((node, parent_state, parent_sdfg))
-
-        return matching_access_nodes
-
-    def get_maps_between(self, stop_map_entry: nodes.MapEntry, node: nodes.Node) -> List[nodes.MapEntry]:
-        """Map scopes enclosing ``node`` up to and including ``stop_map_entry``, innermost first.
-
-        Assumes ``node`` is contained (directly or via a nested SDFG) within
-        ``stop_map_entry``'s scope.
-
-        :param stop_map_entry: Outermost map to report.
-        :param node: Node whose enclosing scopes are walked.
-        :returns: The enclosing ``MapEntry`` nodes, inner to outer.
-        :raises ValueError: ``node`` is not inside ``stop_map_entry``'s scope.
-        """
-        stop_state = self.state_of(stop_map_entry)
-        stop_exit = stop_state.exit_node(stop_map_entry)
-
-        entries: List[nodes.MapEntry] = []
-
-        current_state = self.state_of(node)
-        parent_info = helpers.get_parent_map(current_state, node)
-
-        while True:
-            if parent_info is None:
-                raise ValueError("Expected node to be in scope of stop_map_entry, but no parent map was found.")
-
-            entry, state = parent_info
-            entries.append(entry)
-            if state.exit_node(entry) == stop_exit:
-                break
-
-            parent_info = helpers.get_parent_map(state, entry)
-
-        return entries
-
-    def get_nearest_access_node(self, access_nodes: List[nodes.AccessNode], node: nodes.Node) -> nodes.AccessNode:
-        """Closest AccessNode to ``node`` by graph distance within the same
-        state (direction-agnostic BFS).
-
-        :param access_nodes: Candidate AccessNodes.
-        :param node: Node to start the search from.
-        :returns: The closest AccessNode by edges traversed.
-        :raises RuntimeError: No candidate is connected to ``node`` in its state.
-        """
-        state = self.state_of(node)
-
-        visited = OrderedSet()
+        visited = OrderedSet([node])
         queue = [node]
         while queue:
             current = queue.pop(0)
             if current in access_nodes:
                 return current
-
-            visited.add(current)
             for neighbor in state.neighbors(current):
                 if neighbor not in visited:
+                    visited.add(neighbor)
                     queue.append(neighbor)
-
         raise RuntimeError(f"No access node found connected to the given node {node}. ")

@@ -669,7 +669,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def node(self, id: int) -> NodeT:
         try:
-            return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+            if id >= 0:
+                # Same result as the scan below, without a Python-level loop over the nodes
+                return next(itertools.islice(self._nodes.keys(), id, None))
+            else:
+                return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
         except StopIteration:
             raise NodeNotFoundError
 
