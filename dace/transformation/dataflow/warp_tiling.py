@@ -2,7 +2,6 @@
 import copy
 
 import numpy as np
-from dace.sdfg.graph import SubgraphView
 from dace import properties, nodes, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
@@ -17,6 +16,26 @@ def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:
     if np.issubdtype(dtype.type, np.integer):
         return f'{dtype.ctype}({int(identity)})'
     return f'{dtype.ctype}({float(identity)!r})'
+
+
+def seed_lane_partial(state: SDFGState, inner_map: nodes.MapEntry, name: str, literal: str) -> None:
+    """Set ``name`` to ``literal`` in the scope of ``inner_map``, ordered before it."""
+    seed = state.add_tasklet('lane_partial_seed', {}, {'__out'}, f'__out = {literal};', dtypes.Language.CPP)
+    parent = state.entry_node(inner_map)
+    if parent is not None:
+        state.add_nedge(parent, seed, Memlet())
+    write = state.add_write(name)
+    state.add_edge(seed, '__out', write, None, Memlet(name))
+    state.add_nedge(write, inner_map, Memlet())
+
+
+def accumulator_source(state: SDFGState, inner_map: nodes.MapEntry, data: str) -> nodes.AccessNode:
+    """The access node holding ``data`` as ``inner_map`` starts: the one feeding the map, else a fresh read
+    (the value an earlier state left)."""
+    for edge in state.in_edges(inner_map):
+        if isinstance(edge.src, nodes.AccessNode) and edge.src.data == data:
+            return edge.src
+    return state.add_read(data)
 
 
 @properties.make_properties
@@ -138,12 +157,7 @@ class WarpTiling(xf.SingleStateTransformation):
                         name = nsdfg._find_new_name(out_edge.data.data)
                         nsdfg.add_scalar(name, acc_desc.dtype, transient=True)
 
-                        write = nstate.add_write(name)
-                        seed = nstate.add_tasklet('lane_partial_seed', {}, {'__out'},
-                                                  f'__out = {lane_identity_literal(acc_desc.dtype, identity)};',
-                                                  dtypes.Language.CPP)
-                        nstate.add_edge(seed, '__out', write, None, Memlet(name))
-                        xfh.state_fission(SubgraphView(nstate, [seed, write]))
+                        seed_lane_partial(nstate, nmap, name, lane_identity_literal(acc_desc.dtype, identity))
 
                         newnode = nstate.add_access(name)
                         nstate.remove_edge(out_edge)
@@ -165,7 +179,8 @@ class WarpTiling(xf.SingleStateTransformation):
                         nstate.add_edge(newnode, None, wrt, '__a', Memlet(name))
                         acc_memlet = copy.deepcopy(out_edge.data)
                         acc_memlet.wcr = None
-                        nstate.add_edge(nstate.add_read(out_edge.data.data), None, wrt, '__acc', acc_memlet)
+                        nstate.add_edge(accumulator_source(nstate, nmap, out_edge.data.data), None, wrt, '__acc',
+                                        acc_memlet)
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None, out_edge.data)
                     else:  # More than one element: mapped tasklet
