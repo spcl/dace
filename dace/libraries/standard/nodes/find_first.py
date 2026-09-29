@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
+from dace.libraries.standard.helper import schedule_dispatch
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -82,44 +83,40 @@ def refuse_wrong_machine(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
         raise NotImplementedError(f"{node.label}: FindFirst reads GPU memory; set implementation='CUDA' on the node "
                                   "(a host expansion would dereference a device pointer).")
     if want_device and not on_device:
-        raise NotImplementedError(f"{node.label}: FindFirst(CUDA) reads host memory; use the 'CPU' or 'sequential' "
+        raise NotImplementedError(f"{node.label}: FindFirst(CUDA) reads host memory; use the 'CPU' "
                                   "implementation (a device kernel cannot dereference a host pointer).")
 
 
 @library.expansion
-class ExpandFindFirstSequential(ExpandTransformation):
-    """Serial CPU lowering: :cpp:func:`dace::find_first_index` with the chunk loop unthreaded.
-
-    Still blocked and ``simd``-scanned inside a chunk, and still cancels between chunks -- serial
-    here means one thread, not one element at a time."""
+class ExpandFindFirstCPU(ExpandTransformation):
+    """CPU lowering: chunks handed out ``schedule(dynamic, 1)``, cancelling on a shared hint. See
+    :cpp:func:`dace::find_first_index` for why the hint's race is benign. A ``Sequential`` node, or one
+    re-entered by an enclosing parallel scope or loop, runs the chunk loop on one thread: still
+    blocked, ``simd``-scanned and cancelling between chunks."""
 
     environments = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        from dace.transformation.auto.auto_optimize import libnode_is_sequential
         node.validate(sdfg, state)
         refuse_wrong_machine(node, state, sdfg, want_device=False)
-        return nodes.Tasklet(f'{node.label}_sequential',
+        parallel = node.schedule != dace.ScheduleType.Sequential and not libnode_is_sequential(node, state, sdfg)
+        return nodes.Tasklet(f'{node.label}_openmp',
                              find_first_connectors(node, state, sdfg), {OUTPUT_CONNECTOR_NAME: None},
-                             find_first_code(node, parallel=False),
+                             find_first_code(node, parallel=parallel),
                              language=dace.dtypes.Language.CPP)
 
 
 @library.expansion
-class ExpandFindFirstCPU(ExpandTransformation):
-    """Parallel CPU lowering: chunks handed out ``schedule(dynamic, 1)``, cancelling on a shared
-    hint. See :cpp:func:`dace::find_first_index` for why the hint's race is benign."""
+class ExpandFindFirstAuto(ExpandTransformation):
+    """Picks ``CPU`` or ``CUDA`` from the node's schedule (:func:`schedule_dispatch`)."""
 
     environments = []
 
     @staticmethod
-    def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        node.validate(sdfg, state)
-        refuse_wrong_machine(node, state, sdfg, want_device=False)
-        return nodes.Tasklet(f'{node.label}_openmp',
-                             find_first_connectors(node, state, sdfg), {OUTPUT_CONNECTOR_NAME: None},
-                             find_first_code(node, parallel=True),
-                             language=dace.dtypes.Language.CPP)
+    def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG):
+        return schedule_dispatch(ExpandFindFirstAuto, node, state)
 
 
 def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> List[Tuple[str, str]]:
@@ -200,16 +197,16 @@ class ExpandFindFirstCUDA(ExpandTransformation):
 class FindFirst(nodes.LibraryNode):
     """Smallest ``i`` in ``[begin, end)`` with ``predicate`` true, or ``begin >= end``'s ``end``.
 
-    :cvar implementations: ``"CPU"`` (parallel chunked search, the default), ``"sequential"``
-        (the same search on one thread) and ``"CUDA"`` (the device search).
+    :cvar implementations: ``"Auto"`` (picks by schedule, the default), ``"CPU"`` (chunked OpenMP
+        search) and ``"CUDA"`` (the device search).
     """
 
     implementations = {
-        'sequential': ExpandFindFirstSequential,
+        'Auto': ExpandFindFirstAuto,
         'CPU': ExpandFindFirstCPU,
         'CUDA': ExpandFindFirstCUDA,
     }
-    default_implementation = 'CPU'
+    default_implementation = 'Auto'
 
     #: The ANSWER is a host scalar in every expansion, the CUDA one included: the device search
     #: leaves its result in CUB scratch and ``find_first_index_device`` copies it back and writes

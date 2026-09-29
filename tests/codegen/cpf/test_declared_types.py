@@ -73,7 +73,7 @@ def strided_min_scan(n: int) -> dace.SDFG:
     state = sdfg.add_state('scan')
     node = Scan('Scan', op=ScanOp.MIN, exclusive=False)
     node.stride = 2
-    node.implementation = 'sequential'
+    node.implementation = 'CPU'
     state.add_node(node)
     state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, dace.Memlet(f'arr_out[0:{n}]'))
@@ -130,12 +130,12 @@ def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
     assert thread_ids.min() >= 0 and thread_ids.max() < (os.cpu_count() or 1)
 
 
-def test_a_strided_scan_accumulator_is_declared_at_the_element_type():
+def test_a_strided_scan_renders_as_parallel_residue_classes_with_no_deduced_type():
     arr_in = np.array([5.0, 3.0, 4.0, 9.0, 1.0, 7.0, 2.0, 8.0, 6.0, 0.0, 3.0])
     sdfg = strided_min_scan(arr_in.size)
     rendering = render(sdfg, language='c++')
     assert DEDUCED.search(rendering.code) is None, rendering.code
-    assert 'double _acc = ' in rendering.code, rendering.code
+    assert '#pragma omp parallel for\n' in rendering.code and 'cpf_r < cpf_s' in rendering.code, rendering.code
     arr_out = np.zeros_like(arr_in)
     run(rendering, sdfg.name, 'c++', {'arr_in': arr_in, 'arr_out': arr_out})
     expected = np.empty_like(arr_in)

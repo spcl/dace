@@ -106,7 +106,7 @@ def sequential_arg_extreme(seq, op):
 
 
 @pytest.mark.parametrize('op', ['max', 'min'])
-@pytest.mark.parametrize('impl', ['sequential', 'pure', 'CPU'])
+@pytest.mark.parametrize('impl', ['Auto', 'pure', 'CPU'])
 @pytest.mark.parametrize('transform', ['', 'abs'])
 @pytest.mark.parametrize('stride', [1, 3])
 def test_arg_reduce_reads_a_strided_transformed_gather_in_one_pass(op, impl, transform, stride):
@@ -150,7 +150,7 @@ def test_arg_reduce_reads_a_strided_transformed_gather_in_one_pass(op, impl, tra
             assert idx[0] == exp_j, f'n={n_elems} ties={ties}: index {idx[0]} != {exp_j} (first extreme)'
 
 
-@pytest.mark.parametrize('impl', ['sequential', 'pure', 'CPU'])
+@pytest.mark.parametrize('impl', ['Auto', 'pure', 'CPU'])
 @pytest.mark.parametrize('lo,step', [(3, 1), (3, 2), (5, 3)])
 def test_arg_reduce_reads_from_the_slice_base_not_the_array_base(impl, lo, step):
     """A slice that does not start at element 0 must be read from ITS start.

@@ -144,7 +144,7 @@ def test_openmp_reduction_bf16():
     reduces = [n for state in sdfg.states() for n in state.nodes() if isinstance(n, Reduce)]
     assert reduces, "expected a Reduce node to force the OpenMP expansion"
     for n in reduces:
-        n.implementation = 'OpenMP'
+        n.implementation = 'CPU'
 
     a = np.ones(N, dtype=ml_dtypes.bfloat16)
     r = np.zeros(1, dtype=ml_dtypes.bfloat16)

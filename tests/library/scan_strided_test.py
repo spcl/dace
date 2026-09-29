@@ -82,7 +82,7 @@ def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> n
 @pytest.mark.parametrize('stride', [1, 2, 3, 4, 5])
 @pytest.mark.parametrize('n', [16, 33])
 @pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
-@pytest.mark.parametrize('implementation', ['CPU', 'sequential', 'pure'])
+@pytest.mark.parametrize('implementation', ['CPU', 'Auto', 'pure'])
 def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: ScanOp, implementation: str):
     """For each stride, dtype, and implementation, the libnode-produced output equals
     the per-residue-class sequential scan."""
@@ -158,7 +158,7 @@ _NEGATIVE_STRIDE_SCRIPT = textwrap.dedent("""
 """).format(repo=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-@pytest.mark.parametrize('implementation', ['sequential', 'pure'])
+@pytest.mark.parametrize('implementation', ['Auto', 'pure'])
 def test_negative_stride_aborts_at_runtime(implementation):
     """A non-positive stride must abort the program before the scan runs. Spawned in
     a subprocess so the abort doesn't kill the test runner."""
@@ -400,7 +400,7 @@ def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_m
     np.testing.assert_allclose(cupy.asnumpy(device_out), oracle(host), rtol=1e-12)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'sequential', 'CPU'])
+@pytest.mark.parametrize('implementation', ['pure', 'Auto', 'CPU'])
 def test_a_symbolic_stride_survives_a_json_round_trip_of_the_scan(implementation: str):
     """An untyped stride property saved a symbol as the text ``symbol($K, ...)``, which no expansion could parse:
     a reloaded SDFG (the CPF canonical cache) failed with SyntaxError on scan_strided_sym and versioned_distance_update."""

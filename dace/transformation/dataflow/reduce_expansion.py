@@ -46,7 +46,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                                      dtype=str,
                                      default=None,
                                      choices=[
-                                         'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)', 'CUDA (block allreduce)',
+                                         'pure', 'CPU', 'CUDA (device)', 'CUDA (block)', 'CUDA (block allreduce)',
                                          'CUDA (warp)', 'CUDA (warp allreduce)'
                                      ],
                                      allow_none=True)

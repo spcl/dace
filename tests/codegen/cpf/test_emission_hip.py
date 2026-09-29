@@ -320,7 +320,8 @@ def test_the_host_dialects_do_not_see_the_device_selection(language):
     node, state = next((n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, FindFirst))
     with cpf_lowering.dialect_scope(cpf.LANGUAGES[language]):
         assert not cpf.on_device_at_host_level(node, state)
-        assert cpf.renderable_implementations(node, state) == cpf.RENDERABLE_IMPLEMENTATIONS
+        assert cpf.renderable_implementations(node, state) == (cpf.RENDERABLE_BY_NODE['FindFirst'] +
+                                                               cpf.RENDERABLE_IMPLEMENTATIONS)
 
 
 def code_object(name: str, language: str, target_type: str, linkable: bool = True) -> CodeObject:

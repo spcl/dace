@@ -205,46 +205,46 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
 #: NOT an empty ``environments`` list -- it is "expands to something a standalone unit can compile",
 #: which means SDFG content (maps and tasklets) or a call into the C++ standard library.
 #:
-#: ``Auto`` is the copy and fill nodes' own selector, and it is preferred over any fixed spelling
-#: because it picks BY SIZE AND LAYOUT: one ``std::memcpy``/``memset`` for a contiguous copy that
-#: runs once, a parallel mapped tasklet past the threshold where the map is worth its overhead.
-#: Pinning ``MappedTasklet`` instead spent an element-wise map on copies a single call would do.
-#: Its ``dace::CopyND`` branch needs a ``GPU_Shared`` endpoint, which :func:`prepare` has already
-#: refused by the time this runs. ``pure`` is an SDFG made of maps and tasklets -- which is the
-#: whole point: it renders as loops, and it is the PARALLEL form. ``pure-seq`` is the sequential
-#: fallback for a node with no parallel pure expansion, ``MappedTasklet`` the spelling used by a
-#: copy node that has no ``Auto``.
+#: ``pure`` is an SDFG made of maps and tasklets -- which is the whole point: it renders as loops,
+#: and it is the PARALLEL form. ``pure-seq`` is the sequential fallback for a node with no parallel
+#: pure expansion, ``MappedTasklet`` the spelling used by a copy node that has no ``Auto``.
 #:
 #: DELIBERATELY ABSENT, and the reason this list is a checked allowlist rather than a filter on
 #: ``environments``: DaCe's faster-sounding implementations declare no environment and still name a
-#: symbol nothing here defines. ``Reduce``'s ``OpenMP`` lowers onto ``dace::reduce``, its
-#: ``vectorized`` onto ``horizontal_reduce_*`` from the vectorizable-math headers (and onto
-#: ``OpenMP`` outright under a multicore schedule), ``FindFirst``'s onto ``dace::find_first_index``,
-#: and ``Scan``'s only environment-free spellings are the CUDA ones. Reduce's lowercase ``auto``
-#: is a dispatcher that can land on any of those, which is why only capital ``Auto`` appears here.
-RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
+#: symbol nothing here defines. ``Reduce``'s ``CPU`` lowers onto ``dace::reduce`` and its
+#: ``vectorized`` onto ``horizontal_reduce_*`` from the vectorizable-math headers. ``Auto`` is a
+#: per-node dispatcher that can land on those, so it is listed only for the nodes whose ``Auto``
+#: always renders (:data:`RENDERABLE_BY_NODE`).
+RENDERABLE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
 
 #: Per-node-type implementations that ARE renderable, tried ahead of the global list. The criterion
 #: is unchanged -- "expands to something a standalone unit can compile" -- but it is a property of
 #: the expansion, not of the name, so a name absent from the global list can still qualify for one
 #: node and not for another.
 #:
-#: ``ArgReduce``'s ``CPU`` is the case that matters. Unlike ``Reduce``'s and ``FindFirst``'s
-#: same-named expansions, which call into ``dace::reduce`` / ``dace::find_first_index``, it emits a
-#: self-contained tasklet: an ``omp declare reduction`` over a (value, index) pair, no runtime
-#: symbol and no environment. Without it an ArgReduce falls to ``pure``, which is a SEQUENTIAL
-#: scan, and the rendered unit hands its reader a serial loop for a reduction the canonicalize
-#: pipeline itself parallelizes -- ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all
-#: measured 9-11x over numpy in the parallel form and rendered with no ``omp`` at all.
+#: CPF is a parallel form, so a node renders through its OpenMP ``CPU`` lowering whenever CPF can
+#: spell what that lowering reaches. ``ArgReduce``'s emits a self-contained ``omp declare
+#: reduction`` over a (value, index) pair; ``FindFirst``'s ``dace::find_first_index``, ``Scan``'s
+#: ``dace::scan`` entry points and ``ScatterConflictCheck``'s ``dace::detect_collision`` are
+#: re-spelled by :mod:`dace.cpf_lowering` as the cancelling search, the ``inscan`` scan and the
+#: tagged-write check. Without them a node falls to ``pure``, a SEQUENTIAL loop, and the rendered
+#: unit hands its reader a serial loop for work the canonicalize pipeline itself parallelizes --
+#: ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all measured 9-11x over numpy in the
+#: parallel form and rendered with no ``omp`` at all.
 #:
-#: ``pure`` is built from SDFG components only; ``CPU`` is the parallel C++ lowering and ``sequential`` the C++
-#: single loop, which is what CPF rendered for these nodes before and is faster than the component form.
+#: ``Auto`` is the copy and fill nodes' own selector, preferred over any fixed spelling because it
+#: picks BY SIZE AND LAYOUT: one ``std::memcpy``/``memset`` for a contiguous copy that runs once, a
+#: parallel mapped tasklet past the threshold where the map is worth its overhead. Its
+#: ``dace::CopyND`` branch needs a ``GPU_Shared`` endpoint, which :func:`prepare` has already
+#: refused by the time this runs.
 RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
-    'ArgReduce': ('CPU', 'sequential'),
-    'FindFirst': ('sequential', ),
-    'IntegerSort': ('ISO C++', ),
-    'Scan': ('sequential', ),
-    'ScatterConflictCheck': ('sequential', ),
+    'ArgReduce': ('CPU', ),
+    'CopyLibraryNode': ('Auto', ),
+    'FillLibraryNode': ('Auto', ),
+    'FindFirst': ('CPU', ),
+    'IntegerSort': ('isocpp', ),
+    'Scan': ('CPU', ),
+    'ScatterConflictCheck': ('CPU', ),
 }
 
 #: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a

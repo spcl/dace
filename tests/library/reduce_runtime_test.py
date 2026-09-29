@@ -415,7 +415,7 @@ def test_openmp_expansion_calls_dace_reduce():
     assert LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {}) == 1
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1
-    reduces[0].implementation = 'OpenMP'
+    reduces[0].implementation = 'CPU'
     reduces[0].schedule = dace.ScheduleType.CPU_Multicore
 
     code = '\n'.join(c.clean_code for c in sdfg.generate_code() if c.language == 'cpp')

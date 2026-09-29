@@ -60,7 +60,7 @@ def reduce_sdfg(in_dtype, out_dtype, implementation):
     return sdfg
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'sequential', 'CPU'])
+@pytest.mark.parametrize('implementation', ['pure', 'Auto', 'CPU'])
 def test_exclusive_scan_widens_int8_ranks_to_int64(implementation):
     """The compaction shape: an all-ones mask exclusive-scanned gives rank[k] == k, up to 4095."""
     sdfg, _state, _scan = scan_sdfg(dace.int8, dace.int64, implementation)
@@ -71,7 +71,7 @@ def test_exclusive_scan_widens_int8_ranks_to_int64(implementation):
     assert np.array_equal(rank, np.arange(_N, dtype=np.int64))
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'sequential', 'CPU'])
+@pytest.mark.parametrize('implementation', ['pure', 'Auto', 'CPU'])
 def test_inclusive_scan_widens_int8_to_int64(implementation):
     sdfg, _state, _scan = scan_sdfg(dace.int8, dace.int64, implementation, exclusive=False)
     sdfg.validate()
@@ -81,7 +81,7 @@ def test_inclusive_scan_widens_int8_to_int64(implementation):
     assert np.array_equal(out, np.arange(1, _N + 1, dtype=np.int64))
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'pure-seq', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['pure', 'pure-seq', 'CPU'])
 def test_reduce_widens_int8_into_an_int64_total(implementation):
     """The other half of the compaction phase. ``pure-seq`` staged the INPUT's accumulator and wrapped."""
     sdfg = reduce_sdfg(dace.int8, dace.int64, implementation)
@@ -110,7 +110,7 @@ def test_a_non_widening_dtype_pair_is_refused(pair):
         scan.validate(sdfg, state)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'sequential'])
+@pytest.mark.parametrize('implementation', ['pure', 'CPU'])
 def test_widening_with_a_stride_is_refused(implementation):
     """One accumulator per residue class, each seeded from the input -- no widening design there."""
     sdfg, state, scan = scan_sdfg(dace.int8, dace.int64, implementation, exclusive=False, stride=4)
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     for impl in ('pure', 'CPU'):
         test_exclusive_scan_widens_int8_ranks_to_int64(impl)
         test_inclusive_scan_widens_int8_to_int64(impl)
-    for impl in ('pure', 'pure-seq', 'OpenMP'):
+    for impl in ('pure', 'pure-seq', 'CPU'):
         test_reduce_widens_int8_into_an_int64_total(impl)
     test_the_widening_rule_is_value_preserving_only()
 

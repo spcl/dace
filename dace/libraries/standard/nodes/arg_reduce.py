@@ -24,11 +24,9 @@ whole extra copy of the array.
 
 Expansions:
 
-* ``sequential`` (CPU default): a CPP tasklet with a sequential scan over the
-  input -- correctness-first, no external dependency.
-* ``pure``: the same sequential scan built from SDFG components (a loop region and Python
-  tasklets), for consumers that read the SDFG rather than compile it. Slower than ``sequential``,
-  which is why nothing picks it for speed.
+* ``Auto`` (default): ``CPU``, ``CUDA`` or ``pure`` by the node's schedule.
+* ``pure``: a sequential scan built from SDFG components (a loop region and Python tasklets),
+  the single-core lowering.
 * ``CPU``: the same scan split across threads under a ``declare reduction``
   over the (value, index) pair (see :class:`ExpandArgReduceCPU`).
 * ``CUDA`` (GPU): ``gpucub::DeviceReduce::ArgMax`` / ``ArgMin`` through
@@ -51,6 +49,7 @@ from typing import Callable, Optional, Tuple
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
+from dace.libraries.standard.helper import schedule_dispatch
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -165,32 +164,6 @@ def _writeback(has_val: bool) -> str:
 
 def _connectors(has_val: bool):
     return {c: None for c in (('_out_val', '_out_idx') if has_val else ('_out_idx', ))}
-
-
-@library.expansion
-class ExpandArgReduceSequential(ExpandTransformation):
-    """Correctness-only CPU lowering: a sequential argmax/argmin scan."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        in_dtype, it, n_str, read, has_val = _scan_context(node, parent_state, parent_sdfg)
-        vt, op = in_dtype.ctype, _OP_CPP[node.op]
-
-        # A strict comparison keeps the FIRST extreme element (matches the sequential source).
-        # ``_out_idx`` is the SLICE-LOCAL position ``0 .. n-1``.
-        code = (f"struct {{ {vt} __ar_v; {it} __ar_i; }} __ar_best;\n"
-                f"__ar_best.__ar_v = {read('0')}; __ar_best.__ar_i = 0;\n"
-                f"for ({it} __i = 1; __i < {n_str}; ++__i) {{\n"
-                f"    const {vt} __v = {read('__i')};\n"
-                f"    if (__v {op} __ar_best.__ar_v) {{ __ar_best.__ar_v = __v; __ar_best.__ar_i = __i; }}\n"
-                f"}}\n" + _writeback(has_val))
-        return nodes.Tasklet(label=f"{node.label}_sequential",
-                             inputs={'_in': dace.pointer(in_dtype)},
-                             outputs=_connectors(has_val),
-                             code=code,
-                             language=dace.dtypes.Language.CPP)
 
 
 #: Unary element transforms as a Python expression over the element.
@@ -364,22 +337,33 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandArgReduceAuto(ExpandTransformation):
+    """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        return schedule_dispatch(ExpandArgReduceAuto, node, parent_state)
+
+
 @library.node
 class ArgReduce(nodes.LibraryNode):
     """Argmax / argmin over ``_in`` -> ``_out_val`` (value) + ``_out_idx`` (index).
 
-    :cvar implementations: ``"sequential"`` (C++ sequential scan), ``"pure"`` (the same scan as SDFG
-        components), ``"CPU"`` (parallel lane-blocked pair reduction) and ``"CUDA"`` (CUB
-        ArgMax/ArgMin). ``default_implementation = "sequential"``.
+    :cvar implementations: ``"Auto"`` (picks by schedule), ``"pure"`` (sequential scan as SDFG
+        components), ``"CPU"`` (OpenMP pair reduction) and ``"CUDA"`` (CUB ArgMax/ArgMin).
+        ``default_implementation = "Auto"``.
     """
 
     implementations = {
-        'sequential': ExpandArgReduceSequential,
+        'Auto': ExpandArgReduceAuto,
         'pure': ExpandArgReducePure,
         'CPU': ExpandArgReduceCPU,
         'CUDA': ExpandArgReduceCUDA,
     }
-    default_implementation = 'sequential'
+    default_implementation = 'Auto'
 
     #: Both answers are HOST scalars in every expansion, the CUDA one included: CUB leaves its
     #: result in device scratch and the wrapper copies it back before writing them.

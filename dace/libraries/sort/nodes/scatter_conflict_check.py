@@ -22,10 +22,9 @@ Implementations (the ``_owner_out`` tag array is host memory in every backend; t
 expansion therefore uses a device scratch buffer of its own and reads ``_owner_out`` only for
 its size):
 
-- ``sequential`` -- tagged-write + verify, serial.
-- ``pure`` -- the same serial check as SDFG components (loop regions and Python tasklets), for consumers
-  that read the SDFG rather than compile it; slower than ``sequential``, so nothing picks it for speed.
-- ``CPU``  -- tagged-write + verify, OpenMP-parallel.
+- ``Auto`` -- ``CPU``, ``CUDA`` or ``pure`` by the node's schedule (the default).
+- ``pure`` -- the serial check as SDFG components (loop regions and Python tasklets), the single-core lowering.
+- ``CPU``  -- tagged-write + verify, OpenMP-parallel; serial when the node is re-entered.
 - ``CUDA`` -- the same tagged-write + verify run ON the device (``gpucub::BlockReduce`` fold, one
   atomic per block), with only the resulting flag copied back.
 """
@@ -34,6 +33,7 @@ from typing import Dict, Optional, Tuple
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
+from dace.libraries.standard.helper import schedule_dispatch
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
@@ -127,24 +127,6 @@ def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]
     return f"{OUTPUT_CONNECTOR_NAME} = {call};\n"
 
 
-@library.expansion
-class ExpandSequential(ExpandTransformation):
-    """Tagged-write + verify (serial O(n))."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
-        n = _length(node, state)
-        owner = _owner(node, state, owner_desc)
-        body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=False, owner=owner)
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
-                             _outputs(owner_desc),
-                             "{\n" + body + "}",
-                             language=dace.Language.CPP)
-
-
 #: Loop variable and runtime tag-array size of the ``pure`` check, symbols of its own nested SDFG.
 CHECK_INDEX = 'conflict_i'
 CAPACITY = 'conflict_capacity'
@@ -214,16 +196,19 @@ class ExpandPure(ExpandTransformation):
 
 @library.expansion
 class ExpandCPU(ExpandTransformation):
-    """Tagged-write + verify, OpenMP-parallel (2 passes ~= 2x the scatter's own cost)."""
+    """Tagged-write + verify, OpenMP-parallel (2 passes ~= 2x the scatter's own cost). A ``Sequential``
+    node, or one re-entered by an enclosing parallel scope or loop, runs both passes on one thread."""
 
     environments = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        from dace.transformation.auto.auto_optimize import libnode_is_sequential
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
         n = _length(node, state)
         owner = _owner(node, state, owner_desc)
-        body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=True, owner=owner)
+        omp = node.schedule != dace.ScheduleType.Sequential and not libnode_is_sequential(node, state, sdfg)
+        body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=omp, owner=owner)
         return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
                              _outputs(owner_desc),
                              "{\n" + body + "}",
@@ -287,6 +272,17 @@ class ExpandCUDA(ExpandTransformation):
                              language=dace.Language.CPP)
 
 
+@library.expansion
+class ExpandAuto(ExpandTransformation):
+    """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG):
+        return schedule_dispatch(ExpandAuto, node, state)
+
+
 @library.node
 class ScatterConflictCheck(nodes.LibraryNode):
     """Flag duplicate values in a 1-D integer index array (scatter no-conflict proof).
@@ -312,8 +308,8 @@ class ScatterConflictCheck(nodes.LibraryNode):
     #: :class:`ExpandCUDA`. Declared so an offloader does not move them with the rest of the state.
     host_connectors = frozenset({OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME})
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "sequential": ExpandSequential, "pure": ExpandPure}
-    default_implementation = "CPU"
+    implementations = {"Auto": ExpandAuto, "CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
+    default_implementation = "Auto"
 
     def __init__(self, name: str = "ScatterConflictCheck", *args, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)

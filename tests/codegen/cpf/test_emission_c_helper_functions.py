@@ -73,13 +73,13 @@ def running_product(x: dace.int64[N], y: dace.int64[N]):
 
 
 def scan_sdfg(op: ScanOp, exclusive: bool, identity, source: dace.typeclass, target: dace.typeclass) -> dace.SDFG:
-    """``dst`` as the scan of ``src``, through the sequential expansion CPF renders."""
+    """``dst`` as the scan of ``src``, through the CPU expansion CPF renders."""
     sdfg = dace.SDFG('scan')
     sdfg.add_array('src', [N], source)
     sdfg.add_array('dst', [N], target)
     state = sdfg.add_state()
     node = Scan('scan', op=op, exclusive=exclusive, identity=identity)
-    node.implementation = 'sequential'
+    node.implementation = 'CPU'
     state.add_node(node)
     state.add_edge(state.add_read('src'), None, node, Scan.INPUT_CONNECTOR_NAME, dace.Memlet('src[0:N]'))
     state.add_edge(node, Scan.OUTPUT_CONNECTOR_NAME, state.add_write('dst'), None, dace.Memlet('dst[0:N]'))
@@ -110,7 +110,7 @@ def sort_sdfg() -> dace.SDFG:
     sdfg.add_array('ordered', [N], dace.int64)
     state = sdfg.add_state()
     node = IntegerSort('sort')
-    node.implementation = 'ISO C++'
+    node.implementation = 'isocpp'
     state.add_node(node)
     state.add_edge(state.add_read('keys'), None, node, IntegerSort.INPUT_CONNECTOR_NAME, dace.Memlet('keys[0:N]'))
     state.add_edge(node, IntegerSort.OUTPUT_CONNECTOR_NAME, state.add_write('ordered'), None,
@@ -125,7 +125,7 @@ def duplicate_check_sdfg() -> dace.SDFG:
     sdfg.add_array('count', [1], dace.int64)
     state = sdfg.add_state()
     node = ScatterConflictCheck('check')
-    node.implementation = 'sequential'
+    node.implementation = 'CPU'
     state.add_node(node)
     state.add_edge(state.add_read('ip'), None, node, ScatterConflictCheck.INPUT_CONNECTOR_NAME, dace.Memlet('ip[0:N]'))
     state.add_edge(node, ScatterConflictCheck.OUTPUT_CONNECTOR_NAME, state.add_write('count'), None,
@@ -340,6 +340,20 @@ CASES: Dict[str, Callable[[], Case]] = {
     'duplicate_check_permutation': lambda: duplicate_check_case(False),
     'duplicate_check_repeat': lambda: duplicate_check_case(True),
 }
+
+
+def test_the_cpp_sort_is_the_openmp_parallel_sort_and_orders_the_keys():
+    """C++ has libstdc++'s OpenMP parallel mode, so the policied ``isocpp`` sort renders through it
+    instead of the ``std::execution`` backend a standalone unit cannot link."""
+    sdfg, helpers, arguments, expected = sort_case()
+    sdfg.name = 'cpf_cpp_parallel_sort'
+    rendering = render_sdfg(sdfg, language='c++')
+    code = rendering.code
+    assert 'parallel_sort(ordered, ordered + (N));' in code and '__gnu_parallel::sort(first, last);' in code, code
+    assert 'std::execution' not in code, code
+    assert_standalone(code, sdfg.name, language='c++')
+    call_standalone(build_standalone(code, sdfg.name, language='c++'), rendering.sdfg, arguments)
+    assert np.array_equal(arguments['ordered'], expected['ordered'])
 
 
 @pytest.mark.parametrize('label', sorted(CASES))

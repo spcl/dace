@@ -485,6 +485,22 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '    }\n'
     '}',
+    # sort
+    # The ``isocpp`` sort passes ``std::execution::par_unseq``, whose libstdc++ backend links TBB. CPF
+    # takes libstdc++'s OpenMP parallel mode instead (a multiway mergesort, no library to link), and
+    # the plain ``std::sort`` where that mode is absent (libc++, or no ``-fopenmp``).
+    'parallel_sort':
+    '#if defined(__GLIBCXX__) && defined(_OPENMP)\n'
+    '#include <parallel/algorithm>\n'
+    '#endif\n'
+    'template <typename It>\n'
+    'static inline void parallel_sort(It first, It last) {\n'
+    '#if defined(__GLIBCXX__) && defined(_OPENMP)\n'
+    '    __gnu_parallel::sort(first, last);\n'
+    '#else\n'
+    '    std::sort(first, last);\n'
+    '#endif\n'
+    '}',
     # find-first
     # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
     # short-circuiting parallel search. CPF emits that search rather than unrolling it back into a
@@ -1289,6 +1305,78 @@ class NativeSite:
         self.functions: List[str] = []
 
 
+#: The ``Scan`` CPU lowering's ``dace::scan`` entry points, respelled by :func:`respell_scan_entry_points`.
+SCAN_ENTRY_CALL: 're.Pattern' = re.compile(
+    r'(?:::)?dace::scan::(inclusive|exclusive|strided_inclusive)_(sum|product|min|max)\s*\(')
+AFFINE_SCAN_ENTRY_CALL: 're.Pattern' = re.compile(r'(?:::)?dace::scan::inclusive_affine(_strided)?\s*\(')
+
+#: ``out[j]`` from ``out[j - s]`` and ``in[j]`` per scan operation, as the runtime's ``std::min`` /
+#: ``std::max`` order them, so C and C++ read the same expression.
+STRIDED_SCAN_COMBINE: Dict[str, str] = {
+    'sum': '{o}[cpf_j - cpf_s] + {i}[cpf_j]',
+    'product': '{o}[cpf_j - cpf_s] * {i}[cpf_j]',
+    'min': '({i}[cpf_j] < {o}[cpf_j - cpf_s] ? {i}[cpf_j] : {o}[cpf_j - cpf_s])',
+    'max': '({o}[cpf_j - cpf_s] < {i}[cpf_j] ? {i}[cpf_j] : {o}[cpf_j - cpf_s])',
+}
+
+
+def parenthesized(expression: str) -> str:
+    """``expression`` inside exactly one pair of enclosing parentheses."""
+    expression = expression.strip()
+    return expression if expression.startswith('(') and c_encloses(expression, 0) else '(%s)' % expression
+
+
+def residue_class_loop(n: str, s: str, head: str, step: str, parallel: bool) -> str:
+    """One pass per residue class ``cpf_r`` of the index mod ``s``: ``head`` writes element ``cpf_r``,
+    ``step`` element ``cpf_j`` from ``cpf_j - cpf_s``. The classes are independent, so the class loop is
+    the parallel one, as in the runtime's ``strided_scan``."""
+    return ('{ const long cpf_n = (long)%s; const long cpf_s = (long)%s;\n'
+            '  if (cpf_s <= 0) std::abort();\n'
+            '%s'
+            '  for (long cpf_r = 0; cpf_r < cpf_s; ++cpf_r) {\n'
+            '      if (cpf_r >= cpf_n) continue;\n'
+            '      %s;\n'
+            '      for (long cpf_j = cpf_r + cpf_s; cpf_j < cpf_n; cpf_j += cpf_s) %s;\n'
+            '  }\n'
+            '}' % (parenthesized(n), parenthesized(s), '  #pragma omp parallel for\n' if parallel else '', head, step))
+
+
+def respell_scan_entry_points(code: str) -> str:
+    """Spell the ``Scan`` CPU lowering's ``dace::scan`` calls in the vocabulary CPF already defines.
+
+    A unit-stride ``inclusive_*`` / ``exclusive_*`` becomes the ``scan_incl_*`` / ``scan_excl_*``
+    ``inscan`` call the runtime's blocked scan runs per block, and the strided and affine entry
+    points become their residue-class loops, so both dialects render them with no new definition.
+
+    :param code: the body as the expansion wrote it.
+    :returns: the body with every ``dace::scan`` entry point respelled.
+    """
+
+    def scan(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        kind, operation = match.group(1), match.group(2)
+        if kind == 'strided_inclusive':
+            source, target, n, s = arguments
+            step = '%s[cpf_j] = %s' % (target, STRIDED_SCAN_COMBINE[operation].format(o=target, i=source))
+            return residue_class_loop(n, s, '%s[cpf_r] = %s[cpf_r]' % (target, source), step, parallel=True)
+        first, last, target, seed = arguments
+        n = last[len(first):].strip().lstrip('+').strip() if last.startswith(first) else '%s - %s' % (last, first)
+        return '::dace::scan::detail::scan_%s_%s(%s, %s, 0L, static_cast<long>%s, %s)' % (
+            'incl' if kind == 'inclusive' else 'excl', operation, first, target, parenthesized(n), seed)
+
+    def affine(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        if match.group(1):
+            coef, source, target, n, s, seeds = arguments
+            seed = '0' if 'zero_seeds' in seeds else '%s[cpf_r]' % seeds
+        else:
+            (coef, source, target, n, seed), s = arguments, '1'
+        head = '%s[cpf_r] = %s[cpf_r] * (%s) + %s[cpf_r]' % (target, coef, seed, source)
+        step = '%s[cpf_j] = %s[cpf_j] * %s[cpf_j - cpf_s] + %s[cpf_j]' % (target, coef, target, source)
+        return residue_class_loop(n, s, head, step, parallel=bool(match.group(1)))
+
+    code = c_rewrite_calls(code, SCAN_ENTRY_CALL, scan)
+    return c_rewrite_calls(code, AFFINE_SCAN_ENTRY_CALL, affine)
+
+
 def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Optional[NativeSite] = None) -> str:
     """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
 
@@ -1317,8 +1405,9 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Opti
     :raises NotImplementedError: if the body names a type or function this dialect cannot express.
     """
     tables = tables_for(dialect)
-    code = rewrite_ctypes(code, dialect)
     c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
+    code = POLICY_SORT_CALL.sub('std::sort(' if c_dialect else 'parallel_sort(', code)
+    code = rewrite_ctypes(respell_scan_entry_points(code), dialect)
 
     if c_dialect:
         # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.
@@ -2282,9 +2371,10 @@ C_UNSUPPORTED: Dict[str, str] = {}
 #: the scan itself need the element types the call site names (:func:`c_scan_identities`,
 #: :func:`c_scan`), the duplicate check needs its arrays' types (:func:`c_detect_collision`), and
 #: the find-first takes a predicate, which in C++ is a lambda and in C becomes a function of its own
-#: over the names the predicate reads (:func:`c_find_first`).
+#: over the names the predicate reads (:func:`c_find_first`). The policied sort becomes the sort
+#: typed for its element (:func:`c_sort`).
 C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset(
-    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision'}
+    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision', 'parallel_sort'}
     | {'scan_%s_%s' % (kind, operation)
        for kind in ('incl', 'excl')
        for operation in C_SCAN_OPERATIONS})
@@ -2566,6 +2656,15 @@ HIP_CTYPE_RENAMES: Dict[str, str] = {
 #: static destruction, so both halves of that handshake are inside the unit.
 DEVICE_PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'CUDA', 'ScanScratch', 'DetectScratch'})
 
+#: Environments EVERY standalone rendering supplies for itself. ``ParallelSTL`` links TBB for
+#: libstdc++'s ``std::execution`` backend; CPF replaces the policied sort (:data:`POLICY_SORT_CALL`),
+#: so the unit needs no library.
+PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'ParallelSTL'})
+
+#: ``std::sort`` under a ``std::execution`` policy, up to its first range argument. C++ calls the
+#: OpenMP ``parallel_sort``; C drops the policy for its typed sort (:func:`c_sort`).
+POLICY_SORT_CALL: 're.Pattern' = re.compile(r'(?:::)?std::sort\s*\(\s*(?:::)?std::execution::\w+\s*,\s*')
+
 
 def device_definitions(dialect: Dialect) -> Dict[str, str]:
     """:data:`HIP_INLINE_DEFINITIONS` with the device ones' ``gpu*`` calls spelled for ``dialect``'s backend."""
@@ -2667,7 +2766,7 @@ def c_scan_identities(code: str) -> str:
 
 
 #: ``target = dace::find_first_index((begin), (end), [&](long long __i) -> bool { return (pred); },
-#: parallel);`` -- the one statement ``ExpandFindFirstSequential`` and ``ExpandFindFirstCPU`` write.
+#: parallel);`` -- the one statement ``ExpandFindFirstCPU`` writes.
 #: Anchored on the whole statement, target included. The bounds are captured as ONE group and spliced
 #: through unread: the expansion parenthesizes each of them, so they arrive as two call arguments
 #: however many commas the extents contain.

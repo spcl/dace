@@ -50,7 +50,7 @@ import numpy
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, schedule_dispatch
 from dace.libraries.standard.pure_components import chain as chain_blocks
 from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
@@ -1053,10 +1053,11 @@ class ExpandCPU(ExpandTransformation):
             # A wired ``_scan_init`` is just the accumulator's starting value, which the
             # runtime's seeded overload takes directly -- it is the SAME blocked parallel
             # scan, not the sequential ``std::inclusive_scan`` this used to fall back to.
-            init = f", {INIT_CONNECTOR_NAME}" if _has_init(node) else ""
+            # The seed is always spelled, typed at the output: CPF re-spells this call by its four arguments.
+            init = INIT_CONNECTOR_NAME if _has_init(node) else _OP_TO_SEED_CPP[node.op].format(ct=out_desc.dtype.ctype)
             call = (f"::dace::scan::inclusive_{suffix}("
                     f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
-                    f"{OUTPUT_CONNECTOR_NAME}{init});")
+                    f"{OUTPUT_CONNECTOR_NAME}, {init});")
         inputs = {INPUT_CONNECTOR_NAME: None}
         if _has_init(node):
             inputs[INIT_CONNECTOR_NAME] = None
@@ -1404,6 +1405,17 @@ class ExpandCUDA(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandAuto(ExpandTransformation):
+    """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG):
+        return schedule_dispatch(ExpandAuto, node, state)
+
+
 @library.node
 class Scan(nodes.LibraryNode):
     """Per-position prefix reduction over a 1-D array.
@@ -1432,10 +1444,10 @@ class Scan(nodes.LibraryNode):
 
     Implementations:
 
-    - ``'CPU'`` (default) -- ``std::inclusive_scan`` / ``std::exclusive_scan`` (C++17 ``<numeric>``),
+    - ``'Auto'`` (default) -- picks one of the below by schedule (:func:`select_implementation_by_schedule`).
+    - ``'CPU'``            -- ``std::inclusive_scan`` / ``std::exclusive_scan`` (C++17 ``<numeric>``),
       or ``dace::scan::inclusive_affine`` for ``op=AFFINE``.
     - ``'CUDA'``           -- ``gpucub::DeviceScan::InclusiveScan`` / ``ExclusiveScan``. No ``AFFINE``.
-    - ``'sequential'``     -- portable single-loop fallback.
     - ``'pure'``           -- the same loop as SDFG components, for consumers that read the SDFG.
 
     The libnode is contractually pure: no aliasing between ``in`` and ``out`` is required
@@ -1481,10 +1493,10 @@ class Scan(nodes.LibraryNode):
         "CPU": ExpandCPU,
         "CUDA": ExpandCUDA,
         "CUDA (block)": ExpandCUDABlock,
-        "sequential": ExpandSequential,
         "pure": ExpandPure,
+        "Auto": ExpandAuto,
     }
-    default_implementation = 'CPU'
+    default_implementation = 'Auto'
 
     def __init__(self,
                  name: str = 'Scan',

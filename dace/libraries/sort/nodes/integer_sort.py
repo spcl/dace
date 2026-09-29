@@ -112,7 +112,7 @@ class ExpandISOCpp(ExpandTransformation):
             node.name,
             inputs={INPUT_CONNECTOR_NAME},
             outputs={OUTPUT_CONNECTOR_NAME},
-            code=f"{{\n#include <algorithm>\n#include <execution>\n{code}\n}}",
+            code=f"{{\n{code}\n}}",
             language=dace.Language.CPP,
         )
 
@@ -219,7 +219,7 @@ class IntegerSort(nodes.LibraryNode):
 
     - ``'CPU'`` -- ska_sort (vendored, fast MSD radix). Default on host.
     - ``'CUDA'`` -- ``gpucub::DeviceRadixSort::SortKeys`` (memory-bandwidth bound on GPU).
-    - ``'ISO C++'`` -- ``std::sort`` under ``std::execution::par_unseq``, portable.
+    - ``'isocpp'`` -- ``std::sort`` under ``std::execution::par_unseq``, portable.
 
     The libnode is contractually pure: it neither aliases the input/output buffers
     nor reads/writes any other state. A caller may pass the same buffer for input
@@ -229,7 +229,7 @@ class IntegerSort(nodes.LibraryNode):
     INPUT_CONNECTOR_NAME = INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "ISO C++": ExpandISOCpp}
+    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "isocpp": ExpandISOCpp}
     default_implementation = 'CPU'
 
     def __init__(self, name: str = 'IntegerSort', *args, **kwargs):

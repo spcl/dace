@@ -1837,10 +1837,10 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        'auto': ExpandReduceAuto,
+        'Auto': ExpandReduceAuto,
         'pure': ExpandReducePure,
         'pure-seq': ExpandReducePureSequentialDim,
-        'OpenMP': ExpandReduceOpenMP,
+        'CPU': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
         'CUDA (block)': ExpandReduceCUDABlock,
         'CUDA (block strided)': ExpandReduceCUDABlockStrided,
@@ -1851,7 +1851,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    default_implementation = 'auto'
+    default_implementation = 'Auto'
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)

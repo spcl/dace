@@ -116,6 +116,9 @@ EXPERIMENTAL_GPU_SCHEDULES = [
     ScheduleType.GPU_Warp,
 ]
 
+# Every GPU schedule either CUDA code generator emits.
+ALL_GPU_SCHEDULES = list(dict.fromkeys(GPU_SCHEDULES + EXPERIMENTAL_GPU_SCHEDULES))
+
 # Storages a GPU kernel can address. Register is deliberately absent: outside a kernel it is a CPU
 # stack array. A list, like GPU_SCHEDULES above, because the codegen dispatchers register per list.
 GPU_KERNEL_ACCESSIBLE_STORAGES = [

@@ -130,8 +130,8 @@ def test_finalize_selects_openmp_for_reduce():
 
         reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
         assert reduces, f"{op}: canonicalize should lift the loop-reduction to a Reduce library node"
-        assert all(n.implementation == "OpenMP" for n in reduces), \
-            f"{op}: Reduce must be OpenMP, got {[n.implementation for n in reduces]}"
+        assert all(n.implementation == "CPU" for n in reduces), \
+            f"{op}: Reduce must be CPU, got {[n.implementation for n in reduces]}"
 
         code = sdfg.generate_code()[0].clean_code
         assert f"::dace::reduce::{op}(" in code, \
@@ -221,8 +221,8 @@ def test_finalize_nested_reduction_stays_sequential():
     finalize_for_target(sdfg, "cpu")
 
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert all(n.implementation != "OpenMP" for n in reduces), \
-        f"a nested (Sequential-scheduled) Reduce must not be OpenMP, got {[n.implementation for n in reduces]}"
+    assert all(n.implementation != "CPU" for n in reduces), \
+        f"a nested (Sequential-scheduled) Reduce must not be CPU, got {[n.implementation for n in reduces]}"
     code = sdfg.generate_code()[0].clean_code
     assert code.count("#pragma omp parallel") == 1, \
         f"expected one parallel region (outer map), got {code.count('#pragma omp parallel')} (nested reduction?)"

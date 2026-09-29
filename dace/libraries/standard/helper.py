@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
+"""Shared helpers for library node expansions: CopyLibraryNode, FillLibraryNode and the ``'Auto'`` dispatch."""
 from typing import Callable, Dict, List, Optional, Tuple
 
 import dace
@@ -120,6 +120,41 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
+def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
+    """The lowering an ``'Auto'`` node takes from its schedule: ``CUDA`` on a GPU schedule, ``pure`` when
+    ``Sequential`` or not yet inferred (``Default``: a caller expanding a graph it still transforms), ``CPU``
+    otherwise. A node without the picked lowering takes ``pure``, else ``CPU``.
+
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: a key of the node's ``implementations``.
+    """
+    if node.schedule in dtypes.ALL_GPU_SCHEDULES:
+        name = 'CUDA'
+    elif node.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default):
+        name = 'pure'
+    else:
+        name = 'CPU'
+    implementations = type(node).implementations
+    if name in implementations:
+        return name
+    return 'pure' if 'pure' in implementations else 'CPU'
+
+
+def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dace.SDFGState):
+    """Expand ``node`` through :func:`select_implementation_by_schedule`, carrying the picked lowering's
+    environments onto ``auto_cls`` (the ``'Auto'`` expansion) so a CUDA pick still links its library.
+
+    :param auto_cls: the calling ``'Auto'`` expansion class.
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: whatever the picked expansion returns.
+    """
+    picked = type(node).implementations[select_implementation_by_schedule(node, parent_state)]
+    auto_cls.environments = list(picked.environments)
+    return auto_dispatch(node, parent_state, select_implementation_by_schedule, type(node))
 
 
 #: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node

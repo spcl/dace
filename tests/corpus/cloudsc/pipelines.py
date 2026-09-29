@@ -331,6 +331,9 @@ _PARALLELIZE_PHASE: Dict[str, str] = {
     'SimplifyPass': 'simplify',
     'PrivatizeScalars': 'privatize',
     'ParallelizeLoops': 'parallelize',
+    # Close the new map bodies' induction variables and settle the CFG: value-preserving parallelize tail.
+    'IvSubstitutionFissionFixpoint': 'parallelize',
+    'StructuralCleanup': 'parallelize',
     'FuseStates': 'fuse',
     'FuseMaps': 'fuse',
     'FuseLoops': 'fuse',
@@ -428,6 +431,7 @@ _CANON_SUPER_PHASE: Dict[str, str] = {
     'revert_nonreduction_wcr': 'finalize',
     'relax_powers': 'finalize',
     'end': 'finalize',
+    'fuse_final': 'finalize',
 }
 #: Recurring value-preserving structural-fixup labels that inherit the currently-open super-phase.
 _CANON_GLUE = frozenset({'cascade_iedges_up', 'ssa', 'untrivialize'})

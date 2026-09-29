@@ -696,7 +696,7 @@ def find_first_input(hit):
     return a, FIND_FIRST_SPAN if hit is None else hit
 
 
-@pytest.mark.parametrize('implementation', ['sequential', 'CPU'])
+@pytest.mark.parametrize('implementation', ['Auto', 'CPU'])
 def test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c(implementation):
     """C has no lambda, so the search is a function of its own taking what the predicate reads.
 
@@ -816,7 +816,7 @@ def test_the_scatter_guard_renders_without_the_dace_runtime():
     rendering = render_sdfg(sdfg, language='c')
     code = rendering.code
     assert_standalone(code, 'cpf_c_scatter_guard', language='c')
-    assert re.search(r'\w+ = cpf_detect_collision_int32_int64\(ip, \(N\), \w+, \(N\), false\);',
+    assert re.search(r'\w+ = cpf_detect_collision_int32_int64\(ip, \(N\), \w+, \(N\), true\);',
                      code), f'the check did not become a call to the typed C function:\n{code}'
     assert 'static inline long long cpf_detect_collision_int32_int64(const int32_t *idx,' in code, code
     assert 'reduction(| : c)' in code, 'the C check lost its OR-reduced verify pass'

@@ -44,7 +44,7 @@ def openmp_reduce_available():
             s.add_array("o", [1], dace.float64)
             st = s.add_state("m")
             red = st.add_reduce("lambda x, y: x + y", None, 0.0)
-            red.implementation = "OpenMP"
+            red.implementation = "CPU"
             st.add_edge(st.add_read("a"), None, red, '_in', dace.Memlet("a[0:8]"))
             st.add_edge(red, '_out', st.add_write("o"), None, dace.Memlet("o[0]"))
             s.validate()
@@ -76,7 +76,7 @@ def _reduce_sdfg(op, masked=False):
     rd = state.add_read("a")
     wr = state.add_write("out")
     red = state.add_reduce(wcr, None, identity)
-    red.implementation = "OpenMP"
+    red.implementation = "CPU"
     subset = "a[0:N:2]" if masked else "a[0:N]"
     state.add_edge(rd, None, red, '_in', dace.Memlet(subset))
     state.add_edge(red, '_out', wr, None, dace.Memlet("out[0]"))
@@ -132,7 +132,7 @@ def _partial_reduce_sdfg():
     sdfg.add_array("out", [8], dace.float64)
     state = sdfg.add_state("main")
     red = state.add_reduce("lambda x, y: x + y", [1], 0.0)
-    red.implementation = "OpenMP"
+    red.implementation = "CPU"
     state.add_edge(state.add_read("a"), None, red, '_in', dace.Memlet("a[0:8, 0:16]"))
     state.add_edge(red, '_out', state.add_write("out"), None, dace.Memlet("out[0:8]"))
     sdfg.validate()
@@ -211,7 +211,7 @@ def test_scalar_reduction_kernel_compiles(kernel):
             sdfg.simplify()
             for n, _ in sdfg.all_nodes_recursive():
                 if isinstance(n, Reduce):
-                    n.implementation = "OpenMP"
+                    n.implementation = "CPU"
             code = generated_code(sdfg)
             assert "&_out[0]" not in code, "scalar reduction sink mis-inlined as &_out[0]"
             sdfg.compile()  # raises CompilationError on the old `&rmax[0]` / undeclared `_out` bug

@@ -31,8 +31,7 @@ from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
-                                                    move_small_arrays_to_stack, set_fast_implementations,
-                                                    single_core_implementation)
+                                                    move_small_arrays_to_stack, set_fast_implementations)
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
@@ -135,7 +134,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     if 'HPTT_ROOT' in os.environ:
         prio.append('HPTT')
     prio.append('TTGT')
-    prio += ['OpenMP', 'CPU']
+    prio.append('CPU')
     return prio
 
 
@@ -208,7 +207,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # affine scan under the outer loop). Decide by SCOPE, as the generic rule below does; the
         # schedule says ``Sequential`` for a host loop and a kernel alike.
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
-            node.implementation = (single_core_implementation(node) if libnode_is_device_code(node, state, sdfg) else
+            node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
                                    ('CUDA' if 'CUDA' in impls else node.implementation))
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is

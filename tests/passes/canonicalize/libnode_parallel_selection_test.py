@@ -64,13 +64,13 @@ def test_toplevel_openmp_team_schedule_opens_a_region(schedule):
     sdfg, state, node = build_toplevel_reduce(4096, schedule)
     with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=THRESHOLD):
         assert apply_cpu_library_parallelism(node, state, sdfg) is True
-    assert node.implementation == 'OpenMP'
+    assert node.implementation == 'CPU'
 
 
 def test_toplevel_non_team_schedule_takes_the_single_core_expansion():
     """The half this rule adds. A top-level node passes the scope test, but a schedule that is not an
     OpenMP team (here ``SVE_Map``, an Arm vector map) names an execution context that cannot host a
-    ``#pragma omp parallel`` -- selecting ``OpenMP`` for it emits a team inside a vector map."""
+    ``#pragma omp parallel`` -- selecting ``CPU`` for it emits a team inside a vector map."""
     sdfg, state, node = build_toplevel_reduce(4096, dtypes.ScheduleType.SVE_Map)
     with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=THRESHOLD):
         assert apply_cpu_library_parallelism(node, state, sdfg) is True
@@ -83,7 +83,7 @@ def test_provably_small_toplevel_scan_stays_sequential():
     sdfg, state, node = build_toplevel_scan(8)
     with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=THRESHOLD):
         assert apply_cpu_library_parallelism(node, state, sdfg) is True
-    assert node.implementation == 'sequential'  # the C++ loop, not the SDFG-component 'pure'
+    assert node.implementation == 'pure'
 
 
 def test_symbolic_extent_scan_is_assumed_big_and_stays_parallel():

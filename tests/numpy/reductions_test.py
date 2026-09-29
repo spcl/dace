@@ -284,7 +284,7 @@ if __name__ == '__main__':
 
     # Test supported reduction with OpenMP library node implementation
     from dace.libraries.standard import Reduce
-    Reduce.default_implementation = 'OpenMP'
+    Reduce.default_implementation = 'CPU'
     test_sum()
     test_sum_1()
     test_max()

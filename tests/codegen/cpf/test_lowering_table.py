@@ -441,6 +441,8 @@ CONSTEXPR_PROBES = {
 _SCAN_REASON = 'writes through an output iterator under an OpenMP inscan clause, which cannot be constant-evaluated'
 
 NOT_CONSTEXPR = {
+    'parallel_sort':
+    'sorts through libstdc++ parallel mode, an OpenMP region, which no constant evaluation can run',
     'scan_incl_sum':
     _SCAN_REASON,
     'scan_incl_product':
@@ -644,7 +646,7 @@ def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
     assert cpf_lowering.rewrite_native_code(call, Dialect.STANDALONE).startswith(name)
 
 
-#: The statement ``ExpandFindFirstSequential`` / ``ExpandFindFirstCPU`` write, copied here rather than
+#: The statement ``ExpandFindFirstCPU`` writes, copied here rather than
 #: imported so that a change to the expansion's spelling breaks this file instead of silently
 #: turning the C rewrite into a no-op -- which would surface only as an unlowered ``dace::`` name in
 #: some kernel that happens to search.

@@ -154,7 +154,7 @@ def openmp_reduce_sdfg(name, wcr, identity, size, dtype=dace.float16):
     sdfg.add_array('s', [1], dtype)
     state = sdfg.add_state()
     red = Reduce('reduce', wcr, None, identity=identity)
-    red.implementation = 'OpenMP'
+    red.implementation = 'CPU'
     state.add_node(red)
     state.add_edge(state.add_read('A'), None, red, '_in', dace.Memlet(f'A[0:{size}]'))
     state.add_edge(red, '_out', state.add_write('s'), None, dace.Memlet('s[0]'))

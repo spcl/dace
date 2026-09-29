@@ -119,7 +119,7 @@ EXPECTED: dict[str, Form] = {
         "residual loop plus two Sequential maps ext_war_unit shows"),
     "s13110_d_single":
     Form(
-        0, 0, 0, ("ArgReduce=OpenMP", ), None,
+        0, 0, 0, ("ArgReduce=CPU", ), None,
         "a 2D running maximum carrying the value and BOTH its indices is an argmax, not a recurrence; "
         "the OpenMP ArgReduce expansion opens its own parallel region rather than calling the runtime"),
     "s152_d_single":
@@ -179,11 +179,11 @@ EXPECTED: dict[str, Form] = {
         "one predicated parallel map"),
     "s311_d_single":
     Form(
-        0, 0, 0, ("Reduce=OpenMP", ), "parallel",
+        0, 0, 0, ("Reduce=CPU", ), "parallel",
         "a bare sum accumulation is a reduction and must become one Reduce lowered to dace::reduce::sum, "
         "whose OpenMP reduction lives in reduction.h and never appears in the emitted .cpp"),
     "s3110_d_single":
-    Form(0, 0, 0, ("ArgReduce=OpenMP", ), None,
+    Form(0, 0, 0, ("ArgReduce=CPU", ), None,
          "the same value-plus-index argmax as s13110, reached through a different chksum tail"),
     "s3111_d_single":
     Form(
@@ -196,11 +196,11 @@ EXPECTED: dict[str, Form] = {
         "sum = sum + a[i]; b[i] = sum is the textbook inclusive prefix scan, so the canonical answer is "
         "one Scan lowered to dace::scan::inclusive_sum -- parallel inside scan.hpp, invisible in the .cpp"),
     "s316_d_single":
-    Form(0, 0, 0, ("Reduce=OpenMP", ), "parallel",
+    Form(0, 0, 0, ("Reduce=CPU", ), "parallel",
          "a running minimum is a min reduction and must reach dace::reduce::min, not stay a compare chain"),
     "s318_d_single":
     Form(
-        0, 0, 0, ("ArgReduce=OpenMP", ), None,
+        0, 0, 0, ("ArgReduce=CPU", ), None,
         "the strided |a[k]| search is an argmax over a gathered vector, and the gather needs no map: the "
         "ArgReduce reads a at stride inc through its own _in memlet and applies abs per element, so the "
         "LEN_1D-element staging buffer the map used to fill is never allocated"),
@@ -231,17 +231,17 @@ EXPECTED: dict[str, Form] = {
     Form(1, 0, 0, (), None, "a[i] *= b[i] * c[i] is elementwise"),
     "ext_break_capture":
     Form(
-        0, 0, 0, ("FindFirst=OpenMP", ), "parallel",
+        0, 0, 0, ("FindFirst=CPU", ), "parallel",
         "the loop has NO per-iteration body independent of the search, so a map here would be a "
         "regression, not progress: the whole loop is one FindFirst lowered to dace::find_first_index"),
     "ext_break_find_first":
     Form(
-        1, 0, 0, ("FindFirst=OpenMP", ), "parallel",
+        1, 0, 0, ("FindFirst=CPU", ), "parallel",
         "TSVC s481 -- the break bound is data-dependent on d, so a FindFirst computes it and the body "
         "then runs as a map clipped to that bound"),
     "ext_break_post_body":
     Form(
-        1, 0, 0, ("FindFirst=OpenMP", ), "parallel",
+        1, 0, 0, ("FindFirst=CPU", ), "parallel",
         "TSVC s482 -- the breaking iteration's write is retained, so the same FindFirst bound clips the "
         "body map INCLUSIVELY rather than exclusively"),
     "ext_war_unit":
@@ -269,12 +269,12 @@ EXPECTED: dict[str, Form] = {
         "can merge; done right the two maps become one and tmp disappears"),
     "quasi_affine_reduce_odd":
     Form(
-        0, 0, 0, ("Reduce=OpenMP", ), "parallel",
+        0, 0, 0, ("Reduce=CPU", ), "parallel",
         "a stride-2 sum from a non-zero base is still a sum reduction once the range is canonicalized; "
         "the odd base is the only thing standing between it and dace::reduce::sum"),
     "argmax_with_index":
     Form(
-        0, 0, 0, ("ArgReduce=OpenMP", ), None,
+        0, 0, 0, ("ArgReduce=CPU", ), None,
         "a running maximum carrying both the value and its index is the two-accumulator ArgMaxLift "
         "shape, and must land as one ArgReduce rather than as a conditional recurrence"),
     "wavefront2d":

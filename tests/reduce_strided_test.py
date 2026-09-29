@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
+@pytest.mark.parametrize('implementation', ['pure', 'CPU'])
 def test_strided_reduce(implementation):
     """Reduce a strided input subset ``A[::2, ::2]`` over axis 0. The pure and
     OpenMP expansions index each reduced element with the ARRAY stride times the
@@ -39,4 +39,4 @@ def test_strided_reduce(implementation):
 
 if __name__ == '__main__':
     test_strided_reduce('pure')
-    test_strided_reduce('OpenMP')
+    test_strided_reduce('CPU')

@@ -830,7 +830,7 @@ class CPUCodeGen(TargetCodeGenerator):
         caller, but a CPU-called nest can still contain a GPU map deeper down, so check the subtree.
         Conservative on purpose: anything not clearly host-only stays in the frame TU.
         """
-        gpu_schedules = set(dtypes.GPU_SCHEDULES) | set(dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN)
+        gpu_schedules = set(dtypes.ALL_GPU_SCHEDULES)
         gpu_storages = set(dtypes.GPU_STORAGES)
         for sd in nsdfg.all_sdfgs_recursive():
             for desc in sd.arrays.values():

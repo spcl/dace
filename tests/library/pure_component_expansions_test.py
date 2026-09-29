@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The ``pure`` expansions of ``ArgReduce``, ``Scan`` and ``ScatterConflictCheck`` are SDFG components -- loop
-regions and Python tasklets, no C++ -- and compute exactly what the C++ ``sequential`` lowering computes.
+regions and Python tasklets, no C++ -- and compute exactly what the C++ ``CPU`` lowering computes.
 
-The C++ lowerings stay what every speed-driven choice picks: each node's default, the single-core pick of
-``auto_optimize`` / canonicalize, and CPF's rendering.
+The ``CPU`` lowering stays what every speed-driven choice picks: the ``Auto`` default on a parallel schedule
+and CPF's rendering.
 """
 import numpy as np
 import pytest
@@ -18,7 +18,7 @@ from dace.libraries.standard.nodes.scan import (COEF_CONNECTOR_NAME, INIT_CONNEC
                                                 out_connector)
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.tasklet_utils import is_abort_guard
-from dace.transformation.auto.auto_optimize import set_fast_implementations, single_core_implementation
+from dace.transformation.auto.auto_optimize import set_fast_implementations
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -62,13 +62,13 @@ def run_arg_reduce(sdfg: dace.SDFG, a: np.ndarray) -> tuple:
 
 @pytest.mark.parametrize('op', ['max', 'min'])
 @pytest.mark.parametrize('stride', [1, 3])
-def test_the_pure_arg_reduce_is_a_python_loop_finding_the_first_extreme_the_sequential_one_finds(op, stride):
+def test_the_pure_arg_reduce_is_a_python_loop_finding_the_first_extreme_the_cpu_one_finds(op, stride):
     ties = np.round(np.random.default_rng(SEED).standard_normal(3 * LENGTH))
 
     sut = arg_reduce_sdfg('pure', op, stride)
 
     assert tasklet_languages(sut) == {dace.Language.Python} and loop_count(sut) == 1
-    assert run_arg_reduce(sut, ties) == run_arg_reduce(arg_reduce_sdfg('sequential', op, stride), ties)
+    assert run_arg_reduce(sut, ties) == run_arg_reduce(arg_reduce_sdfg('CPU', op, stride), ties)
 
 
 def scan_sdfg(implementation: str,
@@ -124,11 +124,11 @@ SCANS = {
 
 
 @pytest.mark.parametrize('shape', sorted(SCANS))
-def test_the_pure_scan_is_python_loops_computing_what_the_sequential_scan_computes(shape):
+def test_the_pure_scan_is_python_loops_computing_what_the_cpu_scan_computes(shape):
     sut = scan_sdfg('pure', **SCANS[shape])
 
     assert tasklet_languages(sut) == {dace.Language.Python} and loop_count(sut) >= 1
-    for got, want in zip(run_scan(sut), run_scan(scan_sdfg('sequential', **SCANS[shape]))):
+    for got, want in zip(run_scan(sut), run_scan(scan_sdfg('CPU', **SCANS[shape]))):
         np.testing.assert_allclose(got, want, rtol=1e-14)
 
 
@@ -159,9 +159,9 @@ def run_matrix(sdfg: dace.SDFG) -> tuple:
     return y, idx[0]
 
 
-def test_a_matrix_operand_is_walked_in_row_major_order_like_the_sequential_loop():
+def test_a_matrix_operand_is_walked_in_row_major_order_like_the_cpu_lowering():
     got_y, got_idx = run_matrix(matrix_sdfg('pure', 'pure'))
-    want_y, want_idx = run_matrix(matrix_sdfg('sequential', 'sequential'))
+    want_y, want_idx = run_matrix(matrix_sdfg('CPU', 'CPU'))
 
     np.testing.assert_array_equal(got_y, want_y)
     assert got_idx == want_idx
@@ -208,34 +208,31 @@ def run_conflict(sdfg: dace.SDFG, idx: np.ndarray) -> int:
 
 @pytest.mark.parametrize('owner', [False, True])
 @pytest.mark.parametrize('case', sorted(INDICES))
-def test_the_pure_conflict_check_is_python_loops_flagging_what_the_sequential_check_flags(owner, case):
+def test_the_pure_conflict_check_is_python_loops_flagging_what_the_cpu_check_flags(owner, case):
     sut = conflict_sdfg('pure', owner)
 
     assert tasklet_languages(sut) == {dace.Language.Python} and loop_count(sut) >= 2
-    assert run_conflict(sut, INDICES[case]) == run_conflict(conflict_sdfg('sequential', owner), INDICES[case])
+    assert run_conflict(sut, INDICES[case]) == run_conflict(conflict_sdfg('CPU', owner), INDICES[case])
 
 
 def test_a_duplicate_index_is_flagged_by_the_pure_check():
     assert run_conflict(conflict_sdfg('pure', True), INDICES['a duplicate']) == 1
 
 
-@pytest.mark.parametrize('node_type, default, single_core', [(ArgReduce, 'sequential', 'sequential'),
-                                                             (Scan, 'CPU', 'sequential'),
-                                                             (ScatterConflictCheck, 'CPU', 'sequential')])
-def test_speed_driven_choices_keep_the_cpp_lowerings(node_type, default, single_core):
+@pytest.mark.parametrize('node_type', [ArgReduce, Scan, ScatterConflictCheck])
+def test_speed_driven_choices_keep_the_cpp_lowerings(node_type):
     node = node_type('node')
     renderable = cpf.renderable_implementations(node, dace.SDFGState())
     cpf_pick = next(impl for impl in renderable if impl in node_type.implementations)
 
-    assert node_type.default_implementation == default
-    assert single_core_implementation(node) == single_core
-    assert cpf_pick in ('CPU', 'sequential')
+    assert node_type.default_implementation == 'Auto'
+    assert cpf_pick == 'CPU'
 
 
 @pytest.mark.parametrize('node_type, lowerings', [
-    (ArgReduce, {'CPU', 'sequential', 'pure', 'CUDA'}),
-    (FindFirst, {'CPU', 'sequential', 'CUDA'}),
-    (IntegerSort, {'CPU', 'ISO C++', 'CUDA'}),
+    (ArgReduce, {'Auto', 'CPU', 'pure', 'CUDA'}),
+    (FindFirst, {'Auto', 'CPU', 'CUDA'}),
+    (IntegerSort, {'CPU', 'isocpp', 'CUDA'}),
 ])
 def test_cpu_names_the_parallel_cpp_lowering_and_pure_only_sdfg_components(node_type, lowerings):
     assert set(node_type.implementations) == lowerings

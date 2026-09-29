@@ -114,12 +114,12 @@ def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
     sdfg.validate()
 
     rendered = comment_lines(render(sdfg).code)
-    # CPF renders a host Scan through its sequential expansion, so the trade is stated from that side.
-    assert '// sequential scan; this expansion runs the recurrence as one loop.' in rendered
-    assert '// Alternative: the parallel scan canonicalization chose.' in rendered
+    # CPF renders a host Scan through its parallel CPU expansion, so the trade is stated from that side.
+    assert '// parallel scan; canonicalization takes the parallel form.' in rendered
+    assert '// Alternative: a sequential loop over parallel maps.' in rendered
     # Folded into the node's description so one expansion is one trade, not one per map it leaves.
-    assert rendered.count('// Alternative: the parallel scan canonicalization chose.') == 1
-    assert not [line for line in rendered if line.startswith('// parallel scan')]
+    assert rendered.count('// Alternative: a sequential loop over parallel maps.') == 1
+    assert not [line for line in rendered if line.startswith('// sequential scan')]
 
 
 @pytest.mark.parametrize('implementation, hint', [('pure', SEQUENTIAL_SCAN_HINT), ('CPU', PARALLEL_SCAN_HINT)])

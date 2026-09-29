@@ -546,6 +546,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             # An environment CPF supplies for itself is not a hole in the rendering: see
             # :data:`~dace.cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS` for what each one is and what
             # replaces it.
+            if env.__name__ in cpf_lowering.PROVIDED_ENVIRONMENTS:
+                continue
             if cpf_lowering.device() and env.__name__ in cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS:
                 continue
             needs = [
