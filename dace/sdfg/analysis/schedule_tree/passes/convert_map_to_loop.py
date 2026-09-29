@@ -19,7 +19,8 @@ def convert_map_to_loop(stree: tn.ScheduleTreeRoot) -> int:
 
     :param stree: The schedule tree to modify in place.
     :return: The number of maps converted.
-    :note: A step that is not provably negative is assumed to be positive, as in the ``MapToForLoop`` transformation.
+    :raises ValueError: If a map has a provably negative step, which is invalid in the IR. The tree may then be
+                        partially converted.
     """
     root = stree
     converted = 0
@@ -77,13 +78,12 @@ def _map_to_loops(scope: tn.MapScope) -> tn.ForScope:
     dace_map = scope.node.map
     body = scope.children
     for param, (start, end, step) in reversed(list(zip(dace_map.params, dace_map.range))):
-        # Map ranges are inclusive, loop conditions follow the frontend's ``range`` form
         if (step < 0) == True:
-            condition = f'{param} > {symbolic.symstr(end - 1)}'
-        else:
-            condition = f'{param} < {symbolic.symstr(end + 1)}'
+            raise ValueError(f'Map "{dace_map.label}" has a negative step ({step}) for parameter "{param}", '
+                             'map steps must be positive')
+        # Map ranges are inclusive (and map steps are positive), loop conditions follow the frontend's ``range`` form
         loop = LoopRegion(f'loop_{dace_map.label}_{param}',
-                          condition_expr=condition,
+                          condition_expr=f'{param} < {symbolic.symstr(end + 1)}',
                           loop_var=param,
                           initialize_expr=f'{param} = {symbolic.symstr(start)}',
                           update_expr=f'{param} = {symbolic.symstr(symbolic.symbol(param) + step)}',

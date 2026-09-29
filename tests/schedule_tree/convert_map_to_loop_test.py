@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the schedule-tree map-to-loop conversion pass."""
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -73,24 +74,20 @@ def test_multidimensional_map():
     assert np.allclose(a, expected)
 
 
-def test_negative_step():
-    sdfg = dace.SDFG('negative_step_map')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
-    state = sdfg.add_state()
-    _, map_entry, _ = state.add_mapped_tasklet('reverse', {'i': '0:10'}, {'a': dace.Memlet('A[i]')},
-                                               'b = a + 1', {'b': dace.Memlet('B[i]')},
-                                               external_edges=True)
-    map_entry.map.range = dace.subsets.Range([(9, 0, -1)])
+def test_negative_step_raises():
 
-    stree = sdfg.as_schedule_tree()
-    assert _convert(stree) == 1
-    assert _headers(stree) == [('i = 9', '(i > (- 1))', 'i = (i - 1)')]
+    @dace.program
+    def outer_and_inner(A: dace.float64[10, 10]):
+        for i in dace.map[0:10]:
+            for j in dace.map[0:10]:
+                A[i, j] = 1.0
 
-    a = np.random.rand(10)
-    b = np.zeros(10)
-    _run(stree, A=a, B=b)
-    assert np.allclose(b, a + 1)
+    stree = outer_and_inner.to_sdfg().as_schedule_tree()
+    inner, = [m for m in _nodes(stree, tn.MapScope) if m.node.map.params == ['j']]
+    inner.node.map.range = dace.subsets.Range([(9, 0, -1)])
+
+    with pytest.raises(ValueError, match='negative step'):
+        convert_map_to_loop(stree)
 
 
 def test_nested_maps_and_write_conflict_resolution():
@@ -194,7 +191,7 @@ def test_dynamic_input_name_clash_keeps_map():
 if __name__ == '__main__':
     test_one_dimensional_map()
     test_multidimensional_map()
-    test_negative_step()
+    test_negative_step_raises()
     test_nested_maps_and_write_conflict_resolution()
     test_dynamic_map_range()
     test_dynamic_map_range_from_scalar()
