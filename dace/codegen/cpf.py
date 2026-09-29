@@ -757,7 +757,8 @@ def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
 def written_containers(sdfg: SDFG) -> OrderedSet:
     """The container names some state WRITES, at any nesting depth.
 
-    An ``AccessNode`` with an incoming edge is a write. Nested SDFGs are walked too: a nested
+    An ``AccessNode`` with a data-carrying incoming edge is a write; an empty-memlet edge only orders
+    the node after its source (an inlined callee leaves one into every later read). Nested SDFGs are walked too: a nested
     transient that happens to share an outer name is then reported as written, which is the SAFE
     direction -- it only ever withholds a ``const``, never grants one wrongly.
 
@@ -767,7 +768,7 @@ def written_containers(sdfg: SDFG) -> OrderedSet:
     written: OrderedSet = OrderedSet()
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and state.in_degree(node) > 0:
+            if isinstance(node, nodes.AccessNode) and any(not edge.data.is_empty() for edge in state.in_edges(node)):
                 written.add(node.data)
             elif isinstance(node, nodes.NestedSDFG):
                 written |= written_containers(node.sdfg)

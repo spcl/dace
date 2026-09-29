@@ -229,10 +229,14 @@ def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
 
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
+    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has a non-empty in-edge).
+
+    An empty-memlet in-edge only orders the node after its source and moves no data.
+    """
     for state in sdfg.all_states():
         for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
+            if isinstance(node, nodes.AccessNode) and node.data == name and any(not edge.data.is_empty()
+                                                                                for edge in state.in_edges(node)):
                 return True
     return False
 

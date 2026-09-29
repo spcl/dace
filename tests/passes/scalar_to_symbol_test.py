@@ -1273,3 +1273,35 @@ def test_a_promoted_argument_stays_mapped_into_a_nested_sdfg_through_constant_pr
     out = np.zeros(5, dtype=np.int64)
     sdfg(seq=seq, out=out, target=np.int64(3), bonus=np.int64(7), N_PICK=5)
     assert np.array_equal(out, [7, 0, 7, 7, 0]), out
+
+
+def test_a_widened_loop_iterator_promotes_although_the_iterator_is_a_scope_symbol():
+    """``ii + W`` (``W`` an int64 scalar) reaches the tasklet as ``dace.int64(ii) + W``. A renamed loop
+    iterator is a scope symbol, absent from ``sdfg.symbols``, so the lossless-cast check must read its type
+    from the enclosing loop; without it the sum stays a scalar and a tiled bound built on it stays opaque."""
+    from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
+    N = dace.symbol('N')
+
+    @dace.program
+    def tiled(A: dace.float64[N]):
+        W = 4
+        for ii in range(0, N, W):
+            for i in range(ii, min(ii + W, N)):
+                A[i] = A[i] + 1.0
+
+    sdfg = tiled.to_sdfg(simplify=False)
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    widened = [
+        node for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and 'dace.int64(' in node.code.as_string
+    ]
+    assert widened, 'the frontend no longer widens the iterator, so this test asserts nothing'
+    iterators = {r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)}
+    assert not iterators & set(sdfg.symbols), 'the iterators must be scope symbols for this case'
+
+    promotable = scalar_to_symbol.find_promotable_scalars(sdfg)
+    assert any(name.endswith('plus_W') for name in promotable), promotable
+
+    a = np.zeros(10)
+    sdfg(A=a, N=10)
+    assert np.array_equal(a, np.ones(10))

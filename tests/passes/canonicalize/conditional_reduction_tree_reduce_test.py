@@ -192,5 +192,25 @@ def test_condsum_gpu_emits_block_reduce():
     assert 'atomicAdd' not in code, "no per-passing-thread atomicAdd should remain"
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize('n', [1, 511, 512, 513, 100003])
+def test_condsum_gpu_block_reduce_matches_numpy(n):
+    """The block fold runs on the device: every thread, in range or not, reaches the barrier-using
+    ``BlockReduce``, and one atomic per block commits -- across a partial trailing block too."""
+    import cupy as cp
+    sdfg = condsum.to_sdfg(simplify=True)
+    canonicalize(sdfg,
+                 target='gpu',
+                 peel_limit=4,
+                 break_anti_dependence=True,
+                 interchange_carry_with_map=False,
+                 scatter_to_guarded_maps=True)
+    assert 'BlockReduce' in _gpu_code(sdfg)
+    a = np.random.default_rng(n).random(n)
+    out = cp.zeros(1)
+    sdfg(a=cp.asarray(a), thresh=0.5, out=out, N=n)
+    assert np.isclose(float(out.get()[0]), a[a > 0.5].sum(), rtol=1e-12)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

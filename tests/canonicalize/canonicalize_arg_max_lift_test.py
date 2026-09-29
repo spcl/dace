@@ -1510,14 +1510,13 @@ def test_tsvc_s318_closed_form_gather_lifts_with_value_and_index():
 
 
 def test_tsvc_s318_frontend_shape_is_refused_pending_iv_closure():
-    """TSVC s318 EXACTLY as written: the stride comes in as a scalar container, so
-    the secondary IV update ``k = k + inc`` lowers to a dataflow tasklet in a body
-    state rather than a symbolic interstate assignment.
-    ``InductionVariableSubstitution`` cannot close ``k`` into ``a[inc*i]``, and
-    :meth:`ArgMaxLift.guarded_loop_skeleton` then refuses the loop because its body
-    holds a non-empty state. The argmax analysis itself is NOT the gap -- the
-    closed-form test above lifts the same reduction -- so this pins the cause, and
-    the un-lifted loop must still be numerically right.
+    """TSVC s318 EXACTLY as written: the stride comes in as a scalar container, and the
+    secondary IV update ``k = k + inc`` is promoted to interstate assignments, so the
+    body holds no dataflow and :meth:`ArgMaxLift.guarded_loop_skeleton` accepts it.
+    ``k`` is still carried rather than closed into ``a[inc*i]``, and the lift refuses
+    that. The argmax analysis itself is NOT the gap -- the closed-form test above lifts
+    the same reduction -- so this pins the cause, and the un-lifted loop must still be
+    numerically right.
     """
 
     @dace.program
@@ -1538,9 +1537,10 @@ def test_tsvc_s318_frontend_shape_is_refused_pending_iv_closure():
     sdfg = s318.to_sdfg(simplify=True)
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
     assert len(loops) == 1
-    # The cause, asserted rather than described: a non-empty state in the body.
-    assert any(isinstance(b, dace.SDFGState) and len(b.nodes()) > 0 for b in loops[0].nodes())
-    assert ArgMaxLift().guarded_loop_skeleton(loops[0]) is None
+    # The cause, asserted rather than described: the skeleton matches, the IV ``k`` is still carried.
+    assert not any(isinstance(b, dace.SDFGState) and len(b.nodes()) > 0 for b in loops[0].nodes())
+    assert ArgMaxLift().guarded_loop_skeleton(loops[0]) is not None
+    assert any('k' in e.data.assignments for e in loops[0].edges())
     assert ArgMaxLift().apply_pass(sdfg, {}) is None
     assert _num_loops(sdfg) == 1
 

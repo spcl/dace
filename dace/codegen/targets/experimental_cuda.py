@@ -797,7 +797,10 @@ class KernelSpec:
 
         self.kernel_map_entry: nodes.MapEntry = kernel_map_entry
         self.kernel_map: nodes.Map = kernel_map_entry.map
-        self.kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
+        # Label and ids are unique only within one SDFG; the top-level SDFG name keeps two programs
+        # linked into one process (e.g. torch forward + backward) from binding each other's kernels.
+        self.kernel_name: str = (f'{cudaCodeGen._global_sdfg.name}_{kernel_map_entry.map.label}_{cfg.cfg_id}'
+                                 f'_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}')
 
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)

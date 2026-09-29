@@ -11,6 +11,8 @@ from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
+from dace.codegen.targets.cpu import (collect_gpu_block_reductions, drain_gpu_block_reduction,
+                                      register_gpu_block_reduction)
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
 from dace.codegen.targets.cuda import (_named_idx, chiplet_padding_condition, kernel_grid_conditions,
                                        kernel_index_definitions, kernel_launch_qualifiers)
@@ -90,6 +92,27 @@ class ScopeGenerationStrategy(ABC):
         self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
 
 
+def open_block_reductions(strategy: 'ScopeGenerationStrategy', sdfg: SDFG, cfg: ControlFlowRegion, state_id: int,
+                          scope_entry: nodes.MapEntry, block_dims, stream: CodeIOStream) -> list:
+    """Declare and identity-initialize the register partial of every map-exit WCR accumulator under
+    ``scope_entry`` that folds by ``gpucub::BlockReduce`` plus one atomic per block. Emit before the
+    bounds guard, so out-of-range threads still join the barrier-using fold."""
+    reductions = collect_gpu_block_reductions(sdfg, cfg.state(state_id), scope_entry, block_dims,
+                                              strategy.codegen._frame)
+    covered = strategy.codegen._cpu_codegen._gpu_block_reduction_covered
+    for red in reductions:
+        stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, scope_entry)
+    return reductions
+
+
+def drain_block_reductions(strategy: 'ScopeGenerationStrategy', reductions: list, label: str, cfg: ControlFlowRegion,
+                           state_id: int, scope_entry: nodes.MapEntry, stream: CodeIOStream):
+    """Fold the partials :func:`open_block_reductions` declared; emit after the bounds guard closes."""
+    covered = strategy.codegen._cpu_codegen._gpu_block_reduction_covered
+    for i, red in enumerate(reductions):
+        stream.write(drain_gpu_block_reduction(red, f'{label}_{i}', covered), cfg, state_id, scope_entry)
+
+
 class KernelScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_Device
@@ -118,7 +141,14 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                 ctype = kernel_spec.index_types[var_name].ctype
                 callsite_stream.write(f'{ctype} {var_name} = {expr};', cfg, state_id, kernel_entry_node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ctype)
-            # Without a thread-block map every thread handles one iteration and masks the trailing blocks
+            # Without a thread-block map every thread handles one iteration and masks the trailing blocks,
+            # and the kernel map's own WCR accumulators fold across the block (``emit_tree_reductions``
+            # gates the legacy codegen only).
+            reductions = []
+            if kernel_spec.per_thread:
+                reductions = open_block_reductions(self, sdfg, cfg, state_id, kernel_entry_node, kernel_spec.block_dims,
+                                                   callsite_stream)
+            unguarded = scope_manager.opened
             if kernel_spec.per_thread:
                 conditions = kernel_grid_conditions(kernel_spec.kernel_map, kernel_spec.block_dims,
                                                     kernel_spec.chiplets)
@@ -131,6 +161,9 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
             self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
                                          callsite_stream)
+            scope_manager.close_to(unguarded)
+            drain_block_reductions(self, reductions, kernel_spec.kernel_name, cfg, state_id, kernel_entry_node,
+                                   callsite_stream)
 
     def kernel_signature(self, dfg_scope: ScopeSubgraphView) -> str:
         kernel_name = self._current_kernel_spec.kernel_name
@@ -140,7 +173,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
         maxnreg, launch_bounds = kernel_launch_qualifiers(node, block_dims)
 
-        return f'__global__ void {maxnreg} {launch_bounds} {kernel_name}({", ".join(kernel_args)}) '
+        qualifiers = ' '.join(q for q in ('__global__ void', maxnreg, launch_bounds, kernel_name) if q)
+        return f'{qualifiers}({", ".join(kernel_args)}) '
 
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
@@ -175,6 +209,11 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
+            # Map-exit WCR accumulators fold by gpucub::BlockReduce and one atomic per block, always
+            # (``emit_tree_reductions`` gates the legacy codegen only).
+            reductions = open_block_reductions(self, sdfg, cfg, state_id, node, kernel_block_dims, callsite_stream)
+            unguarded = scope_manager.opened
+
             # Guard each dim so out-of-bounds threads in a trailing block are skipped.
             minels = map_range.min_element()
             maxels = map_range.max_element()
@@ -201,6 +240,8 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                     scope_manager.open(condition=condition)
 
             self.dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, node, function_stream, callsite_stream)
+            scope_manager.close_to(unguarded)
+            drain_block_reductions(self, reductions, scope_map.label, cfg, state_id, node, callsite_stream)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
@@ -373,6 +414,20 @@ class ScopeManager:
         if self.brackets_on_enter:
             self.open()
         return self
+
+    @property
+    def opened(self) -> int:
+        """Brackets currently open."""
+        return self._opened
+
+    def close_to(self, depth: int):
+        """Close brackets until ``depth`` remain open."""
+        while self._opened > depth:
+            self._opened -= 1
+            line = "}"
+            if self.debug:
+                line += f" // {self.comment} (close to {depth})"
+            self.callsite_stream.write(line, self.cfg, self.state_id, self.exit_node)
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Write the closing bracket for every bracket opened by this manager."""

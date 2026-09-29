@@ -22,6 +22,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
+from dace.sdfg.state import enclosing_region_symbols
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import helpers as xfh
@@ -335,8 +336,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
+                        # The enclosing loops' iterators are scope symbols, absent from ``sdfg.symbols``.
                         tasklet_types = {
-                            **sdfg.symbols,
+                            **enclosing_region_symbols(state, sdfg.symbols),
                             **{
                                 e.dst_conn: sdfg.arrays[e.data.data].dtype
                                 for e in state.in_edges(edge.src)

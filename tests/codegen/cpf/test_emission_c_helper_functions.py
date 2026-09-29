@@ -342,18 +342,31 @@ CASES: Dict[str, Callable[[], Case]] = {
 }
 
 
-def test_the_cpp_sort_is_the_openmp_parallel_sort_and_orders_the_keys():
-    """C++ has libstdc++'s OpenMP parallel mode, so the policied ``isocpp`` sort renders through it
-    instead of the ``std::execution`` backend a standalone unit cannot link."""
+def test_the_cpp_sort_is_the_standard_sort_without_an_execution_policy():
+    """A ``std::execution`` policy needs a backend library (TBB under libstdc++) a standalone unit cannot link."""
     sdfg, helpers, arguments, expected = sort_case()
-    sdfg.name = 'cpf_cpp_parallel_sort'
+    sdfg.name = 'cpf_cpp_sort'
     rendering = render_sdfg(sdfg, language='c++')
     code = rendering.code
-    assert 'parallel_sort(ordered, ordered + (N));' in code and '__gnu_parallel::sort(first, last);' in code, code
-    assert 'std::execution' not in code, code
+    assert 'std::sort(ordered, ordered + (N));' in code and 'std::execution' not in code, code
     assert_standalone(code, sdfg.name, language='c++')
     call_standalone(build_standalone(code, sdfg.name, language='c++'), rendering.sdfg, arguments)
     assert np.array_equal(arguments['ordered'], expected['ordered'])
+
+
+def test_the_c_sort_is_an_openmp_task_mergesort_over_heapsorted_leaves():
+    """C has no ``std::sort``, so the parallel form is spelled out: tasks halve the range, leaves
+    heapsort, joins merge. Large enough that the recursion actually splits."""
+    keys = np.random.default_rng(11).integers(-10**12, 10**12, 3 * 4096 * 16 + 5, dtype=np.int64)
+    arguments = {'keys': keys.copy(), 'ordered': np.zeros_like(keys), 'N': keys.size}
+    sdfg = sort_sdfg()
+    sdfg.name = 'cpf_c_mergesort'
+    rendering = render_sdfg(sdfg, language='c')
+    code = rendering.code
+    assert '#pragma omp task\n' in code and 'cpf_merge_int64(first, middle, last, buffer);' in code, code
+    assert_standalone(code, sdfg.name, language='c')
+    call_standalone(build_standalone(code, sdfg.name, language='c'), rendering.sdfg, arguments)
+    assert np.array_equal(arguments['ordered'], np.sort(keys))
 
 
 @pytest.mark.parametrize('label', sorted(CASES))

@@ -78,6 +78,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
                                          external_edges=True)
 
     ain = state.add_read('_a')
+    info = state.add_access('_info')
     if implementation in GPU_SOLVERS:
         binout1 = state.add_access('_bt')
         binout2 = state.add_access('_bt')

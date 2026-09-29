@@ -485,22 +485,6 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '    }\n'
     '}',
-    # sort
-    # The ``isocpp`` sort passes ``std::execution::par_unseq``, whose libstdc++ backend links TBB. CPF
-    # takes libstdc++'s OpenMP parallel mode instead (a multiway mergesort, no library to link), and
-    # the plain ``std::sort`` where that mode is absent (libc++, or no ``-fopenmp``).
-    'parallel_sort':
-    '#if defined(__GLIBCXX__) && defined(_OPENMP)\n'
-    '#include <parallel/algorithm>\n'
-    '#endif\n'
-    'template <typename It>\n'
-    'static inline void parallel_sort(It first, It last) {\n'
-    '#if defined(__GLIBCXX__) && defined(_OPENMP)\n'
-    '    __gnu_parallel::sort(first, last);\n'
-    '#else\n'
-    '    std::sort(first, last);\n'
-    '#endif\n'
-    '}',
     # find-first
     # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
     # short-circuiting parallel search. CPF emits that search rather than unrolling it back into a
@@ -1406,7 +1390,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Opti
     """
     tables = tables_for(dialect)
     c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
-    code = POLICY_SORT_CALL.sub('std::sort(' if c_dialect else 'parallel_sort(', code)
+    code = POLICY_SORT_CALL.sub('std::sort(', code)
     code = rewrite_ctypes(respell_scan_entry_points(code), dialect)
 
     if c_dialect:
@@ -2245,10 +2229,12 @@ def c_detect_collision_sized_definition(name: str, index: str, tagged: str) -> s
 
 
 def c_sort_definition(name: str, element: str) -> str:
-    """``std::sort`` over a contiguous range as a C function: heapsort in the total order ``<`` gives.
+    """``std::sort`` over a contiguous range as a C function: an OpenMP task mergesort.
 
-    Heapsort rather than ``qsort``: the comparison stays inline and typed, where ``qsort`` pays an
-    indirect call per comparison. Same O(n log n) bound.
+    The range halves into tasks down to a leaf of about a quarter of one thread's share, each leaf
+    heapsorts (the comparison stays inline and typed, where ``qsort`` pays an indirect call per
+    comparison), and each join merges through one buffer allocated once. Without OpenMP the pragmas
+    are ignored and the same recursion runs on one thread.
 
     :param name: the instantiation's name.
     :param element: the range's dace element type.
@@ -2258,8 +2244,12 @@ def c_sort_definition(name: str, element: str) -> str:
     if element in C_COMPLEX_DTYPES:
         raise NotImplementedError(f'CPF cannot sort {element} values in C: the type has no order')
     ctype = C_SCALAR_SPELLINGS[element]
+    heap, merge, sort_range = 'cpf_heapsort_%s' % element, 'cpf_merge_%s' % element, 'cpf_sortrange_%s' % element
     return '\n'.join((
-        'static inline void %s(%s *first, %s *last) {' % (name, ctype, ctype),
+        '#ifdef _OPENMP',
+        '#include <omp.h>',
+        '#endif',
+        'static inline void %s(%s *first, %s *last) {' % (heap, ctype, ctype),
         '    const long long len = (long long)(last - first);',
         '    long long start = len / 2;',
         '    long long end = len;',
@@ -2285,6 +2275,48 @@ def c_sort_definition(name: str, element: str) -> str:
         '            root = child;',
         '        }',
         '    }',
+        '}',
+        '// Merges the sorted halves [first, middle) and [middle, last) in place through buffer.',
+        'static inline void %s(%s *first, %s *middle, %s *last, %s *buffer) {' % (merge, ctype, ctype, ctype, ctype),
+        '    const long long left = (long long)(middle - first);',
+        '    long long i = 0;',
+        '    %s *out = first;' % ctype,
+        '    memcpy(buffer, first, (size_t)left * sizeof(%s));' % ctype,
+        '    while (i < left && middle < last) *out++ = (*middle < buffer[i]) ? *middle++ : buffer[i++];',
+        '    while (i < left) *out++ = buffer[i++];',
+        '}',
+        'static inline void %s(%s *first, %s *last, %s *buffer, long long leaf) {' % (sort_range, ctype, ctype, ctype),
+        '    const long long len = (long long)(last - first);',
+        '    %s *middle = first + len / 2;' % ctype,
+        '    if (len <= leaf) {',
+        '        %s(first, last);' % heap,
+        '        return;',
+        '    }',
+        '    #pragma omp task',
+        '    %s(first, middle, buffer, leaf);' % sort_range,
+        '    %s(middle, last, buffer + len / 2, leaf);' % sort_range,
+        '    #pragma omp taskwait',
+        '    %s(first, middle, last, buffer);' % merge,
+        '}',
+        'static inline void %s(%s *first, %s *last) {' % (name, ctype, ctype),
+        '    const long long len = (long long)(last - first);',
+        '    long long threads = 1;',
+        '    long long leaf;',
+        '    %s *buffer;' % ctype,
+        '#ifdef _OPENMP',
+        '    threads = (long long)omp_get_max_threads();',
+        '#endif',
+        '    leaf = len / (4 * threads);',
+        '    if (leaf < 4096) leaf = 4096;',
+        '    buffer = len > leaf ? (%s *)malloc((size_t)len * sizeof(%s)) : NULL;' % (ctype, ctype),
+        '    if (buffer == NULL) {',
+        '        %s(first, last);' % heap,
+        '        return;',
+        '    }',
+        '    #pragma omp parallel',
+        '    #pragma omp single nowait',
+        '    %s(first, last, buffer, leaf);' % sort_range,
+        '    free(buffer);',
         '}',
     ))
 
@@ -2371,10 +2403,9 @@ C_UNSUPPORTED: Dict[str, str] = {}
 #: the scan itself need the element types the call site names (:func:`c_scan_identities`,
 #: :func:`c_scan`), the duplicate check needs its arrays' types (:func:`c_detect_collision`), and
 #: the find-first takes a predicate, which in C++ is a lambda and in C becomes a function of its own
-#: over the names the predicate reads (:func:`c_find_first`). The policied sort becomes the sort
-#: typed for its element (:func:`c_sort`).
+#: over the names the predicate reads (:func:`c_find_first`).
 C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset(
-    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision', 'parallel_sort'}
+    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision'}
     | {'scan_%s_%s' % (kind, operation)
        for kind in ('incl', 'excl')
        for operation in C_SCAN_OPERATIONS})
@@ -2657,12 +2688,12 @@ HIP_CTYPE_RENAMES: Dict[str, str] = {
 DEVICE_PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'CUDA', 'ScanScratch', 'DetectScratch'})
 
 #: Environments EVERY standalone rendering supplies for itself. ``ParallelSTL`` links TBB for
-#: libstdc++'s ``std::execution`` backend; CPF replaces the policied sort (:data:`POLICY_SORT_CALL`),
-#: so the unit needs no library.
+#: libstdc++'s ``std::execution`` backend; CPF drops the policy (:data:`POLICY_SORT_CALL`), so the
+#: unit needs no library.
 PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'ParallelSTL'})
 
-#: ``std::sort`` under a ``std::execution`` policy, up to its first range argument. C++ calls the
-#: OpenMP ``parallel_sort``; C drops the policy for its typed sort (:func:`c_sort`).
+#: ``std::sort`` under a ``std::execution`` policy, up to its first range argument. The policy is
+#: dropped: C++ calls the plain standard ``std::sort``, C the OpenMP mergesort :func:`c_sort` types.
 POLICY_SORT_CALL: 're.Pattern' = re.compile(r'(?:::)?std::sort\s*\(\s*(?:::)?std::execution::\w+\s*,\s*')
 
 

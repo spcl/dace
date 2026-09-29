@@ -441,8 +441,6 @@ CONSTEXPR_PROBES = {
 _SCAN_REASON = 'writes through an output iterator under an OpenMP inscan clause, which cannot be constant-evaluated'
 
 NOT_CONSTEXPR = {
-    'parallel_sort':
-    'sorts through libstdc++ parallel mode, an OpenMP region, which no constant evaluation can run',
     'scan_incl_sum':
     _SCAN_REASON,
     'scan_incl_product':
