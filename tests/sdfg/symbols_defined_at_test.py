@@ -166,6 +166,37 @@ def test_declared_symbol_types_win_over_descriptor_instances():
     assert SymbolResolver().defined_at(state, me)["N"] == dace.int64
 
 
+def test_inter_state_edges_define_symbols_for_the_states_after_them():
+    """An assignment on an inter-state edge defines its symbol in the states the edge leads to."""
+    sdfg = dace.SDFG("inter_state_assignment")
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"i": "5"}))
+
+    assert "i" in second.symbols_defined_at_state()
+    assert "i" not in first.symbols_defined_at_state()
+
+
+def test_inter_state_edges_define_symbols_in_nested_regions():
+    """The assignments before a `LoopRegion` and the ones between its states both reach a state in the loop."""
+    sdfg = dace.SDFG("inter_state_assignment_in_loop")
+    top_level = sdfg.add_state("top_level", is_start_block=True)
+    loop = LoopRegion("loop", "it < 10", "it", "it = 0", "it = it + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(top_level, loop, dace.InterstateEdge(assignments={"j": "3"}))
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    loop.add_edge(first, second, dace.InterstateEdge(assignments={"k": "j + it"}))
+
+    first_symbols = first.symbols_defined_at_state()
+    assert "j" in first_symbols and "it" in first_symbols
+    assert "k" not in first_symbols
+
+    second_symbols = second.symbols_defined_at_state()
+    assert "j" in second_symbols and "it" in second_symbols and "k" in second_symbols
+    assert "k" not in top_level.symbols_defined_at_state()
+
+
 if __name__ == "__main__":
     test_state_symbols_give_the_same_result()
     test_propagation_resolves_the_state_symbols_once_per_state()
@@ -174,3 +205,5 @@ if __name__ == "__main__":
     test_propagation_keeps_the_loop_iterator()
     test_an_error_leaves_no_state_behind()
     test_declared_symbol_types_win_over_descriptor_instances()
+    test_inter_state_edges_define_symbols_for_the_states_after_them()
+    test_inter_state_edges_define_symbols_in_nested_regions()
