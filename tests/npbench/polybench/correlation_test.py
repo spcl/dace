@@ -3,7 +3,6 @@
 import dace.dtypes
 import numpy as np
 import dace as dc
-import os
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
@@ -87,10 +86,8 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply autopot
         sdfg = correlation_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
-        last_value = os.environ.get('DACE_testing_serialization', '0')
-        os.environ['DACE_testing_serialization'] = '0'
-        corr = sdfg(float_n, data, M=M, N=N)
-        os.environ['DACE_testing_serialization'] = last_value
+        with dace.config.set_temporary('testing', 'serialization', value=False):
+            corr = sdfg(float_n, data, M=M, N=N)
 
     # Compute ground truth and validate result
 
@@ -148,10 +145,8 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    run_correlation_autodiff()
-    os.environ['DACE_testing_serialization'] = last_value
+    with dace.config.set_temporary('testing', 'serialization', value=False):
+        run_correlation_autodiff()
 
 
 if __name__ == "__main__":

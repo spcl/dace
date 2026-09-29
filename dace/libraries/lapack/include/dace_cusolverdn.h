@@ -7,7 +7,7 @@
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::to_string
-#include <unordered_map>
+#include <optional>
 
 namespace dace {
 
@@ -20,12 +20,7 @@ static void CheckCusolverDnError(cusolverStatus_t const& status) {
   }
 }
 
-static cusolverDnHandle_t CreateCusolverDnHandle(int device) {
-  if (device >= 0) {
-    if (cudaSetDevice(device) != cudaSuccess) {
-      throw std::runtime_error("Failed to set CUDA device.");
-    }
-  }
+static cusolverDnHandle_t CreateCusolverDnHandle() {
   cusolverDnHandle_t handle;
   CheckCusolverDnError(cusolverDnCreate(&handle));
   return handle;
@@ -33,34 +28,29 @@ static cusolverDnHandle_t CreateCusolverDnHandle(int device) {
 
 /**
  * CUSOLVERDN wrapper class for DaCe. Once constructed, the class can be used to
- * get or create a CUSOLVERDN library handle (cusolverDnHandle_t) for a given
- * GPU ID. The class is constructed when the CUSOLVERDN DaCe library is used.
+ * get or create the CUSOLVERDN library handle (cusolverDnHandle_t). One per
+ * process, like the GPU itself. The class is constructed when the CUSOLVERDN DaCe library is used.
  **/
 class CusolverDnHandle {
  public:
   CusolverDnHandle() = default;
   CusolverDnHandle(CusolverDnHandle const&) = delete;
 
-  cusolverDnHandle_t& Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new cuSolverDn handle if the specified key does not
-      // yet exist
-      auto handle = CreateCusolverDnHandle(device);
-      f = handles_.emplace(device, handle).first;
+  cusolverDnHandle_t& Get() {
+    if (!handle_) {
+      auto handle = CreateCusolverDnHandle();
+      handle_ = handle;
     }
-    return f->second;
+    return *handle_;
   }
 
   ~CusolverDnHandle() {
-    for (auto& h : handles_) {
-      CheckCusolverDnError(cusolverDnDestroy(h.second));
-    }
+    if (handle_) CheckCusolverDnError(cusolverDnDestroy(*handle_));
   }
 
   CusolverDnHandle& operator=(CusolverDnHandle const&) = delete;
 
-  std::unordered_map<int, cusolverDnHandle_t> handles_;
+  std::optional<cusolverDnHandle_t> handle_;
 };
 
 }  // namespace lapack

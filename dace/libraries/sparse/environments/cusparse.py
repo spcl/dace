@@ -22,18 +22,6 @@ class cuSPARSE:
 
     @staticmethod
     def handle_setup_code(node):
-        location = node.location
-        if not location or "gpu" not in node.location:
-            location = -1  # -1 means current device
-        else:
-            try:
-                location = int(location["gpu"])
-            except ValueError:
-                raise ValueError("Invalid GPU identifier: {}".format(location))
-
-        code = """\
-const int __dace_cuda_device = {location};
-cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get(__dace_cuda_device);
+        return dace.library.reject_gpu_location(node) + """\
+cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get();
 cusparseSetStream(__dace_cusparse_handle, __dace_current_stream);\n"""
-
-        return code.format(location=location)
