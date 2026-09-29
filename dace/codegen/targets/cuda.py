@@ -1439,8 +1439,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
         is_persistent = (dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent)
 
-        # Get parameters of subgraph
-        kernel_args = self._arglists[scope_entry]
+        # Get parameters of subgraph. A constant array is declared inside the kernel (see generate_constants
+        # below), so it is not an argument as well.
+        kernel_args = {name: desc for name, desc in self._arglists[scope_entry].items() if name not in sdfg.constants}
 
         kernel_args.update(dynamic_map_input_args(state, scope_entry))
 
