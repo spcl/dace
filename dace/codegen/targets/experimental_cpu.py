@@ -405,7 +405,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                         sdfg: Optional['SDFG'] = None,
                         nodedesc: Optional[dt.Data] = None,
                         data_name: Optional[str] = None) -> str:
-        # Same aligned ``new[]`` as the base generator (paired with the base ``delete[]``), but
+        # A plain ``DACE_ALIGN(64)`` ``new[]`` (paired with ``delete[]`` in heap_free_stmt), and
         # route the element count through a generated ``<array>_size(...)`` helper when worthwhile
         # (see _register_size_function) so the allocation extent reads as a named function; fall back
         # to the classic ``sym2cpp(total_size)`` string (``arrsize``) otherwise.
@@ -415,7 +415,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
+        return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
+
+    def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[dt.Data] = None) -> str:
+        # Pairs with the ``DACE_ALIGN(64)`` allocation above, which is a plain ``new[]``.
+        return ("delete[] %s;\n" if is_array else "delete %s;\n") % alloc_name
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG
