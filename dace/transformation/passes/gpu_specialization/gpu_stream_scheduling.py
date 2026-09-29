@@ -392,6 +392,38 @@ def classify_root_block(block) -> NodeKind:
     return NodeKind.NEUTRAL
 
 
+def block_writes_gpu_accessed(block, gpu_accessed: OrderedSet) -> bool:
+    """Whether ``block`` writes an array GPU work touches: the stream may still be reading or writing it."""
+    write_set = block.read_and_write_sets()[1]
+    return bool(set(write_set) & gpu_accessed)
+
+
+def queued_gpu_accessed(region, gpu_block) -> OrderedSet:
+    """Arrays the GPU work queued up to ``gpu_block`` reads or writes: ``gpu_block`` and the GPU blocks
+    reaching it (conservatively, as if no sync separated them)."""
+    out: OrderedSet[str] = OrderedSet()
+    for block in [gpu_block, *unsynced_gpu_predecessors(region, gpu_block, set())]:
+        read_set, write_set = block.read_and_write_sets()
+        out |= read_set
+        out |= write_set
+    return out
+
+
+def unsynced_gpu_predecessors(region, block, sync_states) -> List[Any]:
+    """GPU blocks that reach ``block`` in ``region`` without passing a sync state."""
+    seen, pending, found = {block}, [block], []
+    while pending:
+        for edge in region.in_edges(pending.pop()):
+            src = edge.src
+            if src in seen or src in sync_states:
+                continue
+            seen.add(src)
+            pending.append(src)
+            if classify_root_block(src) == NodeKind.GPU:
+                found.append(src)
+    return found
+
+
 def collect_gpu_written_arrays(sdfg: SDFG) -> OrderedSet:
     """Root-SDFG array names that a GPU-classified root block writes.
 
@@ -606,24 +638,37 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                 if self._state_kinds.get(src) != NodeKind.GPU:
                     continue
                 # GPU -> GPU: splice only when the iedge reads a GPU-written array. GPU -> host:
-                # splice only when the host block consumes GPU output (copy-out / read-back). A
-                # host block reading no GPU-written array needs the sync solely to make
-                # GPU-resident outputs visible at exit, gated by synchronize_on_exit.
+                # splice only on a hazard -- the host block consumes GPU output (copy-out /
+                # read-back) or writes an array the queued GPU work still touches. Exit visibility
+                # is the sink's concern (:meth:`append_host_sink_exit_syncs`).
                 dst_kind = self._state_kinds.get(dst, NodeKind.CPU)
                 if dst_kind == NodeKind.GPU:
                     if not iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
                         continue
-                else:
-                    host_consumes_gpu = (iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written)
-                                         or block_reads_gpu_written(dst, self._gpu_written))
-                    if not host_consumes_gpu and not self.should_synchronize_on_exit():
-                        continue
+                elif not (iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written) or block_reads_gpu_written(
+                        dst, self._gpu_written) or block_writes_gpu_accessed(dst, queued_gpu_accessed(region, src))):
+                    continue
                 edges_to_splice.append((region, edge))
 
-        for region, edge in edges_to_splice:
+        sync_states = {
             splice_sync_state_on_edge(region, edge, sdfg, stream_array_name)
-
+            for region, edge in edges_to_splice
+        }
+        self.append_host_sink_exit_syncs(sdfg, sync_states, stream_array_name)
         self.add_sync_state(sdfg, stream_array_name)
+
+    def append_host_sink_exit_syncs(self, sdfg: dace.SDFG, sync_states, stream_array_name: str):
+        """Sync after a host sink block that GPU work still reaches unsynchronized: the stream is in
+        order, so one sync at exit covers every kernel queued before it."""
+        for block in list(sdfg.nodes()):
+            if self._state_kinds.get(block) == NodeKind.GPU or sdfg.out_degree(block) > 0:
+                continue
+            pending = unsynced_gpu_predecessors(sdfg, block, sync_states)
+            if not pending:
+                continue
+            host_visible = any(isinstance(b, SDFGState) and sink_writes_host_visible_output(b) for b in pending)
+            if host_visible or self.should_synchronize_on_exit():
+                append_program_end_sync_state(sdfg, block, stream_array_name)
 
     def add_sync_state(self, sdfg: dace.SDFG, stream_array_name: str):
         for state in list(sdfg.states()):

@@ -19,6 +19,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from ordered_set import OrderedSet
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
@@ -94,6 +95,11 @@ class SplitStateByGPUClass(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
+
+    def depends_on(self) -> Set[type]:
+        # A copy is only classified GPU once lifted to a ``CopyLibraryNode``; without this edge the
+        # pipeline orders the two passes by class hash, so the split varied from run to run.
+        return {InsertExplicitCopies}
 
     def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[Dict[str, int]]:
         # Skip when the stream pipeline has already run: the SDFG carries ``gpu_streams`` (and
