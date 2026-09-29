@@ -13,7 +13,7 @@ from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-M, N, K, NB = (dace.symbol(s) for s in ('M', 'N', 'K', 'NB'))
+M, N, K, NB, NNZ = (dace.symbol(s) for s in ('M', 'N', 'K', 'NB', 'NNZ'))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
 
 
@@ -81,6 +81,19 @@ def accumulate_outside(A: dace.float64[M, N], total: dace.float64[1]):
         total[0] += s
 
 
+@dace.program
+def spmv(A_data: dace.float64[NNZ], A_indices: dace.uint32[NNZ], A_indptr: dace.uint32[M + 1], x: dace.float64[N],
+         y: dace.float64[M]):
+    for i in range(M):
+        start = dace.define_local_scalar(dace.uint32)
+        stop = dace.define_local_scalar(dace.uint32)
+        start = A_indptr[i]
+        stop = A_indptr[i + 1]
+        cols = A_indices[start:stop]
+        vals = A_data[start:stop]
+        y[i] = vals @ x[cols]
+
+
 def canonical_gpu(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, target='gpu')
@@ -126,6 +139,19 @@ def test_a_library_node_inside_a_kernel_takes_its_block_collective(program, node
     sdfg = canonical_gpu(program)
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
     assert library_nodes(sdfg)[node].implementation == implementation
+
+
+def test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction():
+    """spmv's ``vals @ x[cols]``: the gather has a per-row extent no kernel may allocate, so the dot expands and
+    fuses with it, and the row loop is the kernel."""
+    sdfg = canonical_gpu(spmv)
+    assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
+    assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
+    assert not library_nodes(sdfg)
+    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    assert 'gpucub::BlockReduce' in code
+    # Lanes start at ``__tid``; a ``stop - start - __tid`` bound underflows with unsigned row pointers.
+    assert '- __tid' not in code
 
 
 def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers():
@@ -190,3 +216,16 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     BC = cp.zeros((nb, m, n))
     canonical_gpu(batched_gemm)(A=cp.asarray(BA), B=cp.asarray(BB), C=BC, NB=nb, M=m, N=n, K=k)
     np.testing.assert_allclose(BC.get(), BA @ BB, rtol=1e-12)
+
+    import scipy.sparse
+    mat = scipy.sparse.random(m, n, density=0.3, format='csr', random_state=m)
+    y = cp.zeros(m)
+    canonical_gpu(spmv)(A_data=cp.asarray(mat.data),
+                        A_indices=cp.asarray(mat.indices.astype(np.uint32)),
+                        A_indptr=cp.asarray(mat.indptr.astype(np.uint32)),
+                        x=cp.asarray(x),
+                        y=y,
+                        M=m,
+                        N=n,
+                        NNZ=mat.nnz)
+    np.testing.assert_allclose(y.get(), mat @ x, rtol=1e-12)

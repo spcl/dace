@@ -13,6 +13,35 @@ from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 
 
+def pure_dot_sdfg(node, parent_state, parent_sdfg, n=None):
+    """The operands of a pure DOT expansion: its SDFG with ``_x``, ``_y`` and ``_result``, the length, the
+    multiply tasklet code and the result type."""
+    (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
+
+    n = n or node.n or sz
+
+    dtype_x = desc_x.dtype.type
+    dtype_y = desc_y.dtype.type
+    dtype_result = desc_res.dtype.type
+    sdfg = dace.SDFG(node.label + "_sdfg")
+
+    if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
+        raise NotImplementedError("Pure expansion not implemented for vector types.")
+
+    sdfg.add_array("_x", [n], dtype_x, strides=[stride_x], storage=desc_x.storage)
+    sdfg.add_array("_y", [n], dtype_y, strides=[stride_y], storage=desc_y.storage)
+    sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
+
+    # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
+    # default Dot models ?dotu (no conjugation). conj on a real type would promote to
+    # complex, so only apply it for complex operands.
+    if node.conjugate and desc_x.dtype.is_complex():
+        mul_program = "__out = conj(__x) * __y"
+    else:
+        mul_program = "__out = __x * __y"
+    return sdfg, n, mul_program, dtype_result
+
+
 @dace.library.expansion
 class ExpandDotPure(ExpandTransformation):
     """
@@ -23,30 +52,7 @@ class ExpandDotPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-
-        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
-
-        n = n or node.n or sz
-
-        dtype_x = desc_x.dtype.type
-        dtype_y = desc_y.dtype.type
-        dtype_result = desc_res.dtype.type
-        sdfg = dace.SDFG(node.label + "_sdfg")
-
-        if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
-            raise NotImplementedError("Pure expansion not implemented for vector types.")
-
-        sdfg.add_array("_x", [n], dtype_x, strides=[stride_x], storage=desc_x.storage)
-        sdfg.add_array("_y", [n], dtype_y, strides=[stride_y], storage=desc_y.storage)
-        sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
-
-        # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
-        # default Dot models ?dotu (no conjugation). conj on a real type would promote to
-        # complex, so only apply it for complex operands.
-        if node.conjugate and desc_x.dtype.is_complex():
-            mul_program = "__out = conj(__x) * __y"
-        else:
-            mul_program = "__out = __x * __y"
+        sdfg, n, mul_program, dtype_result = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -67,6 +73,39 @@ class ExpandDotPure(ExpandTransformation):
                                  mul_program, {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=None)
+
+        return sdfg
+
+
+@dace.library.expansion
+class ExpandDotPureAccumulate(ExpandTransformation):
+    """Single-state DOT for a map body: a register accumulator, so the expansion inlines and its map fuses
+    with an operand's producer (spmv's gathered ``x[cols]``); in a kernel each lane sums its share and a
+    block reduce folds the lanes."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        sdfg, n, mul_program, dtype_result = pure_dot_sdfg(node, parent_state, parent_sdfg, n)
+
+        sdfg.add_scalar("_acc", dtype_result, transient=True, storage=dace.StorageType.Register)
+        state = sdfg.add_state(node.label + "_state")
+        seeded = state.add_access("_acc")
+        zero = state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
+        state.add_edge(zero, "_out", seeded, None, dace.Memlet("_acc[0]"))
+        entry, exit_node = state.add_map("dot", {"__i": f"0:{n}"})
+        mul = state.add_tasklet("dot", {"__x", "__y"}, {"__out"}, mul_program)
+        state.add_memlet_path(state.add_read("_x"), entry, mul, dst_conn="__x", memlet=dace.Memlet("_x[__i]"))
+        state.add_memlet_path(state.add_read("_y"), entry, mul, dst_conn="__y", memlet=dace.Memlet("_y[__i]"))
+        summed = state.add_access("_acc")
+        state.add_memlet_path(mul,
+                              exit_node,
+                              summed,
+                              src_conn="__out",
+                              memlet=dace.Memlet("_acc[0]", wcr="lambda x, y: x + y"))
+        state.add_nedge(seeded, entry, dace.Memlet())
+        state.add_nedge(summed, state.add_write("_result"), dace.Memlet("_acc[0] -> [0]"))
 
         return sdfg
 
@@ -276,6 +315,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandDotPure,
+        "pure_accumulate": ExpandDotPureAccumulate,
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,

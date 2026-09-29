@@ -23,11 +23,14 @@ import os
 
 from dace import SDFG, dtypes, symbolic
 from dace.config import Config
+from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
+from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
@@ -45,7 +48,9 @@ from dace.transformation.passes.gpu_specialization.promote_warp_tiles import Pro
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
-from dace.transformation.dataflow import OTFMapFusion
+from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation import helpers as xfh
 
 #: Map the canonicalize target string to the codegen device type.
@@ -376,6 +381,50 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
 
 
+def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
+    """Whether a map in ``state`` writes a transient operand of ``node`` (spmv's gathered ``x[cols]``)."""
+    return any(
+        isinstance(edge.src, nodes.AccessNode) and edge.src.desc(state.sdfg).transient and any(
+            isinstance(write.src, nodes.MapExit) for write in state.in_edges(edge.src))
+        for edge in state.in_edges(node))
+
+
+def vector_operands(state: SDFGState, node: nodes.LibraryNode) -> bool:
+    """Whether every input of ``node`` is a vector, so a ``MatMul`` specializes to a ``Dot``."""
+    return all(len([extent for extent in edge.data.subset.size() if extent != 1]) <= 1 for edge in state.in_edges(node))
+
+
+def expand_gathered_dots(sdfg: SDFG) -> int:
+    """Expand each DOT a map of its own state feeds, then fuse that map into the product.
+
+    An in-kernel DOT needs its operands in memory, and a gathered operand has a per-row extent that no
+    kernel may allocate. Expanded to a single-state register sum and inlined, the gather fuses into the
+    multiply and the operand copy folds away, leaving one reduction map that the block tiling folds.
+
+    :returns: The number of DOTs expanded.
+    """
+    count = 0
+    while True:
+        found = next(((node, state) for node, state in sdfg.all_nodes_recursive()
+                      if isinstance(node, (Dot, MatMul)) and fed_by_producer_map(state, node) and (
+                          isinstance(node, Dot) or vector_operands(state, node))), None)
+        if found is None:
+            break
+        node, state = found
+        if isinstance(node, Dot):
+            node.implementation = 'pure_accumulate'
+            count += 1
+        before = OrderedSet(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+        node.expand(state.sdfg, state)
+        if isinstance(node, Dot):
+            for nested in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]:
+                InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
+    if count:
+        FuseMaps().apply_pass(sdfg, {})
+        sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray], validate=False)
+    return count
+
+
 def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     """Collapse producer->consumer map chains into a single output-domain map, recomputing
     each intermediate inline and deleting its transient (``OTFMapFusion``, applied to fixpoint).
@@ -447,6 +496,7 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     """
     Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
     run_structural_cleanup(sdfg)
+    expand_gathered_dots(sdfg)
     recompute_fuse_for_gpu(sdfg)
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.

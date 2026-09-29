@@ -106,9 +106,11 @@ class WarpTiling(xf.SingleStateTransformation):
                 continue
 
             bind_lane_symbol(nsdfg, sdfg)
-            nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1] - __tid, nmap.range[-1][2] * self.warp_size)
+            # Lane ``__tid`` starts ``__tid`` steps in. Shifting the start, not the end, keeps an unsigned
+            # bound from underflowing (``stop - start - __tid``).
+            begin, end, step = nmap.range[-1]
+            nmap.range[-1] = (begin + step * __tid, end, step * self.warp_size)
             subgraph = nstate.scope_subgraph(nmap)
-            subgraph.replace(nmap.params[-1], f'{nmap.params[-1]} + __tid')
             inner_map_exit = nstate.exit_node(nmap)
             # If requested, replicate maps with multiple dependent maps
             if self.replicate_maps:
