@@ -3,6 +3,7 @@
 import ast
 import copy
 import logging
+import re
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -53,6 +54,21 @@ def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
     except (TypeError, ValueError):
         return False  # e.g. sympy.oo: not symbolic, but not a finite integer either
     return 0 < total <= max_elements
+
+
+#: Storage codegen emits as a plain local declaration inside device code. ``GPU_Shared`` is absent:
+#: shared memory has its own sizing rules.
+DEVICE_LOCAL_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
+
+
+def needs_global_memory(desc: dt.Data) -> bool:
+    """Whether a transient inside a kernel can only live in device-global memory: it is ``GPU_Global``,
+    or it is device-local with a symbolic extent, which would be a VLA that nvcc rejects."""
+    if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
+        return False
+    if desc.storage is dtypes.StorageType.GPU_Global:
+        return True
+    return desc.storage in DEVICE_LOCAL_STORAGE and any(symbolic.issymbolic(dim) for dim in desc.shape)
 
 
 def has_wcr_incoming(sdfg: SDFG, data_name: str) -> bool:
@@ -242,9 +258,12 @@ class MoveArrayOutOfKernel(ppl.Pass):
             plan = self.plan_lift(name, owner, kernel_state)
             if plan is None:
                 continue
-            warnings.warn(f"Transient array '{name}' with storage type GPU_Global detected inside kernel "
-                          f"{kernel}. GPU_Global memory cannot be allocated within GPU kernels; the array "
-                          f"will be lifted outside the kernel as a non-transient GPU_Global array.")
+            reason = ('with storage type GPU_Global'
+                      if desc.storage is dtypes.StorageType.GPU_Global else f'of symbolic shape {list(desc.shape)}')
+            warnings.warn(f"Transient array '{name}' {reason} detected inside kernel {kernel}. Neither GPU_Global "
+                          f"memory nor a variable-length local array can be allocated within a GPU kernel; the "
+                          f"array will be lifted outside the kernel as a non-transient GPU_Global array.")
+            desc.storage = dtypes.StorageType.GPU_Global
             self.move_array(plan, kernel, kernel_state)
             handled += 1
         self.fail_on_in_kernel_global_global(sdfg)
@@ -253,14 +272,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
     @staticmethod
     def kernel_internal_gpu_global_transients(
             sdfg: SDFG) -> List[Tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
-        """Transient ``GPU_Global`` arrays accessed only inside one ``GPU_Device`` map."""
+        """Transients that need device-global memory (:func:`needs_global_memory`), accessed only inside
+        one ``GPU_Device`` map."""
         kernels: Dict[Tuple[SDFG, str], OrderedSet] = {}
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():
                 for node in state.data_nodes():
-                    desc = owner.arrays[node.data]
-                    if (isinstance(desc, dt.Array) and desc.transient
-                            and desc.storage is dtypes.StorageType.GPU_Global):
+                    if needs_global_memory(owner.arrays[node.data]):
                         for entry, entry_state in enclosing_maps(state, node):
                             if entry.map.schedule == dtypes.ScheduleType.GPU_Device:
                                 kernels.setdefault((owner, node.data), OrderedSet()).add((entry, entry_state))
@@ -324,6 +342,11 @@ class MoveArrayOutOfKernel(ppl.Pass):
         name = self.free_name(plan.name, plan.hierarchy)
         for edge, prefix in plan.prefixes:
             self.prefix_memlet(edge, name, prefix)
+        # A tasklet whose connectors were inlined names the array in its body; it gains the same leading index.
+        for state in plan.owner.all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet) and name in node.code.as_string:
+                    self.prefix_tasklet(node, state, name, plan.levels)
         new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
         plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
 
@@ -375,6 +398,25 @@ class MoveArrayOutOfKernel(ppl.Pass):
             memlet.dst_subset = subsets.Range(prefix + memlet.dst_subset.ndrange())
         elif isinstance(edge.src, nodes.AccessNode) and edge.src.data == name and memlet.src_subset is not None:
             memlet.src_subset = subsets.Range(prefix + memlet.src_subset.ndrange())
+
+    @staticmethod
+    def prefix_tasklet(tasklet: nodes.Tasklet, state: SDFGState, name: str, levels: List[Scope]) -> None:
+        """Prepend this iteration's slice index to every ``name`` subscript in ``tasklet``'s body.
+
+        :raises NotImplementedError: The tasklet runs outside a level (no single slice), or its C++ body
+                                     subscripts ``name``, which only a Python body can be rewritten for.
+        """
+        prefix = lift_prefix(levels, state, tasklet)
+        if any(rng[0] != rng[1] for rng in prefix):
+            raise NotImplementedError(
+                f"Tasklet {tasklet.label} reads '{name}' outside the kernel levels it is lifted by")
+        code = tasklet.code.as_string
+        if tasklet.language is not dtypes.Language.Python:
+            if re.search(r'\b%s\s*\[' % re.escape(name), code):
+                raise NotImplementedError(f"Tasklet {tasklet.label} subscripts '{name}' in {tasklet.language.name}")
+            return
+        point = [symbolic.symstr(rng[0]) for rng in prefix]
+        tasklet.code = properties.CodeBlock(prepend_subscript_indices(code, name, point), tasklet.language)
 
     @staticmethod
     def prefix_control_flow(sdfg: SDFG, name: str, point: Optional[List[str]]) -> None:

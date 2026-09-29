@@ -6,6 +6,7 @@ Wiring (allocate ``gpu_streams``, wire connectors, insert sync tasklets) is owne
 :class:`GPUStreamWiring`, which runs after, with the graph-mutation primitives at the end of this module. Strategies act on the root SDFG only; nested
 SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
 """
+import copy
 import re
 import warnings
 from enum import Enum
@@ -724,11 +725,28 @@ def find_child_sdfgs_requiring_gpu_stream(sdfg: SDFG) -> OrderedSet:
 
 
 def wire_stream_into_parent(level: SDFG, stream_name: str, memlet: dace.Memlet):
+    """Connect ``stream_name`` to ``level``'s NestedSDFG node, through every map scope enclosing it.
+
+    A direct edge from a top-level AccessNode into a scoped node would cross the map boundary, which
+    leaves the scope unwalkable (``scope_dict``: "Leftover nodes in queue").
+    """
     nsdfg_node = level.parent_nsdfg_node
     parent_state = level.parent
     add_gpu_stream_connector(nsdfg_node, stream_name, single_stream=False)
-    src = parent_state.add_access(stream_name)
-    parent_state.add_edge(src, None, nsdfg_node, stream_name, memlet)
+    scopes = parent_state.scope_dict()
+    entries = []
+    entry = scopes[nsdfg_node]
+    while entry is not None:
+        entries.append(entry)
+        entry = scopes[entry]
+    # The pass-through pair is named like the one the Sequential-scope routing threads.
+    src, src_conn = parent_state.add_access(stream_name), None
+    for entry in reversed(entries):
+        entry.add_in_connector(f'IN_{STREAM_CONNECTOR}')
+        entry.add_out_connector(f'OUT_{STREAM_CONNECTOR}')
+        parent_state.add_edge(src, src_conn, entry, f'IN_{STREAM_CONNECTOR}', copy.deepcopy(memlet))
+        src, src_conn = entry, f'OUT_{STREAM_CONNECTOR}'
+    parent_state.add_edge(src, src_conn, nsdfg_node, stream_name, memlet)
 
 
 # Stream-connector wiring (per-stream chains + Sequential-scope routing).
