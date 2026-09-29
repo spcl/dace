@@ -17,6 +17,15 @@ def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:
     return f'{dtype.ctype}({float(identity)!r})'
 
 
+def bind_lane_symbol(inner: SDFG, lane_sdfg: SDFG) -> None:
+    """Map ``__tid`` into ``inner`` and every nested SDFG between it and ``lane_sdfg``, which holds the lane map."""
+    while inner is not lane_sdfg and inner.parent_nsdfg_node is not None:
+        inner.parent_nsdfg_node.symbol_mapping['__tid'] = symbolic.pystr_to_symbolic('__tid')
+        if '__tid' not in inner.symbols:
+            inner.add_symbol('__tid', dtypes.int32)
+        inner = inner.parent_sdfg
+
+
 def seed_lane_partial(state: SDFGState, inner_map: nodes.MapEntry, name: str, literal: str) -> None:
     """Set ``name`` to ``literal`` in the scope of ``inner_map``, ordered before it."""
     seed = state.add_tasklet('lane_partial_seed', {}, {'__out'}, f'__out = {literal};', dtypes.Language.CPP)
@@ -95,10 +104,7 @@ class WarpTiling(xf.SingleStateTransformation):
             if (nmap.range.size()[-1] < self.warp_size) == True:
                 continue
 
-            if nsdfg is not sdfg and nsdfg_node is not None:
-                nsdfg_node.symbol_mapping['__tid'] = __tid
-                if '__tid' not in nsdfg.symbols:
-                    nsdfg.add_symbol('__tid', dtypes.int32)
+            bind_lane_symbol(nsdfg, sdfg)
             nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1] - __tid, nmap.range[-1][2] * self.warp_size)
             subgraph = nstate.scope_subgraph(nmap)
             subgraph.replace(nmap.params[-1], f'{nmap.params[-1]} + __tid')
