@@ -1,6 +1,5 @@
 from dace.sdfg import state
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.treenodes import ForScope
 
 
 def convert_map_to_loop(stree: tn.ScheduleTreeRoot) -> int:
@@ -27,7 +26,7 @@ def convert_map_to_loop(stree: tn.ScheduleTreeRoot) -> int:
                 loop_idx, f"{loop_idx} = {loop_from}",
                 f"{loop_idx} = {loop_idx} + {loop_step}"
             )
-            for_scope = ForScope(
+            for_scope = tn.ForScope(
                 loop=loop_region,
                 children=new_childs,
                 parent=the_map.parent,
