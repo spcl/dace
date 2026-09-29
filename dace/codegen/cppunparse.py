@@ -91,6 +91,38 @@ _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
 
+#: Typeclasses whose C++ element type is a CLASS, not a built-in arithmetic type: ``dace::float16``
+#: is ``__half`` on the device and a struct on the host, and each of these converts implicitly BOTH
+#: to and from the built-in floats. A bare Python literal reaches C++ as an untyped ``double``, so
+#: ``1.0 / x`` with ``x`` one of them has two equally good operators -- the built-in ``arithmetic /
+#: arithmetic`` (converting ``x`` up) and the class's own (converting the literal down) -- and nvcc
+#: rejects the expression as ambiguous. Every other typeclass is a built-in whose usual arithmetic
+#: conversions are unambiguous, so a literal next to it is printed unchanged.
+_IMPLICITLY_CONVERTING_TYPES = frozenset(dtypes.FLOAT_TYPES - {dtypes.float32, dtypes.float64})
+
+
+def numeric_literal_value(node: ast.AST):
+    """The numeric value of a literal operand (``2``, ``2.5``, ``2.5j``) including a unary sign
+    (``-1.5``), or ``None`` if ``node`` is not one.
+
+    A negative literal reaches the unparser as ``UnaryOp(USub, Constant)`` rather than a signed
+    ``Constant``, so a caller inspecting ``ast.Constant`` alone misses exactly the negative half of
+    the cases. ``bool`` is excluded (an ``int`` subclass, but not a numeric literal here). Unlike
+    :func:`numeric_power_value` -- which serves the ``**`` lowering and is therefore real-only and
+    also folds ``abs`` / ``sqrt`` / dtype casts -- this recognizes COMPLEX literals and nothing but
+    literals.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            return None
+        return node.value if isinstance(node.value, (int, float, complex)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = numeric_literal_value(node.operand)
+        if inner is None:
+            return None
+        return -inner if isinstance(node.op, ast.USub) else inner
+    return None
+
 
 def interleave(inter, f, seq, **kwargs):
     """
@@ -918,11 +950,42 @@ class CPPUnparser:
             self.write("(")
 
             # get left and right types for type inference
-            self.dispatch(t.left)
+            self.dispatch_operand(t.left, t.right)
             self.write(" " + self.binop[t.op.__class__.__name__] + " ")
-            self.dispatch(t.right)
+            self.dispatch_operand(t.right, t.left)
 
             self.write(")")
+
+    def operand_class_type(self, node: ast.AST):
+        """The class-typed (``dace::float16`` and friends) typeclass ``node`` evaluates to, else None.
+
+        Only a name whose type the CALLER supplied is answered -- a tasklet connector under the
+        classic generator, or an inlined array access spliced in as a name under the readable one --
+        because that is the whole of what ``defined_symbols`` knows here.
+        """
+        if not isinstance(node, ast.Name):
+            return None
+        dtype = self.defined_symbols.get(node.id)
+        if not isinstance(dtype, dtypes.typeclass):
+            return None
+        return dtype if dtype in _IMPLICITLY_CONVERTING_TYPES else None
+
+    def dispatch_operand(self, node: ast.AST, other: ast.AST) -> None:
+        """Print one operand of an infix binary operator, typing an untyped numeric literal against
+        ``other`` when that side is one of the ``_IMPLICITLY_CONVERTING_TYPES``.
+
+        The cast is the operand's OWN dtype, which is what Python and NumPy compute here too (a
+        weak Python scalar takes the array's dtype), and it is written only where the alternative is
+        an expression no C++ compiler can resolve.
+        """
+        if numeric_literal_value(node) is not None:
+            dtype = self.operand_class_type(other)
+            if dtype is not None:
+                self.write(dtype.ctype + '(')
+                self.dispatch(node)
+                self.write(')')
+                return
+        self.dispatch(node)
 
     cmpops = {
         "Eq": "==",
