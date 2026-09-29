@@ -14,6 +14,14 @@ from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 # legacy ambient-stream symbol, so the expanded IR is valid under either codegen.
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
+#: Threads in one warp; a map nested in a kernel with provably fewer iterations stays one thread's loop.
+WARP_THREADS = 32
+
+
+def statically_narrower_than_warp(entry: nodes.MapEntry) -> bool:
+    """Whether ``entry`` provably has fewer iterations than one warp has lanes (a symbolic size is assumed big)."""
+    return (entry.map.range.num_elements() < WARP_THREADS) == True
+
 
 def get_gpu_stream_array_name() -> str:
     return "gpu_streams"

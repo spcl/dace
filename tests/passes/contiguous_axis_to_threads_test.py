@@ -137,6 +137,19 @@ def threads_already_contiguous_nest():
     return sdfg
 
 
+def narrow_inner_nest():
+    """An inner map of five iterations: fewer than a warp, so it stays each thread's loop."""
+    sdfg = dace.SDFG('narrow_inner_nest')
+    sdfg.add_array('a', [K, ROWS], dace.float64)
+    sdfg.add_array('out', [K, ROWS], dace.float64)
+    state = sdfg.add_state()
+    (oe, ox), (ie, ix) = state.add_map('outer', dict(k='0:K')), state.add_map('inner', dict(l=f'0:{ROWS}'))
+    body = state.add_tasklet('body', {'v': None}, {'o': None}, 'o = 3.0 * v')
+    state.add_memlet_path(state.add_access('a'), oe, ie, body, dst_conn='v', memlet=dace.Memlet('a[k, l]'))
+    state.add_memlet_path(body, ix, ox, state.add_access('out'), src_conn='o', memlet=dace.Memlet('out[k, l]'))
+    return sdfg
+
+
 def offloaded(builder):
     sdfg = builder()
     sdfg.validate()
@@ -197,7 +210,7 @@ def test_a_per_row_scalar_chain_is_recomputed_in_every_lane():
 
 @pytest.mark.parametrize('builder', [
     read_of_written_nest, per_row_reduction_nest, per_row_tasklet_reduction_nest, per_row_output_nest,
-    threads_already_contiguous_nest
+    threads_already_contiguous_nest, narrow_inner_nest
 ])
 def test_a_nest_the_sink_or_collapse_would_change_is_left_untouched(builder):
     """Recomputing per lane is only sound when every lane would see the value the one per-row

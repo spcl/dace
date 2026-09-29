@@ -24,7 +24,8 @@ entry to the inner entry (rewired, no data moves), or a side-effect-free tasklet
   feeds its results only to the inner map.
 
 Anything else between the two entries (a nested map such as a per-k reduction, a nested SDFG, a
-larger buffer), any node between the two exits, a write-conflict-resolved output of the inner
+larger buffer), an inner map with provably fewer iterations than a warp (one thread walks it),
+any node between the two exits, a write-conflict-resolved output of the inner
 map, or an inner range that depends on the outer parameters is refused, leaving the graph
 untouched. The inner map's last parameter must be the one that indexes the unit-stride
 dimension of the device-memory accesses in its body, and no outer parameter may index it.
@@ -38,6 +39,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.helpers import redirect_edge
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import statically_narrower_than_warp
 
 SERIAL_OR_DEVICE = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
 SINKABLE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -199,6 +201,8 @@ class ContiguousAxisToThreads(ppl.Pass):
         if len(inners) != 1 or inners[0].map.schedule not in SERIAL_OR_DEVICE:
             return False
         inner = inners[0]
+        if statically_narrower_than_warp(inner):
+            return False
         outer_exit, inner_exit = state.exit_node(outer), state.exit_node(inner)
         prologue = [c for c in children if c not in (inner, inner_exit, outer_exit)]
         if any(not c.startswith('IN_') for c in inner.in_connectors):

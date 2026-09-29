@@ -11,6 +11,10 @@ A library node additionally loses the device schedule inside any enclosing loop,
 a per-iteration kernel launch is a hazard on GPU regardless of how short the loop is (the CPU band
 makes that same test trip-count aware, which is a CPU-only relaxation).
 
+TODO(perf, only if a kernel needs it): a sequential loop inside a kernel runs in one thread. An
+optional transformation could let a warp walk it collectively (lanes split each trip's inner work,
+the loop order kept across trips).
+
 Runs on the offloaded graph, after schedule inference: ``canonicalize`` leaves the parallelism in
 place and device-neutral, and this is where the GPU target resolves it.
 """
