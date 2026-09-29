@@ -60,6 +60,15 @@ def _replsym(symlist, symrepl):
     return symlist
 
 
+def symbolic_replacements(repl: Dict[str, Any], symbols: Dict[str, 'dace.dtypes.typeclass']) -> Dict:
+    """``repl`` as symbolic expressions, each name taking its dtype from ``symbols`` (its declaring SDFG)."""
+    with symbolic.serialization_symbol_dtypes(symbols, inherit=True):
+        return {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(v, str) else v
+            for k, v in repl.items()
+        }
+
+
 def replace_dict(subgraph: 'StateSubgraphView',
                  repl: Dict[str, str],
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
@@ -70,11 +79,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    symrepl = symrepl or symbolic_replacements(repl, subgraph.sdfg.symbols)
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -242,11 +247,7 @@ def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
                             symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                             sdfg: Optional['dace.SDFG'] = None):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    symrepl = symrepl or symbolic_replacements(repl, sdfg.symbols if sdfg is not None else {})
 
     for propclass, propval in node.properties():
         if propval is None:

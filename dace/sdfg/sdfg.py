@@ -19,7 +19,7 @@ import dace
 from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
-from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
@@ -964,10 +964,7 @@ class SDFG(ControlFlowRegion):
         if symrepl:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
 
-        symrepl = symrepl or {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repldict.items()
-        }
+        symrepl = symrepl or symbolic_replacements(repldict, self.symbols)
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:

@@ -27,6 +27,8 @@ class _SymbolDTypeContext(threading.local):
 
         # The lowest level in the stack is reserved for "no stack active".
         self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
+        # One hashable key per level, so a parse cache keyed on it never returns another level's symbols.
+        self.key_stack: List[tuple] = [()]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
@@ -39,6 +41,7 @@ class _SymbolDTypeContext(threading.local):
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
         })
         self.ctx_stack.append(new_stack_level)
+        self.key_stack.append(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items())))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -46,7 +49,15 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
+        self.key_stack.pop()
         return self
+
+    def declare(self, name: str, dtype: 'dtypes.typeclass') -> None:
+        """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
+        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
+            level = {**self.ctx_stack[-1], name: dtype}
+            self.ctx_stack[-1] = types.MappingProxyType(level)
+            self.key_stack[-1] = tuple(sorted((n, dt.ctype) for n, dt in level.items()))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -76,8 +87,13 @@ class _SymbolDTypeContext(threading.local):
 _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
+def declare_symbol_dtype(name: str, dtype: 'dtypes.typeclass') -> None:
+    """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
 @contextlib.contextmanager
-def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
+def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inherit: bool = False):
     """
     Temporarily override, while serializing symbolic expressions, the dtype used for
     each scope-declared symbol, restoring the previous mapping on exit. Only concrete
@@ -85,7 +101,10 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
     out so that symbol keeps its own dtype.
 
     :param authority: Mapping from symbol name to its authoritative dtype.
+    :param inherit: Keep the enclosing level's entries that ``authority`` does not override.
     """
+    if inherit:
+        authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
     _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
@@ -174,6 +193,11 @@ class symbol(sympy.Symbol):
         self.dtype = dtype
         self._constraints = []
         return self
+
+    def _hashable_content(self):
+        # SymPy's caches key on this; without the dtype they hand back an expression built around a same-named
+        # symbol of another dtype. ``ctype``, not the typeclass: SymPy orders these tuples, typeclasses do not.
+        return super()._hashable_content() + (self.dtype.ctype, )
 
     def __getstate__(self):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
@@ -918,8 +942,9 @@ def sympy_to_dace(exprs, symbol_map=None):
                     try:
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
-                        # Symbol is not in map, create a DaCe symbol with same assumptions
-                        repl[atom] = symbol(atom.name, **atom.assumptions0)
+                        # Symbol is not in map, create a DaCe symbol with same assumptions and the declared dtype
+                        repl[atom] = symbol(atom.name,
+                                            _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name), **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]
@@ -2348,12 +2373,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy.simplify(expr) if simplify is True else expr
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
-        return _pystr_to_symbolic_cached(expr, simplify)
+        return _pystr_to_symbolic_cached(expr, simplify, _SERIALIZATION_SYMBOL_DTYPES.key_stack[-1])
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
+def _pystr_to_symbolic_cached(expr, simplify=None, authority_key: tuple = ()) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
 
@@ -2374,7 +2399,7 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
         if dtypes.validate_name(expr):
-            return symbol(expr)
+            return symbol(expr, _SERIALIZATION_SYMBOL_DTYPES.get().get(expr))
 
     symbol_map = symbol_map or {}
 
