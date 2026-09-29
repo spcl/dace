@@ -11,14 +11,6 @@
 #include "cub_scratch.cuh"
 #include "cuda/gpucub.cuh"
 
-// CCCL 3 (CUDA 13) removed cub's Counting/TransformInputIterator; thrust's pair exists on every CUDA
-// toolkit. hipCUB keeps its own, and hipCUB's algorithms reject thrust's iterator category.
-#if !defined(__HIPCC__) && !defined(__HIP__) && !defined(WITH_HIP)
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
-#define DACE_CUB_COMPAT_THRUST_ITERATORS
-#endif
-
 #if defined(__HIPCC__) || defined(WITH_HIP)
 // hipCUB keeps the functor structs CCCL 3 dropped, so the legacy spelling is the only one that
 // applies here -- and the CCCL version macros below are a CUDA-only fact that says nothing about it.
@@ -257,18 +249,6 @@ inline gpuError_t arg_reduce(InIt in, T* val_out, long long* idx_out, long long 
   if (val_out != nullptr) *val_out = host.value;
   *idx_out = (long long)host.key;
   return gpuSuccess;
-}
-
-/// The sequence ``f(0), f(1), ...`` of ``T`` as a device input iterator.
-template <typename T, typename F>
-__host__ __device__ inline auto index_iterator(F f) {
-#ifdef DACE_CUB_COMPAT_THRUST_ITERATORS
-  return thrust::transform_iterator<F, thrust::counting_iterator<long long>, T>(thrust::counting_iterator<long long>(0),
-                                                                                f);
-#else
-  return ::gpucub::TransformInputIterator<T, F, ::gpucub::CountingInputIterator<long long>>(
-      ::gpucub::CountingInputIterator<long long>(0), f);
-#endif
 }
 
 }  // namespace cub

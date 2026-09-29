@@ -1357,8 +1357,22 @@ class ExpandCUDA(ExpandTransformation):
                     f'        return i == 0 ? {op_cub}(static_cast<{out_ctype}>({seed_value}), v) : v;\n'
                     f'    }}\n'
                     f'}};\n', 'cuda')
-                seed_prologue = (f'    auto __sc_items = ::dace::cub::index_iterator<{out_ctype}>('
-                                 f'{first}{{__sc_in, __sc_init}});\n')
+                # CCCL 3 (CUDA 13) dropped cub's iterators, so CUDA spells the pair with thrust; hipCUB
+                # keeps its own and rejects thrust's iterator category.
+                functor = f'{first}{{__sc_in, __sc_init}}'
+                sdfg.append_global_code(
+                    '#if !defined(__HIPCC__)\n'
+                    '#include <thrust/iterator/counting_iterator.h>\n'
+                    '#include <thrust/iterator/transform_iterator.h>\n'
+                    '#endif\n', 'cuda')
+                count = '::gpucub::CountingInputIterator<long long>'
+                seed_prologue = (f'#if defined(__HIPCC__)\n'
+                                 f'    ::gpucub::TransformInputIterator<{out_ctype}, {first}, {count}> '
+                                 f'__sc_items({count}(0), {functor});\n'
+                                 f'#else\n'
+                                 f'    thrust::transform_iterator<{first}, thrust::counting_iterator<long long>, '
+                                 f'{out_ctype}> __sc_items(thrust::counting_iterator<long long>(0), {functor});\n'
+                                 f'#endif\n')
                 seed_actual = f', {init_connector(chain)}'
                 call = 'InclusiveScan'
                 extra = ''
