@@ -823,3 +823,37 @@ def test_an_assignment_read_only_through_an_attribute_inside_a_loop_is_kept():
     bound = sorted((lhs, rhs) for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items())
     assert bound == [('x', '1'), ('x', '2'), ('y', 'x.real')], bound
     assert 'x' in sdfg.symbols
+
+
+def test_propagation_keeps_a_uint32_symbol_at_one_dtype_in_every_memlet():
+    """SpMV's ``start``/``stop`` are uint32 scalars used as slice bounds. Propagating the alias chain
+    ``start = start_0`` into the memlets must reuse the declared uint32 symbol, not parse the name again as a
+    default-int one (a memlet holding both fails validation)."""
+    M, nnz = dace.symbol('M', dace.int64), dace.symbol('nnz', dace.int64)
+
+    @dace.program
+    def spmv_like(A_indices: dace.uint32[nnz], A_indptr: dace.uint32[M + 1], out: dace.int64[M]):
+        for i in range(M):
+            start = dace.define_local_scalar(dace.uint32)
+            stop = dace.define_local_scalar(dace.uint32)
+            start = A_indptr[i]
+            stop = A_indptr[i + 1]
+            out[i] = np.sum(A_indices[start:stop])
+
+    sdfg = spmv_like.to_sdfg(simplify=True)
+    declared = {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
+    bounds = [name for name in declared if name.startswith(('start', 'stop'))]
+    assert bounds, 'simplify no longer promotes the scalars, so this test asserts nothing'
+    seen = 0
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.all_states():
+            for edge in state.edges():
+                if edge.data.subset is None:
+                    continue
+                for rng in edge.data.subset.ranges:
+                    for sym in {a for bound in rng for a in bound.atoms(dace.symbol)}:
+                        if sym.name in bounds:
+                            seen += 1
+                            assert sym.dtype == declared[sym.name], (edge.data, sym.name, sym.dtype)
+    assert seen, 'no memlet mentions a promoted symbol, so this test asserts nothing'
+    sdfg.validate()

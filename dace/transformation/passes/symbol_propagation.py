@@ -17,7 +17,8 @@ from typing import Any, Dict, Set, Optional
 from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.symbolic import SymbolicType, equalize_symbols_across, pystr_to_symbolic, scalars
+from dace.symbolic import (SymbolicType, equalize_symbols_across, pystr_to_symbolic, scalars,
+                           serialization_symbol_dtypes)
 
 
 def free_symbol_names(value) -> Set[str]:
@@ -311,6 +312,13 @@ class SymbolPropagation(ppl.Pass):
         return modified != ppl.Modifies.Nothing
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+        # A substituted name is parsed from a string; without the declared dtypes it would come back as a default-int
+        # instance beside the declared one, and one memlet would then hold the name at two dtypes.
+        declared = {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
+        with serialization_symbol_dtypes(declared):
+            return self.propagate(sdfg)
+
+    def propagate(self, sdfg: SDFG) -> Optional[Set[str]]:
         # Assumption: Symbols can only change in InterStateEdges
 
         # The invariant check at the end costs two whole-SDFG walks. Arm the "before" half lazily,
