@@ -10,14 +10,17 @@ from dace.transformation.passes.mark_const_init import MarkConstInit
 
 
 def _run(sdfg: dace.SDFG):
-    # MarkConstInit's own return value is ``{cfg_id: {name: classification}}`` (the source of truth for
-    # the classification); the pipeline nests it under the pass name, so unwrap it here.
+    # Pipeline nests MarkConstInit's own {cfg_id: {name: classification}} return under the pass name; unwrap it.
     res = Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
     return (res or {}).get('MarkConstInit')
 
 
 def _tasklets(state):
     return [n for n in state.nodes() if isinstance(n, nd.Tasklet)]
+
+
+def _map_entries(state):
+    return [n for n in state.nodes() if isinstance(n, nd.MapEntry)]
 
 
 def test_scalar_constant_single_write():
@@ -46,10 +49,8 @@ def test_scalar_constant_single_write():
     assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 0
-    # The runtime write (tasklet + write access node) must be gone.
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'a'] == []
-    # The read side must be preserved.
     assert any(n.data == 'a' for n in s2.data_nodes())
 
 
@@ -78,9 +79,35 @@ def test_array_full_constant_write():
     assert kinds.get('A') == 'constexpr_static'
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], np.full(10, 3.0))
-    # The initializing map must be gone from s1.
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'A'] == []
+
+
+def test_device_storage_array_is_not_promoted_to_a_host_constant():
+    """A constant lives at host file scope, which a GPU kernel cannot read, so a GPU_Global fill keeps its writes."""
+    sdfg = dace.SDFG('array_full_gpu_global')
+    sdfg.add_array('A', [10], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    s1 = sdfg.add_state('init')
+    s1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+
+    s2 = sdfg.add_state('use')
+    s2.add_mapped_tasklet('use',
+                          dict(i='0:10'),
+                          dict(inp=dace.Memlet('A[i]')),
+                          'out = inp * 2.0',
+                          dict(out=dace.Memlet('B[i]')),
+                          external_edges=True)
+
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+
+    res = _run(sdfg)
+
+    assert 'A' not in (res or {}).get(sdfg.cfg_id, {})
+    assert 'A' not in sdfg.constants
+    assert len(_tasklets(s1)) == 1
+    assert [n.data for n in s1.data_nodes()] == ['A']
 
 
 def test_array_partial_constant_write():
@@ -114,10 +141,7 @@ def test_array_partial_constant_write():
 
 
 def test_scalar_runtime_single_write():
-    """A scalar written once (a fuseable ``out = inp`` tasklet) from runtime data then
-    read in the SAME state is marked const_runtime -- the const binding is emitted at the
-    write and read within one state block. (A cross-state write is write-once too but not
-    const-emittable: each state is its own scope, so it is deliberately NOT marked.)"""
+    """A scalar written once from runtime data and read in the SAME state is marked const_runtime."""
     sdfg = dace.SDFG('scalar_runtime')
     sdfg.add_array('src', [1], dace.int32)
     sdfg.add_scalar('a', dace.int32, transient=True)
@@ -140,7 +164,6 @@ def test_scalar_runtime_single_write():
     assert kinds.get('a') == 'const_runtime'
     assert sdfg.arrays['a'].const_init is True
     assert 'a' not in sdfg.constants
-    # Dataflow must be untouched: producer + consumer tasklets and the access node stay.
     assert len(_tasklets(s)) == 2
     assert any(n.data == 'a' for n in s.data_nodes())
 
@@ -174,17 +197,15 @@ def test_array_double_write_not_marked():
     assert 'A' not in kinds
     assert 'A' not in sdfg.constants
     assert not sdfg.arrays['A'].const_init
-    # Both writes must be preserved.
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
+    # _tasklets() alone can't see a decline leaving the fill map flattened (speculative unroll runs
+    # before classification, and 10 leftover per-element tasklets would pass that check either way).
+    assert _map_entries(s1) != [], 'rejected fill map was unrolled anyway'
 
 
 def test_interstate_edge_read_not_marked():
-    """A scalar read on an interstate edge is a live use and must not be promoted, even if written once by a constant.
-
-    Interstate edges never write arrays but may read them (in conditions/assignments); such reads are not visible as
-    access nodes, so the pass must treat the descriptor conservatively and leave it unmarked (and its dataflow intact).
-    """
+    """A scalar read on an interstate edge is a live use and must not be promoted, even if written once."""
     sdfg = dace.SDFG('iedge_read')
     sdfg.add_scalar('a', dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -195,8 +216,7 @@ def test_interstate_edge_read_not_marked():
     s1.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
 
     s2 = sdfg.add_state('mid')
-    # Dominated access-node read of 'a': without the interstate-edge guard this structure would be promoted
-    # (it is otherwise identical to the plain scalar-constant case), so the iedge read is the sole disqualifier.
+    # Otherwise identical to the plain scalar-constant case -- the iedge read is the sole disqualifier.
     s3 = sdfg.add_state('use')
     a_read = s3.add_read('a')
     use_t = s3.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
@@ -214,7 +234,6 @@ def test_interstate_edge_read_not_marked():
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
     assert not sdfg.arrays['a'].const_init
-    # Dataflow untouched: the writing tasklet and access node remain.
     assert len(_tasklets(s1)) == 1
     assert any(n.data == 'a' for n in s1.data_nodes())
 
@@ -240,7 +259,6 @@ def test_same_state_separable_marked():
     assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 4
-    # The init tasklet is removed, but the access node is kept (it still feeds the reader).
     assert init_t not in s.nodes()
     assert a_node in s.nodes()
     assert use_t in s.nodes()
@@ -270,7 +288,6 @@ def test_same_state_non_separable_not_marked():
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
     assert not sdfg.arrays['a'].const_init
-    # Dataflow untouched.
     assert init_t in s.nodes()
     assert a_write in s.nodes()
 
@@ -433,7 +450,6 @@ def test_multiwrite_read_before_write_not_marked():
     assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
     assert not sdfg.arrays['arr'].const_init
-    # Dataflow untouched.
     assert t0 in s0.nodes()
     assert t2 in s2.nodes()
 
@@ -520,13 +536,237 @@ def test_idempotency():
     first_value = np.copy(sdfg.constants['A'])
     num_nodes_s1 = len(s1.nodes())
 
-    # Second run must not change anything: MarkConstInit marks nothing (already an SDFG constant), so its
-    # own return value is None and 'A' is absent from the classification.
+    # Second run marks nothing (already an SDFG constant): return value is None, 'A' absent from classification.
     second_result = _run(sdfg)
     assert 'A' not in (second_result or {}).get(sdfg.cfg_id, {})
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], first_value)
     assert len(s1.nodes()) == num_nodes_s1
+
+
+def test_partly_paying_fill_map_is_not_unrolled():
+    """A fill map is unrolled only if EVERY name it writes is const-initializable, not just some."""
+    sdfg = dace.SDFG('partly_paying')
+    sdfg.add_array('X', [8], dace.float64, transient=True)
+    sdfg.add_array('Z', [4], dace.float64, transient=True)
+    sdfg.add_array('BX', [8], dace.float64)
+    sdfg.add_array('BZ', [4], dace.float64)
+
+    s1 = sdfg.add_state('fill')
+    # Disjoint halves of X, so the two fills do not overlap (an overlap is declined outright).
+    s1.add_mapped_tasklet('fill_x', dict(i='0:4'), {}, 'ox = 1.0', dict(ox=dace.Memlet('X[i]')), external_edges=True)
+    s1.add_mapped_tasklet('fill_xz',
+                          dict(i='0:4'), {},
+                          'ox = 2.0\noz = 3.0',
+                          dict(ox=dace.Memlet('X[i + 4]'), oz=dace.Memlet('Z[i]')),
+                          external_edges=True)
+
+    # A second write to Z -> Z is declined, which is what makes fill_xz not pay.
+    s2 = sdfg.add_state('rewrite_z')
+    t = s2.add_tasklet('z0', {}, {'o'}, 'o = 9.0')
+    s2.add_edge(t, 'o', s2.add_access('Z'), None, dace.Memlet('Z[0]'))
+
+    s3 = sdfg.add_state('use')
+    s3.add_mapped_tasklet('ux',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('X[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BX[i]')),
+                          external_edges=True)
+    s3.add_mapped_tasklet('uz',
+                          dict(i='0:4'),
+                          dict(inp=dace.Memlet('Z[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BZ[i]')),
+                          external_edges=True)
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    sdfg.add_edge(s2, s3, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+
+    # Invariant regardless of the classifier's decision: a flattened map must have paid for it.
+    if 'X' not in kinds:
+        assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
+                                            f'{[m.map.label for m in _map_entries(s1)]}')
+    sdfg.validate()
+
+
+def test_symbolic_fill_map_never_becomes_const_runtime():
+    """A fill map is either unrollable or const_runtime-able, never both."""
+    sdfg = dace.SDFG('sym_fill')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+
+    s1 = sdfg.add_state('init')
+    # One iteration, value from a SYMBOL: not compile-time constant, but a single well-defined write.
+    s1.add_mapped_tasklet('fill',
+                          dict(i='0:1'), {},
+                          'out = N * 2.0',
+                          dict(out=dace.Memlet('s[0]')),
+                          external_edges=True)
+    s2 = sdfg.add_state('use')
+    r = s2.add_read('s')
+    t = s2.add_tasklet('use', {'inp'}, {'o'}, 'o = inp + 1.0')
+    s2.add_edge(r, None, t, 'inp', dace.Memlet('s[0]'))
+    s2.add_edge(t, 'o', s2.add_write('B'), None, dace.Memlet('B[0]'))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    # Consumer in another state -> unrollable, but then the const binding has no scope to live in.
+    assert 's' not in kinds, kinds
+    # The map is left alone: it does not pay, so it is not flattened.
+    assert _map_entries(s1) != [], 'a fill map that cannot pay was unrolled anyway'
+    sdfg.validate()
+
+
+def _same_state_fill_sdfg(name):
+    """A constant fill whose consumer lives in the same state, built directly.
+
+    State fusion is what used to produce this shape, so which offloading path runs decided whether
+    the case under test existed at all; the shape is the point, so it is spelled out here.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64, transient=True)
+    sdfg.add_array('B', [8], dace.float64)
+    state = sdfg.add_state('fill_and_use')
+    state.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    filled = next(n for n in state.data_nodes() if n.data == 'A')
+    state.add_mapped_tasklet('use',
+                             dict(i='0:8'),
+                             dict(inp=dace.Memlet('A[i]')),
+                             'out = inp * 2',
+                             dict(out=dace.Memlet('B[i]')),
+                             external_edges=True,
+                             input_nodes={'A': filled})
+    sdfg.validate()
+    return sdfg
+
+
+def test_same_state_constant_fill_is_const_inited():
+    """A constant fill is const-initializable even when its consumer shares the state.
+
+    This used to be unreachable: the classifier only saw element-wise tasklet writes, so it needed
+    ``MapUnroll`` first -- and MapUnroll cannot flatten a fill whose consumer shares its state,
+    since it duplicates the access node per element while keeping the original out-edge, so all N
+    copies claim to deliver the FULL array. The fix was to evaluate the fill WHERE IT STANDS
+    (``_uniform_fill_value``): a map writing one constant to every element of its range is a
+    constant over that range, and the subset already turns into a slice."""
+    sdfg = _same_state_fill_sdfg('same_state_fill')
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static', kinds
+    assert 'A' in sdfg.constants
+    assert np.array_equal(sdfg.constants['A'], np.full(8, 3.0))
+    sdfg.validate()
+
+
+# Must stay at MODULE scope: @dace.program nested in a function parses as a nested program and fails cross-test.
+
+
+@dace.program
+def gpu_constfill(A: dace.float64[8]):
+    """A constant fill of a transient; after ``apply_gpu_transformations`` it is GPU_Device-scheduled."""
+    w = np.zeros((8, ), dtype=np.float64)
+    for i in dace.map[0:8]:
+        w[i] = 2.0
+    for i in dace.map[0:8]:
+        A[i] = A[i] * w[i]
+
+
+@dace.program
+def gpu_refill(A: dace.float64[8]):
+    """Same, but ``w`` is written a second time, so the classifier rejects it."""
+    w = np.zeros((8, ), dtype=np.float64)
+    for i in dace.map[0:8]:
+        w[i] = 2.0
+    for i in dace.map[0:8]:
+        w[i] = w[i] + A[i]
+    for i in dace.map[0:8]:
+        A[i] = w[i]
+
+
+def _gpu_fill_program(program):
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    sdfg.validate()  # Baseline: the GPU-transformed SDFG is valid BEFORE the pass runs.
+    return sdfg
+
+
+def test_gpu_constant_fill_map_keeps_its_schedule():
+    """The pass must not flatten a GPU_Device-scheduled fill map into host tasklets (no GPU needed to check)."""
+    sdfg = _gpu_fill_program(gpu_constfill)
+    _run(sdfg)
+    sdfg.validate()
+
+
+def test_gpu_rejected_fill_map_stays_valid():
+    """Same shape, but the fill target is written twice, so the classifier rejects it (the durbin failure)."""
+    sdfg = _gpu_fill_program(gpu_refill)
+    _run(sdfg)
+    sdfg.validate()
+
+
+def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope():
+    """A zero-input constant-assign tasklet needs no data, so its only in-edge may be an empty
+    ordering edge from a SIBLING access node already inside the map, not the map entry itself
+    (the ITE/s242 shape: a bare ``out = 3.0`` scheduled next to a real per-lane read). Folding its
+    write must re-anchor the surviving, still-consumed descriptor onto that SAME sibling -- the
+    old code only recognised a ``MapEntry`` anchor and silently dropped this one, leaking the
+    consumer out of the map scope (``scope_dict()`` -> ``None``) even though the edge itself stays
+    syntactically valid."""
+    sdfg = dace.SDFG('sibling_anchor')
+    sdfg.add_array('src', [10], dace.float64)
+    sdfg.add_scalar('elem', dace.float64, transient=True)
+    sdfg.add_scalar('cond', dace.float64, transient=True)
+    sdfg.add_scalar('mid', dace.float64, transient=True)
+    sdfg.add_array('B', [10], dace.float64)
+
+    s = sdfg.add_state('main')
+    me, mx = s.add_map('m', dict(i='0:10'))
+
+    src_r = s.add_read('src')
+    stage_t = s.add_tasklet('stage', {'inp'}, {'out'}, 'out = inp')
+    elem_n = s.add_access('elem')
+    s.add_memlet_path(src_r, me, stage_t, memlet=dace.Memlet('src[i]'), dst_conn='inp')
+    s.add_edge(stage_t, 'out', elem_n, None, dace.Memlet('elem[0]'))
+
+    # A properly-scoped sibling computation, analogous to a lifted branch condition.
+    cond_t = s.add_tasklet('cond_calc', {'e'}, {'o'}, 'o = e')
+    cond_n = s.add_access('cond')
+    s.add_edge(elem_n, None, cond_t, 'e', dace.Memlet('elem[0]'))
+    s.add_edge(cond_t, 'o', cond_n, None, dace.Memlet('cond[0]'))
+
+    # Zero-input constant tasklet, anchored via the SIBLING access node 'elem' (not the map entry).
+    const_t = s.add_tasklet('const_assign', {}, {'out'}, 'out = 3.0')
+    mid_n = s.add_access('mid')
+    s.add_nedge(elem_n, const_t, dace.Memlet())
+    s.add_edge(const_t, 'out', mid_n, None, dace.Memlet('mid[0]'))
+
+    # Consumer combining both -- analogous to the ITE tasklet reading cond AND the fold target.
+    combine_t = s.add_tasklet('combine', {'c', 'm'}, {'out'}, 'out = c + m')
+    b_w = s.add_access('B')
+    s.add_edge(cond_n, None, combine_t, 'c', dace.Memlet('cond[0]'))
+    s.add_edge(mid_n, None, combine_t, 'm', dace.Memlet('mid[0]'))
+    s.add_memlet_path(combine_t, mx, b_w, memlet=dace.Memlet('B[i]'), src_conn='out')
+
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('mid') == 'constexpr_static', kinds
+    assert 'mid' in sdfg.constants and float(sdfg.constants['mid']) == 3.0
+    assert mid_n in s.nodes(), 'mid access node must survive -- combine_t still reads it'
+
+    scope = s.scope_dict()
+    assert scope.get(mid_n) is me, (
+        f'mid access node leaked out of the map scope (scope={scope.get(mid_n)!r}, expected {me!r})')
+
+    sdfg.validate()
 
 
 if __name__ == '__main__':
@@ -546,3 +786,194 @@ if __name__ == '__main__':
     test_multiwrite_partial_elementwise_marked()
     test_multiwrite_overlapping_not_marked()
     test_idempotency()
+    test_partly_paying_fill_map_is_not_unrolled()
+    test_symbolic_fill_map_never_becomes_const_runtime()
+    test_gpu_constant_fill_map_keeps_its_schedule()
+    test_gpu_rejected_fill_map_stays_valid()
+    test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
+
+
+def test_a_scalar_whose_container_stays_classic_is_not_marked_const_runtime():
+    """``const_runtime`` is a PROMISE that the write can carry a fused ``const T x = expr;``.
+
+    Making it costs the declaration: ``allocate_array`` skips ``T x;`` on the strength of it. The
+    binding is only emitted when ``InlineTaskletConnectors`` inlines the writing tasklet's
+    connectors, and that pass decides per CONTAINER -- one tasklet it cannot inline keeps that
+    container classic everywhere, this writer included. Marking on a per-tasklet check alone left
+    the name declared nowhere and emitted by nothing (``'_scan_seed_a' was not declared in this
+    scope``), which is what every LoopToScan seed hit: the carrier it copies from is also read by
+    tasklets that stay classic.
+    """
+    sdfg = dace.SDFG('const_init_container_rule')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('seed', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+
+    # The writer, on its own, is exactly the fusable shape: one assignment, plain connectors.
+    copy = state.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
+    state.add_edge(state.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
+    state.add_edge(copy, '_out', state.add_access('seed'), None, dace.Memlet('seed[0]'))
+
+    # A second toucher of ``a`` the planner CANNOT inline: a whole-array connector is not the
+    # single-element access ``_connector_access`` requires. So ``a`` stays classic, and with it the
+    # connector the writer above reads it through.
+    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
+
+    # A reader of the scalar, so it is genuinely write-once-then-read.
+    reader = state.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
+    state.add_edge(state.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
+    state.add_edge(reader, '_o', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    _run(sdfg)
+    assert not sdfg.arrays['seed'].const_init, (
+        'seed was marked const_runtime, but its container stays classic so no binding is emitted '
+        'and the skipped declaration is never replaced')
+
+
+def test_a_brace_free_prediction_is_never_broken_by_the_inliner():
+    """The predicate's contract is an IMPLICATION: True guarantees the brace-free emission.
+
+    That direction is the one ``MarkConstInit`` spends -- it skips a declaration on the strength of
+    a True answer, so a True the inliner then declines is a name declared nowhere. The converse
+    costs nothing: a False where the inliner would have inlined only leaves a declaration standing.
+
+    Asserted over a graph built to contain both kinds of container: one every toucher can inline,
+    and one a single toucher cannot.
+    """
+    from dace.transformation.passes.inline_tasklet_connectors import (InlineTaskletConnectors, tasklet_emits_brace_free)
+
+    sdfg = dace.SDFG('brace_free_agreement')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    state = sdfg.add_state('main')
+
+    plain = state.add_tasklet('plain', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    state.add_edge(state.add_read('b'), None, plain, '_in', dace.Memlet('b[0]'))
+    state.add_edge(plain, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    shares_a = state.add_tasklet('shares_a', {'_in'}, {'_out'}, '_out = _in')
+    state.add_edge(state.add_read('a'), None, shares_a, '_in', dace.Memlet('a[0]'))
+    state.add_edge(shares_a, '_out', state.add_write('out'), None, dace.Memlet('out[2]'))
+
+    whole_array = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, whole_array, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(whole_array, '_out', state.add_write('out'), None, dace.Memlet('out[3]'))
+
+    predicted = {t.label: tasklet_emits_brace_free(sdfg, state, t) for t in _tasklets(state)}
+    actually_inlined = InlineTaskletConnectors().apply_pass(sdfg, {}) or set()
+
+    assert predicted['shares_a'] is False, (
+        'shares_a reads a container another tasklet keeps classic, so its connector stays classic too')
+    for label, said_yes in predicted.items():
+        if said_yes:
+            assert label in actually_inlined, (f'{label}: predicted brace-free, but the inliner left it classic -- '
+                                               'the declaration MarkConstInit skipped is never replaced')
+
+
+def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
+    """A constant fill map whose entry is held by an ENCLOSING map's ordering edge.
+
+    This is what inlining a nested SDFG into a map scope leaves behind (``lift_transients``), and
+    the shape that separates the two ends of the fill scope: the exit reaches degree zero when the
+    promotion takes its write, while the entry never does.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('B', [8, 4], dace.float64)
+    sdfg.add_array('t', [8], dace.float64, transient=True)
+    state = sdfg.add_state('block')
+
+    outer_me, outer_mx = state.add_map('outer', {'jb': '0:4'})
+    fill_me, fill_mx = state.add_map('fill', {'k': '0:8'})
+    seed = state.add_tasklet('set', {}, {'o'}, 'o = 1.0')
+    t_acc = state.add_access('t')
+    b_write = state.add_write('B')
+
+    state.add_nedge(outer_me, fill_me, dace.Memlet())
+    state.add_nedge(fill_me, seed, dace.Memlet())
+    state.add_edge(seed, 'o', fill_mx, 'IN_t', dace.Memlet('t[k]'))
+    fill_mx.add_in_connector('IN_t')
+    fill_mx.add_out_connector('OUT_t')
+    state.add_edge(fill_mx, 'OUT_t', t_acc, None, dace.Memlet('t[0:8]'))
+    state.add_edge(t_acc, None, outer_mx, 'IN_B', dace.Memlet(data='t', subset='0:8', other_subset='0:8, jb'))
+    outer_mx.add_in_connector('IN_B')
+    outer_mx.add_out_connector('OUT_B')
+    state.add_edge(outer_mx, 'OUT_B', b_write, None, dace.Memlet('B[0:8, 0:4]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
+    """Taking a fill's write must remove its map entry too, not only its exit.
+
+    Deadness was tested per node as full isolation, which the two ends do not reach together: the
+    enclosing map holds the entry by an empty ordering edge, so the exit hits degree zero and the
+    entry never does. Taking only the exit leaves a scope that never closes -- ``scope_dict``
+    refuses to walk it, and every SDFG holding one fails validation on the next pass that asks.
+    """
+    sdfg = _fill_map_inside_an_outer_map_sdfg()
+    _run(sdfg)
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    entries = {n.map for n in state.nodes() if isinstance(n, nd.MapEntry)}
+    exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
+    assert entries == exits, f'unpaired scope ends: {sorted(m.label for m in entries ^ exits)}'
+
+    out = np.zeros((8, 4), dtype=np.float64)
+    sdfg(B=out)
+    assert np.array_equal(out, np.ones((8, 4))), f'got {out}'
+
+
+def test_the_container_rule_is_read_over_the_root_not_the_nested_sdfg():
+    """The verdict the mark spends is the ROOT's, so it must be asked of the root.
+
+    ``InlineTaskletConnectors.plan`` walks ``all_nodes_recursive`` and keys its answer on the
+    container NAME alone, and the pass that spends the verdict runs on the root -- so a name a
+    nested SDFG shares with its parent is decided once, for both. Asking the nested SDFG instead
+    answers a narrower question: the toucher that keeps the container classic lives upstairs and is
+    invisible from down here, the write is marked ``const_runtime`` on a promise the root never
+    keeps, ``allocate_array`` skips the declaration, and the name reaches the compiler undeclared
+    (``a_min`` in every outlined translation unit of npbench's ``azimint_hist``).
+    """
+    inner = dace.SDFG('inner_unit')
+    inner.add_array('a', [8], dace.float64)
+    inner.add_array('out', [8], dace.float64)
+    inner.add_scalar('seed', dace.float64, transient=True)
+    istate = inner.add_state('body')
+    copy = istate.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
+    istate.add_edge(istate.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
+    istate.add_edge(copy, '_out', istate.add_access('seed'), None, dace.Memlet('seed[0]'))
+    reader = istate.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
+    istate.add_edge(istate.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
+    istate.add_edge(reader, '_o', istate.add_write('out'), None, dace.Memlet('out[0]'))
+
+    sdfg = dace.SDFG('root_owns_the_verdict')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    state = sdfg.add_state('main')
+    nested = state.add_nested_sdfg(inner, {'a'}, {'out'})
+    state.add_edge(state.add_read('a'), None, nested, 'a', dace.Memlet('a[0:8]'))
+    state.add_edge(nested, 'out', state.add_write('out'), None, dace.Memlet('out[0:8]'))
+
+    # The toucher that keeps ``a`` classic, in the PARENT: a whole-array connector is not the
+    # single-element access ``_connector_access`` requires.
+    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
+
+    from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+
+    root_safe = InlineTaskletConnectors().plan(sdfg)[1]
+    nested_safe = InlineTaskletConnectors().plan(inner)[1]
+    assert 'a' in nested_safe and 'a' not in root_safe, (
+        'fixture no longer discriminates: the two plans must disagree about ``a``')
+
+    marker = MarkConstInit()
+    Pipeline([marker]).apply_pass(sdfg, {})
+    assert marker._inlinable_containers(inner) == root_safe, (
+        'the nested SDFG was classified against its own plan, which cannot see the parent toucher '
+        'that keeps ``a`` classic for the whole root')

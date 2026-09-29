@@ -13,14 +13,16 @@ Correctness-preserving: these keep the classic connector lowering -- WCR outputs
 rewritten here; C++ / library bodies are handled at code-gen time (``rewrite_cpp_tasklet_body``).
 """
 import ast
+import keyword
 import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.scope import is_in_scope
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
@@ -36,17 +38,60 @@ class InlineTaskletConnectors(ppl.Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        inlined_tasklets: Set[str] = set()
+    def plan(self, sdfg: SDFG) -> Tuple[List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]], Set[str]]:
+        """The inlining plan and the containers it may be applied to.
+
+        Decided PER CONTAINER, not per tasklet. A reader rewritten to name the array directly
+        relies on the writer's inlining to declare it -- inlining the reader while the writer stays
+        classic emits a name nothing declares. So a container is inlined only where every tasklet
+        touching it can be, and one tasklet left classic keeps its containers classic everywhere.
+
+        Exposed because :func:`tasklet_emits_brace_free` has to answer the SAME question: a
+        predicate that models only whether one tasklet's connectors are individually inlinable
+        promises an inlining this pass then declines, and its caller
+        (:class:`~dace.transformation.passes.mark_const_init.MarkConstInit`) skips a declaration on
+        the strength of that promise. One rule, computed here, rather than two that can drift.
+
+        :param sdfg: the SDFG to plan over.
+        :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
+                  every toucher of which can be inlined.
+        """
+        plans: List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]] = []
+        touched: Dict[str, int] = {}
+        inlinable: Dict[str, int] = {}
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.Tasklet):
                 continue
             state = parent
-            osdfg = state.sdfg
-            # Per-tasklet resilience: a tasklet we cannot rewrite is simply left
-            # in classic connector form (still correct), never crashing codegen.
+            for is_output, edges in ((False, state.in_edges(node)), (True, state.out_edges(node))):
+                for edge in edges:
+                    if edge.data is None or not edge.data.data:
+                        continue
+                    if _binds_base_pointer(node, edge, is_output):
+                        continue
+                    touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
             try:
-                if self._inline_tasklet(osdfg, state, node):
+                accesses = self._plan_tasklet(state.sdfg, state, node)
+            except Exception as ex:  # noqa: BLE001
+                warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
+                              f'{type(ex).__name__}: {ex}')
+                accesses = {}
+            for data, _indices in accesses.values():
+                inlinable[data] = inlinable.get(data, 0) + 1
+            if accesses:
+                plans.append((node, accesses))
+        return plans, {data for data, count in touched.items() if inlinable.get(data, 0) == count}
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+        plans, safe = self.plan(sdfg)
+
+        inlined_tasklets: Set[str] = set()
+        for node, accesses in plans:
+            accesses = {conn: acc for conn, acc in accesses.items() if acc[0] in safe}
+            if not accesses:
+                continue
+            try:
+                if self._apply_plan(node, accesses):
                     inlined_tasklets.add(node.label)
             except Exception as ex:  # noqa: BLE001
                 warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
@@ -63,6 +108,16 @@ class InlineTaskletConnectors(ppl.Pass):
         """
         conn = edge.src_conn if is_output else edge.dst_conn
         if not conn:
+            return None
+        # A connector DECLARED as a pointer is used as a pointer by the body, so it cannot be
+        # rewritten into a value access. The case that matters is a callback: the body is a call
+        # into a foreign C function whose signature we do not own, and an out-parameter is a ``T*``
+        # the callee writes through. The classic lowering binds it as ``T* __out_x = &x;``;
+        # inlining it emits the bare ``x``, which the C++ compiler rejects with
+        # "cannot convert 'double' to 'double*' in argument passing". Array connectors are
+        # unaffected -- their whole-array subsets already fail the single-element test below.
+        conntype = node.out_connectors[conn] if is_output else node.in_connectors[conn]
+        if isinstance(conntype, (dtypes.pointer, dtypes.vector)):
             return None
         memlet = edge.data
         if memlet.data is None or memlet.data not in osdfg.arrays:
@@ -92,6 +147,10 @@ class InlineTaskletConnectors(ppl.Pass):
         # Dynamic (data-dependent) accesses keep the classic lowering.
         if memlet.dynamic:
             return None
+        # The rewritten body is unparsed and reparsed, so a container whose name is not a usable
+        # Python identifier (``in``) would come back a SyntaxError. Keep those classic.
+        if not memlet.data.isidentifier() or keyword.iskeyword(memlet.data):
+            return None
         subset = memlet.subset
         if subset is None or subset.num_elements() != 1:
             # Only single-element (scalar-like) accesses are inlined for now.
@@ -100,19 +159,24 @@ class InlineTaskletConnectors(ppl.Pass):
         indices = [str(rb) for (rb, _re, _rs) in subset.ranges]
         return (conn, memlet.data, indices)
 
-    def _inline_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> bool:
+    def _plan_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> Dict[str, Tuple[str, List[str]]]:
+        """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites."""
         in_acc: Dict[str, Tuple[str, List[str]]] = {}
         out_acc: Dict[str, Tuple[str, List[str]]] = {}
+        in_subset: Dict[str, subsets.Subset] = {}
+        out_subset: Dict[str, subsets.Subset] = {}
         for edge in state.in_edges(node):
             info = self._connector_access(osdfg, state, node, edge, is_output=False)
             if info is not None:
                 conn, data, indices = info
                 in_acc[conn] = (data, indices)
+                in_subset[conn] = edge.data.subset
         for edge in state.out_edges(node):
             info = self._connector_access(osdfg, state, node, edge, is_output=True)
             if info is not None:
                 conn, data, indices = info
                 out_acc[conn] = (data, indices)
+                out_subset[conn] = edge.data.subset
 
         # Connector names are unique within the in-set and within the out-set, but
         # an inout connector shares a name across both. Inline such a name only if
@@ -130,18 +194,24 @@ class InlineTaskletConnectors(ppl.Pass):
             else:
                 accesses[name] = in_acc.get(name, out_acc.get(name))
 
-        if not accesses:
-            return False
-
         # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
         # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.
         if node.language != dtypes.Language.Python:
-            return False
-        new_code, inlined = self._rewrite_python(node, accesses)
+            return {}
+        # The SVE generator unparses its tasklets itself and types every name through the connectors.
+        if is_in_scope(osdfg, state, node, [dtypes.ScheduleType.SVE_Map]):
+            return {}
 
+        candidates = [name for name in in_acc if name not in inout and name in accesses]
+        for name in reads_after_aliased_writes(node, candidates, in_acc, out_acc, in_subset, out_subset):
+            del accesses[name]
+        return accesses
+
+    def _apply_plan(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> bool:
+        """Rewrite ``node``'s body for the planned connectors."""
+        new_code, inlined = self._rewrite_python(node, accesses)
         if not inlined:
             return False
-
         node.code = CodeBlock(new_code, node.language)
         node.ignored_symbols = set(node.ignored_symbols) | {accesses[c][0] for c in inlined}
         return True
@@ -150,36 +220,144 @@ class InlineTaskletConnectors(ppl.Pass):
         # ``as_string`` unparses the tasklet's already-parsed AST, so it is always valid Python;
         # any unexpected failure is still caught by apply_pass and the tasklet left classic.
         tree = ast.parse(node.code.as_string)
+        # A name a nested scope rebinds (lambda / def parameter, comprehension target) denotes that
+        # binding inside the scope, not the connector. The generator tells inlined connectors apart
+        # from live ones by whether the name still occurs in the body, so such a name can be neither
+        # rewritten (wrong value) nor left alone (the write-back of an uninitialized copy). Keep the
+        # whole connector classic instead.
+        rebound = _rebound_names(tree)
+        accesses = {conn: acc for conn, acc in accesses.items() if conn not in rebound}
+        if not accesses:
+            return node.code.as_string, set()
         inliner = _ConnectorInliner(accesses)
         new_tree = inliner.visit(tree)
         ast.fix_missing_locations(new_tree)
         return ast.unparse(new_tree), inliner.inlined
 
 
-def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
+def _binds_base_pointer(node: nodes.Tasklet, edge, is_output: bool) -> bool:
+    """True when ``edge``'s connector is bound to the container's base pointer.
+
+    Such a connector is never inlined, but it does not make its container unsafe either. The
+    per-container rule exists for a container whose only declaration is the fused binding an
+    inlined write emits; a pointer connector's classic binding (``double* _cpy_in = A;``) already
+    spells the container's name, so the container is declared no matter what the other tasklets do.
+
+    Counting one as a toucher declined inlining for every other tasklet on the same container. On
+    GPU that is every device array -- the host/device memcpy tasklets take them by pointer -- so
+    kernel bodies came out in classic connector form.
+    """
+    conn = edge.src_conn if is_output else edge.dst_conn
+    if not conn:
+        return False
+    conntype = node.out_connectors.get(conn) if is_output else node.in_connectors.get(conn)
+    return isinstance(conntype, dtypes.pointer)
+
+
+def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet, safe: Optional[Set[str]] = None) -> bool:
     """True iff ``InlineTaskletConnectors`` will inline EVERY connector of ``tasklet``,
     so the readable code generator emits it as a single brace-free statement with no
     copy-in/out local.
 
     ``MarkConstInit`` uses this to decide whether a fused ``const T x = <expr>;`` binding
     lands at the enclosing scope (visible to the reads) or is trapped inside the tasklet's
-    ``{ }`` block (a use-before-declaration miscompile). The predicate is SOUND: it returns
-    True only when every connector is individually inlinable AND there is no inout connector
-    (ITC may keep an inout connector classic even when each side is individually inlinable),
-    so a True answer guarantees the brace-free emission.
+    ``{ }`` block (a use-before-declaration miscompile).
+
+    Individually inlinable connectors are NOT sufficient, which is what this used to check:
+    :meth:`InlineTaskletConnectors.plan` decides per CONTAINER, so a container one other tasklet
+    cannot inline stays classic everywhere -- including here. Predicting True there promised an
+    inlining the pass declined, ``MarkConstInit`` marked the target ``const_runtime`` on the
+    strength of it, ``allocate_array`` skipped the declaration, and no binding was ever emitted:
+    the name reached the compiler undeclared. Every ``LoopToScan`` seed landed in that shape,
+    because the carrier array it is copied from is also read by tasklets that stay classic.
+
+    :param safe: the container set from :meth:`InlineTaskletConnectors.plan`, computed here when
+                 not supplied. A caller asking about many tasklets should compute it ONCE -- the
+                 plan walks the whole SDFG.
     """
     if tasklet.language != dtypes.Language.Python:
         return False
     if set(tasklet.in_connectors) & set(tasklet.out_connectors):  # inout -> may stay classic
         return False
+    # A connector a nested scope rebinds stays classic (see _rewrite_python).
+    if _rebound_names(ast.parse(tasklet.code.as_string)) & (set(tasklet.in_connectors) | set(tasklet.out_connectors)):
+        return False
     checker = InlineTaskletConnectors()
-    for edge in state.in_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=False) is None:
-            return False
-    for edge in state.out_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=True) is None:
-            return False
+    if safe is None:
+        _plans, safe = checker.plan(sdfg)
+    for is_output, edges in ((False, state.in_edges(tasklet)), (True, state.out_edges(tasklet))):
+        for edge in edges:
+            if edge.data.is_empty():
+                continue
+            access = checker._connector_access(sdfg, state, tasklet, edge, is_output=is_output)
+            # ``(conn, data, indices)`` -- the CONTAINER is what the safe set is keyed on.
+            if access is None or access[1] not in safe:
+                return False
     return True
+
+
+def _rebound_names(tree: ast.AST) -> Set[str]:
+    """Names bound by a nested scope inside a tasklet body: lambda / function parameters, the
+    function's own name, and comprehension targets."""
+    names: Set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = n.args
+            names.update(a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs))
+            names.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+            if not isinstance(n, ast.Lambda):
+                names.add(n.name)
+        elif isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for gen in n.generators:
+                names.update(t.id for t in ast.walk(gen.target) if isinstance(t, ast.Name))
+    return names
+
+
+def aliased_writers(name: str, in_acc: Dict[str, Tuple[str, List[str]]], out_acc: Dict[str, Tuple[str, List[str]]],
+                    in_subset: Dict[str, subsets.Subset], out_subset: Dict[str, subsets.Subset]) -> List[str]:
+    """The outputs other than input ``name`` that write an element of its container it may read."""
+    return [
+        other for other in out_acc if other != name and out_acc[other][0] == in_acc[name][0]
+        and subsets.intersects(in_subset[name], out_subset[other]) is not False
+    ]
+
+
+def reads_after_aliased_writes(node: nodes.Tasklet, candidates: List[str], in_acc: Dict[str, Tuple[str, List[str]]],
+                               out_acc: Dict[str, Tuple[str, List[str]]], in_subset: Dict[str, subsets.Subset],
+                               out_subset: Dict[str, subsets.Subset]) -> List[str]:
+    """The ``candidates`` inputs a statement of ``node`` may read after an output writing an aliased element."""
+    aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset) for name in candidates}
+    aliased = {name: writers for name, writers in aliased.items() if writers}
+    if not aliased:
+        return []
+    body = ast.parse(node.code.as_string).body
+    return [name for name, writers in aliased.items() if reads_after_write(body, name, writers)]
+
+
+def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bool:
+    """True when a statement of ``body`` may read ``read`` after one of ``writers`` was stored."""
+    written = False
+    for stmt in body:
+        walked = list(ast.walk(stmt))
+        reads = any(isinstance(n, ast.Name) and n.id == read for n in walked)
+        stores = any(stored_name(n) in writers for n in walked)
+        if reads and (written or (stores and not evaluates_before_storing(stmt, walked))):
+            return True
+        written = written or stores
+    return False
+
+
+def stored_name(n: ast.AST) -> Optional[str]:
+    if not isinstance(n, (ast.Name, ast.Subscript)) or not isinstance(n.ctx, ast.Store):
+        return None
+    base = n if isinstance(n, ast.Name) else n.value
+    return base.id if isinstance(base, ast.Name) else None
+
+
+def evaluates_before_storing(stmt: ast.stmt, walked: List[ast.AST]) -> bool:
+    """A plain assignment evaluates its whole value first; a walrus inside it stores early."""
+    return isinstance(
+        stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and not any(isinstance(n, ast.NamedExpr) for n in walked)
 
 
 class _ConnectorInliner(ast.NodeTransformer):
