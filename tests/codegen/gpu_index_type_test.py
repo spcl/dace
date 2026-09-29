@@ -166,8 +166,9 @@ def test_threadblock_map_keeps_its_own_type():
     assert _declaration(code, 'j') == 'int j = threadIdx.x;'
 
 
-def test_nested_device_map():
-    sdfg = dace.SDFG('nested_device_index_type')
+@pytest.mark.parametrize('implementation', ['legacy', 'experimental'])
+def test_nested_device_map(implementation):
+    sdfg = dace.SDFG(f'nested_device_index_type_{implementation}')
     sdfg.add_array('A', [N, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
     outer_entry, outer_exit = state.add_map('outer', {'i': '0:N'}, schedule=dace.ScheduleType.GPU_Device)
@@ -182,8 +183,8 @@ def test_nested_device_map():
                           src_conn='o',
                           memlet=dace.Memlet('A[i, j]'))
 
-    code = _cuda_code(sdfg)
-    if dace.config.Config.get('compiler', 'cuda', 'implementation') == 'experimental':
+    code = _cuda_code(sdfg, implementation=implementation)
+    if implementation == 'experimental':
         # The experimental codegen lowers the nested device map into one two-dimensional kernel map first
         assert _declaration(code, 'b_i') == 'int64_t b_i = static_cast<int64_t>(blockIdx.y);'
         assert _declaration(code, 'i') == 'int64_t i = (threadIdx.y + b_i);'

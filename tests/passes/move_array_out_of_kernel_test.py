@@ -541,7 +541,8 @@ def test_lift_does_not_bind_a_name_the_nest_assigns_itself():
     assert 'k' not in sweep.symbol_mapping, sweep.symbol_mapping
     sdfg.validate()
     code = ''.join(obj.clean_code for obj in sdfg.generate_code())
-    assert re.search(r'\w+ k;', code), 'the loop counter is used without a declaration in scope'
+    assert 'for (k = ' not in code, 'the loop counter is used without a declaration in scope'
+    assert re.search(r'for \(\w+ k = ', code), 'the sweep loop disappeared, so this no longer covers the case'
 
 
 def kernel_with_interstate_buffer_read() -> dace.SDFG:

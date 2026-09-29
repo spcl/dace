@@ -68,9 +68,13 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars)
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+        from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
         #   * scheduler after ExpandLibraryNodes -- it would miss opaque libnodes.
+        #   * PromoteWarpTiles before AddThreadBlockMaps -- canonicalize promotes a pending ``is_warp_tile``
+        #     before choosing a block size; a graph that reaches codegen with one still pending gets its
+        #     thread-block level from the tile, not a second one on top of it.
         #   * AddThreadBlockMaps after the MoveArrayOutOfKernel hoist -- tiling first leaks the
         #     inner-map outer-loop symbol into host-side cudaMalloc sizes.
         #   * DemoteKernelInternalArraysToScalars before ReinferConnectorTypes -- it resets the
@@ -91,6 +95,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             strategy,
             GPUStreamWiring(strategy),
             SynchronizeStreamUnawareGPUCallbacks(),
+            PromoteWarpTiles(),
             AddThreadBlockMaps(),
             DemoteKernelInternalArraysToScalars(),
             ReinferConnectorTypes(),

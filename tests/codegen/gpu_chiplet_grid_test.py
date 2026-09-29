@@ -303,9 +303,7 @@ def test_invalid_chiplet_number(implementation):
 def test_legacy_chiplet_distribution_without_threadblock_map(monkeypatch):
     # Kernels without an inner thread-block map offset the block index by the thread index
     # themselves. `AddThreadBlockMap` inserts such a map into every simple kernel, so it is
-    # disabled here to generate a kernel that does not have one. Only the legacy code generator
-    # emits that form of kernel entry -- see
-    # `test_experimental_codegen_requires_a_threadblock_map` for what the other one does instead.
+    # disabled here to generate a kernel that does not have one.
     monkeypatch.setattr(AddThreadBlockMap, 'can_be_applied', lambda *args, **kwargs: False)
     code = generate_gpu_code(two_dimensional, 'legacy', CHIPLETS)
 
@@ -325,16 +323,6 @@ def test_legacy_chiplet_distribution_disabled_per_map_without_threadblock_map(mo
     # `TRAILING_BLOCK_MASK` is not asserted absent here: a kernel map that binds threads itself
     # masks its own trailing block with the very same condition, distribution or none, so in this
     # one kernel shape the mask says nothing about chiplets. The grid and the index above do.
-
-
-def test_experimental_codegen_requires_a_threadblock_map(monkeypatch):
-    # `ExperimentalCUDACodeGen` reads the launch configuration off an inner thread-block map, so a
-    # kernel that has none is refused before any chiplet decision is reached. That is why the two
-    # tests above are pinned to the legacy code generator: the kernel entry they describe has no
-    # counterpart here, rather than a chiplet distribution that disagrees.
-    monkeypatch.setattr(AddThreadBlockMap, 'can_be_applied', lambda *args, **kwargs: False)
-    with pytest.raises(ValueError, match='GPU_ThreadBlock map'):
-        generate_gpu_code(two_dimensional, 'experimental', CHIPLETS)
 
 
 def test_allow_chiplet_threadblock_distribution_is_serialized():

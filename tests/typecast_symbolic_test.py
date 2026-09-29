@@ -116,7 +116,9 @@ def test_a_cast_beside_a_qualified_call_in_a_view_offset_is_spelled_for_cpp():
     code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     offsets = [line for line in code.splitlines() if "= &blocks[" in line]
     assert offsets, "no view offset into blocks was emitted"
-    assert all("dace::int64(" in line for line in offsets), offsets
+    # Each offset is computed in 64 bits: either the index is cast, or it multiplies the int64 ``K**2``.
+    assert sdfg.symbols['K'] == dace.int64
+    assert all("dace::int64(" in line or "ipow(K, 2)" in line for line in offsets), offsets
     assert not re.search(r"(?<![:\w])int64\(", code), "a bare int64( cast reached the C++ code"
 
     index = np.array([[0, 0, 1], [0, 0, -1], [0, 0, 0]], dtype=np.int32)
