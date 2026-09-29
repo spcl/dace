@@ -1357,9 +1357,8 @@ class ExpandCUDA(ExpandTransformation):
                     f'        return i == 0 ? {op_cub}(static_cast<{out_ctype}>({seed_value}), v) : v;\n'
                     f'    }}\n'
                     f'}};\n', 'cuda')
-                seed_prologue = (f'    ::gpucub::TransformInputIterator<{out_ctype}, {first}, '
-                                 f'::gpucub::CountingInputIterator<long long>> __sc_items('
-                                 f'::gpucub::CountingInputIterator<long long>(0), {first}{{__sc_in, __sc_init}});\n')
+                seed_prologue = (f'    auto __sc_items = ::dace::cub::index_iterator<{out_ctype}>('
+                                 f'{first}{{__sc_in, __sc_init}});\n')
                 seed_actual = f', {init_connector(chain)}'
                 call = 'InclusiveScan'
                 extra = ''
