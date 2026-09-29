@@ -50,22 +50,34 @@ def generate(implementation, loop_index_type):
         return '\n'.join(o.code for o in carried_dependency_sdfg().generate_code() if o.language == 'cpp')
 
 
-def counter_declaration(code):
-    """The hoisted ``<ctype> i;`` declaration of the loop counter (tags/indentation stripped)."""
+def counter_declaration(code, implementation):
+    """The ``<ctype> i`` declaration of the loop counter.
+
+    Legacy emits it hoisted (``int64_t i;``). The readable generator declares it inside the
+    for-init clause (``for (int64_t i = 1; ...``). Both forms are accepted; the caller checks
+    which one is expected for the implementation under test.
+    """
     for line in code.splitlines():
         stripped = line.split('////')[0].strip()
-        if re.fullmatch(r'(?:int|long long|int64_t|int32_t) i;', stripped):
-            return stripped
+        if implementation == 'legacy':
+            if re.fullmatch(r'(?:int|long long|int64_t|int32_t) i;', stripped):
+                return stripped
+        else:
+            m = re.search(r'for \((?:int|long long|int64_t|int32_t) i =', stripped)
+            if m:
+                return stripped[m.start():m.end()]
     return None
 
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
-@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'int64_t i;'), ('int32', 'int32_t i;'),
-                                                       ('int64', 'int64_t i;')])
+@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'int64_t'), ('int32', 'int32_t'), ('int64', 'int64_t')])
 def test_loop_region_counter_is_retyped(implementation, loop_index_type, expected):
-    """int32 -> ``int32_t i;``, int64 -> ``int64_t i;`` (the map-loop spellings); ``auto`` keeps the
-    inferred ``int64_t i;``. Both generators emit the counter through the same shared declaration."""
-    assert counter_declaration(generate(implementation, loop_index_type)) == expected
+    """int32 -> ``int32_t``, int64 -> ``int64_t`` (the map-loop spellings); ``auto`` keeps the
+    inferred ``int64_t``. Legacy emits a hoisted declaration; readable emits it in the for-init
+    clause, so only the type string is shared."""
+    decl = counter_declaration(generate(implementation, loop_index_type), implementation)
+    assert decl is not None
+    assert expected in decl
 
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
@@ -75,7 +87,10 @@ def test_auto_is_byte_identical(implementation):
     assert generate(implementation, 'auto') == generate(implementation, 'auto')
     # A retyped counter is the ONLY difference int32/int64 introduce: the rest of the file matches auto.
     auto = generate(implementation, 'auto')
-    assert 'int64_t i;' in [line.split('////')[0].strip() for line in auto.splitlines()]
+    if implementation == 'legacy':
+        assert 'int64_t i;' in [line.split('////')[0].strip() for line in auto.splitlines()]
+    else:
+        assert any('for (int64_t i =' in line.split('////')[0].strip() for line in auto.splitlines())
 
 
 @pytest.mark.parametrize('loop_index_type', ['auto', 'int32', 'int64'])

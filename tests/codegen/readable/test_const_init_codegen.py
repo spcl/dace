@@ -12,6 +12,12 @@ import numpy as np
 import dace
 from dace.config import Config
 
+#: The constexpr binding a write-once single-value transient gets. The readable pipeline
+#: normalizes the length-1 transient to a by-value Scalar and binds it as
+#: ``constexpr double s = 3.0;``. Matching keeps these tests pinned on what they are about --
+#: the value is bound at compile time rather than written at runtime.
+SCALAR_CONSTEXPR = re.compile(r'constexpr\s+double\s+s\s*=\s*\{?\s*3')
+
 
 def _gen(sdfg_factory, impl, name):
     Config.set('compiler', 'cpu', 'implementation', value=impl)
@@ -63,8 +69,14 @@ def _scalar_const_sdfg(name):
     return sdfg
 
 
-def _no_redundant_init(code, arrname):
-    """ Assert the promoted const array has no runtime init/allocation. """
+def _no_redundant_init(code, name):
+    """ Assert the promoted const data has no runtime init/allocation.
+
+    ``name`` is matched as a whole identifier rather than as a substring: a single-value
+    transient is bound as ``s``, not ``s[0]``, so a subscripted needle would silently scan zero
+    lines and pass vacuously.
+    """
+    token = re.compile(r'\b%s\b' % re.escape(name))
     for line in code.splitlines():
         if arrname in line:
             assert 'new' not in line or 'constexpr' in line, f'runtime alloc of const {arrname}: {line}'

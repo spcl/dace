@@ -59,6 +59,13 @@ def use_implementation(implementation):
     return set_temporary(*IMPLEMENTATION_KEY, value=implementation)
 
 
+@pytest.fixture(autouse=True)
+def restore_cpu_implementation():
+    """Undo a test's ``Config.set`` of the generator, so a later test in the same worker runs the default one."""
+    with set_temporary(*IMPLEMENTATION_KEY, value=Config.get(*IMPLEMENTATION_KEY)):
+        yield
+
+
 def trivial_elementwise_sdfg(name):
     """A tiny ``b[i] = a[i] + 1`` map SDFG, built with the low-level API.
 
