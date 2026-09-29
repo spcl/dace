@@ -85,6 +85,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRO
                                                                          WAVEFRONT_TILE_DIAGONAL,
                                                                          WAVEFRONT_TILE_INTERIOR)
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
+from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 
 #: Prefix for the synthesised skewed iterators.
 SKEW_T_PREFIX = '_skew_t_'
@@ -1695,6 +1696,7 @@ class WavefrontSkew(ppl.Pass):
         variable: ``LoopToMap`` names the map after the body, not after the axis."""
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
         itervar = inner.loop_variable
+        privatize_body_reductions(inner)
         ParallelizeLoops().parallelize_loop(sdfg, inner, proven=True)
         for node, _ in outer.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
@@ -1725,6 +1727,23 @@ class WavefrontSkew(ppl.Pass):
         tag = zlib.crc32(parts.encode()) & 0xfffffff
         pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
         tutil.add_abort_guard(pre, f'_skew_guard_{tag:x}', parts)
+
+
+def privatize_body_reductions(loop: LoopRegion) -> int:
+    """Fold every top-level WCR map of a multi-block ``loop`` body into a transient scalar.
+
+    Such a body is lifted into a NestedSDFG that stays nested, and propagation copies an inner
+    ``MapExit -wcr-> A`` onto the NestedSDFG boundary. Seeding the scalar from ``A`` and writing it
+    back plain (``privatize_reduction_accumulator``) keeps the reduction inside the body.
+    """
+    if len(loop.nodes()) == 1 and isinstance(loop.start_block, SDFGState):
+        return 0
+    count = 0
+    for state in list(loop.all_states()):
+        for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
+            for edge in list(state.in_edges(map_exit)):
+                count += privatize_reduction_accumulator(state, map_exit, edge)
+    return count
 
 
 def bound_expr(terms: List[object], subs: Dict[str, object], fn: str) -> str:
