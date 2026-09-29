@@ -117,14 +117,14 @@ class Vectorization(transformation.SingleStateTransformation):
         if self.preamble is not None:
             create_preamble = self.preamble
         else:
-            create_preamble = not ((dim_from % vector_size == 0) == True or dim_from == 0)
+            create_preamble = not symbolic.is_multiple(dim_from, vector_size)
         if self.postamble is not None:
             create_postamble = self.postamble
         else:
             if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = (((dim_to.approx + 1) % vector_size == 0) == False)
+                create_postamble = not symbolic.is_multiple(dim_to.approx + 1, vector_size)
             else:
-                create_postamble = (((dim_to + 1) % vector_size == 0) == False)
+                create_postamble = not symbolic.is_multiple(dim_to + 1, vector_size)
 
         # Determine new range for vectorized map
         if self.strided_map:

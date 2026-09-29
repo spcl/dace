@@ -8,6 +8,7 @@ from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
+from ordered_set import OrderedSet
 
 ScopeDictType = Dict[nd.Node, List[nd.Node]]
 
@@ -62,16 +63,16 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubg
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()
     if include_exit:
-        children_nodes = set(node_to_children[entry_node])
+        children_nodes = OrderedSet(node_to_children[entry_node])
     else:
-        children_nodes = set(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
+        children_nodes = OrderedSet(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
     map_nodes = [node for node in children_nodes if isinstance(node, nd.EntryNode)]
     while len(map_nodes) > 0:
         next_map_nodes = []
         # Traverse children map nodes
         for map_node in map_nodes:
             # Get child map subgraph (1 level)
-            more_nodes = set(node_to_children[map_node])
+            more_nodes = OrderedSet(node_to_children[map_node])
             # Unionize children_nodes with new nodes
             children_nodes |= more_nodes
             # Add nodes of the next level to next_map_nodes
@@ -150,11 +151,12 @@ def scope_contains_scope(sdict: ScopeDictType, node: nd.Node, other_node: nd.Nod
 
 
 def _scope_path(sdict: ScopeDictType, scope: nd.Node) -> List[nd.Node]:
+    """Returns the scopes from ``scope`` (inclusive) up to the outermost one that contains it."""
     result = []
     curnode = scope
     while curnode is not None:
-        curnode = sdict[scope]
         result.append(curnode)
+        curnode = sdict[curnode]
     return result
 
 
@@ -171,18 +173,12 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: nd.Node, scope_b: nd.Node
     if scope_a is scope_b:
         return scope_a
 
-    # Scope B is in scope A
-    if scope_contains_scope(sdict, scope_a, scope_b):
-        return scope_a
-    # Scope A is in scope B
-    if scope_contains_scope(sdict, scope_b, scope_a):
-        return scope_b
-
-    # Disjoint scopes: prepare two paths and traverse in reversed fashion
+    # Walk both paths from the outermost scope inwards: the last scope they share is the innermost common one, which
+    # is also one of the scopes if it contains the other
     spath_a = _scope_path(sdict, scope_a)
     spath_b = _scope_path(sdict, scope_b)
     common = None
-    for spa, spb in reversed(zip(spath_a, spath_b)):
+    for spa, spb in zip(reversed(spath_a), reversed(spath_b)):
         if spa is spb:
             common = spa
         else:
@@ -304,7 +300,8 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 return tuple(int(s) for s in Config.get('compiler', 'cuda', 'default_block_size').split(','))
             elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 # Dynamic thread-block map, use configured value
-                return tuple(int(s) for s in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(','))
+                from dace.transformation import gpu_helpers  # Avoid import cycle (transformations import the SDFG)
+                return gpu_helpers.dynamic_map_block_dims()
 
             scope = sdict[scope]
         # Traverse up nested SDFGs

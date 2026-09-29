@@ -7,7 +7,7 @@
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::to_string
-#include <unordered_map>
+#include <optional>
 
 namespace dace {
 
@@ -19,12 +19,7 @@ static void CheckCusparseError(cusparseStatus_t const& status) {
   }
 }
 
-static cusparseHandle_t CreateCusparseHandle(int device) {
-  if (device >= 0) {
-    if (cudaSetDevice(device) != cudaSuccess) {
-      throw std::runtime_error("Failed to set CUDA device.");
-    }
-  }
+static cusparseHandle_t CreateCusparseHandle() {
   cusparseHandle_t handle;
   CheckCusparseError(cusparseCreate(&handle));
   return handle;
@@ -32,34 +27,29 @@ static cusparseHandle_t CreateCusparseHandle(int device) {
 
 /**
  * CUsparse wrapper class for DaCe. Once constructed, the class can be used to
- * get or create a cuSPARSE library handle (cusparseHandle_t) for a given
- * GPU ID. The class is constructed when the cuSPARSE DaCe library is used.
+ * get or create the cuSPARSE library handle (cusparseHandle_t). One per
+ * process, like the GPU itself. The class is constructed when the cuSPARSE DaCe library is used.
  **/
 class CusparseHandle {
  public:
   CusparseHandle() = default;
   CusparseHandle(CusparseHandle const&) = delete;
 
-  cusparseHandle_t& Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new cusparse handle if the specified key does not
-      // yet exist
-      auto handle = CreateCusparseHandle(device);
-      f = handles_.emplace(device, handle).first;
+  cusparseHandle_t& Get() {
+    if (!handle_) {
+      auto handle = CreateCusparseHandle();
+      handle_ = handle;
     }
-    return f->second;
+    return *handle_;
   }
 
   ~CusparseHandle() {
-    for (auto& h : handles_) {
-      CheckCusparseError(cusparseDestroy(h.second));
-    }
+    if (handle_) CheckCusparseError(cusparseDestroy(*handle_));
   }
 
   CusparseHandle& operator=(CusparseHandle const&) = delete;
 
-  std::unordered_map<int, cusparseHandle_t> handles_;
+  std::optional<cusparseHandle_t> handle_;
 };
 
 }  // namespace sparse

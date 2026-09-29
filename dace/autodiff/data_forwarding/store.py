@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 import sympy as sp
 
 # DaCe imports
@@ -13,6 +13,9 @@ from dace.sdfg.state import LoopRegion
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
 import dace.autodiff.utils as ad_utils
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
 def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
@@ -596,7 +599,7 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
     return src_candidates[0]
 
 
-def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generator', s: sp.Symbol,
+def _get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s: sp.Symbol,
                                       loops: List[LoopRegion]) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
@@ -610,11 +613,12 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
         loop_index = str(list(loop_indices)[0])
     elif isinstance(s, str):
-        # Convert the string to a symbolic expression and extract free symbols
+        # Convert the string to a symbolic expression and extract free symbols. Not sympify: a
+        # subset dimension spells integer division as ``//``, which sympify reads as a rational.
         try:
-            expr = sp.sympify(s)
-        except (sp.SympifyError, TypeError, ValueError) as e:
-            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}")
+            expr = symbolic.pystr_to_symbolic(s)
+        except (sp.SympifyError, SyntaxError, TypeError, ValueError) as e:
+            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}") from e
 
         # We don't want to match global SDFG symbols
         loop_indices = {symb for symb in expr.free_symbols if str(symb) not in bwd_generator.sdfg.free_symbols}
@@ -638,7 +642,7 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
 
                 # Check if the loop variable has a negative coefficient
                 # by extracting the coefficient from the affine expression
-                s_expr = sp.sympify(s) if isinstance(s, str) else s
+                s_expr = symbolic.pystr_to_symbolic(s) if isinstance(s, str) else s
                 # Find the actual symbol in the expression that matches loop_index by name
                 loop_symbol = None
                 for sym in s_expr.free_symbols:
