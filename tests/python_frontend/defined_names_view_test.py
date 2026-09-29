@@ -20,6 +20,8 @@ def make_visitor() -> ProgramVisitor:
     sdfg.add_scalar('s', dace.float64)
     sdfg.add_array('shadowed', [4], dace.float64)
     sdfg.add_symbol('N', dace.int64)
+    member = dace.data.Scalar(dace.float64)
+    sdfg.add_datadesc('st', dace.data.Structure({'m': member, 'n': dace.data.Scalar(dace.float64)}, name='st'))
 
     scope_arrays = {'shadowed': dace.data.Array(dace.float32, [7]), 'outer': dace.data.Array(dace.float32, [3])}
 
@@ -43,7 +45,8 @@ def make_visitor() -> ProgramVisitor:
     # ``contested`` is deliberately in BOTH tables, resolving to a DIFFERENT descriptor in each:
     # that is the only shape that pins which table wins, and without it an inverted walk order
     # passes every assertion here (verified by mutation).
-    visitor.variables = {'var_to_array': 'A', 'var_to_symbol': 'N', 'A': 's', 'contested': 'A'}
+    # ``to_member`` makes the merge copy the struct member ``st.m`` under its own dotted name.
+    visitor.variables = {'var_to_array': 'A', 'var_to_symbol': 'N', 'A': 's', 'contested': 'A', 'to_member': 'st.m'}
     return visitor
 
 
@@ -60,7 +63,10 @@ def test_the_view_and_the_merged_dict_agree_entry_for_entry():
         assert view[key] is value, f'{key} resolves to a different descriptor through the view'
 
     # `g_plain` is a closure global that is not a symbol, so it is not a defined NAME.
-    for absent in ('nothing_defined_by_this_name', 'g_plain'):
+    # A struct member no variable targets resolves through ``sdfg.arrays`` but is not a defined name.
+    assert 'st.n' in view.pv.sdfg.arrays
+    assert view['st.m'] is view.pv.sdfg.arrays['st'].members['m']
+    for absent in ('nothing_defined_by_this_name', 'g_plain', 'st.n'):
         assert absent not in view
         assert absent not in merged
         with pytest.raises(KeyError):

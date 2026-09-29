@@ -1216,20 +1216,15 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+#: What ``DefinedNames.lookup`` returns for a name that is not defined.
+MISSING = object()
+
+
 class DefinedNames(collections.abc.Mapping):
-    """The names a :class:`ProgramVisitor` can resolve: a VIEW over its tables, not a copy of them.
+    """The names a :class:`ProgramVisitor` can resolve, as a view over its tables.
 
-    The frontend consults this once per name it resolves and once per name it creates, and the
-    original property answered by merging every table into a fresh dict on each access -- so one
-    lookup cost the size of the whole program, and a parse cost that squared. Measured on one
-    ``warpx_field_gather`` parse: 12239 rebuilds, 50 M descriptor-dict operations, the single
-    largest cost in the parse.
-
-    None of that merge needed materialising: 30 of the 47 uses are one membership test or one
-    lookup. :meth:`__getitem__` walks the same sources in REVERSE precedence -- the merged dict let
-    the last ``update`` win, so the source checked first here is the one merged last there -- and
-    stops at the first hit. Only iteration, which the ``{**visitor.defined}`` sites need, still
-    builds the dict, in :meth:`materialize`, which stays the one place the merge is written down.
+    A lookup walks the sources in reverse merge order and stops at the first hit, so it never
+    builds the merged dict; :meth:`materialize` builds it for the sites that spread every name.
     """
 
     __slots__ = ('pv', )
@@ -1237,66 +1232,40 @@ class DefinedNames(collections.abc.Mapping):
     def __init__(self, pv: 'ProgramVisitor') -> None:
         self.pv = pv
 
-    def __getitem__(self, name: str) -> Any:
+    def lookup(self, name: str) -> Any:
         pv = self.pv
-        sdfg = pv.sdfg
-        arrays = sdfg.arrays
-
-        # An MPI communicator out of the closure. Merged last, so it answers first.
-        if preprocessing.mpi4py_is_usable():
-            from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
-            value = pv.globals.get(name)
-            if isinstance(value, MPI.Comm):
-                return value
-
-        if name in arrays:
-            return arrays[name]
-
-        sdfg_name = pv.variables.get(name)
-        if sdfg_name is not None:
-            symbols = sdfg.symbols
-            if sdfg_name in symbols:
-                return symbols[sdfg_name]
-            if sdfg_name in arrays:
-                return arrays[sdfg_name]
-
-        scope_name = pv.scope_vars.get(name)
-        if scope_name is not None:
-            if scope_name in pv.scope_arrays:
-                return pv.scope_arrays[scope_name]
-            if scope_name in arrays:
-                return arrays[scope_name]
-
+        arrays = pv.sdfg.arrays
         value = pv.globals.get(name)
-        if isinstance(value, symbolic.symbol):
-            return value
-
-        raise KeyError(name)
-
-    def __contains__(self, name: str) -> bool:
-        # Spelled out rather than left to Mapping, whose default answers a miss by raising and
-        # catching KeyError. A third of the uses here are membership tests and a miss is the common
-        # answer, so that default would put an exception on the hot path. Every branch below mirrors
-        # one in __getitem__: a name is "in" exactly when a lookup would resolve it, and a variable
-        # whose target is neither an array nor a symbol resolves to nothing.
-        pv = self.pv
-        sdfg = pv.sdfg
-        arrays = sdfg.arrays
-        if name in arrays:
-            return True
-        sdfg_name = pv.variables.get(name)
-        if sdfg_name is not None and (sdfg_name in sdfg.symbols or sdfg_name in arrays):
-            return True
-        scope_name = pv.scope_vars.get(name)
-        if scope_name is not None and (scope_name in pv.scope_arrays or scope_name in arrays):
-            return True
-        value = pv.globals.get(name)
-        if isinstance(value, symbolic.symbol):
-            return True
         if value is not None and preprocessing.mpi4py_is_usable():
             from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
-            return isinstance(value, MPI.Comm)
-        return False
+            if isinstance(value, MPI.Comm):
+                return value
+        # `get`, not `in`: the NestedDict's `in` also resolves struct members, which the merge does not copy.
+        desc = arrays.get(name)
+        if desc is not None:
+            return desc
+        sdfg_name = pv.variables.get(name)
+        if sdfg_name in pv.sdfg.symbols:
+            return pv.sdfg.symbols[sdfg_name]
+        if '.' in name and name in arrays and name in pv.variables.values():
+            return arrays[name]
+        if sdfg_name in arrays:
+            return arrays[sdfg_name]
+        scope_name = pv.scope_vars.get(name)
+        if scope_name in pv.scope_arrays:
+            return pv.scope_arrays[scope_name]
+        if scope_name in arrays:
+            return arrays[scope_name]
+        return value if isinstance(value, symbolic.symbol) else MISSING
+
+    def __getitem__(self, name: str) -> Any:
+        value = self.lookup(name)
+        if value is MISSING:
+            raise KeyError(name)
+        return value
+
+    def __contains__(self, name: str) -> bool:
+        return self.lookup(name) is not MISSING
 
     def __iter__(self) -> Iterable[str]:
         return iter(self.materialize())
@@ -1304,40 +1273,8 @@ class DefinedNames(collections.abc.Mapping):
     def __len__(self) -> int:
         return len(self.materialize())
 
-    def keys(self):
-        # `{**visitor.defined}` reads keys and then subscripts. Handing back the materialised dict's
-        # keys makes that one merge plus N constant-time lookups, rather than N merges.
-        return self.materialize().keys()
-
     def materialize(self) -> Dict[str, Any]:
-        """The merged dict. Precedence is source order: a later source overwrites an earlier one."""
-        pv = self.pv
-        sdfg = pv.sdfg
-        arrays = sdfg.arrays
-        symbols = sdfg.symbols
-        variables = pv.variables
-        scope_arrays = pv.scope_arrays
-
-        result = {}
-        result.update({k: v for k, v in pv.globals.items() if isinstance(v, symbolic.symbol)})
-        result.update({k: arrays[v] for k, v in pv.scope_vars.items() if v in arrays})
-        result.update({k: scope_arrays[v] for k, v in pv.scope_vars.items() if v in scope_arrays})
-        result.update({k: arrays[v] for k, v in variables.items() if v in arrays})
-        result.update({v: arrays[v] for _, v in variables.items() if v in arrays})
-        # TODO: Is there a case of a variable-symbol?
-        result.update({k: symbols[v] for k, v in variables.items() if v in symbols})
-
-        # Add SDFG arrays, in case a replacement added a new output. Process grids are data
-        # descriptors, so this carries them as well.
-        result.update(arrays)
-
-        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
-        # ImportError, so the availability question belongs in one place (see the helper's docstring).
-        if preprocessing.mpi4py_is_usable():
-            from mpi4py import MPI
-            result.update({k: v for k, v in pv.globals.items() if isinstance(v, MPI.Comm)})
-
-        return result
+        return self.pv.defined_dict()
 
 
 def transient_python_renames(arrays: Dict[str, data.Data], variables: Dict[str, str]) -> List[Dict[str, str]]:
@@ -1650,8 +1587,30 @@ class ProgramVisitor(ExtNodeVisitor):
 
     @property
     def defined(self) -> DefinedNames:
-        """Every name this visitor can resolve. A view -- see :class:`DefinedNames`."""
         return DefinedNames(self)
+
+    def defined_dict(self) -> Dict[str, Any]:
+        """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
+        # Check parent SDFG arrays first
+        result = {}
+        result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
+        result.update({k: self.sdfg.arrays[v] for k, v in self.scope_vars.items() if v in self.sdfg.arrays})
+        result.update({k: self.scope_arrays[v] for k, v in self.scope_vars.items() if v in self.scope_arrays})
+        result.update({k: self.sdfg.arrays[v] for k, v in self.variables.items() if v in self.sdfg.arrays})
+        result.update({v: self.sdfg.arrays[v] for v in self.variables.values() if v in self.sdfg.arrays})
+        # TODO: Is there a case of a variable-symbol?
+        result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
+
+        # Add SDFG arrays, in case a replacement added a new output
+        result.update(self.sdfg.arrays)
+
+        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
+        # ImportError, so the availability question belongs in one place (see the helper's docstring).
+        if preprocessing.mpi4py_is_usable():
+            from mpi4py import MPI
+            result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
+
+        return result
 
     def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         """

@@ -16,7 +16,8 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
+from dace.sdfg.state import (BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock,
+                             ConditionalBlock)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
@@ -1113,6 +1114,69 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optio
         region = region.parent_graph
 
 
+def exhaustively_assigned(block: ConditionalBlock) -> Set[str]:
+    """The symbols every branch of ``block`` assigns; empty unless it has an else arm."""
+    if not any(c is None for c, body in block.branches):
+        return set()
+    per_branch = [{
+        k
+        for inner in body.all_control_flow_blocks()
+        for e in inner.parent_graph.out_edges(inner)
+        for k in e.data.assignments
+    } for cond, body in block.branches]
+    return set.intersection(*per_branch) if per_branch else set()
+
+
+def symbols_assigned_before_use(loop: LoopRegion,
+                                itervar: str,
+                                ctx: Optional['LiftContext'] = None,
+                                blocks: Optional[List[ControlFlowBlock]] = None,
+                                refusal: Optional[List[str]] = None) -> Optional[Set[str]]:
+    """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it.
+
+    :param blocks: the body in topological order, if the caller has it.
+    :param refusal: receives why the loop carries a symbol, when it does.
+    """
+    symbols_that_may_be_used: Set[str] = {itervar}
+    used_before_assignment: Set[str] = set()
+    if blocks is None:
+        blocks = cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False)
+    # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
+    for block in blocks:
+        # A conditional precedes its branches in the order but its out-edges run after them, so a symbol
+        # every arm assigns is defined by then (the CloudSC nblks loop).
+        if isinstance(block, ConditionalBlock):
+            symbols_that_may_be_used |= exhaustively_assigned(block)
+        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
+        try:
+            block_reads = {str(s) for s in block_free_symbols(block, ctx)}
+        except Exception:
+            block_reads = set()
+        used_before_assignment |= block_reads - symbols_that_may_be_used
+        for e in block.parent_graph.out_edges(block):
+            used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used
+            assigned_symbols = set()
+            for k, v in e.data.assignments.items():
+                try:
+                    fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
+                except AttributeError:
+                    fsyms = set()
+                if k in fsyms and k not in symbols_that_may_be_used:
+                    # ``k = f(k)`` before any reset this iteration reads the previous iteration's ``k``.
+                    if refusal is not None:
+                        refusal.append(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
+                    return None
+                if k not in fsyms:
+                    assigned_symbols.add(k)
+            if assigned_symbols & used_before_assignment:
+                if refusal is not None:
+                    refusal.append("carried symbol dependency - "
+                                   f"{assigned_symbols & used_before_assignment} read before being assigned")
+                return None
+            symbols_that_may_be_used |= e.data.assignments.keys()
+    return symbols_that_may_be_used
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -1219,8 +1283,6 @@ class LoopToMap(xf.MultiStateTransformation):
         # a stencil's probes -- has nothing to check, so skip the sort and leave
         # ``symbols_that_may_be_used`` at its initial ``{itervar}`` (identical to what the loop below
         # would produce with no assignments).
-        symbols_that_may_be_used: Set[str] = {itervar}
-        used_before_assignment: Set[str] = set()
         facts = None if ctx is None else loop_facts_of(ctx.loop_facts, self.loop)
         # Every accept above is behind us, so a refusal re-derived from the current graph is the verdict.
         # A sweep re-probes the loops enclosing each lift; they stay refused on the same write or read,
@@ -1239,64 +1301,13 @@ class LoopToMap(xf.MultiStateTransformation):
                     cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
             if facts is not None:
                 facts.block_order = in_order_loop_blocks
+        symbols_that_may_be_used: Set[str] = {itervar}
         if in_order_loop_blocks is not None:
-            for block in in_order_loop_blocks:
-                # ``blockorder_topological_sort`` emits a ConditionalBlock BEFORE the blocks nested in
-                # its branches, yet the conditional's own out-edges execute AFTER those branches. A
-                # symbol assigned on EVERY branch of an exhaustive conditional (one with an else arm)
-                # is therefore already defined once the conditional exits, so count it as assigned
-                # before this block's reads/out-edges are examined. Without this, a loop-local scalar
-                # set in both arms of an if/else and read afterwards is misreported as a loop-carried
-                # dependency, which refuses embarrassingly-parallel loops (the CloudSC nblks loop).
-                if isinstance(block, ConditionalBlock) and any(c is None for c, _ in block.branches):
-                    per_branch = []
-                    for _cond, body in block.branches:
-                        assigned_in_branch = set()
-                        for inner in body.all_control_flow_blocks():
-                            for ie in inner.parent_graph.out_edges(inner):
-                                assigned_in_branch |= set(ie.data.assignments.keys())
-                        per_branch.append(assigned_in_branch)
-                    if per_branch:
-                        symbols_that_may_be_used |= set.intersection(*per_branch)
-
-                # A symbol read in the block's own dataflow (e.g. a memlet subset ``b[im]``) is read
-                # before any symbol the block assigns on its out-edges; if the loop later reassigns it,
-                # it is loop-carried. The per-edge ``read_symbols()`` below only sees interstate-edge
-                # reads, so fold in these in-state reads.
-                try:
-                    block_reads = {str(s) for s in block_free_symbols(block, ctx)}
-                except Exception:
-                    block_reads = set()
-                used_before_assignment |= (block_reads - symbols_that_may_be_used)
-                for e in block.parent_graph.out_edges(block):
-                    # Collect read-before-assigned symbols (states are in order; see
-                    # blockorder_topological_sort above).
-                    read_symbols = edge_read_symbols(e.data, ctx) - symbols_that_may_be_used
-                    used_before_assignment |= read_symbols
-                    # If symbol was read before it is assigned, the loop cannot be parallel
-                    assigned_symbols = set()
-                    for k, v in e.data.assignments.items():
-                        try:
-                            fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
-                        except AttributeError:
-                            fsyms = set()
-                        if k in fsyms and k not in symbols_that_may_be_used:
-                            # Self-recurrent assignment (k = f(k), e.g. k = k + inc) whose ``k`` has
-                            # NOT been (re)assigned earlier this iteration is a loop-carried recurrence:
-                            # each iteration reads the previous value, so the loop cannot be
-                            # parallelized. Affine induction variables are substituted to a closed form
-                            # upstream, so a self-recurrence that survives to here is a genuine carried
-                            # dependency. If ``k`` was already assigned earlier in the iteration (e.g.
-                            # reset ``k = 0`` then ``k = k + 1``) it is a loop-local counter, not carried,
-                            # so it is handled by the read-before-assignment check below instead.
-                            return refuse(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
-                        if k not in fsyms:
-                            assigned_symbols.add(k)
-                    if assigned_symbols & used_before_assignment:
-                        return refuse("carried symbol dependency - "
-                                      f"{assigned_symbols & used_before_assignment} read before being assigned")
-
-                    symbols_that_may_be_used |= e.data.assignments.keys()
+            refusal: List[str] = []
+            symbols_that_may_be_used = symbols_assigned_before_use(self.loop, itervar, ctx, in_order_loop_blocks,
+                                                                   refusal)
+            if symbols_that_may_be_used is None:
+                return refuse(refusal[0])
 
         # Which containers the analysis below must consider: a loop data node is only interesting
         # when it is ALSO live outside the loop.
