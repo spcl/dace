@@ -575,7 +575,8 @@ class TypedConstant(sympy.AtomicExpr):
         return self
 
     def _hashable_content(self):
-        return (self.value, self.dtype)
+        # ``ctype``, not the typeclass: SymPy orders terms by comparing these tuples element-wise.
+        return (self.value, self.dtype.ctype)
 
     def _sympystr(self, printer):
         if hasattr(printer, '_print_TypedConstant'):

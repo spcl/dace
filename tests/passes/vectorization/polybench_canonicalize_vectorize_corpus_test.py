@@ -46,7 +46,6 @@ UNTILED_KERNELS = frozenset({
     "correlation",
     "doitgen",
     "k3mm",
-    "lu",
     "syr2k",
     "syrk",
     "trisolv",
