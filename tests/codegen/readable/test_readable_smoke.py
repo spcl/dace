@@ -7,7 +7,6 @@ inputs; the outputs must be bit-exact.
 """
 import copy
 import numpy as np
-import pytest
 import dace
 from dace.config import Config
 

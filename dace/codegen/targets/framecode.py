@@ -18,7 +18,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
+from dace.sdfg.state import (ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 

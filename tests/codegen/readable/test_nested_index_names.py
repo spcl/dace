@@ -10,14 +10,13 @@ so an un-inlined nested-SDFG function does not re-emit an identical helper into 
 """
 import re
 
-import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
 
-from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation, generated_code, run_isolated, assert_outputs_equivalent
+from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation
 
 N = dace.symbol("N")
 

@@ -814,8 +814,8 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage == dtypes.StorageType.Register and
                   (symbolic.issymbolic(arrsize, sdfg.constants) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
-            callsite_stream.write(self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg, state_id,
-                                  node)
+            callsite_stream.write(self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg,
+                                  state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
