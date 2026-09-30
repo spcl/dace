@@ -982,7 +982,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
-        outside_symbols = sdfg.arglist() if is_top_level else set()
+        # The arguments of the top-level SDFG were computed on construction and are those that the generated function
+        # signature and the targets use, so they are reused instead of traversing the whole SDFG again
+        outside_symbols = self.arglist if is_top_level else set()
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
@@ -1098,29 +1100,34 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
-        gotos = re.findall(r'goto (.*?);', generated_code)
-        goto_ctr = collections.Counter(gotos)
-        clean_code = ''
+        # NOTE: The lines are collected in a list and joined once, since repeatedly appending to (and truncating) one
+        # string copies the code generated so far for every line.
+        goto_ctr = collections.Counter(re.findall(r'goto (.*?);', generated_code))
+        empty_statement = re.compile(r'^\s*;\s*')
+        label_line = re.compile(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$')
+        clean_lines = []
         last_line = ''
         for line in generated_code.split('\n'):
             # Empty line
             if not line.strip():
                 continue
             # Empty line with semicolon
-            if re.match(r'^\s*;\s*', line):
+            if empty_statement.match(line):
                 continue
             # Label that might be unused
-            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            label = label_line.findall(line)
             if len(label) > 0:
-                if label[0] not in gotos:
+                if label[0] not in goto_ctr:
                     last_line = ''
                     continue
                 if f'goto {label[0]};' in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
-                    clean_code = clean_code[:-len(last_line) - 1]
+                    # ``last_line`` is non-empty only if it is the last line kept
+                    clean_lines.pop()
                     last_line = ''
                     continue
-            clean_code += line + '\n'
+            clean_lines.append(line)
             last_line = line
+        clean_code = ''.join(line + '\n' for line in clean_lines)
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
