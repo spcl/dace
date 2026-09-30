@@ -2882,8 +2882,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         else:
             # Propagate new CFG list to all children
             all_cfgs = list(self.all_control_flow_regions(recursive=True))
-            for g in all_cfgs:
+            seen = set()
+            for i, g in enumerate(all_cfgs):
                 g._cfg_list = all_cfgs
+                # Also record the position of each CFG (its ``cfg_id``, i.e., its first occurrence in the list)
+                if id(g) not in seen:
+                    seen.add(id(g))
+                    g._cfg_id_cache = i
         return self._cfg_list
 
     def update_cfg_list(self, cfg_list):
