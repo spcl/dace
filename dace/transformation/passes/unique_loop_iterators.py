@@ -21,7 +21,6 @@ from typing import List, Optional, Set, Union
 import sympy
 
 import dace
-from dace import symbolic
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -258,16 +257,7 @@ class UniqueLoopIterators(ppl.Pass):
                 # names (from fission) still fall through to be disambiguated.
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{self._next_id}"
-            # The rename parses ``new_name`` from strings; give it the iterator's dtype, and let an
-            # enclosing authority (canonicalize's) keep it for every later parse.
-            renamed_dtype = {
-                new_name: dtype
-                for name, dtype in cfg.new_symbols(dict(cfg.sdfg.symbols)).items() if name == old_name
-            }
-            for dtype in renamed_dtype.values():
-                symbolic.declare_symbol_dtype(new_name, dtype)
-            with symbolic.serialization_symbol_dtypes(renamed_dtype, inherit=True):
-                self._rename_one_loop_var(cfg, old_name, new_name)
+            self._rename_one_loop_var(cfg, old_name, new_name)
             renamed.add(new_name)
 
             if self.assign_loop_iterator_post_value:

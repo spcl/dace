@@ -848,30 +848,5 @@ def test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value
     assert sdfg.free_symbols == {'N'} and C[0] == 3
 
 
-def test_renamed_iterator_keeps_the_loop_iterator_dtype():
-    """The rename parses the new name from strings; it must carry the iterator's dtype everywhere."""
-    sdfg = dace.SDFG('renamed_iterator_dtype')
-    sdfg.add_array('a', [8], dace.float64)
-    loop = LoopRegion('walk', 'i < 8', 'i', 'i = 0', 'i = i + 1')
-    sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    tasklet = body.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in + 1.0')
-    body.add_edge(body.add_read('a'), None, tasklet, '__in', dace.Memlet('a[i]'))
-    body.add_edge(tasklet, '__out', body.add_write('a'), None, dace.Memlet('a[i]'))
-    iterator_dtype = loop.new_symbols(dict(sdfg.symbols))['i']
-
-    UniqueLoopIterators().apply_pass(sdfg, {})
-
-    new_name = loop.loop_variable
-    dtypes = {
-        sym.dtype
-        for e in body.edges()
-        for rng in e.data.subset.ndrange()
-        for expr in rng if dace.symbolic.issymbolic(expr) for sym in expr.free_symbols if sym.name == new_name
-    }
-    assert dtypes == {iterator_dtype}, dtypes
-    sdfg.validate()
-
-
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
