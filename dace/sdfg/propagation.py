@@ -428,12 +428,8 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        # By name: a memlet and a re-parsed parameter may carry one name at two dtypes.
-        defined_names = {str(v) for v in defined_vars}
-        if ({str(s)
-             for s in used_symbols} & {str(p)
-                                       for p in self.params}
-                and any(str(s) not in defined_names for s in node_range.free_symbols)):
+        if (used_symbols & set(self.params)
+                and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
@@ -466,9 +462,11 @@ class GenericSMemlet(SeparableMemletPattern):
             pos_lastindex = node_re
             neg_lastindex = node_rb
             if node_rs != 1:
-                # Built on the symbols themselves: a string round trip re-parses them at the default dtype.
-                rb_sym, re_sym, rs_sym = (symbolic.pystr_to_symbolic(x) for x in (node_rb, node_re, node_rs))
-                pos_lastindex = rb_sym + symbolic.int_floor(re_sym - rb_sym, rs_sym) * rs_sym
+                pos_lastindex = symbolic.pystr_to_symbolic(
+                    '%s + int_floor(%s - %s, %s) * %s' %
+                    (symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(node_re, cpp_mode=False),
+                     symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(
+                         node_rs, cpp_mode=False), symbolic.symstr(node_rs, cpp_mode=False)))
                 neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
