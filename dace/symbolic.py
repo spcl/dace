@@ -27,8 +27,6 @@ class _SymbolDTypeContext(threading.local):
 
         # The lowest level in the stack is reserved for "no stack active".
         self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
-        # One hashable key per level, so a parse cache keyed on it never returns another level's symbols.
-        self.key_stack: List[tuple] = [()]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
@@ -41,7 +39,6 @@ class _SymbolDTypeContext(threading.local):
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
         })
         self.ctx_stack.append(new_stack_level)
-        self.key_stack.append(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items())))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -49,15 +46,7 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
-        self.key_stack.pop()
         return self
-
-    def declare(self, name: str, dtype: 'dtypes.typeclass') -> None:
-        """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
-        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
-            level = {**self.ctx_stack[-1], name: dtype}
-            self.ctx_stack[-1] = types.MappingProxyType(level)
-            self.key_stack[-1] = tuple(sorted((n, dt.ctype) for n, dt in level.items()))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -76,6 +65,11 @@ class _SymbolDTypeContext(threading.local):
         """
         return type(dtype) is dtypes.typeclass and dtype.type is not None
 
+    def declare(self, name: str, dtype: 'dtypes.typeclass') -> None:
+        """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
+        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
+            self.ctx_stack[-1] = types.MappingProxyType({**self.ctx_stack[-1], name: dtype})
+
 
 # Authoritative dtype of the symbols an enclosing scope declares while an SDFG
 # element is being serialized (name -> typeclass). ``DaceSympySerializer._print_Symbol``
@@ -85,6 +79,21 @@ class _SymbolDTypeContext(threading.local):
 # only ever *overrides*: a name it does not declare keeps the symbol's own dtype, so a
 # bare ``serialize_symbolic`` call (empty map) behaves exactly as before.
 _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
+
+#: Parse-cache key per authority level, holding the level so its id is not reused while cached.
+_AUTHORITY_KEYS: Dict[int, Tuple[Any, tuple]] = {}
+
+
+def authority_cache_key() -> tuple:
+    """Hashable key of the active symbol-dtype authority, so a parse cache never returns another level's symbols."""
+    level = _SERIALIZATION_SYMBOL_DTYPES.get()
+    cached = _AUTHORITY_KEYS.get(id(level))
+    if cached is None or cached[0] is not level:
+        cached = (level, tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+        _AUTHORITY_KEYS[id(level)] = cached
+        if len(_AUTHORITY_KEYS) > 256:
+            del _AUTHORITY_KEYS[next(iter(_AUTHORITY_KEYS))]
+    return cached[1]
 
 
 def declare_symbol_dtype(name: str, dtype: 'dtypes.typeclass') -> None:
@@ -195,8 +204,10 @@ class symbol(sympy.Symbol):
         return self
 
     def _hashable_content(self):
-        # SymPy's caches key on this; without the dtype they hand back an expression built around a same-named
-        # symbol of another dtype. ``ctype``, not the typeclass: SymPy orders these tuples, typeclasses do not.
+        # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
+        # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
+        # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
+        # comparing these tuples element-wise, and typeclasses define equality but no ordering.
         return super()._hashable_content() + (self.dtype.ctype, )
 
     def __getstate__(self):
@@ -2373,7 +2384,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy.simplify(expr) if simplify is True else expr
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
-        return _pystr_to_symbolic_cached(expr, simplify, _SERIALIZATION_SYMBOL_DTYPES.key_stack[-1])
+        return _pystr_to_symbolic_cached(expr, simplify, authority_cache_key())
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
