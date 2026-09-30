@@ -389,36 +389,36 @@ a read and a write). Several fields describe the data being moved:
 
 There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
 
-**Memlet schedules**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet,
-library node, or nested SDFG, or a copy between two access nodes) carries a ``schedule`` property, a
-:class:`~dace.sdfg.memlet_schedule.MemletSchedule`, that describes *how its addressing is realized* in generated code.
-The schedule is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
+**Memlet access policies**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet,
+library node, or nested SDFG, or a copy between two access nodes) carries a ``access_policy`` property, a
+:class:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy`, that describes *how its addressing is realized* in generated code.
+The policy is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
 constructs (symbols, loop statements, reference containers) in the code-generation window by
-:class:`~dace.transformation.passes.memlet_schedules.LowerMemletSchedules`, so that code generation itself knows
-nothing about schedules. Two kinds exist today:
+:class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies`, so that code generation itself knows
+nothing about policies. Two kinds exist today:
 
-  * :class:`~dace.sdfg.memlet_schedule.CopyOnAccess` (the default): the full offset expression is evaluated at every
+  * :class:`~dace.sdfg.memlet_access_policy.CopyOnAccess` (the default): the full offset expression is evaluated at every
     access and data moves at the access (or through the copy library node inserted for access-node-to-access-node
-    copies). This is the behavior every SDFG had before schedules existed; it is not serialized.
-  * :class:`~dace.sdfg.memlet_schedule.LoopCursor`: the memlet's element offset is affine in the induction variable of
+    copies). This is the behavior every SDFG had before access policies existed; it is not serialized.
+  * :class:`~dace.sdfg.memlet_access_policy.LoopCursor`: the memlet's element offset is affine in the induction variable of
     an enclosing :class:`~dace.sdfg.state.LoopRegion`. The record names the loop and states the number of elements the
     address advances per iteration (``step``), the loop-invariant part of the base offset (``base_invariant``), the
     part that depends on thread/lane map parameters (``lane_part``), and optionally the cursor's integer type
     (``cursor_type``, a DaCe data type; ``None`` picks int32 when the array extent provably fits, else int64).
-    Schedules of this kind can be attached by hand, by a tuner, or by the
-    :class:`~dace.transformation.passes.memlet_schedules.ScheduleLoopCursors` analysis pass:
+    Policies of this kind can be attached by hand, by a tuner, or by the
+    :class:`~dace.transformation.passes.memlet_access_policies.AssignLoopCursors` analysis pass:
 
 .. code-block:: python
 
-  # Attach loop-cursor schedules to every affine leaf memlet in every loop (default scope: only GPU kernels)
-  ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
+  # Attach loop-cursor policies to every affine leaf memlet in every loop (default scope: only GPU kernels)
+  AssignLoopCursors(scope='all').apply_pass(sdfg, {})
   for edge in state.edges():
-      print(edge.data, edge.data.schedule)  # e.g., A[i, 3] -> LoopCursor(loop='for_1', var=i, step=16, ...)
+      print(edge.data, edge.data.access_policy)  # e.g., A[i, 3] -> LoopCursor(loop='for_1', var=i, step=16, ...)
 
-Lowering a loop-cursor schedule materializes one loop-carried integer *cursor symbol* per cursor class (memlets of
+Lowering a loop-cursor policy materializes one loop-carried integer *cursor symbol* per cursor class (memlets of
 the same array and loop whose offsets differ only by a loop-invariant *immediate*), assigned in the loop's init
 statement and advanced in its update statement, and one flat :class:`~dace.data.Reference` per array, set once to the
-array's base at SDFG entry. Each scheduled memlet is rewritten to address ``flat[cursor + immediate]``; a
+array's base at SDFG entry. Each such memlet is rewritten to address ``flat[cursor + immediate]``; a
 non-contiguous read is rewritten to a small *window* reference that is set to that address once per iteration and
 accessed with the memlet's original shape. A class is anchored at the lowest member offset (or, for a stencil-like
 neighbourhood, at its centre) so that the base of an array window is applied once, on loop entry. In loop nests an
@@ -443,9 +443,9 @@ is generated as (schematically):
 
 Cursor symbols, flat references and the rewritten memlets only exist on the code-generation copy of the SDFG (or on
 an SDFG the lowering pass was applied to explicitly); the SDFG that transformations and tuners see keeps only the
-descriptive records. Because a schedule is a claim about the memlet's subset, the lowering pass re-derives it: a
-schedule that no longer matches its memlet (e.g., after a transformation changed the subset) is dropped with a
-warning and the memlet falls back to copy-on-access, so a stale schedule can never produce incorrect code.
+descriptive records. Because a policy is a claim about the memlet's subset, the lowering pass re-derives it: a
+policy that no longer matches its memlet (e.g., after a transformation changed the subset) is dropped with a
+warning and the memlet falls back to copy-on-access, so a stale policy can never produce incorrect code.
 
 Memlet subsets and volumes are used for analyzing (or estimating, if dynamic) data movement patterns and costs.
 A memlet's ``subset`` does not necessarily mean that all values in that subset would be read at runtime. It rather acts as a

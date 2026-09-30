@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for memlet schedules: ScheduleLoopCursors (analysis) + LowerMemletSchedules (codegen-window lowering of
-schedules to loop-carried cursor symbols and flat references)."""
+"""Tests for memlet access policies: AssignLoopCursors (analysis) + LowerMemletAccessPolicies (codegen-window
+lowering of policies to loop-carried cursor symbols and flat references)."""
 import json
 import re
 import warnings
@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.memlet_schedule import CopyOnAccess, LoopCursor
+from dace.sdfg.memlet_access_policy import CopyOnAccess, LoopCursor
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.memlet_schedules import LowerMemletSchedules, ScheduleLoopCursors
+from dace.transformation.passes.memlet_access_policies import LowerMemletAccessPolicies, AssignLoopCursors
 
 N = dace.symbol('N')
 
@@ -21,10 +21,10 @@ def _code(sdfg: dace.SDFG) -> str:
     return '\n'.join(c.clean_code for c in sdfg.generate_code())
 
 
-def _scheduled_memlets(sdfg: dace.SDFG):
+def _policy_memlets(sdfg: dace.SDFG):
     return [
         e.data for s in sdfg.all_sdfgs_recursive() for st in s.states() for e in st.edges()
-        if not e.data.schedule.is_default
+        if not e.data.access_policy.is_default
     ]
 
 
@@ -66,16 +66,16 @@ def _advance(cursor: str, step) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Default schedule
+# Default policy
 # ---------------------------------------------------------------------------------------------------------------
-def test_default_schedule_is_copy_on_access():
+def test_default_policy_is_copy_on_access():
     m = dace.Memlet('A[0]')
-    assert isinstance(m.schedule, CopyOnAccess) and m.schedule.is_default
-    assert 'schedule' not in m.to_json()  # the default is not serialized
-    assert isinstance(dace.Memlet.from_memlet(m).schedule, CopyOnAccess)
+    assert isinstance(m.access_policy, CopyOnAccess) and m.access_policy.is_default
+    assert 'access_policy' not in m.to_json()  # the default is not serialized
+    assert isinstance(dace.Memlet.from_memlet(m).access_policy, CopyOnAccess)
     sdfg = _strided_concrete.to_sdfg()
     sdfg2 = dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json())))
-    assert all(isinstance(e.data.schedule, CopyOnAccess) for st in sdfg2.all_states() for e in st.edges())
+    assert all(isinstance(e.data.access_policy, CopyOnAccess) for st in sdfg2.all_states() for e in st.edges())
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -89,21 +89,21 @@ def _shared_and_inner(A: dace.float32[N, 16], B: dace.float32[N], C: dace.float3
             C[i, j] = A[i, j] * 3
 
 
-def test_schedule_shared_cursor_and_inner_immediate():
+def test_policy_shared_cursor_and_inner_immediate():
     sdfg = _shared_and_inner.to_sdfg()
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    assert res is not None and res['scheduled'] >= 4
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert res is not None and res['assigned'] >= 4
     # A[i,3], A[i,7] and A[i,j] share one class (same array, step 16, same non-constant base); B and C
     # have one class each.
     assert res['classes'] == 3
-    for m in _scheduled_memlets(sdfg):
-        assert isinstance(m.schedule, LoopCursor)
-        assert m.schedule.loop and m.schedule.variable == 'i'
-        assert not m.schedule.is_lowered
-    steps = {m.data: str(m.schedule.step) for m in _scheduled_memlets(sdfg)}
+    for m in _policy_memlets(sdfg):
+        assert isinstance(m.access_policy, LoopCursor)
+        assert m.access_policy.loop and m.access_policy.variable == 'i'
+        assert not m.access_policy.is_lowered
+    steps = {m.data: str(m.access_policy.step) for m in _policy_memlets(sdfg)}
     assert steps == {'A': '16', 'B': '1', 'C': '16'}
 
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low is not None and low['cursors'] == 3 and low['dropped'] == 0
     loop = _loops(sdfg)[0]
     cur_a, init_a, step_a = _cursor_of(loop, 'A')
@@ -111,8 +111,8 @@ def test_schedule_shared_cursor_and_inner_immediate():
     assert str(step_a) == '16' and str(step_c) == '16' and str(_cursor_of(loop, 'B')[2]) == '1'
     assert str(init_a) == '0'  # anchored at A[i, 0], the lowest member (the map access A[i, j])
     # Lowered memlets address the flat references; the flat references are set once at SDFG entry.
-    assert all(m.schedule.is_lowered and m.data == m.schedule.reference for m in _scheduled_memlets(sdfg))
-    assert sdfg.start_block.label == '__dace_memlet_schedule_init'
+    assert all(m.access_policy.is_lowered and m.data == m.access_policy.reference for m in _policy_memlets(sdfg))
+    assert sdfg.start_block.label == '__dace_memlet_access_policy_init'
     assert isinstance(sdfg.arrays['__dace_flat_A'], dace.data.Reference)
     sdfg.validate()
 
@@ -123,7 +123,7 @@ def test_schedule_shared_cursor_and_inner_immediate():
     assert f'__dace_flat_A[({cur_a} + 3)]' in code and f'__dace_flat_A[({cur_a} + 7)]' in code
     # Inner map parameter stays in the (loop-invariant) immediate.
     assert f'__dace_flat_A[({cur_a} + j)]' in code and f'__dace_flat_C[({cur_c} + j)]' in code
-    # No full multiply-add offset left for the scheduled arrays inside the loop body.
+    # No full multiply-add offset left for the cursor-addressed arrays inside the loop body.
     assert '16 * i' not in code and '16*i' not in code
 
     n = 33
@@ -146,8 +146,8 @@ def _strided_concrete(A: dace.float32[64, 16], B: dace.float32[64]):
 
 def test_strided_loop_int32_cursor():
     sdfg = _strided_concrete.to_sdfg()
-    assert ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})['classes'] == 2
-    LowerMemletSchedules().apply_pass(sdfg, {})
+    assert AssignLoopCursors(scope='all').apply_pass(sdfg, {})['classes'] == 2
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
     loop = _loops(sdfg)[0]
     cur_a, init_a, step_a = _cursor_of(loop, 'A')
     cur_b, init_b, step_b = _cursor_of(loop, 'B')
@@ -167,28 +167,28 @@ def test_strided_loop_int32_cursor():
 
 def test_symbolic_extent_int64_and_assume_int32():
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert all(sdfg.symbols[c] == dace.int64 for c in _cursors(_loops(sdfg)[0]))
 
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    LowerMemletSchedules(assume_int32=True).apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    LowerMemletAccessPolicies(assume_int32=True).apply_pass(sdfg, {})
     assert all(sdfg.symbols[c] == dace.int32 for c in _cursors(_loops(sdfg)[0]))
 
     # Explicit per-memlet request wins over auto.
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    for m in _scheduled_memlets(sdfg):
-        m.schedule.cursor_type = dace.int64
-    LowerMemletSchedules(assume_int32=True).apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    for m in _policy_memlets(sdfg):
+        m.access_policy.cursor_type = dace.int64
+    LowerMemletAccessPolicies(assume_int32=True).apply_pass(sdfg, {})
     assert all(sdfg.symbols[c] == dace.int64 for c in _cursors(_loops(sdfg)[0]))
 
-    # The analysis pass can pin the type for every schedule it creates.
+    # The analysis pass can pin the type for every policy it creates.
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all', cursor_type=dace.int16).apply_pass(sdfg, {})
-    assert all(m.schedule.cursor_type == dace.int16 for m in _scheduled_memlets(sdfg))
-    LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all', cursor_type=dace.int16).apply_pass(sdfg, {})
+    assert all(m.access_policy.cursor_type == dace.int16 for m in _policy_memlets(sdfg))
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
     cursors = _cursors(_loops(sdfg)[0])
     assert all(sdfg.symbols[c] == dace.int16 for c in cursors)
     code = _code(sdfg)
@@ -206,14 +206,14 @@ def _nonaffine(A: dace.float32[64], B: dace.float32[N], C: dace.float32[N]):
 
 def test_nonaffine_left_alone():
     sdfg = _nonaffine.to_sdfg()
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
     assert res is not None
-    scheduled = {m.data for m in _scheduled_memlets(sdfg)}
-    assert 'A' not in scheduled  # quadratic in i
-    assert 'C' not in scheduled  # independent of i
-    assert 'B' in scheduled
+    assigned = {m.data for m in _policy_memlets(sdfg)}
+    assert 'A' not in assigned  # quadratic in i
+    assert 'C' not in assigned  # independent of i
+    assert 'B' in assigned
     assert res['skipped'] >= 2
-    LowerMemletSchedules().apply_pass(sdfg, {})
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code = _code(sdfg)
     assert 'i * i' in code or 'i*i' in code
     n = 8
@@ -225,7 +225,7 @@ def test_nonaffine_left_alone():
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Loop inside a map -> nested SDFG: schedules live in the nested SDFG, cursors in its loop
+# Loop inside a map -> nested SDFG: policies live in the nested SDFG, cursors in its loop
 # ---------------------------------------------------------------------------------------------------------------
 @dace.program
 def _loop_in_map(A: dace.float32[4, N, 16], B: dace.float32[4, N]):
@@ -236,9 +236,9 @@ def _loop_in_map(A: dace.float32[4, N, 16], B: dace.float32[4, N]):
 
 def test_loop_inside_map_nested_sdfg():
     sdfg = _loop_in_map.to_sdfg()
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
     assert res is not None and res['classes'] >= 2
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low['cursors'] >= 2 and low['dropped'] == 0
     sdfg.validate()
     code = _code(sdfg)
@@ -253,36 +253,36 @@ def test_loop_inside_map_nested_sdfg():
 # ---------------------------------------------------------------------------------------------------------------
 # Serialization, staleness, idempotence
 # ---------------------------------------------------------------------------------------------------------------
-def test_schedule_survives_serialization():
+def test_policy_survives_serialization():
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    before = sorted(repr(sorted(m.schedule.to_json().items())) for m in _scheduled_memlets(sdfg))
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    before = sorted(repr(sorted(m.access_policy.to_json().items())) for m in _policy_memlets(sdfg))
     text = json.dumps(sdfg.to_json())
     assert 'LoopCursor' in text and 'CopyOnAccess' not in text
     sdfg2 = dace.SDFG.from_json(json.loads(text))
-    after = sorted(repr(sorted(m.schedule.to_json().items())) for m in _scheduled_memlets(sdfg2))
+    after = sorted(repr(sorted(m.access_policy.to_json().items())) for m in _policy_memlets(sdfg2))
     assert before == after
     # The lowered SDFG (symbols, references, loop statements) is an ordinary SDFG and round-trips too.
-    LowerMemletSchedules().apply_pass(sdfg2, {})
+    LowerMemletAccessPolicies().apply_pass(sdfg2, {})
     sdfg3 = dace.SDFG.from_json(json.loads(json.dumps(sdfg2.to_json())))
     assert _cursors(_loops(sdfg3)[0]) == _cursors(_loops(sdfg2)[0])
-    assert all(m.schedule.is_lowered for m in _scheduled_memlets(sdfg3))
+    assert all(m.access_policy.is_lowered for m in _policy_memlets(sdfg3))
     assert _code(sdfg3) == _code(sdfg2)
 
 
-def test_stale_schedule_is_dropped_not_miscompiled():
+def test_stale_policy_is_dropped_not_miscompiled():
     sdfg = _strided_concrete.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    # Simulate a transformation that changed the subset after scheduling (step would now be 2*64).
-    for m in _scheduled_memlets(sdfg):
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    # Simulate a transformation that changed the subset after policy assignment (step would now be 2*64).
+    for m in _policy_memlets(sdfg):
         if m.data == 'A':
             m.subset = dace.subsets.Range.from_string('2*i, 5')
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        low = LowerMemletSchedules().apply_pass(sdfg, {})
+        low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low['dropped'] == 1
     assert any('stale' in str(x.message) for x in w)
-    assert all(m.data != 'A' for m in _scheduled_memlets(sdfg))
+    assert all(m.data != 'A' for m in _policy_memlets(sdfg))
     A = np.random.default_rng(3).random((64, 16)).astype(np.float32)
     B = np.zeros(64, np.float32)
     sdfg(A=A, B=B)
@@ -291,11 +291,11 @@ def test_stale_schedule_is_dropped_not_miscompiled():
 
 def test_lowering_is_idempotent():
     sdfg = _shared_and_inner.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    first = LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    first = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code1 = _code(sdfg)
     nodes1 = sum(st.number_of_nodes() for st in sdfg.all_states())
-    second = LowerMemletSchedules().apply_pass(sdfg, {})
+    second = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code2 = _code(sdfg)
     assert first['memlets'] == second['memlets'] and second['cursors'] == 0
     assert sum(st.number_of_nodes() for st in sdfg.all_states()) == nodes1
@@ -303,15 +303,15 @@ def test_lowering_is_idempotent():
     assert code1 == code2
 
 
-def test_manual_schedule_lowering_matches_analysis():
-    # A hand-written schedule (what a tuner would set) is honored as long as it re-derives consistently.
-    from dace.transformation.passes.memlet_schedules import leaf_edges
+def test_manual_policy_lowering_matches_analysis():
+    # A hand-written policy (what a tuner would set) is honored as long as it re-derives consistently.
+    from dace.transformation.passes.memlet_access_policies import leaf_edges
     sdfg = _strided_concrete.to_sdfg()
     for st in sdfg.all_states():
         for e in leaf_edges(st):
             if e.data.data == 'A':
-                e.data.schedule = LoopCursor(_loops(sdfg)[0].label, 'i', 64, cursor_type=dace.int32)
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+                e.data.access_policy = LoopCursor(_loops(sdfg)[0].label, 'i', 64, cursor_type=dace.int32)
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low['cursors'] == 1 and low['dropped'] == 0
     cur, _, _ = _cursor_of(_loops(sdfg)[0], 'A')
     assert sdfg.symbols[cur] == dace.int32
@@ -322,8 +322,8 @@ def test_manual_schedule_lowering_matches_analysis():
 # ---------------------------------------------------------------------------------------------------------------
 def test_gpu_scope_filter_skips_host_loops():
     sdfg = _shared_and_inner.to_sdfg()
-    assert ScheduleLoopCursors(scope='gpu').apply_pass(sdfg, {}) is None
-    assert not _scheduled_memlets(sdfg)
+    assert AssignLoopCursors(scope='gpu').apply_pass(sdfg, {}) is None
+    assert not _policy_memlets(sdfg)
 
 
 @dace.program
@@ -340,13 +340,13 @@ def _gpu_loop(A: dace.float32[N, 64] @ dace.StorageType.GPU_Global,
 def test_gpu_kernel_loop_gets_cursors_in_kernel_code(backend):
     with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
         sdfg = _gpu_loop.to_sdfg()
-        res = ScheduleLoopCursors(scope='gpu').apply_pass(sdfg, {})
-        assert res is not None and res['scheduled'] >= 1
+        res = AssignLoopCursors(scope='gpu').apply_pass(sdfg, {})
+        assert res is not None and res['assigned'] >= 1
         # The frontend slices A[0:N, t] into a nested array bound at ``A + t`` (the lane part lives in that
-        # binding); the loop-carried access inside the kernel loop is what gets the schedule.
-        steps = [str(m.schedule.step) for m in _scheduled_memlets(sdfg)]
+        # binding); the loop-carried access inside the kernel loop is what gets the policy.
+        steps = [str(m.access_policy.step) for m in _policy_memlets(sdfg)]
         assert '64' in steps
-        low = LowerMemletSchedules().apply_pass(sdfg, {})
+        low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
         assert low['cursors'] >= 1
         sdfg.validate()
         gpu_code = [c.clean_code for c in sdfg.generate_code() if c.title == 'CUDA'][0]
@@ -382,8 +382,8 @@ def _tri_nest(A: dace.float32[N, N], out: dace.float32[N]):
 
 def test_nested_loops_chain_cursors():
     sdfg = _rect_nest.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     # A and C: inner cursor (step 1) chained to an outer cursor (step M); B: inner cursor only.
     assert low['cursors'] == 5 and low['memlets'] == 3
     loops = {l.loop_variable: l for l in _loops(sdfg)}
@@ -407,8 +407,8 @@ def test_nested_loops_chain_cursors():
 
 def test_nested_loops_chaining_can_be_disabled():
     sdfg = _rect_nest.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    low = LowerMemletSchedules(chain_outer_loops=False).apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies(chain_outer_loops=False).apply_pass(sdfg, {})
     assert low['cursors'] == 3
     loops = {l.loop_variable: l for l in _loops(sdfg)}
     assert not _cursors(loops['i'])
@@ -417,8 +417,8 @@ def test_nested_loops_chaining_can_be_disabled():
 
 def test_triangular_nest_diagonal_step():
     sdfg = _tri_nest.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low['dropped'] == 0
     loops = {l.loop_variable: l for l in _loops(sdfg)}
     outer_a, _, outer_step = _cursor_of(loops['i'], 'A')
@@ -432,17 +432,17 @@ def test_triangular_nest_diagonal_step():
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Code generation lowers schedules by itself; the user's SDFG stays descriptive
+# Code generation lowers policies by itself; the user's SDFG stays descriptive
 # ---------------------------------------------------------------------------------------------------------------
-def test_codegen_lowers_schedules_automatically():
+def test_codegen_lowers_policies_automatically():
     sdfg = _strided_concrete.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
     assert not _cursors(_loops(sdfg)[0])
     code = _code(sdfg)
     assert '__dace_flat_A[' in code and _advance('__dace_cur_A_' + _loops(sdfg)[0].label, 64) in _for_header(code)
     # Lowering happened on the code-generation copy only.
     assert not _cursors(_loops(sdfg)[0]) and '__dace_flat_A' not in sdfg.arrays
-    assert all(not m.schedule.is_lowered for m in _scheduled_memlets(sdfg))
+    assert all(not m.access_policy.is_lowered for m in _policy_memlets(sdfg))
     A = np.random.default_rng(4).random((64, 16)).astype(np.float32)
     B = np.zeros(64, np.float32)
     sdfg(A=A, B=B)
@@ -450,7 +450,7 @@ def test_codegen_lowers_schedules_automatically():
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Non-contiguous reads go through a per-iteration window reference; non-contiguous writes are not scheduled
+# Non-contiguous reads go through a per-iteration window reference; non-contiguous writes get no cursor
 # ---------------------------------------------------------------------------------------------------------------
 def _window_sdfg(write: bool) -> dace.SDFG:
     """``for i in range(N - 1)``: copy the 2x2 block ``A[i:i+2, 0:2]`` (non-contiguous for M > 2) into a transient
@@ -478,9 +478,9 @@ def _window_sdfg(write: bool) -> dace.SDFG:
 
 def test_non_contiguous_read_uses_window_reference():
     sdfg = _window_sdfg(write=False)
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    assert res is not None and {m.data for m in _scheduled_memlets(sdfg)} == {'A', 'out'}
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert res is not None and {m.data for m in _policy_memlets(sdfg)} == {'A', 'out'}
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low == {'cursors': 2, 'memlets': 2, 'dropped': 0}
     sdfg.validate()
     windows = [n for n, d in sdfg.arrays.items() if n.startswith('__dace_win_A_')]
@@ -490,7 +490,7 @@ def test_non_contiguous_read_uses_window_reference():
     assert tuple(win.strides) == tuple(sdfg.arrays['A'].strides)
     cur, init, step = _cursor_of(_loops(sdfg)[0], 'A')
     assert str(step) == 'M' and str(init) == '0'
-    lowered = [m for m in _scheduled_memlets(sdfg) if m.schedule.window]
+    lowered = [m for m in _policy_memlets(sdfg) if m.access_policy.window]
     assert len(lowered) == 1 and lowered[0].data == windows[0] and str(lowered[0].subset) == '0:2, 0:2'
     code = _code(sdfg)
     # The window is set once per iteration from the flat reference at the cursor, then read with its 2-D shape.
@@ -502,10 +502,10 @@ def test_non_contiguous_read_uses_window_reference():
     np.testing.assert_allclose(out[:-1], A[:-1, 0] + A[1:, 1])
 
 
-def test_non_contiguous_write_is_not_scheduled():
+def test_non_contiguous_write_gets_no_cursor():
     sdfg = _window_sdfg(write=True)
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    assert 'A' not in {m.data for m in _scheduled_memlets(sdfg)}
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert 'A' not in {m.data for m in _policy_memlets(sdfg)}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -533,10 +533,10 @@ def _access_map_access_sdfg() -> dace.SDFG:
 
 def test_access_node_inside_map_is_a_leaf():
     sdfg = _access_map_access_sdfg()
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    assert {m.data for m in _scheduled_memlets(sdfg)} == {'A', 'B'}
-    assert res['scheduled'] == 2
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert {m.data for m in _policy_memlets(sdfg)} == {'A', 'B'}
+    assert res['assigned'] == 2
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low == {'cursors': 2, 'memlets': 2, 'dropped': 0}
     sdfg.validate()
     state = next(iter(sdfg.all_states()))
@@ -608,9 +608,9 @@ def test_stencil3d_window_padded_strides_and_offset():
         desc.total_size = (N + 2) * pm * pk
         desc.offset = (1, 1, 1)
 
-    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    assert res['scheduled'] == 8 and res['classes'] == 2  # the seven reads of A form one class
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert res['assigned'] == 8 and res['classes'] == 2  # the seven reads of A form one class
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low == {'cursors': 6, 'memlets': 8, 'dropped': 0}
     sdfg.validate()
     loops = {l.loop_variable: l for l in _loops(sdfg)}
@@ -671,8 +671,8 @@ def _kloop_two_nests(A: dace.float32[N, M, K], B: dace.float32[N, M, K], C: dace
 
 def test_k_loop_with_successive_ij_nests_shares_k_cursors():
     sdfg = _kloop_two_nests.to_sdfg()
-    ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
-    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     # K level: A, B, C; first nest: A, B per level; second nest: A, B, C per level.
     assert low == {'cursors': 13, 'memlets': 5, 'dropped': 0}
     sdfg.validate()
@@ -716,25 +716,25 @@ def test_k_loop_with_successive_ij_nests_shares_k_cursors():
 
 
 if __name__ == '__main__':
-    test_default_schedule_is_copy_on_access()
-    test_schedule_shared_cursor_and_inner_immediate()
+    test_default_policy_is_copy_on_access()
+    test_policy_shared_cursor_and_inner_immediate()
     test_strided_loop_int32_cursor()
     test_symbolic_extent_int64_and_assume_int32()
     test_nonaffine_left_alone()
     test_loop_inside_map_nested_sdfg()
-    test_schedule_survives_serialization()
-    test_stale_schedule_is_dropped_not_miscompiled()
+    test_policy_survives_serialization()
+    test_stale_policy_is_dropped_not_miscompiled()
     test_lowering_is_idempotent()
-    test_manual_schedule_lowering_matches_analysis()
+    test_manual_policy_lowering_matches_analysis()
     test_gpu_scope_filter_skips_host_loops()
     test_gpu_kernel_loop_gets_cursors_in_kernel_code('cuda')
     test_gpu_kernel_loop_gets_cursors_in_kernel_code('hip')
     test_nested_loops_chain_cursors()
     test_nested_loops_chaining_can_be_disabled()
     test_triangular_nest_diagonal_step()
-    test_codegen_lowers_schedules_automatically()
+    test_codegen_lowers_policies_automatically()
     test_non_contiguous_read_uses_window_reference()
-    test_non_contiguous_write_is_not_scheduled()
+    test_non_contiguous_write_gets_no_cursor()
     test_access_node_inside_map_is_a_leaf()
     test_stencil3d_window_padded_strides_and_offset()
     test_k_loop_with_successive_ij_nests_shares_k_cursors()

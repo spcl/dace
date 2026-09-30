@@ -73,10 +73,10 @@ Memlet Consolidation
    :show-inheritance:
 
 
-Memlet Schedules (Loop-Carried Address Cursors)
------------------------------------------------
+Memlet Access Policies (Loop-Carried Address Cursors)
+-----------------------------------------------------
 
-.. automodule:: dace.transformation.passes.memlet_schedules
+.. automodule:: dace.transformation.passes.memlet_access_policies
    :members:
    :undoc-members:
    :show-inheritance:

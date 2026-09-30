@@ -1,20 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Memlet schedule passes: assigning :class:`~dace.sdfg.memlet_schedule.LoopCursor` schedules and lowering all
-schedule kinds to ordinary SDFG constructs.
+"""Memlet access policy passes: assigning :class:`~dace.sdfg.memlet_access_policy.LoopCursor` policies and lowering all
+policy kinds to ordinary SDFG constructs.
 
-* :class:`ScheduleLoopCursors` (analysis, optional, SDFG level): for every leaf memlet whose base element offset is
+* :class:`AssignLoopCursors` (analysis, optional, SDFG level): for every leaf memlet whose base element offset is
   affine in the induction variable of an enclosing :class:`~dace.sdfg.state.LoopRegion`, attaches a descriptive
-  :class:`~dace.sdfg.memlet_schedule.LoopCursor` (``memlet.schedule``) recording the per-iteration step, the
+  :class:`~dace.sdfg.memlet_access_policy.LoopCursor` (``memlet.access_policy``) recording the per-iteration step, the
   loop-invariant base and the lane-dependent part. Nothing else in the SDFG changes; tuners may inspect or override
   the records (including forcing or forbidding cursor sharing through ``share_key``).
 
-* :class:`LowerMemletSchedules` (codegen window): dispatches every non-default schedule to its kind's
-  :meth:`~dace.sdfg.memlet_schedule.MemletSchedule.lower`. For loop cursors (:func:`lower_loop_cursors`) this
+* :class:`LowerMemletAccessPolicies` (codegen window): dispatches every non-default policy to its kind's
+  :meth:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy.lower`. For loop cursors (:func:`lower_loop_cursors`) this
   materializes one loop-carried integer *cursor symbol* per cursor class (assigned in the loop's init statement,
   advanced in its update statement), a flat :class:`~dace.data.Reference` per array set once at SDFG entry, and
   rewrites each memlet to ``flat[cursor + immediate]`` (or, for non-contiguous reads, to a per-iteration *window*
   reference). Code generation then emits the loop as ``for (i = ..., cur = ...; ...; i = i + 1, cur = cur + step)``
-  and every access as ``flat[cur + imm]``, with no schedule-specific code paths.
+  and every access as ``flat[cur + imm]``, with no policy-specific code paths.
 
 Definitions: for a leaf memlet on array ``A`` with physical base element offset ``beta = sum_k (start_k + offset_k)
 * stride_k`` (the flat reference points at the array's physical element 0) and an enclosing loop with variable ``v``
@@ -45,7 +45,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.memlet_schedule import LoopCursor, MemletSchedule
+from dace.sdfg.memlet_access_policy import LoopCursor, MemletAccessPolicy
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
@@ -56,7 +56,7 @@ _SCOPE_NODES = (nodes.EntryNode, nodes.ExitNode)
 _GPU_KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
 _LANE_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 _INT32_MAX_BYTES = 2**31
-_INIT_STATE_LABEL = '__dace_memlet_schedule_init'
+_INIT_STATE_LABEL = '__dace_memlet_access_policy_init'
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -250,7 +250,7 @@ def extent_bytes_int32(desc: dt.Data) -> bool:
         return False
 
 
-def schedulable_array(desc: Optional[dt.Data]) -> bool:
+def flat_addressable_array(desc: Optional[dt.Data]) -> bool:
     """Arrays whose base address a flat reference can hold: plain arrays (no views, references, scalars, streams)."""
     return isinstance(desc, dt.Array) and not isinstance(desc, dt.View)
 
@@ -262,7 +262,7 @@ def decompose(desc: dt.Data,
               lanes: Set[str],
               outer: Optional[Set[str]] = None) -> Optional[OffsetDecomposition]:
     """Decompose ``memlet``'s base offset w.r.t. ``loop`` (see module docstring). ``None`` if the memlet is
-    not schedulable against this loop: dynamic, offset not affine in the loop variable, step depending on
+    not cursor-addressable against this loop: dynamic, offset not affine in the loop variable, step depending on
     inner symbols, or the moved shape varying with the loop variable.
 
     :param inner: Symbols defined inside the loop body (see :func:`inner_symbols`).
@@ -323,7 +323,7 @@ def analyze_edge(state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List
     :param loops: The loops enclosing ``state``, innermost first.
     """
     desc = state.sdfg.arrays.get(edge.data.data)
-    if not schedulable_array(desc):
+    if not flat_addressable_array(desc):
         return None
     root, is_read = _root(state, edge)
     if root is None:
@@ -346,10 +346,10 @@ def analyze_edge(state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List
 # ---------------------------------------------------------------------------------------------------------------
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class ScheduleLoopCursors(ppl.Pass):
-    """Attach :class:`~dace.sdfg.memlet_schedule.LoopCursor` schedules to leaf memlets whose address is affine
+class AssignLoopCursors(ppl.Pass):
+    """Attach :class:`~dace.sdfg.memlet_access_policy.LoopCursor` policies to leaf memlets whose address is affine
     in an enclosing loop's induction variable (descriptive only; see module docstring). Memlets that are not
-    schedulable keep their (default copy-on-access) schedule."""
+    cursor-addressable keep their (default copy-on-access) policy."""
 
     scope = properties.Property(dtype=str,
                                 default='gpu',
@@ -362,16 +362,16 @@ class ScheduleLoopCursors(ppl.Pass):
                                                'else int64.')
     arrays = properties.SetProperty(element_type=str,
                                     default=set(),
-                                    desc='If non-empty, only schedule memlets of these arrays.')
+                                    desc='If non-empty, only assign policies to memlets of these arrays.')
     overwrite = properties.Property(dtype=bool,
                                     default=True,
-                                    desc='Replace existing non-default schedules (False keeps hand-set records).')
+                                    desc='Replace existing non-default policies (False keeps hand-set records).')
 
     def __init__(self, **props):
         super().__init__()
         for name, value in props.items():
             if name not in ('scope', 'cursor_type', 'arrays', 'overwrite'):
-                raise TypeError(f'ScheduleLoopCursors has no property {name!r}')
+                raise TypeError(f'AssignLoopCursors has no property {name!r}')
             setattr(self, name, value)
 
     def modifies(self) -> ppl.Modifies:
@@ -385,10 +385,10 @@ class ScheduleLoopCursors(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """
-        :return: ``{'scheduled': n, 'classes': k, 'skipped': m}`` summed over all SDFGs, or ``None`` if nothing
-                 was scheduled.
+        :return: ``{'assigned': n, 'classes': k, 'skipped': m}`` summed over all SDFGs, or ``None`` if nothing
+                 was assigned.
         """
-        scheduled = skipped = 0
+        assigned = skipped = 0
         classes: Set[Tuple] = set()
         for nsdfg in sdfg.all_sdfgs_recursive():
             inner_cache: Dict[LoopRegion, Set[str]] = {}
@@ -400,9 +400,9 @@ class ScheduleLoopCursors(ppl.Pass):
                     memlet = edge.data
                     if self.arrays and memlet.data not in self.arrays:
                         continue
-                    if not memlet.schedule.is_default and not self.overwrite:
+                    if not memlet.access_policy.is_default and not self.overwrite:
                         continue
-                    if not schedulable_array(nsdfg.arrays.get(memlet.data)):
+                    if not flat_addressable_array(nsdfg.arrays.get(memlet.data)):
                         continue  # scalars carry no address arithmetic; views/references have no fixed base
                     if self.scope == 'gpu' and not is_devicelevel_gpu(nsdfg, state, _scope_node(edge)):
                         continue
@@ -411,16 +411,16 @@ class ScheduleLoopCursors(ppl.Pass):
                         skipped += 1
                         continue
                     classes.add((nsdfg.cfg_id, memlet.data) + dec.cursor_key)
-                    memlet.schedule = LoopCursor(loop=dec.loop.label,
-                                                 variable=dec.variable,
-                                                 step=dec.step,
-                                                 base_invariant=dec.base_invariant,
-                                                 lane_part=dec.lane_part,
-                                                 cursor_type=self.cursor_type)
-                    scheduled += 1
-        if scheduled == 0:
+                    memlet.access_policy = LoopCursor(loop=dec.loop.label,
+                                                      variable=dec.variable,
+                                                      step=dec.step,
+                                                      base_invariant=dec.base_invariant,
+                                                      lane_part=dec.lane_part,
+                                                      cursor_type=self.cursor_type)
+                    assigned += 1
+        if assigned == 0:
             return None
-        return {'scheduled': scheduled, 'classes': len(classes), 'skipped': skipped}
+        return {'assigned': assigned, 'classes': len(classes), 'skipped': skipped}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -428,9 +428,9 @@ class ScheduleLoopCursors(ppl.Pass):
 # ---------------------------------------------------------------------------------------------------------------
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class LowerMemletSchedules(ppl.Pass):
-    """Lower every non-default memlet schedule to ordinary SDFG constructs by dispatching to the schedule kind's
-    :meth:`~dace.sdfg.memlet_schedule.MemletSchedule.lower`. Meant to run on the code-generation copy of the
+class LowerMemletAccessPolicies(ppl.Pass):
+    """Lower every non-default memlet access policy to ordinary SDFG constructs by dispatching to the policy kind's
+    :meth:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy.lower`. Meant to run on the code-generation copy of the
     SDFG, after :class:`~dace.transformation.passes.insert_explicit_copies.InsertExplicitCopies` and before
     library-node expansion; :func:`dace.codegen.codegen.generate_code` does so automatically. Idempotent: memlets
     that are already lowered are left alone."""
@@ -461,17 +461,17 @@ class LowerMemletSchedules(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """
-        :return: The summed counters of the schedule kinds' lowerings (for loop cursors ``{'cursors': n,
+        :return: The summed counters of the policy kinds' lowerings (for loop cursors ``{'cursors': n,
                  'memlets': m, 'dropped': d}``), or ``None`` if there was nothing to lower.
         """
         totals: Dict[str, int] = {}
         options = {'assume_int32': self.assume_int32, 'chain_outer_loops': self.chain_outer_loops}
         for nsdfg in sdfg.all_sdfgs_recursive():
-            by_kind: Dict[Type[MemletSchedule], List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
+            by_kind: Dict[Type[MemletAccessPolicy], List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
             for state in nsdfg.states():
                 for edge in leaf_edges(state):
-                    if not edge.data.schedule.is_default:
-                        by_kind.setdefault(type(edge.data.schedule), []).append((state, edge))
+                    if not edge.data.access_policy.is_default:
+                        by_kind.setdefault(type(edge.data.access_policy), []).append((state, edge))
             for kind, entries in by_kind.items():
                 for key, value in kind.lower(nsdfg, entries, **options).items():
                     totals[key] = totals.get(key, 0) + value
@@ -668,10 +668,10 @@ def lower_loop_cursors(sdfg: SDFG,
                        assume_int32: bool = False,
                        chain_outer_loops: bool = True,
                        **_) -> Dict[str, int]:
-    """Lower the :class:`~dace.sdfg.memlet_schedule.LoopCursor` schedules of one SDFG (see module docstring).
+    """Lower the :class:`~dace.sdfg.memlet_access_policy.LoopCursor` policies of one SDFG (see module docstring).
 
     :param sdfg: The SDFG owning the loops and memlets.
-    :param entries: ``(state, edge)`` pairs whose memlets carry ``LoopCursor`` schedules.
+    :param entries: ``(state, edge)`` pairs whose memlets carry ``LoopCursor`` policies.
     :param assume_int32: Treat ``auto`` cursors as int32 even when the array extent is not provably < 2**31.
     :param chain_outer_loops: Initialize inner cursors from outer cursors (see :meth:`_CursorTable.cursor_for`).
     :return: ``{'cursors': n, 'memlets': m, 'dropped': d}`` (``memlets`` includes already-lowered ones).
@@ -680,23 +680,23 @@ def lower_loop_cursors(sdfg: SDFG,
     refs = _References(sdfg)
     lowered = dropped = 0
 
-    # Collect per loop, skipping memlets that were already lowered and dropping stale schedules.
+    # Collect per loop, skipping memlets that were already lowered and dropping stale policies.
     per_loop: Dict[LoopRegion, List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
     for state, edge in entries:
-        sched: LoopCursor = edge.data.schedule
-        if sched.is_lowered:
-            if edge.data.data in (sched.reference, sched.window):
+        policy: LoopCursor = edge.data.access_policy
+        if policy.is_lowered:
+            if edge.data.data in (policy.reference, policy.window):
                 lowered += 1
             else:
-                warnings.warn(f'Memlet "{edge.data}" carries a lowered schedule of another memlet; dropping it.')
-                edge.data.schedule = _default()
+                warnings.warn(f'Memlet "{edge.data}" carries a lowered policy of another memlet; dropping it.')
+                edge.data.access_policy = _default()
                 dropped += 1
             continue
-        loop = {l.label: l for l in enclosing_loops(state)}.get(sched.loop)
-        if loop is None or loop.loop_variable != sched.variable:
-            warnings.warn(f'Memlet schedule of "{edge.data}" refers to loop "{sched.loop}" (variable '
-                          f'{sched.variable}) which no longer encloses it; dropping the schedule.')
-            edge.data.schedule = _default()
+        loop = {l.label: l for l in enclosing_loops(state)}.get(policy.loop)
+        if loop is None or loop.loop_variable != policy.variable:
+            warnings.warn(f'Memlet access policy of "{edge.data}" refers to loop "{policy.loop}" (variable '
+                          f'{policy.variable}) which no longer encloses it; dropping the policy.')
+            edge.data.access_policy = _default()
             dropped += 1
             continue
         per_loop.setdefault(loop, []).append((state, edge))
@@ -705,32 +705,32 @@ def lower_loop_cursors(sdfg: SDFG,
     ordered = sorted(per_loop.items(), key=lambda item: len(_enclosing_loops_of_region(item[0])))
     for loop, loop_entries in ordered:
         if loop_analysis.get_init_assignment(loop) is None:
-            warnings.warn(f'Cannot lower memlet schedules of loop "{loop.label}": no recognizable init '
-                          'assignment; schedules dropped.')
+            warnings.warn(f'Cannot lower memlet access policies of loop "{loop.label}": no recognizable init '
+                          'assignment; policies dropped.')
             for _, edge in loop_entries:
-                edge.data.schedule = _default()
+                edge.data.access_policy = _default()
             dropped += len(loop_entries)
             continue
         inner = inner_symbols(loop)
-        # Re-derive every schedule (dropping stale ones), then group the memlets into cursor classes.
+        # Re-derive every policy (dropping stale ones), then group the memlets into cursor classes.
         members: Dict[Tuple, List[Tuple[SDFGState, MultiConnectorEdge[Memlet], OffsetDecomposition]]] = {}
         dtypes_of: Dict[Tuple, dtypes.typeclass] = {}
         for state, edge in loop_entries:
             memlet = edge.data
-            sched: LoopCursor = memlet.schedule
+            policy: LoopCursor = memlet.access_policy
             desc = sdfg.arrays.get(memlet.data)
-            root, is_read = _root(state, edge) if schedulable_array(desc) else (None, False)
+            root, is_read = _root(state, edge) if flat_addressable_array(desc) else (None, False)
             dec = None
             if root is not None and (is_read or flat_length(desc, memlet.subset) is not None):
                 dec = decompose(desc, memlet, loop, inner, lane_symbols(state, _scope_node(edge)))
-            if dec is None or sp.expand(dec.step - sched.step) != 0:
-                warnings.warn(f'Memlet schedule of "{memlet}" is stale or not lowerable (recorded step '
-                              f'{sched.step}, derived {None if dec is None else dec.step}); dropping it.')
-                memlet.schedule = _default()
+            if dec is None or sp.expand(dec.step - policy.step) != 0:
+                warnings.warn(f'Memlet access policy of "{memlet}" is stale or not lowerable (recorded step '
+                              f'{policy.step}, derived {None if dec is None else dec.step}); dropping it.')
+                memlet.access_policy = _default()
                 dropped += 1
                 continue
-            dtype = _cursor_dtype(sched, desc, assume_int32)
-            key = _CursorTable.class_key(loop, memlet.data, dtype, sched.share_key, dec.class_base)
+            dtype = _cursor_dtype(policy, desc, assume_int32)
+            key = _CursorTable.class_key(loop, memlet.data, dtype, policy.share_key, dec.class_base)
             members.setdefault(key, []).append((state, edge, dec))
             dtypes_of[key] = dtype
         for key, items in members.items():
@@ -740,30 +740,30 @@ def lower_loop_cursors(sdfg: SDFG,
             # base offset is added once, on loop entry, and each access carries only its small difference.
             anchor = _choose_anchor([_invariant_part(dec.immediate, inner) for _, _, dec in items])
             cursor, cursor_anchor = cursors.cursor_for(loop, array, dtypes_of[key], dec0.class_base, anchor,
-                                                       edge0.data.schedule.share_key)
+                                                       edge0.data.access_policy.share_key)
             for state, edge, dec in items:
                 _rewrite(state, edge, dec, cursor, cursor_anchor, refs)
                 lowered += 1
     return {'cursors': cursors.created, 'memlets': lowered, 'dropped': dropped}
 
 
-def _default() -> MemletSchedule:
-    from dace.sdfg.memlet_schedule import CopyOnAccess
+def _default() -> MemletAccessPolicy:
+    from dace.sdfg.memlet_access_policy import CopyOnAccess
     return CopyOnAccess()
 
 
-def _cursor_dtype(sched: LoopCursor, desc: dt.Data, assume_int32: bool) -> dtypes.typeclass:
-    if sched.cursor_type is not None:
-        return sched.cursor_type
+def _cursor_dtype(policy: LoopCursor, desc: dt.Data, assume_int32: bool) -> dtypes.typeclass:
+    if policy.cursor_type is not None:
+        return policy.cursor_type
     return dtypes.int32 if (assume_int32 or extent_bytes_int32(desc)) else dtypes.int64
 
 
 def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDecomposition, cursor: symbolic.symbol,
              cursor_anchor: sp.Basic, refs: _References) -> None:
-    """Rewrite one scheduled memlet to address through the cursor: ``flat[cursor + immediate]`` for contiguous
+    """Rewrite one loop-cursor memlet to address through the cursor: ``flat[cursor + immediate]`` for contiguous
     memlets, a window reference for non-contiguous reads."""
     old = edge.data
-    sched: LoopCursor = old.schedule
+    policy: LoopCursor = old.access_policy
     array = old.data
     desc = state.sdfg.arrays[array]
     root, is_read = _root(state, edge)
@@ -788,6 +788,6 @@ def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDeco
                         wcr_nonatomic=old.wcr_nonatomic,
                         allow_oob=old.allow_oob,
                         debuginfo=old.debuginfo)
-    sched.cursor, sched.reference, sched.window, sched.immediate = cursor.name, flat, window, immediate
-    new_memlet.schedule = sched
+    policy.cursor, policy.reference, policy.window, policy.immediate = cursor.name, flat, window, immediate
+    new_memlet.access_policy = policy
     _reroute(state, edge, new_root, is_read, new_memlet)

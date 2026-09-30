@@ -56,10 +56,10 @@ dace.sdfg.infer_types module
    :undoc-members:
    :show-inheritance:
 
-dace.sdfg.memlet_schedule module
---------------------------------
+dace.sdfg.memlet_access_policy module
+-------------------------------------
 
-.. automodule:: dace.sdfg.memlet_schedule
+.. automodule:: dace.sdfg.memlet_access_policy
    :members:
    :undoc-members:
    :show-inheritance:
