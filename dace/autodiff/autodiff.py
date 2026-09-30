@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Union, Optional
 
+from dace import symbolic
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, nodes
@@ -73,7 +74,9 @@ def add_backward_pass(sdfg: SDFG,
                                 backward_sdfg=backward_sdfg,
                                 data_forwarding_strategy=data_forwarding_strategy,
                                 data_to_recompute=data_to_recompute)
-    gen.backward()
+    # The generator builds memlets from strings; parse them at the forward SDFG's declared symbol dtypes.
+    with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+        gen.backward()
     sdfg.validate()
 
     if simplify:

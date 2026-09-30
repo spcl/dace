@@ -29,7 +29,7 @@ def reference_defined_symbols(state: dace.SDFGState) -> dict:
     for desc in sdfg.arrays.values():
         for sym in desc.free_symbols:
             if sym.dtype is not None:
-                defined[str(sym)] = sym.dtype
+                defined.setdefault(str(sym), sym.dtype)
     for edge in sdfg.all_interstate_edges():
         defined.update({k: v for k, v in edge.data.new_symbols(sdfg, defined).items() if v is not None})
         if isinstance(edge.dst, LoopRegion):
@@ -42,6 +42,8 @@ def test_defined_symbols_types_every_assignment_as_before():
     state = next(s for s in sdfg.states() if s.label == 'last')
     assert state.defined_symbols() == reference_defined_symbols(state)
     assert state.defined_symbols()['z'] == dace.float64
+    # The declared ``N: int64`` wins over the default-typed ``N`` of the array extent.
+    assert state.defined_symbols()['N'] == dace.int64
 
 
 def test_defined_symbols_builds_no_type_environment_per_edge(monkeypatch):

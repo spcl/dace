@@ -31,7 +31,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, copy_graph_field, generate_element_id)
 from dace.sdfg import propagation as sdprop
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_expr_type, infer_iteration_symbol_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
 from dace.ordered import OrderedSet
@@ -808,11 +808,11 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
-        # Add data-descriptor free symbols
+        # Add data-descriptor free symbols; a declared symbol keeps its declared dtype
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 if sym.dtype is not None:
-                    defined_syms[str(sym)] = sym.dtype
+                    defined_syms.setdefault(str(sym), sym.dtype)
 
         # Add inter-state symbols
         try:
@@ -4348,7 +4348,8 @@ class LoopRegion(ControlFlowRegion):
             parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
             if not parts:
                 return {}
-            inferred_type = dtypes.result_type_of(*(infer_expr_type(part, alltypes) for part in parts))
+            # Typed like a map parameter over the same range, so lifting the loop to a map keeps the dtype.
+            inferred_type = infer_iteration_symbol_type(*parts, symbols=alltypes)
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
                 self._new_symbols_value = {self.loop_variable: inferred_type}

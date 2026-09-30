@@ -353,10 +353,11 @@ class SplitDimensions(ppl.Pass):
             arr = sdfg.arrays[array_name]
             if len(masks) != len(arr.shape) or len(factors) != len(arr.shape):
                 raise ValueError("Mask and factors must have the same length as the number of dimensions of the array")
-            new_shape = self._split_dimensions(arr, masks, factors)
-
-            self._replace_array_recursive(sdfg, array_name, new_shape)
-            self._replace_memlets_recursive(sdfg, array_name, masks, factors)
-            self._replace_interstate_edges_recursive(sdfg, array_name, masks, factors)
+            # The new index expressions are built from strings; parse them at the declared symbol dtypes.
+            with dace.symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+                new_shape = self._split_dimensions(arr, masks, factors)
+                self._replace_array_recursive(sdfg, array_name, new_shape)
+                self._replace_memlets_recursive(sdfg, array_name, masks, factors)
+                self._replace_interstate_edges_recursive(sdfg, array_name, masks, factors)
 
         return 0

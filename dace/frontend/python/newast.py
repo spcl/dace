@@ -1172,7 +1172,7 @@ class TaskletTransformer(ExtNodeTransformer):
         if (isinstance(node.ctx, ast.Load) and node.id in self.defined
                 and isinstance(self.defined[node.id], symbolic.symbol)):
             if node.id not in self.sdfg.symbols:
-                self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+                add_symbol(self.sdfg, node.id, self.defined[node.id].dtype)
             return self.generic_visit(node)
         # Storing into a symbol is not allowed
         if (isinstance(node.ctx, ast.Store) and node.id in self.defined
@@ -1298,6 +1298,13 @@ def transient_python_renames(arrays: Dict[str, data.Data], variables: Dict[str, 
     return renames
 
 
+def add_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass, **kwargs) -> str:
+    """Declares ``name`` on ``sdfg`` and to the active symbol-dtype authority, so later parses reuse its dtype."""
+    name = sdfg.add_symbol(name, dtype, **kwargs)
+    symbolic.declare_symbol_dtype(name, dtype)
+    return name
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1393,7 +1400,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for arr in self.sdfg.arrays.values():
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(sym.name, sym.dtype)
+                        add_symbol(self.sdfg, sym.name, sym.dtype)
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
@@ -1479,12 +1486,15 @@ class ProgramVisitor(ExtNodeVisitor):
         program = astutils.AnnotateTopLevel().visit(program)
         self.program_ast = program
 
-        if is_tasklet:
-            program.decorator_list = []
-            self.visit_FunctionDef(program)
-        else:
-            for stmt in program.body:
-                self.visit_TopLevel(stmt)
+        # Parse under the declared symbol dtypes, else a bare name in a range mints DEFAULT_SYMBOL_TYPE.
+        declared = {v.name: v.dtype for v in self.globals.values() if isinstance(v, symbolic.symbol)}
+        with symbolic.serialization_symbol_dtypes({**declared, **self.sdfg.symbols}, inherit=True):
+            if is_tasklet:
+                program.decorator_list = []
+                self.visit_FunctionDef(program)
+            else:
+                for stmt in program.body:
+                    self.visit_TopLevel(stmt)
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
@@ -2258,7 +2268,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
                         elif candidate not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
+                            add_symbol(self.sdfg, atomstr, self.defined[candidate].dtype)
 
                 for expr in symbolic.swalk(symval):
                     # An array access in a bound (legacy ``arr(i)`` or ``Subscript(arr, i)``)
@@ -2590,9 +2600,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if sym.name not in self.sdfg.symbols:
                     if (sym.name in self.globals and isinstance(self.globals[sym.name], symbolic.symbol)):
-                        self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
+                        add_symbol(self.sdfg, sym.name, self.globals[sym.name].dtype)
                     elif sym.name in self.closure.callbacks:
-                        self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
+                        add_symbol(self.sdfg, sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
     def _recursive_visit(self,
                          body: List[ast.AST],
@@ -2721,14 +2731,14 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_var = indices[0]
             # A symbol already declared at another dtype gets a fresh name: one name, one dtype.
             if self.sdfg.symbols.get(loop_var, sym_dtype) != sym_dtype:
-                loop_var = self.sdfg.add_symbol(loop_var, sym_dtype, find_new_name=True)
+                loop_var = add_symbol(self.sdfg, loop_var, sym_dtype, find_new_name=True)
             sym_obj = symbolic.symbol(loop_var, sym_dtype, **assumptions)
 
             if loop_var != indices[0]:
                 extra_syms = {indices[0]: sym_obj}
             else:
                 if sym_name not in self.sdfg.symbols:
-                    sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
+                    sym_name = add_symbol(self.sdfg, sym_name, sym_obj.dtype, find_new_name=True)
                 extra_syms = {sym_name: sym_obj}
 
             self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
@@ -2748,7 +2758,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
-                            self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
+                            add_symbol(self.sdfg, astr, self.declared_symbol_dtype(atom))
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
@@ -2879,7 +2889,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 continue
             if astr not in self.defined:
                 raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
-            self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
+            add_symbol(self.sdfg, astr, self.declared_symbol_dtype(atom))
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2946,7 +2956,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
         did_break_symbol = '__dace_did_break_' + loop_region.label
-        self.sdfg.add_symbol(did_break_symbol, dace.int32)
+        add_symbol(self.sdfg, did_break_symbol, dace.int32)
         for iedge in self.cfg_target.in_edges(loop_region):
             iedge.data.assignments[did_break_symbol] = '0'
         oedges = self.cfg_target.out_edges(loop_region)
@@ -3160,7 +3170,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
                     if str(sym) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                        add_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
                 target_desc = self.sdfg.arrays.get(target_name)
                 if (op is None and boolarr is None and not indirect_indices and isinstance(target_desc, data.Scalar)
                         and target_desc.dtype in dtypes.INTEGER_TYPES):
@@ -3424,7 +3434,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
                     if str(sym) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                        add_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
         proven = self.proven_symbol_values()
         if proven:
@@ -4720,7 +4730,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for aname, arr in closure_arrays.items():
                 if aname in sdfg.symbols:
                     outer_name = self.sdfg.find_new_symbol(aname)
-                    self.sdfg.add_symbol(outer_name, sdfg.symbols[aname])
+                    add_symbol(self.sdfg, outer_name, sdfg.symbols[aname])
                     args.append((aname, outer_name))
                     required_args.append(aname)
                     self.nested_closure_arrays[outer_name] = (arr, sdfg.symbols[aname])
@@ -4871,7 +4881,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 isedge = self.cfg_target.edges_between(symassign_state, state)[0]
                 newsym = self.sdfg.find_new_symbol(f'sym_{local}')
                 desc = self.sdfg.arrays[local]
-                self.sdfg.add_symbol(newsym, desc.dtype)
+                add_symbol(self.sdfg, newsym, desc.dtype)
                 if isinstance(desc, data.Array):
                     isedge.data.assignments[newsym] = f'{local}[0]'
                 else:
@@ -5252,13 +5262,13 @@ class ProgramVisitor(ExtNodeVisitor):
         callback_type = dace.callback(return_type, *argtypes)
 
         if funcname not in self.sdfg.symbols:
-            self.sdfg.add_symbol(funcname, callback_type)
+            add_symbol(self.sdfg, funcname, callback_type)
         else:
             # If callback signature mismatches
             symtype = self.sdfg.symbols[funcname]
             if symtype != callback_type:
                 new_funcname = self.sdfg.find_new_symbol(funcname)
-                self.sdfg.add_symbol(new_funcname, callback_type)
+                add_symbol(self.sdfg, new_funcname, callback_type)
                 self.sdfg.callback_mapping[new_funcname] = funcname
                 funcname = new_funcname
 
@@ -5704,7 +5714,7 @@ class ProgramVisitor(ExtNodeVisitor):
             result = inner_eval_ast(self.globals, node)
             # If a symbol, add to symbols
             if (isinstance(result, symbolic.symbol) and name not in self.sdfg.symbols.keys()):
-                self.sdfg.add_symbol(result.name, result.dtype)
+                add_symbol(self.sdfg, result.name, result.dtype)
             return result
 
         if name in self.closure.callbacks:
@@ -6182,7 +6192,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # A NEW name per version: re-minting the bare ``__sym_<scalar>`` after a rebind would
             # re-bind the extent an earlier array already took.
             reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
-            name = self.sdfg.add_symbol(find_new_name(f'__sym_{scalar}', reserved), desc.dtype)
+            name = add_symbol(self.sdfg, find_new_name(f'__sym_{scalar}', reserved), desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
             self.indirections[key] = sym
         if for_shape:

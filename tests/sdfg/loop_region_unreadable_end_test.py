@@ -45,7 +45,8 @@ def test_the_end_bound_is_genuinely_unreadable():
 
 def test_the_iterator_is_typed_from_init_and_step_alone():
     symbols = loop_of(compound_condition_sdfg()).new_symbols({})
-    assert symbols == {'i': dace.int64}, symbols
+    # Literal bounds carry no width: the iterator takes the default symbol type, like a map over 0:2.
+    assert symbols == {'i': dace.symbolic.DEFAULT_SYMBOL_TYPE}, symbols
 
 
 def test_codegen_survives_an_unreadable_end():
