@@ -183,10 +183,11 @@ def loop_varying_symbols(loop: LoopRegion) -> OrderedSet[str]:
     return varying
 
 
-def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, itersym, step, start,
-                              varying: OrderedSet[str]) -> bool:
-    """Some dimension's read/write indices are disjoint for every pair of iterations, keeping the
-    constant dimensions propagate+intersect drops."""
+def _read_write_dims_ordered(read: subsets.Subset, write: subsets.Subset, itersym, step, start,
+                             varying: OrderedSet[str]) -> bool:
+    """Some point dimension keeps read and write apart: disjoint for every pair of iterations
+    (keeping the constant dimensions propagate+intersect drops), or indexed alike so any overlap
+    stays within one iteration."""
     rnd = list(read.ndrange())
     wnd = list(write.ndrange())
     if len(rnd) != len(wnd) or len(rnd) == 0:
@@ -194,28 +195,12 @@ def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, iters
     for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
         if rb != re_ or wb != we_:  # non-point dimension: cannot decide here
             continue
-        # SOUNDNESS: a body-varying symbol looks constant per dimension yet aliases as it sweeps.
-        rw_syms = {s.name
-                   for s in symbolic.pystr_to_symbolic(rb).free_symbols
-                   } | {s.name
-                        for s in symbolic.pystr_to_symbolic(wb).free_symbols}
-        if rw_syms & varying:
-            continue
-        if _dim_provably_disjoint(rb, wb, itersym, step, start):
-            return True
-    return False
-
-
-def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym) -> bool:
-    """A point dimension indexing read and write alike confines any overlap to one iteration."""
-    rnd = list(read.ndrange())
-    wnd = list(write.ndrange())
-    if len(rnd) != len(wnd) or len(rnd) == 0:
-        return False
-    for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
-        if rb != re_ or wb != we_:  # only point dimensions carry an injective index
-            continue
         if _same_injective_index(rb, wb, itersym):
+            return True
+        # SOUNDNESS: a body-varying symbol looks constant per dimension yet aliases as it sweeps.
+        rw_syms = {s.name for s in symbolic.pystr_to_symbolic(rb).free_symbols}
+        rw_syms |= {s.name for s in symbolic.pystr_to_symbolic(wb).free_symbols}
+        if not rw_syms & varying and _dim_provably_disjoint(rb, wb, itersym, step, start):
             return True
     return False
 
@@ -605,10 +590,8 @@ class LoopToMap(xf.MultiStateTransformation):
             write = candidate.dst_subset if candidate.dst_subset is not None else candidate.subset
             if read == write:
                 continue
-            # Step-aware disjointness; the fallback below drops constant dims and the stride.
-            if _read_write_dims_disjoint(read, write, itersym, step, start, varying):
-                continue
-            if _read_write_same_iteration(read, write, itersym):
+            # Step-aware; the fallback below drops constant dims and the stride.
+            if _read_write_dims_ordered(read, write, itersym, step, start, varying):
                 continue
             # A transpose settles no single dimension, yet the dependence is distance-0.
             if _collision_forces_same_iteration(read, write, itersym, varying):
