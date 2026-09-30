@@ -95,7 +95,7 @@ def write_once_heap_sdfg(name):
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('s', [1], dace.float64, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_transient('s', [2], dace.float64, storage=dace.StorageType.CPU_Heap)
     st = sdfg.add_state('main')
     ra0 = st.add_access('A')
     ts = st.add_tasklet('setc', {'a'}, {'o'}, 'o = a * 2.0')
@@ -123,6 +123,8 @@ FUSED = re.compile(r'double\*\s+__restrict__\s+tmp\s*=\s*new\s+double\s+DACE_ALI
 #: The legacy split pair.
 SPLIT_DECL = re.compile(r'double\s*\*\s*tmp\s*;')
 SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[')
+#: The legacy generator allocates through aligned ``operator new[]``.
+LEGACY_SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\s*\[')
 
 
 def test_fused_definition_with_restrict(require_experimental):
@@ -138,7 +140,7 @@ def test_legacy_still_splits(require_experimental):
     """The legacy generator keeps the split declaration + assignment (its output must not change)."""
     code = code_for(heap_transient_sdfg, 'fused_legacy', LEGACY)
     assert SPLIT_DECL.search(code), f'legacy declaration disappeared:\n{code}'
-    assert SPLIT_ALLOC.search(code), f'legacy allocation disappeared:\n{code}'
+    assert LEGACY_SPLIT_ALLOC.search(code), f'legacy allocation disappeared:\n{code}'
     assert not FUSED.search(code), f'legacy must not emit the fused/restrict form:\n{code}'
     assert '__restrict__ tmp' not in code
 
@@ -167,9 +169,9 @@ def test_constant_extent_stays_split(require_experimental):
 
     ``heap_alloc_stmt`` emits the element type carrying ``DACE_ALIGN(64)``, which makes ``new`` call
     the over-aligned ``operator new[]``. With a constant bound, a fused DECLARATION names the fixed
-    array type ``double[1]`` and GCC rejects it ("alignment of array elements is greater than element
+    array type ``double[2]`` and GCC rejects it ("alignment of array elements is greater than element
     size"); the same ``new`` is legal as a bare assignment. So this must stay split rather than
-    de-align the allocation. ``write_once_heap_sdfg`` allocates ``s`` with a constant extent of 1.
+    de-align the allocation. ``write_once_heap_sdfg`` allocates ``s`` with a constant extent of 2 (a length-1 transient becomes a Scalar first).
     """
     code = code_for(write_once_heap_sdfg, 'fused_const_extent', EXPERIMENTAL)
     assert re.search(r'double\s*\*\s*s\s*;', code), f'expected the split declaration for a constant extent:\n{code}'
@@ -183,7 +185,7 @@ def test_write_once_heap_data_is_not_pointee_const(require_experimental):
     """Write-once data reaching the allocator is never emitted as pointee-``const``.
 
     ``s`` is read-only after its write, yet that write is emitted THROUGH the pointer, so
-    ``const double* s = new double[1];`` would not compile ("assignment of read-only location").
+    ``const double* s = new double[2];`` would not compile ("assignment of read-only location").
     """
     # Precondition: a runtime value is not a literal, so ``s`` really reaches the allocator.
     assert PromoteConstantTransients().apply_pass(write_once_heap_sdfg('fused_const_init_desc'), {}) is None

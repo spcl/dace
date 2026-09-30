@@ -47,6 +47,6 @@ def test_the_alias_of_a_read_only_view_is_const():
 def test_the_argument_it_aliases_is_declared_const():
     """The signature and the alias have to agree; the argument side was already right."""
     code = kernel_code()
-    signature = [line for line in code.splitlines() if '__global__' in line and 'gather' in line]
+    signature = [line for line in code.splitlines() if '__global__' in line]
     assert signature, code[:400]
     assert 'const int * __restrict__ grid' in signature[0], signature[0]

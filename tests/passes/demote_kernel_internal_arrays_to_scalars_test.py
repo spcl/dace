@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for :class:`DemoteKernelInternalArraysToScalars`.
 
-The pass is the inverse of ``PromoteGPUScalarsToArrays``: a length-1 ``Array``
+The pass is the inverse of ``PromoteScalarOutputsToArrays(gpu)``: a length-1 ``Array``
 that lives entirely inside a ``GPU_Device`` kernel (and is not a kernel output)
 is demoted back to a ``Scalar``. Genuine kernel outputs (``GPU_Global`` storage
 or written across a ``GPU_Device`` ``MapExit``) and ``GPU_Shared`` arrays are
@@ -132,19 +132,23 @@ def test_non_gpu_len1_array_untouched():
 
 
 def _build_block_reduction() -> dace.SDFG:
-    """GPU-transformed SDFG whose length-1 ``tB`` is the output of a cub block ``Reduce``."""
+    """A kernel whose length-1 ``tB`` is the output of a cub block ``Reduce``.
+
+    The schedules and storages are DECLARED rather than derived: ``Reduce`` with the ``CUDA
+    (block)`` implementation rejects anything but GPU register operands, and this fixture is about
+    what the demotion pass does to ``tB``, not about which placement an offloader arrives at.
+    """
     from dace.memlet import Memlet
-    from dace.transformation.interstate import GPUTransformSDFG
 
     sdfg = dace.SDFG('block_reduction')
-    sdfg.add_array('A', (128, ), dace.float32)
-    sdfg.add_array('B', (2, ), dace.float32)
-    sdfg.add_transient('tA', (2, ), dace.float32)
-    sdfg.add_transient('tB', (1, ), dace.float32)  # length-1 reduce output
+    sdfg.add_array('A', (128, ), dace.float32, storage=GPU_GLOBAL)
+    sdfg.add_array('B', (2, ), dace.float32, storage=GPU_GLOBAL)
+    sdfg.add_transient('tA', (2, ), dace.float32, storage=REGISTER)
+    sdfg.add_transient('tB', (1, ), dace.float32, storage=REGISTER)  # length-1 reduce output
     state = sdfg.add_state('a')
     A, B = state.add_access('A'), state.add_access('B')
-    me, mx = state.add_map('mymap', dict(bi='0:2'))
-    mei, mxi = state.add_map('mymap2', dict(i='0:32'))
+    me, mx = state.add_map('mymap', dict(bi='0:2'), schedule=GPU_DEVICE)
+    mei, mxi = state.add_map('mymap2', dict(i='0:32'), schedule=dtypes.ScheduleType.GPU_ThreadBlock)
     red = state.add_reduce('lambda a, b: a + b', None, 0)
     red.implementation = 'CUDA (block)'
     tA, tB = state.add_access('tA'), state.add_access('tB')
@@ -159,7 +163,6 @@ def _build_block_reduction() -> dace.SDFG:
     state.add_edge(mxi, None, mx, None, Memlet.simple(B, 'bi'))
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0:2'))
     sdfg.fill_scope_connectors()
-    sdfg.apply_transformations(GPUTransformSDFG, options={'sequential_innermaps': False})
     return sdfg
 
 
@@ -178,7 +181,7 @@ def test_block_reduce_output_not_scalarized_end_to_end():
     ``ExpandLibraryNodes`` runs *before* this pass, turning the cub block ``Reduce`` into a C++
     tasklet that writes ``tB[0]`` as raw text -- so by pass time there is no ``LibraryNode`` to key
     on, only the non-Python tasklet. ``tB`` must still be kept; otherwise codegen emits
-    ``float tB; ... tB[0] = cub::BlockReduce...`` (the CI compile failure). This is the regression a
+    ``float tB; ... tB[0] = gpucub::BlockReduce...`` (the CI compile failure). This is the regression a
     direct (un-expanded) pass invocation does not catch.
     """
     sdfg = _build_block_reduction()

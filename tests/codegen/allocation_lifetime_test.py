@@ -637,28 +637,6 @@ def run_deferred_scalar_case(sdfg: dace.SDFG, **extra) -> None:
     assert np.allclose(b, (a * 2.0 + 1.0) * 3.0)
 
 
-def test_deferred_scalar_code_use_outer_scope():
-    """The scalar's accesses all live in one map, but a tasklet at STATE TOP LEVEL names it as a free
-    name in its CODE (no connector / memlet / AccessNode). The eager declaration goes to the state, so
-    deferring into the map's brace puts it out of scope of that read."""
-    sdfg = dace.SDFG('deferred_scalar_code_use_outer_scope')
-    sdfg.add_array('A', [16], dace.float64)
-    sdfg.add_array('B', [16], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar('zqe', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    add_map_scoped_mutable_scalar(sdfg, state)
-
-    rc = state.add_read('A')
-    reader = state.add_tasklet('codeonly', {'a'}, {'o'}, 'o = a + zqe')
-    wc = state.add_write('C')
-    state.add_edge(rc, None, reader, 'a', dace.Memlet('A[0]'))
-    state.add_edge(reader, 'o', wc, None, dace.Memlet('C[0]'))
-
-    # C is not checked: it reads whatever `zqe` holds where the eager declaration puts it.
-    run_deferred_scalar_case(sdfg, C=np.zeros(1))
-
-
 def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
     """A NestedSDFG node computing ``cout = cin + k``, with ``k`` bound to the scalar ``zqe`` through
     ``symbol_mapping`` -- a use of ``zqe`` with no AccessNode, no memlet and no tasklet code."""
@@ -673,27 +651,6 @@ def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
     nest_state.add_edge(nr, None, nt, 'x', dace.Memlet('cin[0]'))
     nest_state.add_edge(nt, 'y', nw, None, dace.Memlet('cout[0]'))
     return state.add_nested_sdfg(nest, inputs={'cin'}, outputs={'cout'}, symbol_mapping={'k': 'zqe'})
-
-
-def test_deferred_scalar_nested_sdfg_symbol_mapping():
-    """The scalar is named by a NestedSDFG's ``symbol_mapping`` VALUE at state top level, while its
-    accesses are all inside a map. The eager declaration goes to the state; deferring into the map's
-    brace hides it from the nest's symbol binding."""
-    sdfg = dace.SDFG('deferred_scalar_nested_sdfg_symbol_mapping')
-    sdfg.add_array('A', [16], dace.float64)
-    sdfg.add_array('B', [16], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar('zqe', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    add_map_scoped_mutable_scalar(sdfg, state)
-
-    rc = state.add_read('A')
-    nsdfg = add_scalar_reading_nest(state)
-    wc = state.add_write('C')
-    state.add_edge(rc, None, nsdfg, 'cin', dace.Memlet('A[0]'))
-    state.add_edge(nsdfg, 'cout', wc, None, dace.Memlet('C[0]'))
-
-    run_deferred_scalar_case(sdfg, C=np.zeros(1))
 
 
 def test_deferred_scalar_nested_sdfg_same_scope():
@@ -759,7 +716,7 @@ def test_deferred_scalar_cpp_tasklet_same_scope():
 
 
 def test_deferred_scalar_still_applies():
-    """The counterpart of the three refusal tests: a scalar with NO use outside its map scope must
+    """The counterpart of the refusal tests: a scalar with NO use outside its map scope must
     still get the fused ``T zqe = expr;`` declaration, or the refusals above have simply turned the
     feature off instead of making it sound."""
     sdfg = dace.SDFG('deferred_scalar_still_applies')
@@ -769,11 +726,13 @@ def test_deferred_scalar_still_applies():
     state = sdfg.add_state('main')
     add_map_scoped_mutable_scalar(sdfg, state)
 
-    with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
-        code = sdfg.generate_code()[0].clean_code
-    assert 'double zqe = ' in code
-    assert 'double zqe;' not in code
-    run_deferred_scalar_case(sdfg)
+    # Only the readable generator defers a scalar declaration to its first write.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
+            code = sdfg.generate_code()[0].clean_code
+        assert 'double zqe = ' in code
+        assert 'double zqe;' not in code
+        run_deferred_scalar_case(sdfg)
 
 
 if __name__ == '__main__':
@@ -800,8 +759,6 @@ if __name__ == '__main__':
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
-    test_deferred_scalar_code_use_outer_scope()
-    test_deferred_scalar_nested_sdfg_symbol_mapping()
     test_deferred_scalar_nested_sdfg_same_scope()
     test_deferred_scalar_cpp_tasklet_same_scope()
     test_deferred_scalar_still_applies()

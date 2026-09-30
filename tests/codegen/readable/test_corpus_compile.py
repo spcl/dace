@@ -50,6 +50,14 @@ def fp_contract_off():
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
 SYMBOL_SIZE = 13
 
+#: Kernels where the uniform SYMBOL_SIZE is too large. scattering_self is an 8-deep nest, so 13 per
+#: axis is ~8e8 iterations and took the CI worker down; two per axis still exercises the shape.
+SYMBOL_OVERRIDES = {"scattering_self": {s: 2 for s in ("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb")}}
+
+#: Integer inputs that index an axis, as ``{kernel: {input: bounding symbol}}``; the generic integer
+#: range would read out of bounds once the axis is smaller.
+INDEX_INPUTS = {"scattering_self": {"neigh_idx": "NA"}}
+
 #: npbench corpus subpackages under ``tests/npbench`` this sweep covers: ``polybench`` (npbench's
 #: polybench set) and ``misc`` (the non-polybench npbench kernels). The heavier deep-learning /
 #: weather-stencil subpackages are left out.
@@ -97,7 +105,7 @@ def load_program(family, name):
     return programs[0][1]
 
 
-def make_inputs(sdfg, symbols, seed=0):
+def make_inputs(sdfg, symbols, index_bounds=None, seed=0):
     """Deterministic inputs matched to the SDFG's argument descriptors (free symbols are
     passed separately, so they are skipped here)."""
     rng = np.random.default_rng(seed)
@@ -115,7 +123,9 @@ def make_inputs(sdfg, symbols, seed=0):
         elif npdt.kind == "c":
             inputs[name] = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(npdt)
         else:
-            inputs[name] = rng.integers(1, 5, shape).astype(npdt)
+            bound = (index_bounds or {}).get(name)
+            low, high = (0, symbols[bound]) if bound else (1, 5)
+            inputs[name] = rng.integers(low, high, shape).astype(npdt)
     return inputs
 
 
@@ -137,10 +147,11 @@ def build_and_run(family, name, implementation, target):
         with use_implementation(implementation):
             sdfg = load_program(family, name).to_sdfg(simplify=True)
             sdfg.name = f"{sdfg.name}_{implementation}_{target}"
-            symbols = {symbol: SYMBOL_SIZE for symbol in map(str, sdfg.free_symbols)}
+            overrides = SYMBOL_OVERRIDES.get(name, {})
+            symbols = {symbol: overrides.get(symbol, SYMBOL_SIZE) for symbol in map(str, sdfg.free_symbols)}
             if target == "gpu":
                 sdfg.apply_gpu_transformations()
-            inputs = make_inputs(sdfg, symbols)
+            inputs = make_inputs(sdfg, symbols, INDEX_INPUTS.get(name))
             call_arguments = {n: (v.copy() if hasattr(v, "copy") else v) for n, v in inputs.items()}
             result = sdfg(**call_arguments, **symbols)
             return collect_outputs(result, call_arguments)

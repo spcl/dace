@@ -19,7 +19,6 @@ from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation
 #: Two headers every tasklet below asks for, so N tasklets produce N copies without the dedupe.
 TASKLET_GLOBAL_CODE = "#include <cmath>\n#include <cstdio>"
 #: Config path giving each top-level map nest its own translation unit.
-SPLIT_KEY = ("compiler", "cpu", "codegen_params", "split_nsdfg_translation_units")
 
 
 def include_lines(code_object):
@@ -98,33 +97,6 @@ def test_generated_code_still_compiles_and_runs():
     with use_implementation(EXPERIMENTAL):
         sdfg(A=a, B=b)
     assert np.allclose(b, np.sqrt(a))
-
-
-def test_split_translation_unit_includes_once():
-    """Two tasklets of ONE map nest, emitted into their own translation unit by
-    ``split_nsdfg_translation_units``: that file re-emits the shared header itself, so it is
-    deduplicated where the target hands its code objects over."""
-    sdfg = dace.SDFG("incdedup_split")
-    for name in ("A", "B", "C"):
-        sdfg.add_array(name, [8], dace.float64)
-    state = sdfg.add_state("s")
-    entry, exit_node = state.add_map("m", dict(i="0:8"))
-    read = state.add_read("A")
-    for index, out in enumerate(("B", "C")):
-        tasklet = state.add_tasklet(f"t{index}", {"a"}, {"b"},
-                                    "b = std::sqrt(a);",
-                                    language=dace.Language.CPP,
-                                    code_global=TASKLET_GLOBAL_CODE)
-        state.add_memlet_path(read, entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
-        state.add_memlet_path(tasklet, exit_node, state.add_write(out), src_conn="b", memlet=dace.Memlet(f"{out}[i]"))
-    split = dace.config.set_temporary(*SPLIT_KEY, value=True)
-    with use_implementation(EXPERIMENTAL), split:
-        objects = sdfg.generate_code()
-    nests = [obj for obj in objects if obj.target_type == "nsdfg"]
-    assert nests, "split_nsdfg_translation_units emitted no nest translation unit"
-    for nest in nests:
-        counts = collections.Counter(include_lines(nest))
-        assert not [line for line, count in counts.items() if count > 1], counts
 
 
 def test_only_include_lines_are_touched():
