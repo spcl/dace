@@ -19,11 +19,30 @@ from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_expr_type
+from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
 
 # -----------------------------------------------------------------------------
+
+
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
 
 
 @make_properties
@@ -865,9 +884,9 @@ class MapEntry(EntryNode):
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         # Add map params
-        known = {**symbols, **result}
+        known = {**symbols, **_constant_types(sdfg), **result}
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], known), infer_expr_type(rng[1], known))
+            result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
 
         return result
 
@@ -1049,6 +1068,13 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
     def __init__(self,
                  label,
                  params,
@@ -1176,7 +1202,7 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        result = set(self._consume.num_pes.free_symbols)
+        result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
         return result - dyn_inputs
@@ -1184,7 +1210,11 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes,
+                                                                     symbols={
+                                                                         **symbols,
+                                                                         **_constant_types(sdfg)
+                                                                     })
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
