@@ -466,11 +466,9 @@ class GenericSMemlet(SeparableMemletPattern):
             pos_lastindex = node_re
             neg_lastindex = node_rb
             if node_rs != 1:
-                pos_lastindex = symbolic.pystr_to_symbolic(
-                    '%s + int_floor(%s - %s, %s) * %s' %
-                    (symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(node_re, cpp_mode=False),
-                     symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(
-                         node_rs, cpp_mode=False), symbolic.symstr(node_rs, cpp_mode=False)))
+                # Built on the symbols themselves: a string round trip re-parses them at the default dtype.
+                rb_sym, re_sym, rs_sym = (symbolic.pystr_to_symbolic(x) for x in (node_rb, node_re, node_rs))
+                pos_lastindex = rb_sym + symbolic.int_floor(re_sym - rb_sym, rs_sym) * rs_sym
                 neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
