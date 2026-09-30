@@ -32,7 +32,9 @@ import tempfile
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
-os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
+# Under mpirun the MPI tests need mpi4py's automatic MPI_Init; only a plain session skips it.
+if "OMPI_COMM_WORLD_SIZE" not in os.environ:
+    os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 # Pin a single OpenMP thread so parallel reductions accumulate in a deterministic order. The
 # suite compares the legacy and experimental generators BIT-EXACTLY on CPU; with more than one
