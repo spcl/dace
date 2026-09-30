@@ -203,6 +203,9 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            if node_re != node_re or node_rb != node_rb or node_rs != node_rs:
+                # UndefinedSymbol hangs in SymPy's expand(), fail early
+                return False
             result_begin = subexprs[0].subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
