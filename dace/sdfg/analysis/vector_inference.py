@@ -434,7 +434,7 @@ class VectorInferenceGraph(DiGraph):
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
         for dim, sub in enumerate(edge.data.subset):
-            if self.param in {str(sym) for sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols}:
+            if self.param in {sym.name for sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols}:
                 if vec_dim is None:
                     vec_dim = dim
                 else:

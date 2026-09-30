@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import Dict, List, Optional, Sequence, Set, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -271,12 +271,7 @@ class Subset(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of undefined symbols in this subset. """
-        return set(self.symbols)
-
-    @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
-        """ Returns the symbol instance this subset carries for each of its undefined symbol names. """
-        raise NotImplementedError('symbols not implemented by "%s"' % type(self).__name__)
+        raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
 
 
 def _simplified_str(val):
@@ -566,11 +561,11 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for dim in self.ranges:
             for d in dim:
-                result.update(symbolic.symlist(d))
+                result |= symbolic.symlist(d).keys()
         return result
 
     def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
@@ -1141,10 +1136,10 @@ class SubsetUnion(Subset):
             return None
 
     @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for subset in self.subset_list:
-            result.update(subset.symbols)
+            result |= subset.free_symbols
         return result
 
     def replace(self, repl_dict):

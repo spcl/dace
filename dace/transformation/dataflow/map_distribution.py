@@ -135,8 +135,11 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             desc = src.desc(sdfg)
             if not isinstance(desc, (data.Scalar, data.Array)):
                 raise NotImplementedError
-            if not symbolic.same_value(list(desc.shape), m.src_subset.size_exact()):
-                raise NotImplementedError
+            if list(desc.shape) != m.src_subset.size_exact():
+                # Second attempt
+                # TODO: We need a solution for symbols not matching
+                if str(list(desc.shape)) != str(m.src_subset.size_exact()):
+                    raise NotImplementedError
             inputs.add(src)
 
         for inp in inputs:
@@ -182,11 +185,17 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             if not isinstance(desc, data.Array):
                 raise NotImplementedError
             try:
-                if not symbolic.same_value(list(desc.shape), m.dst_subset.size_exact()):
-                    raise NotImplementedError
+                if list(desc.shape) != m.dst_subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.dst_subset.size_exact()):
+                        raise NotImplementedError
             except AttributeError:
-                if not symbolic.same_value(list(desc.shape), m.subset.size_exact()):
-                    raise NotImplementedError
+                if list(desc.shape) != m.subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.subset.size_exact()):
+                        raise NotImplementedError
             outputs.add(dst)
 
         for out in outputs:
@@ -342,8 +351,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             desc = src.desc(sdfg)
             if not isinstance(desc, (data.Scalar, data.Array)):
                 raise NotImplementedError
-            if not symbolic.same_value(list(desc.shape), m.src_subset.size_exact()):
-                raise NotImplementedError
+            if list(desc.shape) != m.src_subset.size_exact():
+                # Second attempt
+                # TODO: We need a solution for symbols not matching
+                if str(list(desc.shape)) != str(m.src_subset.size_exact()):
+                    raise NotImplementedError
             inputs.add(src)
 
         for inp in inputs:
@@ -407,11 +419,17 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             if not isinstance(desc, data.Array):
                 raise NotImplementedError
             try:
-                if not symbolic.same_value(list(desc.shape), m.dst_subset.size_exact()):
-                    raise NotImplementedError
+                if list(desc.shape) != m.dst_subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.dst_subset.size_exact()):
+                        raise NotImplementedError
             except AttributeError:
-                if not symbolic.same_value(list(desc.shape), m.subset.size_exact()):
-                    raise NotImplementedError
+                if list(desc.shape) != m.subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.subset.size_exact()):
+                        raise NotImplementedError
             outputs.add(dst)
 
         for out in outputs:
