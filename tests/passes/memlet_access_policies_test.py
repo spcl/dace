@@ -546,9 +546,12 @@ def test_access_node_inside_map_is_a_leaf():
         and not isinstance(e.src, dace.nodes.AccessNode)
     ][0]
     cur, init, step = _cursor_of(_loops(sdfg)[0], 'A')
-    cur_sym = dace.symbolic.pystr_to_symbolic(cur)
+    # Compare against the symbols with their declared dtypes: a symbol's dtype is part of its identity.
+    cur_sym = dace.symbolic.symbol(cur, dtype=sdfg.symbols[cur])
     assert inner.data.data == '__dace_flat_A'
-    assert (inner.data.subset.ranges[0][0] - (cur_sym + dace.symbolic.symbol('j'))).expand() == 0
+    start = inner.data.subset.ranges[0][0]
+    j = next(s for s in start.free_symbols if str(s) == 'j')
+    assert (start - (cur_sym + j)).expand() == 0
     outer = state.memlet_path(inner)[0]
     assert outer.src.data == '__dace_flat_A'
     assert (outer.data.subset.ranges[0][0] - cur_sym).expand() == 0
