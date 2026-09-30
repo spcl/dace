@@ -1071,11 +1071,27 @@ def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
         parent_node.symbol_mapping[outer] = symbolic.pystr_to_symbolic(outer)
 
     # The nested SDFGs below are connected to containers whose descriptors were just restated
+    integrate_nested_sdfgs_within(sdfg)
+    return folded
+
+
+def integrate_nested_sdfgs_within(sdfg: SDFG) -> None:
+    """
+    Integrates every nested SDFG directly within ``sdfg`` (see ``integrate_nested_sdfg``).
+
+    Replacing symbols in an SDFG restates its descriptors and the symbol mappings of the nested SDFG nodes in it,
+    but not the connector descriptors inside those nested SDFGs. For example, replacing ``M`` with ``20`` turns a
+    container ``X[M, K]`` into ``X[20, K]`` and a mapping ``{'M': 'M'}`` into ``{'M': 20}``, while a connector
+    connected to ``X`` still reads ``[M, K]``. Integrating the nested SDFGs again restates such connectors as the
+    containers they are connected to.
+
+    :param sdfg: The SDFG whose nested SDFGs are integrated.
+    :note: This function operates in-place.
+    """
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
                 integrate_nested_sdfg(node.sdfg)
-    return folded
 
 
 def integrate_nested_sdfg(sdfg: SDFG):

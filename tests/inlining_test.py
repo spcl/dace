@@ -1653,6 +1653,68 @@ def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool
         InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
 
 
+def _constant_mapped_two_level_sdfg() -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+    """
+    Builds ``Y = 2 * X`` over ``X[20, 3]`` through a nested SDFG in ``M`` and ``K``, mapped to the constants ``20``
+    and ``3``. It copies its input to an ``[M, K]`` transient, which another nested SDFG within reads. Integration
+    restates the connectors in the parent's terms, but the transient stays written in ``M`` and ``K``.
+    """
+    M, K = dace.symbol('M'), dace.symbol('K')
+
+    inner = dace.SDFG('constant_mapped_inner')
+    inner.add_array('a', [M, K], dace.float64)
+    inner.add_array('b', [M, K], dace.float64)
+    inner.add_state().add_mapped_tasklet('double', {
+        'i': '0:M',
+        'j': '0:K'
+    }, {'inp': dace.Memlet('a[i, j]')},
+                                         'out = 2 * inp', {'out': dace.Memlet('b[i, j]')},
+                                         external_edges=True)
+
+    middle = dace.SDFG('constant_mapped_middle')
+    middle.add_array('x', [M, K], dace.float64)
+    middle.add_array('y', [M, K], dace.float64)
+    middle.add_transient('t', [M, K], dace.float64)
+    state = middle.add_state()
+    t = state.add_access('t')
+    state.add_nedge(state.add_read('x'), t, middle.make_array_memlet('x'))
+    inner_node = state.add_nested_sdfg(inner, {'a'}, {'b'})
+    state.add_edge(t, None, inner_node, 'a', middle.make_array_memlet('t'))
+    state.add_edge(inner_node, 'b', state.add_write('y'), None, middle.make_array_memlet('y'))
+    inner_node.integrate_into_parent()
+
+    sdfg = dace.SDFG('constant_mapped_outer')
+    sdfg.add_array('X', [20, 3], dace.float64)
+    sdfg.add_array('Y', [20, 3], dace.float64)
+    state = sdfg.add_state()
+    middle_node = state.add_nested_sdfg(middle, {'x'}, {'y'}, symbol_mapping={'M': 20, 'K': 3})
+    state.add_edge(state.add_read('X'), None, middle_node, 'x', sdfg.make_array_memlet('X'))
+    state.add_edge(middle_node, 'y', state.add_write('Y'), None, sdfg.make_array_memlet('Y'))
+    middle_node.integrate_into_parent()
+    sdfg.validate()
+    return sdfg, middle_node
+
+
+@pytest.mark.parametrize('inliner', [InlineSDFG, InlineMultistateSDFG])
+def test_inline_restates_nested_connectors(inliner: Type):
+    """
+    Tests that inlining a nested SDFG whose symbols are mapped to constants restates the connectors of the nested
+    SDFGs within it, which are written in the symbols the inlining replaces.
+    """
+    sdfg, middle_node = _constant_mapped_two_level_sdfg()
+    inliner.apply_to(sdfg, nested_sdfg=middle_node)
+    sdfg.validate()
+
+    nested = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace_nodes.NestedSDFG)]
+    assert len(nested) == 1
+    assert all(tuple(desc.shape) == (20, 3) for desc in nested[0].sdfg.arrays.values())
+
+    X = np.random.rand(20, 3)
+    Y = np.zeros((20, 3))
+    sdfg(X=X, Y=Y)
+    assert np.allclose(Y, 2 * X)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1707,3 +1769,5 @@ if __name__ == "__main__":
     for outer_context in ['producer', 'consumer']:
         for in_map in [False, True]:
             test_inline_shared_inout_connector_rejected(outer_context=outer_context, in_map=in_map)
+    for inliner in [InlineSDFG, InlineMultistateSDFG]:
+        test_inline_restates_nested_connectors(inliner)

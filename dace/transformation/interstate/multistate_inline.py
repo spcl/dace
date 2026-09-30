@@ -6,7 +6,7 @@ import itertools
 from typing import Dict, List
 
 from dace import Memlet, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil
@@ -183,6 +183,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
+        # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
+        # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
+        # ``{'M': 20}``) are kept on the node rather than folded, so an inner nested SDFG connected to ``X[M, K]`` still
+        # reads ``[M, K]`` while ``X`` became ``X[20, K]``. Integrating the nested SDFGs restates those connectors.
+        dealias.integrate_nested_sdfgs_within(nsdfg)
 
         #######################################################
         # Collect and modify interstate edges as necessary
