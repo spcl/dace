@@ -1099,6 +1099,22 @@ def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
         "re-parallelize must recover the map after the round-trip"
 
 
+def test_symbol_mapping_applies_to_typed_inner_symbols():
+    """The inner symbol keeps its declared dtype, so mapping it outward must match by name."""
+    from dace.transformation.interstate.loop_to_map import _through_symbol_mapping
+    inner = dace.SDFG('inner')
+    inner.add_symbol('M', dace.int64)
+    inner.add_array('x', [10], dace.float64)
+    outer = dace.SDFG('outer')
+    outer.add_symbol('K', dace.int32)
+    outer.add_array('x', [10], dace.float64)
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {'x'}, set(), symbol_mapping={'M': 'K + 1'})
+    subset = dace.subsets.Range([(dace.symbol('M', dace.int64), dace.symbol('M', dace.int64), 1)])
+    result = _through_symbol_mapping(subset, nsdfg)
+    assert {str(sym) for sym in result.ndrange()[0][0].free_symbols} == {'K'}
+
+
 def test_refuse_when_body_assigns_loop_range_symbol():
     """A loop whose range expression reads a symbol that the loop body
     re-assigns via an interstate-edge assignment must NOT be converted to

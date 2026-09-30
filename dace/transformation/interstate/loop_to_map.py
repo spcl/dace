@@ -42,11 +42,22 @@ def _check_range(subset: subsets.Subset, a: IndexExpr, itersym: symbolic.symbol,
     return found
 
 
+def _through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
+    """Copy of an inner ``subset`` in terms of the outer symbols; matches by name, so the inner
+    symbol's dtype does not matter."""
+    outer = copy.deepcopy(subset)
+    inner_syms = {s for rng in outer.ndrange() for x in rng if symbolic.issymbolic(x) for s in x.free_symbols}
+    outer.replace({
+        s: symbolic.pystr_to_symbolic(nsdfg_node.symbol_mapping[s.name])
+        for s in inner_syms if s.name in nsdfg_node.symbol_mapping
+    })
+    return outer
+
+
 def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
                                 b: IndexExpr, step: IndexExpr) -> bool:
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     found = False
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
@@ -63,8 +74,7 @@ def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym
                 dst_subset = e.data.get_dst_subset(e, state)
                 if dst_subset is None:
                     return False
-                outer = copy.deepcopy(dst_subset)
-                outer.replace(repl)
+                outer = _through_symbol_mapping(dst_subset, nsdfg_node)
                 if not _check_range(outer, a, itersym, b, step):
                     return False
                 found = True
@@ -75,7 +85,6 @@ def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym:
                                b: IndexExpr, step: IndexExpr) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -90,8 +99,7 @@ def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym:
                 src_subset = e.data.get_src_subset(e, state)
                 if src_subset is None:
                     return False
-                outer = copy.deepcopy(src_subset)
-                outer.replace(repl)
+                outer = _through_symbol_mapping(src_subset, nsdfg_node)
                 if itersym not in outer.free_symbols:
                     continue
                 if not _check_range(outer, a, itersym, b, step):
