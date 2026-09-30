@@ -46,7 +46,7 @@ def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym
                                 b: IndexExpr, step: IndexExpr) -> bool:
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     found = False
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
@@ -75,7 +75,7 @@ def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym:
                                b: IndexExpr, step: IndexExpr) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -121,7 +121,7 @@ def _affine_coeffs(expr: IndexExpr,
     """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
     value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
     ``itersym`` is the degree test."""
-    e = symbolic.pystr_to_symbolic(expr)
+    e, itersym = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(expr), itersym)
     if not e.is_polynomial(itersym):
         return None
     a = sp.diff(e, itersym)
@@ -132,9 +132,7 @@ def _affine_coeffs(expr: IndexExpr,
 
 def _same_injective_index(idx1: IndexExpr, idx2: IndexExpr, itersym: symbolic.symbol) -> bool:
     """True iff ``idx1`` and ``idx2`` are the same injective affine ``a*i+b`` (``a != 0``) of ``itersym``."""
-    # The string round trip retypes index symbols like ``itersym``; typed ones would never cancel.
-    e1 = symbolic.pystr_to_symbolic(str(idx1))
-    e2 = symbolic.pystr_to_symbolic(str(idx2))
+    e1, e2 = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(idx1), symbolic.pystr_to_symbolic(idx2))
     coeffs = _affine_coeffs(e1, itersym)
     return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
 
