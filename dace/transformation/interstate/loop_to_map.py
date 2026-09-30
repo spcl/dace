@@ -279,6 +279,8 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     if _collision_forces_same_iteration(m1.subset, m2.subset, itersym, varying):
         return False
     return True
+
+
 def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> Optional[Set[str]]:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
     symbols_that_may_be_used: Set[str] = {itervar}
