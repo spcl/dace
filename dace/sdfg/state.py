@@ -1839,8 +1839,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
         :return: The created NestedSDFG node.
-        :raises ValueError: If neither sdfg nor external_path is provided, or if required symbols
-                           are missing from the symbol mapping.
+        :raises ValueError: If neither sdfg nor external_path is provided.
+        :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
+               node. Integration makes the connectors' descriptors those of the parent's containers, as a valid
+               SDFG requires (see ``dace.sdfg.dealias.integrate_nested_sdfg``).
         """
         if name is None:
             name = sdfg.label

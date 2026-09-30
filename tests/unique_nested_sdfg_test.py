@@ -119,6 +119,7 @@ def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
                                         z_out,
                                         src_conn="z",
                                         memlet=Memlet.simple(z_out, "0:size", num_accesses=n))
+    nested_sdfg.integrate_into_parent()
 
     return vecAdd_parent_sdfg
 
@@ -152,6 +153,7 @@ def make_nested_sdfg_cpu_single_state():
     state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
     state.add_memlet_path(nested_sdfg, z, src_conn="z", memlet=Memlet.simple(z, "0:n", num_accesses=n))
+    nested_sdfg.integrate_into_parent()
 
     # Build the second axpy: works with v,w and u of m elements
     to_nest = make_vecAdd_sdfg("vecAdd")
@@ -168,6 +170,7 @@ def make_nested_sdfg_cpu_single_state():
     state.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
     state.add_memlet_path(nested_sdfg, u, src_conn="z", memlet=Memlet.simple(u, "0:m", num_accesses=m))
+    nested_sdfg.integrate_into_parent()
 
     return sdfg
 
@@ -201,6 +204,7 @@ def make_nested_sdfg_cpu_two_states():
     state_0.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state_0.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
     state_0.add_memlet_path(nested_sdfg, z, src_conn="z", memlet=Memlet.simple(z, "0:n", num_accesses=n))
+    nested_sdfg.integrate_into_parent()
 
     # Build the second axpy: add another state works with v,w and u of m elements
     state_1 = sdfg.add_state_after(state_0, "state_1")
@@ -219,6 +223,7 @@ def make_nested_sdfg_cpu_two_states():
     state_1.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state_1.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
     state_1.add_memlet_path(nested_sdfg, u, src_conn="z", memlet=Memlet.simple(u, "0:m", num_accesses=m))
+    nested_sdfg.integrate_into_parent()
 
     return sdfg
 
@@ -251,6 +256,7 @@ def make_nested_nested_sdfg_cpu():
     state_0.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state_0.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
     state_0.add_memlet_path(nested_sdfg, z, src_conn="z", memlet=Memlet.simple(z, "0:n", num_accesses=n))
+    nested_sdfg.integrate_into_parent()
 
     # Build the second axpy: add another state works with v,w and u of m elements
     state_1 = sdfg.add_state_after(state_0, "state_1")
@@ -269,6 +275,7 @@ def make_nested_nested_sdfg_cpu():
     state_1.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state_1.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
     state_1.add_memlet_path(nested_sdfg, u, src_conn="z", memlet=Memlet.simple(u, "0:m", num_accesses=m))
+    nested_sdfg.integrate_into_parent()
 
     return sdfg
 

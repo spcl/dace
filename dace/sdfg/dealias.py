@@ -1104,6 +1104,20 @@ def integrate_nested_sdfg(sdfg: SDFG):
     parent_state = sdfg.parent
     parent_node = sdfg.parent_nsdfg_node
 
+    # The parent's descriptors adopted below are written in the parent's symbols. An inner symbol of the same name
+    # that the node binds to something else (e.g., ``{'N': 'N - 5'}``) is a different symbol, so it is renamed first
+    parent_desc_symbols: Set[str] = set()
+    for edge in parent_state.all_edges(parent_node):
+        if edge.data.data in parent_sdfg.arrays:
+            parent_desc_symbols |= set(map(str, parent_sdfg.arrays[edge.data.data].used_symbols(all_symbols=True)))
+    shadowed = {
+        sym
+        for sym in parent_desc_symbols
+        if sym in parent_node.symbol_mapping and str(parent_node.symbol_mapping[sym]) != sym
+    }
+    if shadowed:
+        remove_symbol_aliases(sdfg, {sym: sym for sym in shadowed})
+
     # Track which data containers need to be added and converted to views
     to_add_and_view: Dict[str,
                           Tuple[str,
