@@ -3,7 +3,7 @@
 
 A range like ``dace.map[A[i]:A[i + 1]]`` reads ``A[i]`` and ``A[i + 1]`` as dynamic map inputs, so that no
 scalar copy sits between the map and the scope enclosing it. A bound given through a variable reads the value the
-variable holds.
+variable holds, which is a copy of the element.
 """
 import numpy as np
 
@@ -47,6 +47,41 @@ def test_range_reads_the_element_itself():
     assert np.allclose(out, expected), out
 
 
+def test_range_reads_variables():
+    """Bounds given through variables read the scalars that hold the elements, which in turn copy them."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def rowsum(indptr: dace.int32[N + 1], vals: dace.float64[N * N], out: dace.float64[N]):
+        for i in range(N):
+            start = indptr[i]
+            end = indptr[i + 1]
+            for j in dace.map[start:end]:
+                out[i] += vals[j]
+
+    sdfg = rowsum.to_sdfg(simplify=False)
+    inputs = _dynamic_inputs(sdfg)
+    assert len(inputs) == 2, inputs
+
+    # Every scalar a bound reads is a copy of an element of ``indptr``
+    copied = set()
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if any(memlet.data == node.data for memlet in inputs.values()):
+                for edge in state.in_edges(node):
+                    assert edge.data.data == 'indptr', edge.data
+                    copied.add(str(edge.data.subset))
+    assert copied == {'i', 'i + 1'}, copied
+
+    indptr = np.array([0, 3, 3, 7], dtype=np.int32)
+    vals = np.random.rand(9)
+    expected = np.array([vals[0:3].sum(), 0.0, vals[3:7].sum()])
+    for simplify in (False, True):
+        out = np.zeros(3)
+        rowsum.to_sdfg(simplify=simplify)(indptr=indptr, vals=vals, out=out, N=3)
+        assert np.allclose(out, expected), (simplify, out)
+
+
 def test_range_keeps_the_value_it_was_given():
     """A write to the array in between makes the copy and the element differ; the copy is right."""
 
@@ -71,4 +106,5 @@ def test_range_keeps_the_value_it_was_given():
 
 if __name__ == '__main__':
     test_range_reads_the_element_itself()
+    test_range_reads_variables()
     test_range_keeps_the_value_it_was_given()
