@@ -32,18 +32,16 @@ element type is formed and the fused spelling is well-formed.
 On ``const``: a pointee-const definition (``const double* p = new double[N];``) is NOT emitted for
 an allocated array, and this is deliberate -- a heap transient is filled at runtime THROUGH that
 pointer, so ``const`` would make its own initializing write ill-formed ("assignment of read-only
-location"). The generator's const machinery (``MarkConstInit`` -> ``_is_const_scalar`` /
-``_is_const_len1_array``) instead handles read-only data by SKIPPING the allocation and fusing the
-value into a ``const T x = expr;`` binding at the write site. ``test_const_init_heap_not_pointee_const``
-pins that: const-initialized heap data still compiles and stays bit-exact.
+location"). Only literal-only data becomes ``constexpr`` (``PromoteConstantTransients``), which
+skips the allocation altogether. ``test_write_once_heap_data_is_not_pointee_const`` pins that a
+write-once runtime value stays a plain heap array that compiles and stays bit-exact.
 """
 import re
 
 import numpy as np
 
 import dace
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.mark_const_init import MarkConstInit
+from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
 from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, generated_code,
                                              run_isolated, use_implementation)
 
@@ -90,20 +88,11 @@ def may_alias_transient_sdfg(name):
     return sdfg
 
 
-def const_init_heap_sdfg(name):
-    """Single-state ``const_runtime`` CPU_Heap array (``MarkConstInit`` sets ``const_init``):
-    ``s[0] = A[0] * 2`` written once, then read by ``B[i] = A[i] + s[0]``.
-
-    ``s`` is a CPU_Heap Array, so neither ``_is_const_scalar`` (Scalar only) nor
-    ``_is_const_len1_array`` (Register only) claims it: it reaches the heap allocation path while
-    being const-initialized, which is exactly the case a naive pointee-``const`` would miscompile.
-
-    The extent is 2, not 1, on purpose: the readable pipeline runs
-    ``ConvertLengthOneArraysToScalars`` ahead of the const machinery, so a length-1 transient never
-    reaches the allocator as an Array at all -- it becomes a by-value Scalar and takes the
-    ``const T x = expr;`` path instead. 2 is still a COMPILE-TIME-CONSTANT extent, which is the
-    other property these tests need.
-    """
+def write_once_heap_sdfg(name):
+    """Single-state CPU_Heap array ``s[0] = A[0] * 2`` written once from runtime data, then read by
+    ``B[i] = A[i] + s[0]``. It reaches the heap allocation path while being read-only after its write,
+    which is exactly the case a naive pointee-``const`` would miscompile. The extent is 2: a length-1
+    transient becomes a by-value Scalar before it reaches the allocator."""
     N = dace.symbol('N')
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [N], dace.float64)
@@ -183,30 +172,24 @@ def test_constant_extent_is_fused(require_experimental):
     cannot each be 64-byte aligned -- GCC rejects it, while the identical ``new`` is legal as a bare
     assignment. Aligned ``operator new[]`` moved the alignment into a placement argument, so no
     over-aligned element type is formed and the exclusion is gone with its cause.
-    ``const_init_heap_sdfg`` allocates ``s`` with a constant extent of 2.
+    ``write_once_heap_sdfg`` allocates ``s`` with a constant extent of 2.
     """
-    code = code_for(const_init_heap_sdfg, 'fused_const_extent', EXPERIMENTAL)
+    code = code_for(write_once_heap_sdfg, 'fused_const_extent', EXPERIMENTAL)
     assert re.search(r'double\*\s+__restrict__\s+s\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
         f'expected a fused definition for a constant extent:\n{code}'
     assert not re.search(r'double\s*\*\s*s\s*;', code), f'the declaration was not fused away:\n{code}'
 
 
-def test_const_init_data_is_not_pointee_const(require_experimental):
-    """Const-initialized data reaching the allocator is never emitted as pointee-``const``.
+def test_write_once_heap_data_is_not_pointee_const(require_experimental):
+    """Write-once data reaching the allocator is never emitted as pointee-``const``.
 
-    ``MarkConstInit`` flags ``s`` (written once, then read-only), yet its initializing write is
-    emitted THROUGH the pointer, so ``const double* s = new double[1];`` would not compile
-    ("assignment of read-only location"). The generator's const machinery instead handles read-only
-    data by skipping the allocation entirely and fusing the value into a ``const T x = expr;``
-    binding at the write site. Guard against naively adding pointee-const at the allocation.
+    ``s`` is read-only after its write, yet that write is emitted THROUGH the pointer, so
+    ``const double* s = new double[1];`` would not compile ("assignment of read-only location").
     """
-    # Precondition: the pass really does classify this data as write-once/read-only, so the test
-    # cannot pass vacuously if MarkConstInit ever stops marking it.
-    marked = const_init_heap_sdfg('fused_const_init_desc')
-    Pipeline([MarkConstInit()]).apply_pass(marked, {})
-    assert marked.arrays['s'].const_init, 'expected MarkConstInit to flag s as const-initialized'
+    # Precondition: a runtime value is not a literal, so ``s`` really reaches the allocator.
+    assert PromoteConstantTransients().apply_pass(write_once_heap_sdfg('fused_const_init_desc'), {}) is None
 
-    code = code_for(const_init_heap_sdfg, 'fused_const_init_code', EXPERIMENTAL)
+    code = code_for(write_once_heap_sdfg, 'fused_const_init_code', EXPERIMENTAL)
     assert not re.search(r'const\s+double\s*\*[^=]*=\s*new', code), \
         f'pointee-const would make the array\'s own initializing write ill-formed:\n{code}'
     # The write through the pointer is still emitted -- precisely why const is unsound here.
@@ -236,12 +219,12 @@ def test_fused_definition_bit_exact(require_experimental):
     np.testing.assert_array_equal(experimental['b'], np.random.default_rng(42).random(64) * 2.0 + 1.0)
 
 
-def run_const_init(name, implementation):
-    """Compile + run the const-initialized heap SDFG; returns ``{'B': ...}``."""
+def run_write_once(name, implementation):
+    """Compile + run the write-once heap SDFG; returns ``{'B': ...}``."""
 
     def build_and_run():
         with use_implementation(implementation):
-            sdfg = const_init_heap_sdfg(name)
+            sdfg = write_once_heap_sdfg(name)
             rng = np.random.default_rng(7)
             A = rng.random(64)
             B = np.zeros(64)
@@ -251,8 +234,8 @@ def run_const_init(name, implementation):
     return run_isolated(build_and_run)
 
 
-def test_const_init_heap_bit_exact(require_experimental):
-    """Const-initialized heap data compiles under the readable generator and matches legacy."""
-    legacy = run_const_init('const_run_legacy', LEGACY)
-    experimental = run_const_init('const_run_readable', EXPERIMENTAL)
+def test_write_once_heap_bit_exact(require_experimental):
+    """Write-once heap data compiles under the readable generator and matches legacy."""
+    legacy = run_write_once('const_run_legacy', LEGACY)
+    experimental = run_write_once('const_run_readable', EXPERIMENTAL)
     assert_outputs_equivalent(legacy, experimental, 'cpu', label='const_init_heap')

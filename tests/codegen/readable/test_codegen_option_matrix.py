@@ -36,7 +36,7 @@ its OWN regression test rather than silently "fixed":
   - ``scalar_init_style = 'const'/'setzero'`` -- only 'fused' is special-cased; both fall through to
                                              'split' ('setzero' names a node property, not a value).
   - ``const_init = 'const'/'constexpr_static'`` -- only 'on' is special-cased; both behave like 'off'
-                                             (both are ``const_init_kind`` classification labels).
+                                             (neither is a value of this key).
   - ``heap_ptr_restrict = 'may_alias'``   -- only 'restrict' is special-cased; behaves like 'none'
                                              ('may_alias' is the ARRAY-DESCRIPTOR flag this key reads,
                                              not a value of the key itself).
@@ -357,9 +357,7 @@ def test_scalar_init_style_recognizes_only_fused(value: str) -> None:
 
 @pytest.mark.parametrize('value', ['const', 'constexpr_static'])
 def test_const_init_recognizes_only_on(value: str) -> None:
-    """Only the literal 'on' runs MarkConstInit; 'const' and 'constexpr_static' are
-    ``const_init_kind`` CLASSIFICATION labels (``dace/data/core.py``), not settable values of this
-    key, so both behave like 'off'."""
+    """Only the literal 'on' runs PromoteConstantTransients; any other value behaves like 'off'."""
     off = cpp_text('nv_ci_off', ('compiler', 'cpu', 'codegen_params', 'const_init'), 'off')
     arm = cpp_text('nv_ci_off', ('compiler', 'cpu', 'codegen_params', 'const_init'), value)
     assert arm == off

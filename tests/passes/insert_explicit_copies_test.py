@@ -1208,6 +1208,7 @@ def test_copy_competing_with_another_write_is_lifted_ahead_of_it():
     sdfg.validate()
 
     InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
 
     lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
     assert len(lifted) == 1, "the copy competing with another write to B was not lifted"

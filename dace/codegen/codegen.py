@@ -372,11 +372,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Experimental readable generator: flatten nested SDFGs, mark write-once data const/constexpr, and
+    # Experimental readable generator: flatten nested SDFGs, promote literal-only transients to constants, and
     # inline tasklet connectors. Runs after library expansion so post-expansion tasklets are seen too.
     if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.mark_const_init import MarkConstInit
+        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
         from dace.transformation.passes.gpu_shared_memory import PrivatizeKernelSharedMemory
@@ -410,10 +410,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         # accumulator chain has been rewritten to WCR, and fissioning a read-modify-write into a
         # fresh SSA version drops the running value (this silently miscompiled CloudSC full_cpu).
         # A caller who wants more const-markable versions runs it in their own pipeline instead.
-        # const_init: classify write-once transients as constexpr/const. Default 'on' keeps output
-        # byte-identical.
+        # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
-            Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+            PromoteConstantTransients().apply_pass(sdfg, {})
         # Renames shared containers, so it must precede the inlining that writes data names into tasklet code.
         PrivatizeKernelSharedMemory().apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})

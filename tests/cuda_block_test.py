@@ -56,6 +56,14 @@ def test_gpu():
     _test(sdfg)
 
 
+def inner_maps_scheduled_by_the_kernel(sdfg: dace.SDFG) -> None:
+    """The offload makes every map inside a kernel Sequential; these tests want the code generator to pick
+    the thread-block level, so the inner maps, nested SDFGs included, go back to ``Default``."""
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Sequential:
+            node.map.schedule = dace.ScheduleType.Default
+
+
 @pytest.mark.gpu
 def test_different_block_sizes_nesting():
 
@@ -190,6 +198,7 @@ def test_block_thread_specialization():
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
+    inner_maps_scheduled_by_the_kernel(sdfg)
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive()
                    if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string)
     tasklet.location['gpu_thread'] = dace.subsets.Range.from_string('2:9:3')

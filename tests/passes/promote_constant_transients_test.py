@@ -1,18 +1,15 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the MarkConstInit pass. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+""" Tests the PromoteConstantTransients pass. """
 
 import numpy as np
 
 import dace
 from dace.sdfg import nodes as nd
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.mark_const_init import MarkConstInit
+from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
 
 
 def _run(sdfg: dace.SDFG):
-    # Pipeline nests MarkConstInit's own {cfg_id: {name: classification}} return under the pass name; unwrap it.
-    res = Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
-    return (res or {}).get('MarkConstInit')
+    return PromoteConstantTransients().apply_pass(sdfg, {})
 
 
 def _tasklets(state):
@@ -24,7 +21,7 @@ def _map_entries(state):
 
 
 def test_scalar_constant_single_write():
-    """A scalar written once by ``a = 0`` then read becomes a constexpr_static constant."""
+    """A scalar written once by ``a = 0`` then read becomes a SDFG constant."""
     sdfg = dace.SDFG('scalar_const')
     sdfg.add_scalar('a', dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -46,7 +43,7 @@ def test_scalar_constant_single_write():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('a') == 'constexpr_static'
+    assert 'a' in kinds
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 0
     assert _tasklets(s1) == []
@@ -55,7 +52,7 @@ def test_scalar_constant_single_write():
 
 
 def test_array_full_constant_write():
-    """An array fully written by a constant map then read becomes a constexpr_static constant."""
+    """An array fully written by a constant map then read becomes a SDFG constant."""
     sdfg = dace.SDFG('array_full')
     sdfg.add_array('A', [10], dace.float64, transient=True)
     sdfg.add_array('B', [10], dace.float64)
@@ -76,7 +73,7 @@ def test_array_full_constant_write():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('A') == 'constexpr_static'
+    assert 'A' in kinds
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], np.full(10, 3.0))
     assert _tasklets(s1) == []
@@ -132,7 +129,7 @@ def test_array_partial_constant_write():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('A') == 'constexpr_static'
+    assert 'A' in kinds
     assert 'A' in sdfg.constants
     expected = np.zeros(10, dtype=np.float64)
     expected[1:9] = 5.0
@@ -140,8 +137,8 @@ def test_array_partial_constant_write():
     assert expected[0] == 0.0 and expected[9] == 0.0
 
 
-def test_scalar_runtime_single_write():
-    """A scalar written once from runtime data and read in the SAME state is marked const_runtime."""
+def test_scalar_runtime_single_write_not_promoted():
+    """A scalar written from runtime data is not a literal, so it keeps its write."""
     sdfg = dace.SDFG('scalar_runtime')
     sdfg.add_array('src', [1], dace.int32)
     sdfg.add_scalar('a', dace.int32, transient=True)
@@ -161,8 +158,7 @@ def test_scalar_runtime_single_write():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('a') == 'const_runtime'
-    assert sdfg.arrays['a'].const_init is True
+    assert 'a' not in kinds
     assert 'a' not in sdfg.constants
     assert len(_tasklets(s)) == 2
     assert any(n.data == 'a' for n in s.data_nodes())
@@ -196,12 +192,9 @@ def test_array_double_write_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'A' not in kinds
     assert 'A' not in sdfg.constants
-    assert not sdfg.arrays['A'].const_init
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
-    # _tasklets() alone can't see a decline leaving the fill map flattened (speculative unroll runs
-    # before classification, and 10 leftover per-element tasklets would pass that check either way).
-    assert _map_entries(s1) != [], 'rejected fill map was unrolled anyway'
+    assert _map_entries(s1) != []
 
 
 def test_interstate_edge_read_not_marked():
@@ -233,7 +226,6 @@ def test_interstate_edge_read_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
-    assert not sdfg.arrays['a'].const_init
     assert len(_tasklets(s1)) == 1
     assert any(n.data == 'a' for n in s1.data_nodes())
 
@@ -256,7 +248,7 @@ def test_same_state_separable_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('a') == 'constexpr_static'
+    assert 'a' in kinds
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 4
     assert init_t not in s.nodes()
@@ -264,8 +256,8 @@ def test_same_state_separable_marked():
     assert use_t in s.nodes()
 
 
-def test_same_state_non_separable_not_marked():
-    """A read of the transient that is not ordered after the write in the same state must not be marked."""
+def test_same_state_unordered_write_is_promoted():
+    """A read not ordered after the only write reads either garbage or the literal, so the literal is valid."""
     sdfg = dace.SDFG('same_state_nonsep')
     sdfg.add_scalar('a', dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -285,11 +277,11 @@ def test_same_state_non_separable_not_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' not in kinds
-    assert 'a' not in sdfg.constants
-    assert not sdfg.arrays['a'].const_init
-    assert init_t in s.nodes()
-    assert a_write in s.nodes()
+    assert 'a' in kinds
+    assert int(sdfg.constants['a']) == 4
+    assert init_t not in s.nodes()
+    assert a_write not in s.nodes()
+    assert a_read in s.nodes()
 
 
 def test_nested_sdfg_no_crash_and_marks():
@@ -325,7 +317,7 @@ def test_nested_sdfg_no_crash_and_marks():
 
     # The transient lives in the nested SDFG, so its classification is keyed by ``nsdfg.cfg_id``.
     kinds = (res or {}).get(nsdfg.cfg_id, {})
-    assert kinds.get('t') == 'constexpr_static'
+    assert 't' in kinds
     assert 't' in nsdfg.constants
     assert np.array_equal(nsdfg.constants['t'], np.full(10, 2.0))
     assert _tasklets(ns1) == []
@@ -360,7 +352,7 @@ def test_multiwrite_elementwise_one_state_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('arr') == 'constexpr_static'
+    assert 'arr' in kinds
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
@@ -391,7 +383,7 @@ def test_multiwrite_elementwise_spread_states_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('arr') == 'constexpr_static'
+    assert 'arr' in kinds
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     for sk in init_states:
         assert _tasklets(sk) == []
@@ -416,14 +408,14 @@ def test_multiwrite_different_access_nodes_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('arr') == 'constexpr_static'
+    assert 'arr' in kinds
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
 
 
-def test_multiwrite_read_before_write_not_marked():
-    """A read interleaved before one of the writes must not be marked (ordering not provable)."""
+def test_multiwrite_read_before_write_is_promoted():
+    """A read before arr[1] is written sees garbage there, so the promoted literal is a valid value."""
     sdfg = dace.SDFG('mw_interleaved')
     sdfg.add_array('arr', [4], dace.int32, transient=True)
     sdfg.add_array('OUT', [4], dace.int32)
@@ -447,11 +439,10 @@ def test_multiwrite_read_before_write_not_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' not in kinds
-    assert 'arr' not in sdfg.constants
-    assert not sdfg.arrays['arr'].const_init
-    assert t0 in s0.nodes()
-    assert t2 in s2.nodes()
+    assert 'arr' in kinds
+    assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 0, 0], dtype=np.int32))
+    assert t0 not in s0.nodes()
+    assert t2 not in s2.nodes()
 
 
 def test_multiwrite_partial_elementwise_marked():
@@ -473,7 +464,7 @@ def test_multiwrite_partial_elementwise_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('arr') == 'constexpr_static'
+    assert 'arr' in kinds
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 7, 8, 0], dtype=np.int32))
     assert _tasklets(s1) == []
 
@@ -505,7 +496,6 @@ def test_multiwrite_overlapping_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
-    assert not sdfg.arrays['arr'].const_init
     assert t1 in s1.nodes()
     assert t2 in s2.nodes()
 
@@ -531,7 +521,7 @@ def test_idempotency():
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('A') == 'constexpr_static'
+    assert 'A' in kinds
     assert 'A' in sdfg.constants
     first_value = np.copy(sdfg.constants['A'])
     num_nodes_s1 = len(s1.nodes())
@@ -544,9 +534,9 @@ def test_idempotency():
     assert len(s1.nodes()) == num_nodes_s1
 
 
-def test_partly_paying_fill_map_is_not_unrolled():
-    """A fill map is unrolled only if EVERY name it writes is const-initializable, not just some."""
-    sdfg = dace.SDFG('partly_paying')
+def test_fill_writing_two_arrays_is_not_promoted():
+    """A fill tasklet with two outputs is not a single literal store, so neither array it writes is promoted."""
+    sdfg = dace.SDFG('two_output_fill')
     sdfg.add_array('X', [8], dace.float64, transient=True)
     sdfg.add_array('Z', [4], dace.float64, transient=True)
     sdfg.add_array('BX', [8], dace.float64)
@@ -561,7 +551,6 @@ def test_partly_paying_fill_map_is_not_unrolled():
                           dict(ox=dace.Memlet('X[i + 4]'), oz=dace.Memlet('Z[i]')),
                           external_edges=True)
 
-    # A second write to Z -> Z is declined, which is what makes fill_xz not pay.
     s2 = sdfg.add_state('rewrite_z')
     t = s2.add_tasklet('z0', {}, {'o'}, 'o = 9.0')
     s2.add_edge(t, 'o', s2.add_access('Z'), None, dace.Memlet('Z[0]'))
@@ -586,22 +575,19 @@ def test_partly_paying_fill_map_is_not_unrolled():
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
 
-    # Invariant regardless of the classifier's decision: a flattened map must have paid for it.
-    if 'X' not in kinds:
-        assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
-                                            f'{[m.map.label for m in _map_entries(s1)]}')
+    assert 'X' not in kinds and 'Z' not in kinds, kinds
+    assert len(_map_entries(s1)) == 2
     sdfg.validate()
 
 
-def test_symbolic_fill_map_never_becomes_const_runtime():
-    """A fill map is either unrollable or const_runtime-able, never both."""
+def test_symbol_valued_fill_is_not_promoted():
+    """A value computed from a symbol is not a literal."""
     sdfg = dace.SDFG('sym_fill')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_scalar('s', dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
 
     s1 = sdfg.add_state('init')
-    # One iteration, value from a SYMBOL: not compile-time constant, but a single well-defined write.
     s1.add_mapped_tasklet('fill',
                           dict(i='0:1'), {},
                           'out = N * 2.0',
@@ -617,10 +603,8 @@ def test_symbolic_fill_map_never_becomes_const_runtime():
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    # Consumer in another state -> unrollable, but then the const binding has no scope to live in.
     assert 's' not in kinds, kinds
-    # The map is left alone: it does not pay, so it is not flattened.
-    assert _map_entries(s1) != [], 'a fill map that cannot pay was unrolled anyway'
+    assert _map_entries(s1) != []
     sdfg.validate()
 
 
@@ -647,19 +631,12 @@ def _same_state_fill_sdfg(name):
     return sdfg
 
 
-def test_same_state_constant_fill_is_const_inited():
-    """A constant fill is const-initializable even when its consumer shares the state.
-
-    This used to be unreachable: the classifier only saw element-wise tasklet writes, so it needed
-    ``MapUnroll`` first -- and MapUnroll cannot flatten a fill whose consumer shares its state,
-    since it duplicates the access node per element while keeping the original out-edge, so all N
-    copies claim to deliver the FULL array. The fix was to evaluate the fill WHERE IT STANDS
-    (``_uniform_fill_value``): a map writing one constant to every element of its range is a
-    constant over that range, and the subset already turns into a slice."""
+def test_same_state_constant_fill_is_promoted():
+    """A uniform constant fill is promoted even when its consumer shares the state."""
     sdfg = _same_state_fill_sdfg('same_state_fill')
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('A') == 'constexpr_static', kinds
+    assert 'A' in kinds, kinds
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], np.full(8, 3.0))
     sdfg.validate()
@@ -680,7 +657,7 @@ def gpu_constfill(A: dace.float64[8]):
 
 @dace.program
 def gpu_refill(A: dace.float64[8]):
-    """Same, but ``w`` is written a second time, so the classifier rejects it."""
+    """Same, but ``w`` is written a second time, so it is not promoted."""
     w = np.zeros((8, ), dtype=np.float64)
     for i in dace.map[0:8]:
         w[i] = 2.0
@@ -705,7 +682,7 @@ def test_gpu_constant_fill_map_keeps_its_schedule():
 
 
 def test_gpu_rejected_fill_map_stays_valid():
-    """Same shape, but the fill target is written twice, so the classifier rejects it (the durbin failure)."""
+    """Same shape, but the fill target is written twice, so it is not promoted (the durbin failure)."""
     sdfg = _gpu_fill_program(gpu_refill)
     _run(sdfg)
     sdfg.validate()
@@ -758,7 +735,7 @@ def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert kinds.get('mid') == 'constexpr_static', kinds
+    assert 'mid' in kinds, kinds
     assert 'mid' in sdfg.constants and float(sdfg.constants['mid']) == 3.0
     assert mid_n in s.nodes(), 'mid access node must survive -- combine_t still reads it'
 
@@ -767,111 +744,6 @@ def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_
         f'mid access node leaked out of the map scope (scope={scope.get(mid_n)!r}, expected {me!r})')
 
     sdfg.validate()
-
-
-if __name__ == '__main__':
-    test_scalar_constant_single_write()
-    test_array_full_constant_write()
-    test_array_partial_constant_write()
-    test_scalar_runtime_single_write()
-    test_array_double_write_not_marked()
-    test_interstate_edge_read_not_marked()
-    test_same_state_separable_marked()
-    test_same_state_non_separable_not_marked()
-    test_nested_sdfg_no_crash_and_marks()
-    test_multiwrite_elementwise_one_state_marked()
-    test_multiwrite_elementwise_spread_states_marked()
-    test_multiwrite_different_access_nodes_marked()
-    test_multiwrite_read_before_write_not_marked()
-    test_multiwrite_partial_elementwise_marked()
-    test_multiwrite_overlapping_not_marked()
-    test_idempotency()
-    test_partly_paying_fill_map_is_not_unrolled()
-    test_symbolic_fill_map_never_becomes_const_runtime()
-    test_gpu_constant_fill_map_keeps_its_schedule()
-    test_gpu_rejected_fill_map_stays_valid()
-    test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
-
-
-def test_a_scalar_whose_container_stays_classic_is_not_marked_const_runtime():
-    """``const_runtime`` is a PROMISE that the write can carry a fused ``const T x = expr;``.
-
-    Making it costs the declaration: ``allocate_array`` skips ``T x;`` on the strength of it. The
-    binding is only emitted when ``InlineTaskletConnectors`` inlines the writing tasklet's
-    connectors, and that pass decides per CONTAINER -- one tasklet it cannot inline keeps that
-    container classic everywhere, this writer included. Marking on a per-tasklet check alone left
-    the name declared nowhere and emitted by nothing (``'_scan_seed_a' was not declared in this
-    scope``), which is what every LoopToScan seed hit: the carrier it copies from is also read by
-    tasklets that stay classic.
-    """
-    sdfg = dace.SDFG('const_init_container_rule')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('out', [8], dace.float64)
-    sdfg.add_scalar('seed', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-
-    # The writer, on its own, is exactly the fusable shape: one assignment, plain connectors.
-    copy = state.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
-    state.add_edge(state.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
-    state.add_edge(copy, '_out', state.add_access('seed'), None, dace.Memlet('seed[0]'))
-
-    # A second toucher of ``a`` the planner CANNOT inline: a whole-array connector is not the
-    # single-element access ``_connector_access`` requires. So ``a`` stays classic, and with it the
-    # connector the writer above reads it through.
-    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
-    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
-    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
-
-    # A reader of the scalar, so it is genuinely write-once-then-read.
-    reader = state.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
-    state.add_edge(state.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
-    state.add_edge(reader, '_o', state.add_write('out'), None, dace.Memlet('out[0]'))
-
-    _run(sdfg)
-    assert not sdfg.arrays['seed'].const_init, (
-        'seed was marked const_runtime, but its container stays classic so no binding is emitted '
-        'and the skipped declaration is never replaced')
-
-
-def test_a_brace_free_prediction_is_never_broken_by_the_inliner():
-    """The predicate's contract is an IMPLICATION: True guarantees the brace-free emission.
-
-    That direction is the one ``MarkConstInit`` spends -- it skips a declaration on the strength of
-    a True answer, so a True the inliner then declines is a name declared nowhere. The converse
-    costs nothing: a False where the inliner would have inlined only leaves a declaration standing.
-
-    Asserted over a graph built to contain both kinds of container: one every toucher can inline,
-    and one a single toucher cannot.
-    """
-    from dace.transformation.passes.inline_tasklet_connectors import (InlineTaskletConnectors, tasklet_emits_brace_free)
-
-    sdfg = dace.SDFG('brace_free_agreement')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('b', [8], dace.float64)
-    sdfg.add_array('out', [8], dace.float64)
-    state = sdfg.add_state('main')
-
-    plain = state.add_tasklet('plain', {'_in'}, {'_out'}, '_out = _in * 2.0')
-    state.add_edge(state.add_read('b'), None, plain, '_in', dace.Memlet('b[0]'))
-    state.add_edge(plain, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
-
-    shares_a = state.add_tasklet('shares_a', {'_in'}, {'_out'}, '_out = _in')
-    state.add_edge(state.add_read('a'), None, shares_a, '_in', dace.Memlet('a[0]'))
-    state.add_edge(shares_a, '_out', state.add_write('out'), None, dace.Memlet('out[2]'))
-
-    whole_array = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
-    state.add_edge(state.add_read('a'), None, whole_array, '_in', dace.Memlet('a[0:8]'))
-    state.add_edge(whole_array, '_out', state.add_write('out'), None, dace.Memlet('out[3]'))
-
-    predicted = {t.label: tasklet_emits_brace_free(sdfg, state, t) for t in _tasklets(state)}
-    actually_inlined = InlineTaskletConnectors().apply_pass(sdfg, {}) or set()
-
-    assert predicted['shares_a'] is False, (
-        'shares_a reads a container another tasklet keeps classic, so its connector stays classic too')
-    for label, said_yes in predicted.items():
-        if said_yes:
-            assert label in actually_inlined, (f'{label}: predicted brace-free, but the inliner left it classic -- '
-                                               'the declaration MarkConstInit skipped is never replaced')
 
 
 def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
@@ -928,52 +800,49 @@ def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
     assert np.array_equal(out, np.ones((8, 4))), f'got {out}'
 
 
-def test_the_container_rule_is_read_over_the_root_not_the_nested_sdfg():
-    """The verdict the mark spends is the ROOT's, so it must be asked of the root.
-
-    ``InlineTaskletConnectors.plan`` walks ``all_nodes_recursive`` and keys its answer on the
-    container NAME alone, and the pass that spends the verdict runs on the root -- so a name a
-    nested SDFG shares with its parent is decided once, for both. Asking the nested SDFG instead
-    answers a narrower question: the toucher that keeps the container classic lives upstairs and is
-    invisible from down here, the write is marked ``const_runtime`` on a promise the root never
-    keeps, ``allocate_array`` skips the declaration, and the name reaches the compiler undeclared
-    (``a_min`` in every outlined translation unit of npbench's ``azimint_hist``).
-    """
-    inner = dace.SDFG('inner_unit')
-    inner.add_array('a', [8], dace.float64)
-    inner.add_array('out', [8], dace.float64)
-    inner.add_scalar('seed', dace.float64, transient=True)
-    istate = inner.add_state('body')
-    copy = istate.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
-    istate.add_edge(istate.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
-    istate.add_edge(copy, '_out', istate.add_access('seed'), None, dace.Memlet('seed[0]'))
-    reader = istate.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
-    istate.add_edge(istate.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
-    istate.add_edge(reader, '_o', istate.add_write('out'), None, dace.Memlet('out[0]'))
-
-    sdfg = dace.SDFG('root_owns_the_verdict')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('out', [8], dace.float64)
+def test_data_bound_to_a_reference_is_not_promoted():
+    """A reference writes its target under another name, so the target's literal writes are not all of them."""
+    sdfg = dace.SDFG('ref_target')
+    sdfg.add_array('A', [4], dace.float64, transient=True)
+    sdfg.add_reference('R', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
     state = sdfg.add_state('main')
-    nested = state.add_nested_sdfg(inner, {'a'}, {'out'})
-    state.add_edge(state.add_read('a'), None, nested, 'a', dace.Memlet('a[0:8]'))
-    state.add_edge(nested, 'out', state.add_write('out'), None, dace.Memlet('out[0:8]'))
+    init = state.add_tasklet('init', {}, {'o'}, 'o = 1.0')
+    a_node = state.add_access('A')
+    state.add_edge(init, 'o', a_node, None, dace.Memlet('A[0]'))
+    state.add_edge(a_node, None, state.add_access('R'), 'set', dace.Memlet('A[0:4]'))
+    use = sdfg.add_state_after(state, 'use')
+    use.add_nedge(use.add_read('A'), use.add_write('B'), dace.Memlet('A[0:4]'))
 
-    # The toucher that keeps ``a`` classic, in the PARENT: a whole-array connector is not the
-    # single-element access ``_connector_access`` requires.
-    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
-    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
-    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
+    res = _run(sdfg)
+    assert 'A' not in (res or {}).get(sdfg.cfg_id, {})
+    assert 'A' not in sdfg.constants
+    assert init in state.nodes()
 
-    from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
 
-    root_safe = InlineTaskletConnectors().plan(sdfg)[1]
-    nested_safe = InlineTaskletConnectors().plan(inner)[1]
-    assert 'a' in nested_safe and 'a' not in root_safe, (
-        'fixture no longer discriminates: the two plans must disagree about ``a``')
-
-    marker = MarkConstInit()
-    Pipeline([marker]).apply_pass(sdfg, {})
-    assert marker._inlinable_containers(inner) == root_safe, (
-        'the nested SDFG was classified against its own plan, which cannot see the parent toucher '
-        'that keeps ``a`` classic for the whole root')
+if __name__ == '__main__':
+    test_scalar_constant_single_write()
+    test_array_full_constant_write()
+    test_device_storage_array_is_not_promoted_to_a_host_constant()
+    test_array_partial_constant_write()
+    test_scalar_runtime_single_write_not_promoted()
+    test_array_double_write_not_marked()
+    test_interstate_edge_read_not_marked()
+    test_same_state_separable_marked()
+    test_same_state_unordered_write_is_promoted()
+    test_nested_sdfg_no_crash_and_marks()
+    test_multiwrite_elementwise_one_state_marked()
+    test_multiwrite_elementwise_spread_states_marked()
+    test_multiwrite_different_access_nodes_marked()
+    test_multiwrite_read_before_write_is_promoted()
+    test_multiwrite_partial_elementwise_marked()
+    test_multiwrite_overlapping_not_marked()
+    test_idempotency()
+    test_fill_writing_two_arrays_is_not_promoted()
+    test_symbol_valued_fill_is_not_promoted()
+    test_same_state_constant_fill_is_promoted()
+    test_gpu_constant_fill_map_keeps_its_schedule()
+    test_gpu_rejected_fill_map_stays_valid()
+    test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
+    test_promoting_a_held_fill_removes_both_ends_of_its_scope()
+    test_data_bound_to_a_reference_is_not_promoted()

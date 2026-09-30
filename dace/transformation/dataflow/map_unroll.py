@@ -23,7 +23,7 @@ class MapUnroll(transformation.SingleStateTransformation):
         if graph.scope_dict()[map_entry] is not None:
             return False
         # Flattening a device map strands its body on the host, still touching GPU_Global memory.
-        # Only permissive callers (that delete the writes afterwards, e.g. MarkConstInit) may do it.
+        # Only permissive callers (that delete the writes afterwards) may do it.
         if not permissive and map_entry.map.schedule in dtypes.GPU_SCHEDULES:
             return False
         # All map ranges must be constant

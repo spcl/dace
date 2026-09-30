@@ -246,7 +246,7 @@ class AccessSets(ppl.Pass):
         readset, writeset = OrderedSet(), OrderedSet()
         for anode in state.data_nodes():
             # Ordering edges transfer nothing: neither read nor written. Must match
-            # ``FindAccessNodes`` -- ``MarkConstInit`` bails on a disagreement.
+            # ``FindAccessNodes``.
             if any(not e.data.is_empty() for e in state.in_edges(anode)):
                 writeset.add(anode.data)
                 if has_wcr_in_edge(state, anode):

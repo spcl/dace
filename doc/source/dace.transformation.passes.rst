@@ -82,6 +82,15 @@ Memlet Consolidation
    :show-inheritance:
 
 
+Constant Table Folding
+----------------------
+
+.. automodule:: dace.transformation.passes.fold_constant_tables
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 State Fusion and SDFG Inlining
 ------------------------------
 

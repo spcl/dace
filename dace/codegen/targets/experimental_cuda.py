@@ -17,6 +17,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen import common
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
+from dace.codegen.exceptions import CodegenError
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
@@ -26,6 +27,7 @@ from dace.codegen.targets.cuda import (_DYNAMIC_SHARED_MEMORY_SYMBOL, chiplet_co
                                        location_condition, location_index_exprs, plan_shared_memory, reset_shared_code)
 from dace.codegen.target import TargetCodeGenerator
 
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
@@ -379,6 +381,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # ``InsertExplicitCopies`` during ``preprocess()`` and
         # lowered through their expansions. Anything reaching this dispatch
         # is a register / scope-local CPU copy -- delegate to CPU codegen.
+        # A host-side copy touching device memory has no CPU lowering: CopyND would dereference
+        # device pointers on the host, so refuse it rather than emit a segfault.
+        if (not self._in_device_code and isinstance(src_node, nodes.AccessNode)
+                and isinstance(dst_node, nodes.AccessNode)
+                and GPU_RESIDENT_STORAGES & {sdfg.arrays[src_node.data].storage, sdfg.arrays[dst_node.data].storage}):
+            raise CodegenError(f'Copy {src_node} -> {dst_node} involves GPU memory but was not lowered to a '
+                               'CopyLibraryNode by InsertExplicitCopies; the CPU fallback would access device '
+                               'memory from the host.')
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def synchronize_host_reads(self,
@@ -576,7 +586,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if name in tasklet.location:
                     scope_manager.open(condition=location_condition(name, index_expr, tasklet.location[name]))
 
-            self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            # Tag this as device (.cu) generation so the delegate's generated-function dedup keys on
+            # the .cu owner, not the host TU -- otherwise a ``<name>_idx`` helper flushed here lands in
+            # the .cu under the host key and is re-emitted under the device key = a C++ redefinition.
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            try:
+                self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            finally:
+                self._cpu_codegen.calling_codegen = old_codegen
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -833,11 +851,23 @@ class KernelSpec:
         self.kernel_name: str = (f'{cudaCodeGen._global_sdfg.name}_{kernel_map_entry.map.label}_{cfg.cfg_id}'
                                  f'_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}')
 
+        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        self.kernel_constants: Set[str] = kernel_const_data | kernel_const_symbols
-
-        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
+        # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN
+        # data container's name as a "constant symbol" -- its MapEntry branch returns
+        # ``used_symbols_within_scope`` (which includes data names used in subset/offset expressions) and,
+        # unlike the CFG branches, never subtracts writes. Letting such a name into ``kernel_constants``
+        # const-qualifies a written output pointer -> ``expression must be a modifiable lvalue``. Drop any
+        # pointer arg that is not genuinely read-only; scalar-symbol args are unaffected.
+        written_pointers = {
+            name
+            for name, data in self.arglist.items()
+            if isinstance(data, (dt.Array, dt.View)) and name not in kernel_const_data
+        }
+        self.kernel_constants: Set[str] = (kernel_const_data | kernel_const_symbols) - written_pointers
 
         restore_in_device_code = cudaCodeGen._in_device_code
 

@@ -14,7 +14,9 @@ import tempfile
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
-os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
+# Under mpirun the MPI tests need mpi4py's automatic MPI_Init; only a plain session skips it.
+if "OMPI_COMM_WORLD_SIZE" not in os.environ:
+    os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 # No thread pin here. The compare is not bit-exact any more -- ``assert_outputs_equivalent`` grades
 # at the dtype tolerance, sized for the reassociation a threaded WCR costs -- so forcing the whole

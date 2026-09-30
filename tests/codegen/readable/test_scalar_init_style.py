@@ -27,8 +27,7 @@ N = dace.symbol('N')
 
 @dace.program
 def reassigned(A: dace.float64[N], B: dace.float64[N]):
-    """``t`` is written twice, so it can never be the ``const T t = expr;`` form MarkConstInit emits --
-    it is exactly the mutable scalar this knob is about. It lives in a map body: the scope a frontend
+    """``t`` is written twice, so it is exactly the mutable scalar this knob is about. It lives in a map body: the scope a frontend
     actually puts scalars in."""
     for i in dace.map[0:N]:
         t = A[i] * 2.0

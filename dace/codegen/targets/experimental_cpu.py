@@ -4,7 +4,8 @@ Experimental "readable" CPU code generator (``compiler.cpu.implementation = expe
 
 Changes only how tasklets and array accesses are emitted: accesses go through a generated
 ``<array>_idx(...)`` index function, tasklets whose connectors ``InlineTaskletConnectors`` inlined access
-arrays directly, and write-once data marked by ``MarkConstInit`` becomes ``const``/``constexpr``. The GPU
+arrays directly, and transients that only store literals are ``constexpr`` SDFG constants
+(``PromoteConstantTransients``). The GPU
 generator emits device tasklets through the shared CPU instance, so this also applies inside kernels.
 """
 import ast
@@ -296,8 +297,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._name_owners: Dict[int, Optional[Dict[str, Set[int]]]] = {}
         self._node_references: Dict[int, Optional[Set[str]]] = {}
         self._nested_free_names: Dict[int, Optional[Set[str]]] = {}
-        # const_init bindings registered while lowering a tasklet, consumed by emit_tasklet_body_block.
-        self.const_pending: List[dict] = []
         # Origin GUIDs of library-node descriptions already written into this unit (see emit_provenance).
         self._emitted_provenance: Set[str] = set()
         self.declaration_run: Optional[DeclarationRun] = None
@@ -836,16 +835,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                        declaration_stream,
                        allocation_stream,
                        allocate_nested_data: bool = True):
-        # A write-once scope scalar / length-1 stack array is declared by its fused ``const`` write
-        # (ReadableKeywordRemover.visit_Assign); only register it here.
-        if self._is_const_scalar(nodedesc, node.data, sdfg):
-            self._dispatcher.defined_vars.add(self.ptr(node.data, nodedesc, sdfg), DefinedType.Scalar,
-                                              nodedesc.dtype.ctype)
-            return
-        if self._is_const_len1_array(nodedesc, node.data, sdfg):
-            self._dispatcher.defined_vars.add(self.ptr(node.data, nodedesc, sdfg), DefinedType.Pointer,
-                                              dtypes.pointer(nodedesc.dtype).ctype)
-            return
         if self.defer_scalar_declaration(sdfg, dfg, node, nodedesc):
             return
         super().allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
@@ -951,7 +940,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         if not isinstance(desc, dt.Scalar) or isinstance(desc, (dt.View, dt.Reference, dt.Stream)):
             return None
-        if not desc.transient or desc.const_init or node.data in sdfg.constants_prop:
+        if not desc.transient or node.data in sdfg.constants_prop:
             return None
         if desc.lifetime != dtypes.AllocationLifetime.Scope:
             return None
@@ -1105,22 +1094,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             names |= identifiers_in(code_blocks_of(value))
         return names
 
-    def register_const_binding(self, decl: str, plain: str, fused: str) -> None:
-        """Register the ``const T x = expr;`` binding of a write-once transient: ``plain`` is the bare write,
-        ``fused`` the write carrying the binding, ``decl`` the standalone declaration.
-        :meth:`emit_tasklet_body_block` picks: fused when the tasklet is brace-free, else ``decl`` ahead of
-        the block."""
-        self.const_pending.append({'decl': decl, 'plain': plain, 'fused': fused})
-
     def fuse_pending_decl(self, tasklet, line: str) -> str:
         """Fold a pending declaration into ``line``, the brace-free statement of ``tasklet`` (``x = expr;``
-        becomes ``T x = expr;``). Unchanged unless the line is the exact registered const write, or
-        ``scalar_init_style`` is ``fused`` and the text itself spells the scalar's first write."""
-        for info in self.const_pending:
-            if line != info['plain']:
-                continue
-            self.const_pending.remove(info)
-            return info['fused']
+        becomes ``T x = expr;``). Unchanged unless ``scalar_init_style`` is ``fused`` and the text itself
+        spells the scalar's first write."""
         for ptrname, info in list(self._late_pending.items()):
             if not info['fusable'] or id(tasklet) not in info['writers']:
                 continue
@@ -1131,12 +1108,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         return line
 
     def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
-        """Emit before ``tasklet`` the deferred ``T x;`` of every scalar it uses first, and any unfused
-        const binding's declaration."""
-        # An unfused const binding belongs to a braced tasklet; declare it (mutable) at the enclosing scope.
-        for info in self.const_pending:
-            callsite_stream.write(info['decl'], cfg, state_id, tasklet)
-        self.const_pending.clear()
+        """Emit before ``tasklet`` the deferred ``T x;`` of every scalar it uses first."""
         if not self._late_pending:
             return
         for ptrname, info in list(self._late_pending.items()):
@@ -1145,28 +1117,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             zero = ' = 0' if info['setzero'] else ''
             callsite_stream.write('%s %s%s;' % (info['ctype'], info['ptrname'], zero), cfg, state_id, tasklet)
             del self._late_pending[ptrname]
-
-    def const_binding_scope_is_local(self, sdfg, name: str) -> bool:
-        """Whether the allocation planner declares ``name`` in the block its write is emitted in. A
-        ``Scope`` transient touched in several states (as ``SplitStateByGpuClass`` makes) is declared at
-        function scope, where a fused binding would die before its readers."""
-        scope = self.eager_allocation_scope(sdfg, name)
-        return scope is not None and not isinstance(scope, SDFG)
-
-    def _is_const_scalar(self, desc, name: Optional[str] = None, sdfg=None) -> bool:
-        # A write-once scope-lifetime CPU value scalar, emitted as a fused ``const T x = expr;``.
-        if name is not None and sdfg is not None and not self.const_binding_scope_is_local(sdfg, name):
-            return False
-        return (isinstance(desc, dt.Scalar) and desc.const_init and desc.lifetime == dtypes.AllocationLifetime.Scope
-                and desc.storage in VALUE_SCALAR_STORAGES)
-
-    def _is_const_len1_array(self, desc, name: Optional[str] = None, sdfg=None) -> bool:
-        # A write-once single-element Register array, emitted as ``const T x[1] = {expr};``.
-        if name is not None and sdfg is not None and not self.const_binding_scope_is_local(sdfg, name):
-            return False
-        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and desc.const_init
-                and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage == dtypes.StorageType.Register
-                and len(desc.shape) >= 1 and all(d == 1 for d in desc.shape))
 
     def array_index_access(self, sdfg, desc, data_name: str):
         """Register the ``<array>_idx`` helper of ``data_name`` and return ``(ptrname, fnname, ndim,
@@ -1274,7 +1224,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         return name not in self.memlets and name not in self.constants and name in self.sdfg.arrays
 
     def _scalar_constant_name(self, name: str) -> Optional[str]:
-        # A 0-d SDFG constant (a MarkConstInit-promoted scalar) is a bare ``constexpr T name``; the classic
+        # A 0-d SDFG constant (a PromoteConstantTransients-promoted scalar) is a bare ``constexpr T name``; the classic
         # ``_subscript_expr`` would fail on its empty stride list.
         if name in self.constants and numpy.ndim(self.constants[name]) == 0:
             return name
@@ -1319,19 +1269,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
                                         **self.operand_dtypes
                                     },
                                     data_names=self.operand_dtypes)
-        desc = self.sdfg.arrays[target]
         plain = '%s = %s;' % (lhs, rhs)
-        if self.codegen._is_const_scalar(desc, target, self.sdfg):
-            # allocate_array skipped ``T x;``; this write carries it (see register_const_binding).
-            ctype = desc.dtype.ctype
-            self.codegen.register_const_binding('%s %s;' % (ctype, lhs), plain, 'const %s %s = %s;' % (ctype, lhs, rhs))
-        elif self.codegen._is_const_len1_array(desc, target, self.sdfg):
-            # ``const T x[1] = {(T)(expr)};``: the cast keeps legacy's silent narrowing, which a braced
-            # initializer would report as -Wnarrowing.
-            name = self.codegen.ptr(target, desc, self.sdfg)
-            ctype = desc.dtype.ctype
-            self.codegen.register_const_binding('%s %s[1];' % (ctype, name), plain,
-                                                'const %s %s[1] = {(%s)(%s)};' % (ctype, name, ctype, rhs))
         return self._replace_assignment(ast.Name(id=plain), node)
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:

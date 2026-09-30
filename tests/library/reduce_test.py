@@ -111,6 +111,8 @@ def test_multidim_gpu(impl, test_case):
     a = np.random.rand(*in_shape).astype(dtype)
     b = np.random.rand(*out_shape).astype(dtype)
     sdfg = multidimred.to_sdfg(a, b)
+    # One build folder per case: parallel workers compiling the same name overwrite each other's library.
+    sdfg.name = f'multidimred_{_impls.index(impl)}_{_case_params.index(test_case)}'
     sdfg.apply_gpu_transformations()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
     rednode.implementation = impl
@@ -146,6 +148,39 @@ def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
                 assert len(desc.offset) == len(desc.shape), \
                     f'{sub.name}::{name}: offset rank {len(desc.offset)} != shape rank {len(desc.shape)}'
     sdfg.generate_code()
+
+
+def device_reduce_through_connectors() -> dace.SDFG:
+    """A top-level ``CUDA (device)`` sum wired through the node's own ``_in``/``_out`` connectors."""
+    sdfg = dace.SDFG('device_reduce_through_connectors')
+    sdfg.add_array('A', [64], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('out', [1], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    reduce = state.add_reduce('lambda a, b: a + b', None, 0)
+    reduce.implementation = 'CUDA (device)'
+    reduce.schedule = dace.ScheduleType.GPU_Device
+    reduce.add_in_connector('_in')
+    reduce.add_out_connector('_out')
+    state.add_edge(state.add_read('A'), None, reduce, '_in', dace.Memlet('A[0:64]'))
+    state.add_edge(reduce, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_device_reduce_expands_with_typed_connectors():
+    """The expansion read the output type with ``next`` on a dict view, a TypeError once the connector exists."""
+    sdfg = device_reduce_through_connectors()
+    sdfg.expand_library_nodes()
+    assert not any(isinstance(n, std.Reduce) for n, _ in sdfg.all_nodes_recursive())
+
+
+@pytest.mark.gpu
+def test_device_reduce_through_connectors_computes_the_sum():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = device_reduce_through_connectors()
+    A = cupy.asarray(np.random.default_rng(0).random(64))
+    out = cupy.zeros(1)
+    sdfg(A=A, out=out)
+    assert np.allclose(out.get(), A.get().sum())
 
 
 if __name__ == '__main__':
