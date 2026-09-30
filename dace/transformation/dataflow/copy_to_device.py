@@ -31,6 +31,7 @@ class CopyToDevice(transformation.SingleStateTransformation):
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
+                                      category='Memory',
                                       desc="Nested SDFG storage",
                                       default=dtypes.StorageType.Default)
 

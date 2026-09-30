@@ -19,7 +19,7 @@ class Enumerator:
     An abstract enumerator interface that is able to enumerate subgraphs
     based on custom rules and criteria.
     """
-    debug = Property(desc="Debug mode", default=False, dtype=bool)
+    debug = Property(category="Diagnostics", desc="Debug mode", default=False, dtype=bool)
 
     def __init__(self,
                  sdfg: SDFG,

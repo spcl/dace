@@ -164,9 +164,10 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
     accumulator_type = dace.properties.TypeClassProperty(default=None,
                                                          allow_none=True,
+                                                         category="Semantics",
                                                          desc="Accumulator or intermediate storage type")
 
     def __init__(self, name, n=None, accumulator_type=None, **kwargs):

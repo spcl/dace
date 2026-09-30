@@ -72,7 +72,7 @@ class Bcast(MPINode):
     }
     default_implementation = "MPI"
 
-    fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None, category='Semantics')
 
     def __init__(self, name, fcomm=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)

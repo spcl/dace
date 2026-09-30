@@ -43,9 +43,10 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         :seealso: GPUTransformMap
     """
 
-    fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
+    fullcopy = Property(category="Memory", desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
     nested_seq = Property(
+        category="Scheduling",
         desc="Makes nested code semantically-equivalent to single-core code,"
         "transforming nested maps and memory into sequential and "
         "local memory respectively.",

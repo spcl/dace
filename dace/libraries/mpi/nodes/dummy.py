@@ -38,7 +38,7 @@ class Dummy(MPINode):
     }
     default_implementation = "MPI"
 
-    fields = dace.properties.ListProperty(default=[], element_type=str)
+    fields = dace.properties.ListProperty(default=[], element_type=str, category='Code Generation')
 
     def __init__(self, name, fields=[], *args, **kwargs):
         super().__init__(name, *args, outputs={}, **kwargs)

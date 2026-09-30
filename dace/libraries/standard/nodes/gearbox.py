@@ -226,7 +226,9 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     # Properties
-    size = dace.properties.SymbolicProperty(desc="Number of wide vectors to convert to/from narrow vectors.", default=0)
+    size = dace.properties.SymbolicProperty(category="Semantics",
+                                            desc="Number of wide vectors to convert to/from narrow vectors.",
+                                            default=0)
 
     def __init__(self, size, name=None, schedule=None, **kwargs):
         """

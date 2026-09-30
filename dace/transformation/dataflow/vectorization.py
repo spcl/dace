@@ -19,20 +19,26 @@ class Vectorization(transformation.SingleStateTransformation):
         to be equal to the length of the vector and vectorizes the memlets.
   """
 
-    vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through "
-                                "parent SDFGs", dtype=bool, default=False)
-    strided_map = Property(desc="Use strided map range (jump by vector length)"
+    vector_len = Property(category='Parameters', desc="Vector length", dtype=int, default=4)
+    propagate_parent = Property(category='Parameters',
+                                desc="Propagate vector length through "
+                                "parent SDFGs",
+                                dtype=bool,
+                                default=False)
+    strided_map = Property(category='Parameters',
+                           desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,
                            default=True)
     preamble = Property(dtype=bool,
                         default=None,
                         allow_none=True,
+                        category='Parameters',
                         desc='Force creation or skipping a preamble map without vectors')
     postamble = Property(dtype=bool,
                          default=None,
                          allow_none=True,
+                         category='Parameters',
                          desc='Force creation or skipping a postamble map without vectors')
 
     map_entry = transformation.PatternNode(nodes.MapEntry)

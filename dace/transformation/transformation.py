@@ -799,9 +799,11 @@ class SubgraphTransformation(TransformationBase):
     class docstring for more information.
     """
 
-    cfg_id = Property(dtype=int, desc='ID of CFG to transform')
-    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the SDFG')
-    subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
+    cfg_id = Property(dtype=int, category='(Debug)', desc='ID of CFG to transform')
+    state_id = Property(dtype=int,
+                        category='(Debug)',
+                        desc='ID of state to transform subgraph within, or -1 to transform the SDFG')
+    subgraph = SetProperty(element_type=int, category='(Debug)', desc='Subgraph in transformation instance')
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
         """

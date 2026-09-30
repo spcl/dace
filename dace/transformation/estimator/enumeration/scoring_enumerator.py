@@ -13,7 +13,8 @@ class MapScoringEnumerator(Enumerator):
     which rely on a scoring function
     """
 
-    mode = Property(desc="Data type the Iterator should return. "
+    mode = Property(category="Parameters",
+                    desc="Data type the Iterator should return. "
                     "Choice between Subgraph and List of Map Entries.",
                     default="map_entries",
                     choices=["subgraph", "map_entries"],

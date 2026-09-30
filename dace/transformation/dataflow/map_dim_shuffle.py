@@ -20,7 +20,10 @@ class MapDimShuffle(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    parameters = ListProperty(element_type=str, default=None, desc="Desired order of map parameters")
+    parameters = ListProperty(element_type=str,
+                              default=None,
+                              category="Parameters",
+                              desc="Desired order of map parameters")
 
     @classmethod
     def expressions(cls):

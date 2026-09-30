@@ -70,6 +70,7 @@ class LoopToReduce(ppl.Pass):
     permissive = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Enable extractors that make semantic assumptions about input "
         "data (e.g. the ``any``/``all`` conditional-const-assign pattern "
         "which assumes the guard array is 0/1-valued).",
