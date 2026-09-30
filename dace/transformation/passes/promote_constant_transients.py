@@ -112,7 +112,8 @@ def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Optional[Any]
 
 def constant_value(desc: dt.Data, writes: List[Write]) -> Optional[Any]:
     """ The initializer if every write stores a literal to a disjoint constant subset, else ``None``. """
-    if not writes:
+    # Only a plain scalar type has a numpy value (not e.g. an opaque ``MPI_Request``).
+    if not writes or type(desc.dtype) is not dtypes.typeclass:
         return None
     shape = tuple(int(d) for d in desc.shape)
     array = np.zeros(shape, dtype=desc.dtype.as_numpy_dtype())

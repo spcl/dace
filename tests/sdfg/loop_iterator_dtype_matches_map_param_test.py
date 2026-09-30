@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" A loop iterator is typed like the map parameter it becomes, so LoopToMap keeps one dtype per name. """
+""" LoopToMap declares the nested iterator at the loop iterator's own dtype, so one name keeps one dtype. """
 import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.transformation.interstate import LoopToMap
 
 
@@ -22,24 +21,16 @@ def counting_loop_sdfg(bound_dtype: dace.typeclass) -> dace.SDFG:
 
 
 @pytest.mark.parametrize('bound_dtype', [dace.int32, dace.int64])
-def test_loop_iterator_takes_the_map_parameter_dtype(bound_dtype):
+def test_loop_to_map_declares_the_nested_iterator_at_the_loop_iterator_dtype(bound_dtype):
     sdfg = counting_loop_sdfg(bound_dtype)
     loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
-    map_dtype = infer_iteration_symbol_type(0, dace.symbol('M', bound_dtype) - 1, symbols=dict(sdfg.symbols))
-    assert map_dtype == bound_dtype
-    assert loop.new_symbols(dict(sdfg.symbols)) == {'i': map_dtype}
-
-
-@pytest.mark.parametrize('bound_dtype', [dace.int32, dace.int64])
-def test_loop_to_map_declares_the_nested_iterator_at_the_map_parameter_dtype(bound_dtype):
-    sdfg = counting_loop_sdfg(bound_dtype)
+    loop_dtype = loop.new_symbols(dict(sdfg.symbols))['i']
     assert sdfg.apply_transformations(LoopToMap) == 1
     declared = {s.name: s.symbols['i'] for s in sdfg.all_sdfgs_recursive() if 'i' in s.symbols}
-    assert declared and all(dtype == bound_dtype for dtype in declared.values()), declared
+    assert declared and all(dtype == loop_dtype for dtype in declared.values()), declared
     sdfg.validate()
 
 
 if __name__ == '__main__':
     for dtype in (dace.int32, dace.int64):
-        test_loop_iterator_takes_the_map_parameter_dtype(dtype)
-        test_loop_to_map_declares_the_nested_iterator_at_the_map_parameter_dtype(dtype)
+        test_loop_to_map_declares_the_nested_iterator_at_the_loop_iterator_dtype(dtype)

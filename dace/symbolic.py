@@ -144,6 +144,11 @@ def declare_symbol_dtype(name: str, dtype: 'dtypes.typeclass') -> None:
     _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
 
 
+def symbol_dtype_authority_active() -> bool:
+    """Whether an enclosing scope already declares the symbol dtypes that parsing uses."""
+    return len(_SERIALIZATION_SYMBOL_DTYPES.ctx_stack) > 1
+
+
 @contextlib.contextmanager
 def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inherit: bool = False):
     """

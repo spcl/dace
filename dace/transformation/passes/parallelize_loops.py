@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift every parallelizable loop of an SDFG to a Map, outermost-first."""
 
+import contextlib
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from dace import properties
+from dace import properties, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -224,11 +225,22 @@ class ParallelizeLoops(ppl.Pass):
         # order reaches 5, because lifting an outer loop can put a sibling behind a NestedSDFG
         # whose propagated memlet then fails the ``a*i+b`` write check. Sweeping graph order once
         # more afterwards costs one probe round and recovers those.
-        for order in (loop_order_key, None):
-            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
+        # LoopToMap and propagation re-parse bounds from strings; parse every name at the dtype some
+        # SDFG of the tree declares, as canonicalize does, or a bound and a shape stop cancelling. An
+        # enclosing authority (canonicalize's) already does, and keeps what a lift declares.
+        scope = contextlib.nullcontext()
+        if not symbolic.symbol_dtype_authority_active():
+            scope = symbolic.serialization_symbol_dtypes({
+                name: dtype
+                for nested in sdfg.all_sdfgs_recursive()
+                for name, dtype in nested.symbols.items()
+            })
+        with scope:
+            for order in (loop_order_key, None):
+                applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
-        if applied:
-            self.finish(sdfg)
+            if applied:
+                self.finish(sdfg)
         return applied or None
 
     def parallelize_loop(self, sdfg: SDFG, loop: LoopRegion, proven: bool = False) -> bool:
