@@ -3,6 +3,7 @@
 import ast
 import itertools
 from dataclasses import dataclass
+from functools import lru_cache
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ControlFlowBlock,
@@ -12,21 +13,42 @@ from dace.sdfg.state import (
 )
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties, SDFGState
-from typing import Any, Dict, Set, Optional
+from typing import Any, Dict, FrozenSet, Set, Optional
 from dace import data as dt
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.symbolic import pystr_to_symbolic, scalars
+from dace.symbolic import pystr_to_symbolic
 
 
-def free_symbol_names(value) -> Set[str]:
+def free_symbol_names(value) -> FrozenSet[str]:
     """Free symbol names of an interstate-edge assignment RHS; empty for ``None``."""
     if value is None:
-        return set()
+        return frozenset()
+    if isinstance(value, str):
+        # The same few values are queried for every block they reach
+        return _free_symbol_names(value)
     try:
-        return {str(s) for s in pystr_to_symbolic(value).free_symbols}
+        return frozenset(str(s) for s in pystr_to_symbolic(value).free_symbols)
     except Exception:
-        return set()
+        return frozenset()
+
+
+@lru_cache(maxsize=16384)
+def _free_symbol_names(value: str) -> FrozenSet[str]:
+    try:
+        return frozenset(str(s) for s in pystr_to_symbolic(value).free_symbols)
+    except Exception:
+        return frozenset()
+
+
+@lru_cache(maxsize=16384)
+def _expression_names(value: str) -> Optional[FrozenSet[str]]:
+    """The names an expression reads, or None if it does not parse."""
+    try:
+        tree = ast.parse(value.strip(), mode='eval')
+    except (SyntaxError, ValueError):
+        return None
+    return frozenset(node.id for node in ast.walk(tree) if isinstance(node, ast.Name))
 
 
 def opaque_scalar_names(sdfg: SDFG) -> Set[str]:
@@ -74,6 +96,7 @@ def is_array_access(value: Optional[str]) -> bool:
     return reads_struct_member(value)
 
 
+@lru_cache(maxsize=16384)
 def reads_struct_member(value: str) -> bool:
     """``value`` reads an attribute off a plain name; a callee (``math.floor``) does not count."""
     try:
@@ -93,20 +116,18 @@ def resolve_value(value, table: Dict[str, Any]):
         return None
     if is_array_access(value):
         return value
-    try:
-        tree = ast.parse(value.strip(), mode='eval')
-    except (SyntaxError, ValueError):
+    names = _expression_names(value)
+    if names is None:
         return value
     repl = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Name) or node.id in repl:
-            continue
-        known = table.get(node.id)
+    for name in names:
+        known = table.get(name)
         if known is not None and not is_array_access(known):
-            repl[node.id] = known
+            repl[name] = known
     if not repl:
         return value
     try:
+        tree = ast.parse(value.strip(), mode='eval')
         return astutils.unparse(astutils.ASTFindReplace(repl).visit(tree))
     except Exception:
         return value
@@ -181,8 +202,11 @@ class SymbolPropagation(ppl.Pass):
 
         # An unwritten Scalar of the top-level SDFG is read-only and propagates like a symbol.
         self._opaque_scalars: Dict[SDFG, Set[str]] = {}
+        # Views are seen as pointers. Descriptors do not change until the fixed point is reached.
+        self._view_names: Dict[SDFG, Set[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
             self._opaque_scalars[sd] = opaque_scalar_names(sd)
+            self._view_names[sd] = {name for name, desc in sd.arrays.items() if isinstance(desc, dt.View)}
 
         in_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
         out_syms = {cfg_blk: {} for cfg_blk in all_cfg_blks.keys()}
@@ -238,90 +262,132 @@ class SymbolPropagation(ppl.Pass):
     def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> Set[str]:
         """Drop interstate-edge assignments whose LHS is no longer referenced anywhere."""
         removed: Set[str] = set()
-        while True:
-            this_round = self._eliminate_round(sdfg)
-            if not this_round:
-                break
-            removed |= this_round
+        # What an SDFG reads does not depend on eliminations in its parent or in its nested SDFGs
+        # (a nested SDFG is read through its whole symbol mapping), so each SDFG is swept to its
+        # own fixed point rather than all of them until none changes.
+        for sd in sdfg.all_sdfgs_recursive():
+            while True:
+                this_round = self._eliminate_round(sd)
+                if not this_round:
+                    break
+                removed |= this_round
         return removed
 
-    def _eliminate_round(self, sdfg: SDFG) -> Set[str]:
-        """One sweep across ``sdfg`` and its nested SDFGs; descriptors go first, since
-        ``free_symbols`` pulls shape symbols through the access nodes."""
-        eliminated: Set[str] = set()
-        for sd in sdfg.all_sdfgs_recursive():
-            # Propagatable: every binding edge agrees, and the RHS is not self-referential.
-            bindings: Dict[str, Optional[str]] = {}
-            for e in sd.all_interstate_edges():
-                for lhs, rhs in e.data.assignments.items():
-                    if rhs is None or lhs in free_symbol_names(rhs):
-                        bindings[lhs] = None
-                        continue
-                    if lhs not in bindings:
-                        bindings[lhs] = rhs
-                    elif bindings[lhs] is not None and bindings[lhs] != rhs:
-                        bindings[lhs] = None
-            # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope, so
-            # ``K = i + 1`` would size a transient by a loop variable and allocate it outside.
-            invariant = {str(s) for s in sd.free_symbols} | set(sd.constants_prop.keys())
-            safe_subs = {
-                sym: rhs
-                for sym, rhs in bindings.items()
-                if rhs is not None and not is_array_access(rhs) and free_symbol_names(rhs) <= invariant
-            }
-
-            if safe_subs:
-                sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)
-
-            used_in_ir: Set[str] = set()
-            for blk in sd.all_control_flow_blocks():
-                used_in_ir |= {str(s) for s in blk.free_symbols}
-                used_in_ir |= meta_read_symbols(blk)
-            for e in sd.all_interstate_edges():
+    def _symbols_read(self, sd: SDFG) -> Set[str]:
+        """Symbols read in ``sd``, not across nested SDFGs: the free symbols of every block and the
+        symbols its meta code and interstate edges read. A region's free symbols are those of its
+        contents, meta code and edges, so they are assembled from those rather than recomputed for
+        every enclosing region."""
+        used: Set[str] = set()
+        for blk in sd.all_control_flow_blocks():
+            if not isinstance(blk, AbstractControlFlowRegion):
+                used |= {str(s) for s in blk.free_symbols}
+            used |= meta_read_symbols(blk)
+        for region in sd.all_control_flow_regions():
+            for e in region.edges():
                 for rhs in e.data.assignments.values():
-                    used_in_ir |= free_symbol_names(rhs)
+                    used |= free_symbol_names(rhs)
                 if e.data.condition is not None:
                     try:
-                        used_in_ir |= {str(s) for s in e.data.condition.get_free_symbols()}
+                        used |= {str(s) for s in e.data.condition.get_free_symbols()}
                     except Exception:
                         pass
+                if region is not sd:
+                    # What a nested region adds for its edges, including the shapes of containers they read
+                    edge_syms = e.data.used_symbols(all_symbols=True)
+                    used |= edge_syms
+                    for name in edge_syms & sd.arrays.keys():
+                        used |= {str(s) for s in sd.arrays[name].used_symbols(True)}
+        return used
 
-            sd_eliminated: Set[str] = set()
-            for e in sd.all_interstate_edges():
-                for lhs in list(e.data.assignments.keys()):
-                    if lhs not in used_in_ir:
-                        del e.data.assignments[lhs]
-                        sd_eliminated.add(lhs)
-            # Drop orphaned declarations, else nested-SDFG validation demands the symbol.
-            if sd_eliminated:
-                still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
-                for name in sd_eliminated:
-                    if (name in sd.symbols and name not in still_bound and name not in used_in_ir):
-                        del sd.symbols[name]
-            eliminated |= sd_eliminated
+    def _eliminate_round(self, sd: SDFG) -> Set[str]:
+        """One sweep across ``sd`` (not its nested SDFGs); descriptors go first, since
+        ``free_symbols`` pulls shape symbols through the access nodes."""
+        # Propagatable: every binding edge agrees, and the RHS is not self-referential.
+        bindings: Dict[str, Optional[str]] = {}
+        for e in sd.all_interstate_edges():
+            for lhs, rhs in e.data.assignments.items():
+                if rhs is None or lhs in free_symbol_names(rhs):
+                    bindings[lhs] = None
+                    continue
+                if lhs not in bindings:
+                    bindings[lhs] = rhs
+                elif bindings[lhs] is not None and bindings[lhs] != rhs:
+                    bindings[lhs] = None
+        if not bindings:
+            # No assignments: nothing to substitute into descriptors or to eliminate.
+            return set()
+
+        # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope, so
+        # ``K = i + 1`` would size a transient by a loop variable and allocate it outside.
+        safe_subs = {sym: rhs for sym, rhs in bindings.items() if rhs is not None and not is_array_access(rhs)}
+        if safe_subs:
+            invariant = {str(s) for s in sd.free_symbols} | set(sd.constants_prop.keys())
+            safe_subs = {sym: rhs for sym, rhs in safe_subs.items() if free_symbol_names(rhs) <= invariant}
+        if safe_subs:
+            sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)
+
+        used_in_ir = self._symbols_read(sd)
+
+        eliminated: Set[str] = set()
+        for e in sd.all_interstate_edges():
+            for lhs in list(e.data.assignments.keys()):
+                if lhs not in used_in_ir:
+                    del e.data.assignments[lhs]
+                    eliminated.add(lhs)
+        # Drop orphaned declarations, else nested-SDFG validation demands the symbol.
+        if eliminated:
+            still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
+            for name in eliminated:
+                if (name in sd.symbols and name not in still_bound and name not in used_in_ir):
+                    del sd.symbols[name]
         return eliminated
 
     # Given a cfg_blk, builds the incoming set of symbols
     def _execution_order(self, sdfg: SDFG, all_cfg_blks: Dict[ControlFlowBlock, ControlFlowRegion]):
         """``(block, parent)`` pairs in execution order, one entry per block of ``all_cfg_blks``.
 
-        The sort runs per SDFG because it does not cross nested SDFGs, and it only reaches blocks
-        with a path from the start block -- an unreachable one still carries symbols, so it is
-        appended rather than dropped."""
+        Each region is ordered in reverse postorder (linear, unlike ``blockorder_topological_sort``,
+        whose dominator and branch analyses are quadratic in the length of a region) and followed
+        by its contents, then by itself again: its outgoing table combines its contents, so what
+        follows it is computed from final values within the same sweep. The order runs per SDFG
+        because it does not cross nested SDFGs, and it only reaches blocks with a path from the
+        start block -- an unreachable one still carries symbols, so it is appended rather than
+        dropped."""
         ordered = []
         seen = set()
-        for sd in sdfg.all_sdfgs_recursive():
+
+        def add(blk: ControlFlowBlock) -> None:
+            if id(blk) not in seen and blk in all_cfg_blks:
+                seen.add(id(blk))
+                ordered.append((blk, all_cfg_blks[blk]))
+
+        def revisit(blk: ControlFlowBlock) -> None:
+            if blk in all_cfg_blks:
+                ordered.append((blk, all_cfg_blks[blk]))
+
+        def visit(region: AbstractControlFlowRegion) -> None:
+            if region.number_of_nodes() == 0:
+                return
             try:
-                blocks = list(cfg_analysis.blockorder_topological_sort(sd, recursive=True))
-            except KeyError:
-                # The sort walks a dominator tree rooted at the start block, so a CFG with a second
-                # source -- which this pass supports -- has blocks the tree never names. Fall back
-                # to insertion order for that SDFG rather than ordering part of it.
-                continue
+                blocks = cfg_analysis.blockorder_reverse_postorder(region)
+            except ValueError:
+                # No unique start block; the remaining blocks are appended in insertion order.
+                return
             for blk in blocks:
-                if id(blk) not in seen and blk in all_cfg_blks:
-                    seen.add(id(blk))
-                    ordered.append((blk, all_cfg_blks[blk]))
+                add(blk)
+                if isinstance(blk, ConditionalBlock):
+                    for branch in blk.sub_regions():
+                        add(branch)
+                        visit(branch)
+                        revisit(branch)
+                    revisit(blk)
+                elif isinstance(blk, AbstractControlFlowRegion):
+                    visit(blk)
+                    revisit(blk)
+
+        for sd in sdfg.all_sdfgs_recursive():
+            visit(sd)
         for blk, parent in all_cfg_blks.items():
             if id(blk) not in seen:
                 seen.add(id(blk))
@@ -389,20 +455,13 @@ class SymbolPropagation(ppl.Pass):
                     sym_table[sym] = None
             sym_table.update(resolved)
 
-            # Nested array accesses are not supported.
-            sym_table = {k: v for k, v in sym_table.items() if not is_array_access(v)}
-
-            # Views are seen as pointers.
+            # Nested array accesses are not supported, views are seen as pointers, and opaque scalars change.
+            unpropagatable = self._view_names.get(owner, set()) | self._opaque_scalars.get(owner, set())
             sym_table = {
                 k: v
-                for k, v in sym_table.items() if v is None or not any([
-                    str(s) in owner.arrays and isinstance(owner.arrays[str(s)], dt.View)
-                    for s in pystr_to_symbolic(v).free_symbols
-                ])
+                for k, v in sym_table.items()
+                if v is None or not (is_array_access(v) or free_symbol_names(v) & unpropagatable)
             }
-
-            opaque = self._opaque_scalars.get(owner, set())
-            sym_table = {k: v for k, v in sym_table.items() if v is None or not (scalars(v, owner.arrays) & opaque)}
 
             if i == 0:
                 new_in_syms = sym_table
@@ -468,12 +527,6 @@ class SymbolPropagation(ppl.Pass):
                 self._combine_syms(new_out_syms, out_syms[n])
             return new_out_syms
 
-    def _block_free_symbols(self, cfg_blk: ControlFlowBlock, parent: ControlFlowRegion) -> Set[str]:
-        """Names of symbols read by ``cfg_blk`` and by its outgoing edges."""
-        free = {str(s) for s in cfg_blk.free_symbols}
-        free |= {str(s) for edge in parent.out_edges(cfg_blk) for s in edge.data.free_symbols}
-        return free
-
     # Given a cfg_blk, updates the symbols in the cfg_blk
     def _update_syms(
         self,
@@ -491,7 +544,15 @@ class SymbolPropagation(ppl.Pass):
         candidates = set(new_in_syms) | set(new_out_syms)
         if not candidates:
             return set()
-        free_before = self._block_free_symbols(cfg_blk, parent)
+
+        out_edges = parent.out_edges(cfg_blk)
+        free_edge_sym = {str(s) for edge in out_edges for s in edge.data.free_symbols}
+        # A region is only rewritten in its meta code and outgoing edges. If neither reads a
+        # candidate, nothing changes, and the free symbols of its whole contents are not needed.
+        if not isinstance(cfg_blk, SDFGState) and not (candidates & (meta_read_symbols(cfg_blk) | free_edge_sym)):
+            return set()
+        free_sym = {str(s) for s in cfg_blk.free_symbols}
+        free_before = free_sym | free_edge_sym
 
         # An acyclic chain converges within ``#symbols`` rounds; the cap stops a cyclic one.
         max_iters = len(new_in_syms) + len(new_out_syms) + 2
@@ -514,8 +575,6 @@ class SymbolPropagation(ppl.Pass):
         while changed and iters < max_iters:
             iters += 1
             changed = False
-            free_sym = {str(s) for s in cfg_blk.free_symbols}
-            free_edge_sym = {str(s) for edge in parent.out_edges(cfg_blk) for s in edge.data.free_symbols}
 
             # Only what the block still reads: ``replace_in_codeblock`` shadows a name in a C++
             # tasklet by prepending ``auto i = ...;``, and a second round prepends it again.
@@ -534,7 +593,7 @@ class SymbolPropagation(ppl.Pass):
                 pass  # Nested CFGs inherit their parent's symbols
 
             # Same rule out: a substitution naming a key of this edge reads its own output.
-            for edge in parent.out_edges(cfg_blk):
+            for edge in out_edges:
                 edge_free = {str(s) for s in edge.data.free_symbols}
                 edge_keys = set(edge.data.assignments.keys())
                 edge_subs = {
@@ -543,12 +602,15 @@ class SymbolPropagation(ppl.Pass):
                 }
                 edge.data.replace_dict(edge_subs, replace_keys=False)
 
-            new_free_edge_sym = {str(s) for edge in parent.out_edges(cfg_blk) for s in edge.data.free_symbols}
-            if free_sym != {str(s) for s in cfg_blk.free_symbols} or free_edge_sym != new_free_edge_sym:
+            # The next round starts from what this one leaves behind.
+            new_free_sym = {str(s) for s in cfg_blk.free_symbols}
+            new_free_edge_sym = {str(s) for edge in out_edges for s in edge.data.free_symbols}
+            if free_sym != new_free_sym or free_edge_sym != new_free_edge_sym:
                 changed = True
+            free_sym, free_edge_sym = new_free_sym, new_free_edge_sym
 
         # The candidate symbols that are no longer read here were propagated.
-        return candidates & (free_before - self._block_free_symbols(cfg_blk, parent))
+        return candidates & (free_before - (free_sym | free_edge_sym))
 
     def _combine_syms(self, sym1: Dict[str, Any], sym2: Dict[str, Any]) -> None:
         """Meet of two symbol tables at a join, in place: a symbol survives only when both sides

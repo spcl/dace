@@ -478,6 +478,11 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
 
 def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
     """ Match based on the VF2 algorithm for general SI. """
+    # A subgraph isomorphism maps pattern nodes (and hence edges) injectively, so a graph with fewer nodes or edges
+    # than the pattern cannot match. Checking this first avoids setting up the matcher for, e.g., small regions.
+    if (digraph.number_of_nodes() < nxpattern.number_of_nodes()
+            or digraph.number_of_edges() < nxpattern.number_of_edges()):
+        return
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
 

@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
@@ -42,6 +43,21 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
+@functools.lru_cache(maxsize=16384)
+def _normalize_python_code(code: str) -> str:
+    """
+    Parses and unparses Python code. Two roundtrips avoid issues in AST parsing/unparsing of negative numbers, i.e.,
+    "(-1)" becomes "(- 1)". The result only depends on the string, so it is cached.
+    """
+    return unparse(ast.parse(code))
+
+
+@functools.lru_cache(maxsize=None)
+def _predates_symbolic_serialization(version: str) -> bool:
+    """ Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format. """
+    return parse_version(version) < parse_version("2.0.0a4")
+
+
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     """
     A backwards compatibility deserializer for symbolic properties. If the version of the
@@ -51,7 +67,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if version is None or _predates_symbolic_serialization(version):
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
@@ -1056,7 +1072,10 @@ class CodeBlock(object):
             self.code = code
 
     def __eq__(self, other):
-        if isinstance(other, str) or other is None:
+        if other is None:
+            # Only code that is None has no string representation
+            return self.code is None
+        if isinstance(other, str):
             return self.as_string == other
         elif isinstance(other, CodeBlock):
             return self.as_string == other.as_string and self.language == other.language
@@ -1067,7 +1086,7 @@ class CodeBlock(object):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if self.language == dace.dtypes.Language.Python and self.code is not None:
-            code = unparse(ast.parse(self.as_string))
+            code = _normalize_python_code(self.as_string)
         else:
             code = self.as_string
 
@@ -1123,7 +1142,7 @@ class CodeProperty(Property):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if obj.language == dace.dtypes.Language.Python and obj.code is not None:
-            code = unparse(ast.parse(obj.as_string))
+            code = _normalize_python_code(obj.as_string)
         else:
             code = obj.as_string
 
