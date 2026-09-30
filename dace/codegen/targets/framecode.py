@@ -425,7 +425,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         for storage, arrays in ext_arrays.items():
             size = 0
             for subsdfg, aname, arr in arrays:
-                size += arr.total_size * arr.dtype.bytes
+                size += arr.total_size_in_bytes
 
             # Size query functions
             callsite_stream.write(
@@ -446,7 +446,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for subsdfg, aname, arr in arrays:
                 allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
-                offset += arr.total_size * arr.dtype.bytes
+                offset += arr.total_size_in_bytes
 
             # Footer
             callsite_stream.write('}', sdfg)
@@ -757,7 +757,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break

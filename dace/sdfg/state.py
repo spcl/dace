@@ -1647,7 +1647,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries
         for desc in sdfg.arrays.values():
             for s in desc.free_symbols:
-                symbols.setdefault(str(s), s.dtype)
+                symbols.setdefault(s.name, s.dtype)
 
         return symbols
 
@@ -1671,25 +1671,24 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         symbols = collections.OrderedDict(self.sdfg_symbols() if sdfg_symbols is None else sdfg_symbols)
 
-        # Add symbols from inter-state edges along the path to the state
-        try:
-            start_state = sdfg.start_state
-            for e in sdfg.predecessor_state_transitions(start_state):
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-        except ValueError:
-            # Cannot determine starting state (possibly some inter-state edges
-            # do not yet exist)
-            for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+        # The blocks from this state up to the SDFG, each one nested in the next
+        path = [self]
+        while path[-1] is not sdfg and path[-1].parent_graph is not None:
+            path.append(path[-1].parent_graph)
 
-        # Add the symbols of the control flow regions this state is nested in
-        regions = []
-        region = self.parent_graph
-        while region is not None and region is not sdfg:
-            regions.append(region)
-            region = region.parent_graph
-        for region in reversed(regions):
-            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
+        # From the outermost region inward, add the symbols each control flow region defines and the ones of the
+        # inter-state edges along the paths to the block of the path it contains
+        for graph, block in reversed(list(zip(path[1:], path[:-1]))):
+            if graph is not sdfg:
+                symbols.update({k: v for k, v in graph.new_symbols(symbols).items() if v is not None})
+            try:
+                graph.start_block
+                edges = graph.edge_bfs(block, reverse=True)
+            except ValueError:
+                # Cannot determine starting block (possibly some inter-state edges do not yet exist)
+                edges = graph.edges()
+            for e in edges:
+                symbols.update(e.data.new_symbols(sdfg, symbols))
 
         return symbols
 
@@ -2067,11 +2066,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if len(inputs) == 0:
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
+        # Every edge below propagates through this one scope: resolve its symbols once
+        symbols = SymbolResolver()
+
         if external_edges:
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2102,7 +2104,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))
@@ -2646,8 +2648,9 @@ class SymbolResolver:
     the entry points that belong together; each of them makes its own if it is not given one.
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
-    around it, and may yet come to depend on the inter-state edges that lead to it. Its expensive
-    part, the walk over the data descriptors, is genuinely per SDFG and is reused as such.
+    around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
+    data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
+    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
     """
 
     def __init__(self) -> None:

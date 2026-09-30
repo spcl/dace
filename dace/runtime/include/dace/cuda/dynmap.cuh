@@ -15,26 +15,26 @@ namespace dace {
 
     namespace cg = cooperative_groups;
 
-    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename index_type = int32_t>
+    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename INDEX_TYPE = int32_t>
     struct DynamicMap {
 
         // empty field so the compiler doesn't get confused when empty_type is used instead of fg_type
         struct empty_type {
-            index_type src[1];  // outer map index
-            index_type data[1]; // inner map index
+            INDEX_TYPE src[1];  // outer map index
+            INDEX_TYPE data[1]; // inner map index
         };
 
         struct tb_type {
-            index_type owner;
-            index_type src;
-            index_type start;
-            index_type size;
+            INDEX_TYPE owner;
+            INDEX_TYPE src;
+            INDEX_TYPE start;
+            INDEX_TYPE size;
         };
 
         // fine grained needs space to accommodate all thread in the warp having the most possible jobs
         struct fg_type {
-            index_type src[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];  // outer map index
-            index_type data[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE]; // inner map index
+            INDEX_TYPE src[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];  // outer map index
+            INDEX_TYPE data[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE]; // inner map index
         };
 
         // depending on configuration of scheduler generate smaller union to save space
@@ -51,10 +51,10 @@ namespace dace {
 
 
         template<typename Functor>
-        __device__ static void schedule(shared_type& s, index_type localStart, index_type localEnd, index_type localSrc, Functor&& work) {
+        __device__ static void schedule(shared_type& s, INDEX_TYPE localStart, INDEX_TYPE localEnd, INDEX_TYPE localSrc, Functor&& work) {
 
             // defining other local variables
-            index_type localSize = localEnd - localStart;
+            INDEX_TYPE localSize = localEnd - localStart;
 
             cg::thread_block block = cg::this_thread_block();
             unsigned int threadRank = block.thread_rank();
@@ -93,9 +93,9 @@ namespace dace {
                 block.sync();
 
                 // get winning values and reset owner for next round
-                index_type src = s.tb.src;
-                index_type start = s.tb.start;
-                index_type size = s.tb.size;
+                INDEX_TYPE src = s.tb.src;
+                INDEX_TYPE start = s.tb.start;
+                INDEX_TYPE size = s.tb.size;
 
                 if (s.tb.owner == threadRank) {
                     s.tb.owner = blockSize;
@@ -125,9 +125,9 @@ namespace dace {
                 int owner = __ffs(mask) - 1;
 
                 // share value across warp
-                index_type src = warp.shfl(localSrc, owner);
-                index_type start = warp.shfl(localStart, owner);
-                index_type size = warp.shfl(localSize, owner);
+                INDEX_TYPE src = warp.shfl(localSrc, owner);
+                INDEX_TYPE start = warp.shfl(localStart, owner);
+                INDEX_TYPE size = warp.shfl(localSize, owner);
 
                 // mark as processed
                 if (owner == warpThreadRank) {
@@ -145,18 +145,18 @@ namespace dace {
             if (FINE_GRAINED) {
 
                 // prefix sum (after execution the prefix sum will include the value of the current thread)
-                index_type prefix = localSize;
+                INDEX_TYPE prefix = localSize;
                 for (int delta = 1; delta < warpSize; delta *= 2) {
-                    index_type tmp = warp.shfl_up(prefix, delta);
+                    INDEX_TYPE tmp = warp.shfl_up(prefix, delta);
                     prefix += (warpThreadRank >= delta) ? tmp : 0;
                 }
 
                 // total number and local start index (need to subtract localSize, because it is including the
                 // local element)
-                index_type total = warp.shfl(prefix, warpSize - 1);
-                index_type warp_offset = warpId * WARP_SIZE*WARP_SIZE;
-                index_type thread_offset = prefix - localSize;
-                index_type offset = warp_offset + thread_offset;
+                INDEX_TYPE total = warp.shfl(prefix, warpSize - 1);
+                INDEX_TYPE warp_offset = warpId * WARP_SIZE*WARP_SIZE;
+                INDEX_TYPE thread_offset = prefix - localSize;
+                INDEX_TYPE offset = warp_offset + thread_offset;
 
                 // write element range and owner to shared memory
                 for (int i = 0; i < localSize; i++) {
@@ -175,7 +175,7 @@ namespace dace {
 
                 // do work
                 if (localSize > 0) {
-                    for (index_type j = localStart; j < localEnd; j++) {
+                    for (INDEX_TYPE j = localStart; j < localEnd; j++) {
                         work(localSrc, j);
                     }
                 }

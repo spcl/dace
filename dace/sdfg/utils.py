@@ -1174,6 +1174,68 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     return in_edge
 
 
+def convert_to_view(sdfg: SDFG, name: str, viewed: str, subset: sbs.Subset) -> dt.View:
+    """
+    Turns a data container into a view of a subset of another one, in every state of an SDFG.
+
+    The view keeps the name, shape, strides and data type of the container (the data type may differ from the viewed
+    container's, which reinterprets its memory), so no memlet needs to change. Every access node of the container is
+    connected to a new access node of ``viewed`` through a ``views`` connector, so that its view edge is never
+    ambiguous (see ``get_view_edge``): a node that is only read views ``viewed`` through its incoming edge, one that is
+    only written through its outgoing edge, and one that is both is split into a written view, followed by ``viewed``,
+    followed by a read view.
+
+    :param sdfg: The SDFG that contains both containers. Nested SDFGs are not modified.
+    :param name: The name of the container to turn into a view.
+    :param viewed: The name of the container to view.
+    :param subset: The subset of ``viewed`` that the view refers to.
+    :return: The new view descriptor, which replaces the container in ``sdfg``.
+    """
+    view = dt.View.view(sdfg.arrays[name])
+    sdfg.arrays[name] = view
+
+    for state in sdfg.all_states():
+        for node in [n for n in state.data_nodes() if n.data == name]:
+            _attach_view_edges(state, node, viewed, subset)
+
+    return view
+
+
+def _attach_view_edges(state: SDFGState, node: nd.AccessNode, viewed: str, subset: sbs.Subset) -> None:
+    """Connects a view access node to a new access node of the container it views; see ``convert_to_view``."""
+    is_written = any(not e.data.is_empty() for e in state.in_edges(node))
+    is_read = any(not e.data.is_empty() for e in state.out_edges(node))
+    scope_entry = state.entry_node(node)
+
+    viewed_node = state.add_access(viewed)
+    if is_written:
+        # The written view (``node``) is followed by the viewed container. Dependencies that follow ``node`` now
+        # follow the viewed container, so that the view edge is the only outgoing edge of the written view.
+        for e in [e for e in state.out_edges(node) if e.data.is_empty()]:
+            state.remove_edge(e)
+            state.add_edge(viewed_node, None, e.dst, e.dst_conn, e.data)
+        read_edges = [e for e in state.out_edges(node)]
+        node.add_out_connector('views', force=True)
+        state.add_edge(node, 'views', viewed_node, None, mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
+        if not is_read:
+            return
+
+        # Split the reads off into a read view that follows the viewed container
+        read_view = state.add_access(node.data)
+        for e in read_edges:
+            state.remove_edge(e)
+            if e.src_conn is not None:
+                read_view.add_out_connector(e.src_conn, force=True)
+            state.add_edge(read_view, e.src_conn, e.dst, e.dst_conn, e.data)
+        node = read_view
+    elif scope_entry is not None:
+        # A viewed container that only precedes a view has no other edge that places it in the view's scope
+        state.add_nedge(scope_entry, viewed_node, mm.Memlet())
+
+    node.add_in_connector('views', force=True)
+    state.add_edge(viewed_node, None, node, 'views', mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
+
+
 def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
