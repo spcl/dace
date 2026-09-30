@@ -693,31 +693,21 @@ control flow in the context of acyclic dataflow. A nested SDFG is defined by the
 which contains a reference to an SDFG object, and a set of input and output connectors. When invoked, the nested SDFG
 will be executed in that context, independently from other instances if parallel, similarly to a function call.
 
-.. raw:: html
+.. figure:: images/nested-sdfg.svg
+  :figwidth: 50%
+  :align: right
+  :alt: Nested SDFG example.
 
-  <div class="figure align-right" id="nestedsdfg" style="width: 40%">
-    <iframe width="100%" height="400" frameborder="0" src="../_static/embed.html?url=sdfg/nested.sdfg"></iframe>
-  </div>
-
-
-.. code-block:: python
-
-  @dace.program
-  def halve(A: dace.float64[N], B: dace.float64[N]):
-      for i in dace.map[0:N]:
-          x = A[i]
-          while x > 1:
-              x = x / 2
-          B[i] = x
-
+  Nested SDFG example. The graph corresponds to the code ``if input[7] > 5: output[1] = 1; else: output[2] = 2``.
+  The memlets inside the nested SDFG address the same containers as the ones outside it.
 
 To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG.
 Within the nested SDFG, the data descriptors are set to be non-transient, meaning that they act as if they were
 function parameters. A valid SDFG specifies the same data descriptors in the nested SDFG as the data containers
 connected to it in the parent SDFG, and the memlets inside the nested SDFG address those containers the same way
-the parent does. In the example on the right, the loop inside the map requires a nested SDFG, whose connectors
-``A`` and ``B`` describe the entire arrays, and the loop body reads ``A[i]`` and writes ``B[i]``. If a reinterpretation
-or a subset of a container is needed, it is expressed with a view inside the nested SDFG.
+the parent does. In the figure, the input array is externally transient but internally non-transient (hence the thick
+edge), and the memlets inside (``input[7]``, ``output[1]``, ``output[2]``) are written the same way as they would be
+outside. If a reinterpretation or a subset of a container is needed, it is expressed with a view inside the nested SDFG.
 The memlets outside the nested SDFG represent the union of all the internal memlets that go into the nested SDFG, and
 the volume is the sum of all the volumes of the internal memlets. See more in :ref:`memprop`.
 
