@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple, Union
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -19,8 +19,10 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from ordered_set import OrderedSet
 
+IndexExpr = Union[str, int, symbolic.SymbolicType]
 
-def _check_range(subset, a, itersym, b, step):
+
+def _check_range(subset: subsets.Subset, a: IndexExpr, itersym: symbolic.symbol, b: IndexExpr, step: IndexExpr) -> bool:
     found = False
     for rb, re, _ in subset.ndrange():
         if rb != 0:
@@ -40,10 +42,11 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
-def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
+                                b: IndexExpr, step: IndexExpr) -> bool:
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     found = False
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
@@ -68,10 +71,11 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
-def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
+                               b: IndexExpr, step: IndexExpr) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
+    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -112,7 +116,8 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
-def _affine_coeffs(expr, itersym):
+def _affine_coeffs(expr: IndexExpr,
+                   itersym: symbolic.symbol) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
     """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
     value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
     ``itersym`` is the degree test."""
@@ -125,16 +130,19 @@ def _affine_coeffs(expr, itersym):
     return a, e.subs(itersym, 0)
 
 
-def _same_injective_index(idx1, idx2, itersym) -> bool:
+def _same_injective_index(idx1: IndexExpr, idx2: IndexExpr, itersym: symbolic.symbol) -> bool:
     """True iff ``idx1`` and ``idx2`` are the same injective affine ``a*i+b`` (``a != 0``) of ``itersym``."""
-    sym = symbolic.pystr_to_symbolic(str(itersym))
-    e1 = symbolic.pystr_to_symbolic(str(idx1))
-    e2 = symbolic.pystr_to_symbolic(str(idx2))
-    coeffs = _affine_coeffs(e1, sym)
+    e1 = symbolic.pystr_to_symbolic(idx1)
+    e2 = symbolic.pystr_to_symbolic(idx2)
+    coeffs = _affine_coeffs(e1, itersym)
     return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
 
 
-def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
+def _dim_provably_disjoint(idx1: IndexExpr,
+                           idx2: IndexExpr,
+                           itersym: symbolic.symbol,
+                           step: IndexExpr = 1,
+                           start: IndexExpr = 0) -> bool:
     """True iff ``idx1`` at any iteration can never equal ``idx2`` at any iteration. Over the
     counter ``t`` (``i == start + step*t``), ``A1*t1 + B1 == A2*t2 + B2`` is solvable iff
     ``gcd(A1, A2)`` divides ``B2 - B1``; ranging ``t`` over all integers is conservative."""
@@ -183,8 +191,8 @@ def loop_varying_symbols(loop: LoopRegion) -> OrderedSet[str]:
     return varying
 
 
-def _read_write_dims_ordered(read: subsets.Subset, write: subsets.Subset, itersym, step, start,
-                             varying: OrderedSet[str]) -> bool:
+def _read_write_dims_ordered(read: subsets.Subset, write: subsets.Subset, itersym: symbolic.symbol, step: IndexExpr,
+                             start: IndexExpr, varying: OrderedSet[str]) -> bool:
     """Some point dimension keeps read and write apart: disjoint for every pair of iterations
     (keeping the constant dimensions propagate+intersect drops), or indexed alike so any overlap
     stays within one iteration."""
@@ -205,7 +213,7 @@ def _read_write_dims_ordered(read: subsets.Subset, write: subsets.Subset, itersy
     return False
 
 
-def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym,
+def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym: symbolic.symbol,
                                      varying: OrderedSet[str]) -> bool:
     """Prove two point subsets of one container collide only when their iterations coincide:
     with ``itersym`` replaced by ``p`` and ``q``, rationals ``lam_d`` with
@@ -246,7 +254,8 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, varying: OrderedSet[str]) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym: symbolic.symbol, step: IndexExpr,
+                        start: IndexExpr, varying: OrderedSet[str]) -> bool:
     """Whether two writes to one container may hit the same element from different iterations."""
     nd1 = list(m1.subset.ndrange())
     nd2 = list(m2.subset.ndrange())
