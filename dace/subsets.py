@@ -274,6 +274,25 @@ class Subset(object):
         raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
 
 
+def _is_one(val) -> bool:
+    """ Returns True if the given value is the integer one (as a Python or SymPy integer). """
+    return val is sp.S.One or (type(val) is int and val == 1)
+
+
+def _cancels_exactly(val) -> bool:
+    """
+    Returns True if the given value is an integer, a symbol, or a sum of integers and symbols, for which
+    ``val + c - val`` evaluates to ``c`` (as opposed to, e.g., infinities or floating-point values).
+    """
+    if type(val) is int:
+        return True
+    if not isinstance(val, sp.Basic):
+        return False
+    if val.is_Symbol or val.is_Integer:
+        return True
+    return val.is_Add and all(arg.is_Symbol or arg.is_Integer for arg in val.args)
+
+
 def _simplified_str(val):
     val = _expr(val)
     try:
@@ -422,12 +441,17 @@ class Range(Subset):
                 for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
         else:
-            return [
-                ts * sp.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
-                                 (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                (step.approx if isinstance(step, symbolic.SymExpr) else step))
-                for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
-            ]
+            result = []
+            for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes):
+                iMin = iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin
+                iMax = iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax
+                step = step.approx if isinstance(step, symbolic.SymExpr) else step
+                if _is_one(step) and _is_one(ts) and _cancels_exactly(iMin) and iMin == iMax:
+                    # Single index (e.g., ``i:i+1``): ``ceiling((i + 1 - i) / 1)`` is always one
+                    result.append(sp.S.One)
+                else:
+                    result.append(ts * sp.ceiling((iMax + off - iMin) / step))
+            return result
 
     def size_exact(self):
         """ Returns the number of elements in each dimension. """
@@ -565,7 +589,13 @@ class Range(Subset):
         result = set()
         for dim in self.ranges:
             for d in dim:
-                result |= symbolic.symlist(d).keys()
+                # Shortcuts for the most common cases, which ``symlist`` would return as-is
+                if isinstance(d, symbolic.symbol):
+                    result.add(d.name)
+                elif type(d) is int or isinstance(d, sp.Number):
+                    continue
+                else:
+                    result.update(symbolic.symlist(d).keys())
         return result
 
     def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
