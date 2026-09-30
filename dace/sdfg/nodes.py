@@ -3,6 +3,8 @@
     dataflow multigraph representation. """
 
 import ast
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -43,6 +45,31 @@ def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
                 result[name] = desc.dtype
         sdfg = sdfg.parent_sdfg
     return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict['dace.SDFG', Set[str]]]] = contextvars.ContextVar(
+    'nested_used_symbols_memo', default=None)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
 
 
 @make_properties
@@ -278,6 +305,11 @@ class Node(object):
         """ Returns a mapping between symbols defined by this node (e.g., for
             scope entries) to their type. """
         return {}
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """ Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+            without inferring their types. """
+        return set(self.new_symbols(sdfg, state, {}).keys())
 
     def infer_connector_types(self, sdfg, state):
         """
@@ -688,7 +720,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.
@@ -890,6 +928,10 @@ class MapEntry(EntryNode):
 
         return result
 
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
+
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbol names that are used within the Map scope created by this MapEntry
@@ -904,7 +946,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))

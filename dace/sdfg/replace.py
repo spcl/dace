@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 tokenize_cpp = re.compile(r'\b\w+\b')
 
 
+def _symbol_name(sym) -> str:
+    """ ``str(sym)``, without invoking the SymPy printer for plain symbols. """
+    if type(sym) is symbolic.symbol or type(sym) is sp.Symbol:
+        return sym.name
+    return str(sym)
+
+
 def _internal_replace(sym, symrepl):
     # A SymExpr is a (exact, over-approximation) pair, not a sympy.Basic, so the guard below
     # would hand it back untouched. Strip-mined bounds are SymExprs and sit in the same range
@@ -39,7 +46,7 @@ def _internal_replace(sym, symrepl):
             tokens = s.split('.')
             for i in range(1, len(tokens)):
                 fsyms.add('.'.join(tokens[:i]))
-    newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
+    newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
 
@@ -255,9 +262,9 @@ def replace_properties_dict(node: Any,
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
+                setattr(node, pname, _internal_replace(symbolic.pystr_to_symbolic(str(propval)), symrepl))
             else:
-                setattr(node, pname, propval.subs(symrepl))
+                setattr(node, pname, _internal_replace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
