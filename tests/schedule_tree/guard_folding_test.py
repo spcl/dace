@@ -536,6 +536,24 @@ def test_pair_then_fold_uses_negation():
     assert _conditions(stree) == ['(k >= 4)', '(k < 2)']
 
 
+def test_pair_nested_in_second_guard():
+    """A pair inside the second guard's body is formed in the ``else`` that replaces it, with consistent parents."""
+    stree = _pair_tree('k < 4', 'k >= 4', [_scale_tasklet('k', 2.0)])
+    inner = [
+        tn.IfScope(condition=dace.properties.CodeBlock('k < 6'), children=[_scale_tasklet('k', 5.0)]),
+        tn.IfScope(condition=dace.properties.CodeBlock('k >= 6'), children=[_scale_tasklet('k', 7.0)]),
+    ]
+    stree.children[0].children[1].add_children(inner)
+    assert pair_complementary_guards(stree) == 2
+    tn.validate_children_and_parents_align(stree, root=True)
+    assert len(_nodes(stree, tn.ElseScope)) == 2
+    a = np.random.rand(8)
+    b = np.zeros(8)
+    _run(stree, A=a, B=b, flag=np.zeros(1))
+    k = np.arange(8)
+    assert np.allclose(b, np.where(k < 4, a * 2.0, np.where(k < 6, a * 5.0, a * 7.0)))
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Merging of contiguous loops
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1204,6 +1222,7 @@ if __name__ == '__main__':
     test_pair_not_for_unrelated_conditions()
     test_pair_not_when_second_guard_has_else()
     test_pair_then_fold_uses_negation()
+    test_pair_nested_in_second_guard()
     test_merge_contiguous_identical_loops()
     test_merge_not_applied([(0, 3), (3, 8)], 3.0)
     test_merge_not_applied_when_first_body_changes_bound_of_second()

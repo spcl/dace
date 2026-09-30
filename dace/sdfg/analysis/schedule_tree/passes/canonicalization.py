@@ -338,7 +338,8 @@ def pair_complementary_guards(stree: tn.ScheduleTreeScope) -> int:
     """
     containers = stree.get_root().containers
     paired = 0
-    for scope in [n for n in stree.preorder_traversal() if isinstance(n, tn.ScheduleTreeScope)]:
+    # Innermost scopes first: pairing drops the second ``if``, which must not be visited (and rewritten) afterwards
+    for scope in reversed([n for n in stree.preorder_traversal() if isinstance(n, tn.ScheduleTreeScope)]):
         children, result, k, before = scope.children, [], 0, paired
         while k < len(children):
             node = children[k]
@@ -347,7 +348,7 @@ def pair_complementary_guards(stree: tn.ScheduleTreeScope) -> int:
             # ``node`` must end its chain (``following`` is an ``if``), and ``following`` must be a chain of its own
             if (following is not None and not isinstance(after, (tn.ElifScope, tn.ElseScope))
                     and _complementary(node, following, containers)):
-                result += [node, tn.ElseScope(children=following.children)]
+                result += [node, tn.ElseScope(children=list(following.children))]
                 paired += 1
                 k += 2
             else:
