@@ -52,6 +52,18 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
+def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
+    """Copy of an inner ``subset`` in terms of the outer symbols; matches by name, so the inner
+    symbol's dtype does not matter."""
+    outer = copy.deepcopy(subset)
+    inner_syms = {s for rng in outer.ndrange() for x in rng if symbolic.issymbolic(x) for s in x.free_symbols}
+    outer.replace({
+        s: symbolic.pystr_to_symbolic(nsdfg_node.symbol_mapping[s.name])
+        for s in inner_syms if s.name in nsdfg_node.symbol_mapping
+    })
+    return outer
+
+
 def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     """Whether every write to ``conn``'s array INSIDE ``nsdfg_node`` is indexed by the (mapped)
     iteration variable.
@@ -72,7 +84,6 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     :param itersym: outer loop iteration symbol.
     :returns: True iff every inner write to ``conn`` is iter-indexed.
     """
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
     found = False
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
@@ -94,8 +105,7 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 dst_subset = e.data.get_dst_subset(e, state)
                 if dst_subset is None:
                     return False
-                outer = copy.deepcopy(dst_subset)
-                outer.replace(repl)
+                outer = through_symbol_mapping(dst_subset, nsdfg_node)
                 if not _check_range(outer, a, itersym, b, step):
                     return False
                 found = True
@@ -114,7 +124,6 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
     :returns: True if no carried-read pattern found; False if any inner read hits the carrier
               array outside the write's affine form.
     """
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -131,8 +140,7 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 src_subset = e.data.get_src_subset(e, state)
                 if src_subset is None:
                     return False
-                outer = copy.deepcopy(src_subset)
-                outer.replace(repl)
+                outer = through_symbol_mapping(src_subset, nsdfg_node)
                 # Loop-invariant read (no itersym) -- safe, same value every iteration.
                 free = set()
                 for rb, re, _ in outer.ndrange():
