@@ -952,6 +952,8 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
     )
 
+    # Integration folds `inner_symbol -> outer_symbol` into the inner SDFG
+    nsdfg_node.integrate_into_parent()
     outer_sdfg.validate()
 
     return outer_sdfg, inner_sdfg, inner_state, nsdfg_node

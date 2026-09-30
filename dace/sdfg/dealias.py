@@ -1027,6 +1027,57 @@ def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
     return widened
 
 
+def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
+    """
+    Folds the entries of a nested SDFG's symbol mapping that map one of its symbols to a symbol of the parent into
+    the nested SDFG, renaming the inner symbol to the parent's.
+
+    Under the nested SDFG contract, a connector's descriptor is the parent's container, written in the parent's
+    symbols. Folding makes the nested SDFG use the same names, so that the descriptors, the memlets inside, and the
+    parent agree on one name per value. For example, a nested SDFG with an array ``a[N]`` and the mapping
+    ``{'N': 'M'}`` becomes a nested SDFG with ``a[M]`` and the mapping ``{'M': 'M'}``. Entries that map to other
+    expressions (e.g., ``{'N': 'M + 1'}``) or to a parent data container are kept as they are.
+
+    Internal names that would clash with the parent symbols are renamed first (see ``remove_symbol_aliases``).
+
+    :param sdfg: The nested SDFG whose parent node's symbol mapping is folded.
+    :return: The folded entries, mapping inner symbol names to the parent symbol names that replaced them.
+    :note: This function operates in-place, on the nested SDFG and on the symbol mapping of its node.
+    """
+    parent_node = sdfg.parent_nsdfg_node
+    if parent_node is None:
+        return {}
+    parent_arrays = sdfg.parent_sdfg.arrays if sdfg.parent_sdfg is not None else {}
+
+    def foldable() -> Dict[str, str]:
+        used = set(map(str, sdfg.free_symbols))
+        return {
+            str(k): str(v)
+            for k, v in parent_node.symbol_mapping.items()
+            if str(k) != str(v) and str(k) in used and dtypes.validate_name(str(v)) and str(v) not in parent_arrays
+        }
+
+    folded = foldable()
+    if not folded:
+        return {}
+    if remove_symbol_aliases(sdfg, folded):
+        # Internal names that clashed were renamed, possibly along with entries of the mapping
+        folded = foldable()
+    symbolic.safe_replace(folded, lambda m: sdfg.replace_dict(m))
+
+    for inner in folded:
+        del parent_node.symbol_mapping[inner]
+    for outer in folded.values():
+        parent_node.symbol_mapping[outer] = symbolic.pystr_to_symbolic(outer)
+
+    # The nested SDFGs below are connected to containers whose descriptors were just restated
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                integrate_nested_sdfg(node.sdfg)
+    return folded
+
+
 def integrate_nested_sdfg(sdfg: SDFG):
     """
     Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
@@ -1046,6 +1097,8 @@ def integrate_nested_sdfg(sdfg: SDFG):
     """
     if sdfg.parent is None:
         return
+
+    fold_symbol_mapping(sdfg)
 
     parent_sdfg = sdfg.parent_sdfg
     parent_state = sdfg.parent
@@ -1410,6 +1463,8 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
       * Symbols used inside the SDFG that match an introduced symbol but are not keys of the
         mapping. Keys are either identity-mapped (i.e., the same symbol as the parent's) or
         replaced separately by the caller, so they do not alias.
+      * Free symbols that match an introduced symbol, but that the nested SDFG node maps to something
+        else (e.g., ``{'i': 42}``), unless the caller replaces them.
 
     :param sdfg: The SDFG to operate on.
     :param symbol_mapping: A dictionary mapping SDFG symbols to symbolic expressions in the parent scope.
@@ -1441,11 +1496,18 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
     # Such a symbol therefore *is* the parent's symbol of the same name and must never be renamed away.
     free_symbols = set(map(str, sdfg.free_symbols))
 
+    # A free symbol that the nested SDFG node binds to something else (e.g., ``{'i': 42}``) is not the parent's
+    # symbol of the same name, unless the caller is about to replace it
+    node_mapping = sdfg.parent_nsdfg_node.symbol_mapping if sdfg.parent_nsdfg_node is not None else {}
+    replaced = {str(k) for k, v in symbol_mapping.items() if str(k) != str(v)}
+
     clashing: Set[str] = set()
     for sym in target_symbols:
         if sym in defined_symbols or sym in sdfg.arrays or sym in sdfg.constants_prop:
             clashing.add(sym)
         elif sym in used_symbols and sym not in symbol_mapping and sym not in free_symbols:
+            clashing.add(sym)
+        elif sym in free_symbols and sym not in replaced and str(node_mapping.get(sym, sym)) != sym:
             clashing.add(sym)
 
     if not clashing:

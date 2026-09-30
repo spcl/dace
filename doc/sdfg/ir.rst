@@ -725,6 +725,26 @@ To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_ma
 symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
 this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
 
+Since the connectors describe the parent's containers, their descriptors are written in the parent's symbols. When a
+nested SDFG is integrated into its parent (:func:`dace.sdfg.dealias.integrate_nested_sdfg`, which the frontends and
+transformations call once the node is connected, and which runs when a nested SDFG is loaded from a file), every entry
+of the symbol mapping that maps an internal symbol to a symbol of the parent is folded into the nested SDFG, by renaming
+the internal symbol to the parent's (see :func:`dace.sdfg.dealias.fold_symbol_mapping`). Entries that map to other
+expressions are kept. For example:
+
+.. code-block:: python
+
+  # The nested SDFG has an array ``a`` of shape ``[N]`` and a map over ``k`` in ``0:N``
+  node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping={'N': 'M'})
+  state.add_edge(node, 'a', state.add_write('A'), None, dace.Memlet('A[0:M]'))  # ``A`` is of shape ``[M]``
+  node.symbol_mapping  # {'N': M}: stored as given
+
+  node.integrate_into_parent()
+  node.symbol_mapping  # {'M': M}
+  nsdfg.arrays['a']    # Of shape ``[M]``, the same descriptor as ``A``, and the map ranges over ``0:M``
+
+Internal names that would clash with the parent's symbols, such as a map parameter called ``M``, are renamed first.
+
 Transformations and passes apply within nested SDFGs as they do anywhere else. The :ref:`simplify` pipeline also
 tries to inline nested SDFGs into their parent (e.g., with :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`)
 whenever possible.

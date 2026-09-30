@@ -35,12 +35,13 @@ def _inner_with_map(range_end='N', param='k'):
 
 
 def _connect(state, node):
-    """Connects A -> inA and outB -> B around a nested SDFG node."""
+    """Connects A -> inA and outB -> B around a nested SDFG node, and integrates it (which folds its symbol mapping)."""
     sdfg = state.sdfg
     r = state.add_read('A')
     w = state.add_write('B')
     state.add_edge(r, None, node, 'inA', dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_edge(node, 'outB', w, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
+    node.integrate_into_parent()
 
 
 def _all_map_params(sdfg: SDFG):
@@ -363,6 +364,8 @@ def test_symbol_rename_target_clash_with_grandchild():
 def test_free_symbol_shared_with_mapping_value_is_not_renamed():
     """An inner free symbol that also appears in a mapping value is the parent's symbol, not a clash.
 
+    A mapping to an expression is kept as it is, rather than folded into the nested SDFG.
+
     Mirrors the shape produced by the Python frontend when a callee's argument descriptor is
     specialized with the caller's symbols: the callee ends up using ``H`` directly while its own
     symbol ``N`` is mapped to an expression over the same ``H``.
@@ -388,7 +391,8 @@ def test_free_symbol_shared_with_mapping_value_is_not_renamed():
 
     maps = {n.map.params[0]: n.map for n, _ in inner.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
     assert str(maps['j'].range[0][1] + 1) == 'H'
-    assert str(maps['i'].range[0][1] + 1) == 'H + 2'
+    assert str(maps['i'].range[0][1] + 1) == 'N'
+    assert str(node.symbol_mapping['N']) == 'H + 2'
     # No new symbol may have leaked into the parent
     assert sdfg.free_symbols == {'H'}
     sdfg.validate()
@@ -540,6 +544,7 @@ def _mapped_symbol_sdfg(value):
     state = parent.add_state()
     node = state.add_nested_sdfg(inner, {}, {'o'}, {'s': value})
     state.add_edge(node, 'o', state.add_write('O'), None, dace.Memlet('O[0]'))
+    node.integrate_into_parent()
     return parent, node
 
 

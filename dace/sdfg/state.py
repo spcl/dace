@@ -62,25 +62,6 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
     return None
 
 
-def _symbols_reassigned_within(sdfg: 'SDFG') -> Set[str]:
-    """
-    Collects the symbols that an SDFG assigns to somewhere inside itself.
-
-    These are the symbols whose value within the SDFG is governed by its own control flow --
-    interstate-edge assignments and the symbols that control flow regions define, such as loop
-    variables -- rather than by whatever a parent maps them to.
-
-    :param sdfg: The SDFG to inspect.
-    :return: The set of symbol names assigned within ``sdfg``.
-    """
-    result: Set[str] = set()
-    for edge in sdfg.all_interstate_edges():
-        result.update(edge.data.assignments.keys())
-    for region in sdfg.all_control_flow_regions():
-        result.update(region.new_symbols(sdfg.symbols).keys())
-    return result
-
-
 def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
@@ -1850,7 +1831,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param outputs: Output connectors of the nested SDFG. Can be a set of connector names
                         (types will be auto-detected) or a dict mapping connector names to data types.
         :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
-                               parent SDFG's scope. If None, symbols are mapped to themselves.
+                               parent SDFG's scope. It is stored on the node as given, and free symbols
+                               of the nested SDFG without an entry are mapped to themselves. Entries that
+                               map a symbol to a parent symbol are folded into the nested SDFG when it is
+                               integrated (see ``dace.sdfg.dealias.fold_symbol_mapping``).
         :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
@@ -1871,33 +1855,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_sdfg = self.sdfg
 
             sdfg.update_cfg_list([])
-            # Mapping entries of symbols the nested SDFG does not use (yet) are kept as-is
-            retained_mapping: Dict[str, Any] = {}
-            if symbol_mapping:
-                from dace.sdfg import dealias  # Avoid circular import
-                used = sdfg.free_symbols
-                # A symbol the nested SDFG reassigns cannot be replaced by an expression
-                reassigned = _symbols_reassigned_within(sdfg)
-                # A value naming a parent data container is not a symbol of the parent's scope
-                parent_arrays = self.sdfg.arrays if self.sdfg is not None else {}
-                applied_mapping = {
-                    k: v
-                    for k, v in symbol_mapping.items()
-                    if k in used and not (k in reassigned and not dtypes.validate_name(str(v)))
-                    and not (symbolic.arrays(v) | symbolic.scalars(v, parent_arrays))
-                }
-                retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in applied_mapping}
-
-                if applied_mapping:
-                    dealias.remove_symbol_aliases(sdfg, applied_mapping)
-
-                    symbolic.safe_replace(applied_mapping, lambda m: sdfg.replace_dict(m))
-
-                    # Integrate any internal SDFGs after performing replacements
-                    for state in sdfg.states():
-                        for node in state.nodes():
-                            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
-                                dealias.integrate_nested_sdfg(node.sdfg)
 
         # Make dictionary of autodetect connector types from set
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
@@ -1912,7 +1869,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg,
             inputs,
             outputs,
-            symbol_mapping=None,
+            symbol_mapping=symbol_mapping,
             location=location,
             debuginfo=debuginfo,
             path=external_path,
@@ -1922,9 +1879,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Remaining free symbols are identity-mapped, plus the entries that could not be applied
-            symbol_mapping = {fs: fs for fs in sdfg.free_symbols}
-            symbol_mapping.update(retained_mapping)
+            # Free symbols without an entry are the parent's symbols of the same name
+            symbol_mapping = dict(symbol_mapping or {})
+            for fs in sdfg.free_symbols:
+                symbol_mapping.setdefault(fs, fs)
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
@@ -1932,8 +1890,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
-        else:
-            s.symbol_mapping = symbol_mapping or {}
 
         return s
 
