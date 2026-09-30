@@ -64,13 +64,14 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
-                else:
-                    allocated_as_scalar = True
 
                 if node.in_connectors[cname].type is None:
+                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+                    if e.data.data is not None:
+                        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+                    else:
+                        allocated_as_scalar = True
+
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
