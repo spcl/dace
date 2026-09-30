@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import Dict, List, Optional, Sequence, Set, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -274,7 +274,7 @@ class Subset(object):
         raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
 
     @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+    def symbols(self) -> dict[str, 'symbolic.symbol']:
         """ Returns the symbol instance this subset carries for each of its undefined symbol names. """
         raise NotImplementedError('symbols not implemented by "%s"' % type(self).__name__)
 
@@ -604,7 +604,7 @@ class Range(Subset):
         return result
 
     @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+    def symbols(self) -> dict[str, 'symbolic.symbol']:
         result = {}
         for dim in self.ranges:
             for d in dim:
@@ -1186,7 +1186,7 @@ class SubsetUnion(Subset):
         return result
 
     @property
-    def symbols(self) -> Dict[str, 'symbolic.symbol']:
+    def symbols(self) -> dict[str, 'symbolic.symbol']:
         result = {}
         for subset in self.subset_list:
             result.update(subset.symbols)
