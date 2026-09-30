@@ -1892,14 +1892,14 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     #   * Unsqueezed dimensions are ignored (should always be 0)
                     #   * Squeezed dimensions remain as they were in original subset
                     if e.data.subset is not None:
-                        e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                        e.data.subset = sdutil.compose_view_subset(mapping, subset, e.data.subset)
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
 
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
-                        e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+                        e.data.other_subset = sdutil.compose_view_subset(mapping, subset, e.data.other_subset)
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.other_subset = copy.deepcopy(subset)
@@ -1916,24 +1916,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Remove view node
         state.remove_node(self.view)
-
-    def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
-        """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
-
-        Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the edge
-        subset's own STEP and re-derives the end as ``offset + size - 1``, turning a strided window
-        into a contiguous one holding the same number of elements: ``a[0:N, 0:N][:, 0:N:2]`` folded
-        into ``a[0:N, 0:N//2]``, so the program read the first half of every row instead of its even
-        columns. The step is also missing from the offset, so a strided view of a strided view came
-        out wrong twice over.
-        """
-        new_subset: List[Tuple[int, int, int]] = subset.ndrange()
-        for vdim, adim in mapping.items():
-            rb, re, rs = new_subset[adim]
-            vb, ve, vs = edge_subset.ranges[vdim]
-            new_subset[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
-
-        return subsets.Range(new_subset)
 
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):

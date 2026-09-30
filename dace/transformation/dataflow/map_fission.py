@@ -15,45 +15,6 @@ from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
-def _substitute_map_range(subset: subsets.Range, params: List[str], rng: subsets.Range) -> Optional[subsets.Range]:
-    """
-    Replaces the map parameters in ``subset`` by the range of values they take.
-
-    Memlet propagation falls back to a bounding box as soon as the map has a non-unit step, which
-    turns a strided gather into a contiguous copy. Where every dimension is a point access that is
-    affine in a single parameter with a positive integer multiplier, the exact strided range can be
-    derived instead, which keeps the number of elements on both sides of a copy equal.
-
-    :param subset: The subset to substitute into, expressed in terms of ``params``.
-    :param params: The map parameters.
-    :param rng: The range the map parameters iterate over.
-    :return: The substituted subset, or ``None`` if it cannot be derived exactly.
-    """
-    symbolic_params = [pystr_to_symbolic(p) for p in params]
-    result = []
-    for rb, re, rs in subset.ndrange():
-        rb, re, rs = (pystr_to_symbolic(v) for v in (rb, re, rs))
-        used = [(i, p) for i, p in enumerate(symbolic_params) if p in (rb.free_symbols | re.free_symbols)]
-        if not used:
-            result.append((rb, re, rs))
-            continue
-        if len(used) > 1 or rb != re or rs != 1:
-            return None
-        pind, param = used[0]
-        # Match an affine access ``mult * param + addition``
-        poly = rb.as_poly(param)
-        if poly is None or poly.degree() > 1:
-            return None
-        mult = poly.coeff_monomial(param)
-        addition = poly.coeff_monomial(1)
-        if not mult.is_Integer or mult <= 0:
-            return None
-        map_rb, map_re, map_rs = rng[pind]
-        # Use the range's own end, so the element count is the map's size expression
-        result.append((mult * map_rb + addition, mult * map_re + addition, mult * map_rs))
-    return subsets.Range(result)
-
-
 @transformation.explicit_cf_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
@@ -591,11 +552,7 @@ class MapFission(transformation.SingleStateTransformation):
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
-                                    new_subset = _substitute_map_range(e.data.subset, outer_map.params, outer_map.range)
-                                    if new_subset is None:
-                                        e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
-                                    else:
-                                        e.data.subset = new_subset
+                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
@@ -618,12 +575,10 @@ class MapFission(transformation.SingleStateTransformation):
                             if e in outside_border_edges:
                                 map_ranges = full_map_ranges
                                 # The external subset may still name the out-of-scope map parameters
-                                if e.data.data != node.data and e.data.subset is not None:
-                                    new_subset = _substitute_map_range(e.data.subset, outer_map.params, outer_map.range)
-                                    if new_subset is None:
-                                        new_subset = propagate_subset([e.data], parent.arrays[e.data.data],
-                                                                      outer_map.params, outer_map.range).subset
-                                    e.data.subset = new_subset
+                                if (e.data.data != node.data and e.data.subset is not None
+                                        and set(outer_map.params) & set(map(str, e.data.subset.free_symbols))):
+                                    e.data.subset = propagate_subset([e.data], parent.arrays[e.data.data],
+                                                                     outer_map.params, outer_map.range).subset
                             else:
                                 map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:

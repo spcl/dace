@@ -64,7 +64,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for edge in consume_edges:
             read_memlet = edge.data
             write_memlet = produce_edge.data
-            if not write_memlet.subset.covers(read_memlet.subset):
+            if not write_memlet.subset.covers_precise(read_memlet.subset):
                 return False
 
         # First memlets

@@ -565,12 +565,24 @@ def test_symbol_mapped_to_a_parent_container_is_kept():
 
 
 if __name__ == '__main__':
-    import traceback
-    for name, fn in list(globals().items()):
-        if name.startswith('test_') and callable(fn):
-            try:
-                fn()
-                print(f'PASS {name}')
-            except Exception:
-                print(f'FAIL {name}')
-                traceback.print_exc()
+    test_no_clash_identity_is_noop()
+    test_symbol_clash_with_map_param()
+    test_symbol_clash_with_interstate_assignment()
+    test_symbol_clash_with_loop_variable()
+    test_symbol_clash_with_transient()
+    test_symbol_clash_with_constant()
+    test_symbol_mapping_swap()
+    test_partial_symbol_mapping_identity_completion()
+    test_integrate_parent_data_clash_with_inner_map_param()
+    test_integrate_parent_memlet_symbol_clash_with_inner_transient()
+    test_deeply_nested_symbol_clash()
+    test_integrate_parent_data_clash_with_inner_registered_symbol()
+    test_integrate_new_name_clash_with_defined_symbol()
+    test_symbol_rename_target_clash_with_grandchild()
+    test_free_symbol_shared_with_mapping_value_is_not_renamed()
+    test_connector_clash_with_outer_memlet_symbol()
+    test_connector_clash_with_parent_shape_symbol()
+    test_connector_clash_with_enclosing_map_parameter()
+    test_adopted_connector_follows_a_rename()
+    test_symbol_mapped_to_a_parent_symbol_is_folded()
+    test_symbol_mapped_to_a_parent_container_is_kept()

@@ -39,7 +39,7 @@ def test_simplify_mmm():
     assert np.allclose(S, sum(sum(np.matmul(X, Y))))
 
     # Simplify the SDFG
-    # NOTE: If the SDFG has not been dealised properly, simplification will violate semantics.
+    # NOTE: If the SDFG has not been dealiased properly, simplification will violate semantics.
     sdfg.simplify()
 
     # Input reinitialization just in case

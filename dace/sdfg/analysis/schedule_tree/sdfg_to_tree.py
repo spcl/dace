@@ -10,7 +10,6 @@ from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegi
                              UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.memlet_utils import MemletReplacer
-from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
@@ -34,9 +33,9 @@ class _InterstateMemletReplacer(MemletReplacer):
     Rewrites reads of nested-SDFG data containers inside inter-state edge code (conditions and assignment values)
     to the corresponding accesses of the parent SDFG, as given by the memlets connected to the nested SDFG node.
 
-    Subscripts (``A[2]``) and bare scalar reads (``s``) are both replaced by the unsqueezed external access
-    (e.g., ``B[4]`` or ``cstarr[i]``). A bare reference to a non-scalar container (e.g., in ``A is not None``)
-    is only renamed, since it has no subset to offset.
+    A connector describes the container it is connected to, so its accesses keep their subsets: subscripts
+    (``A[2]``) and bare scalar reads (``s``) are renamed to the external container (e.g., ``B[2]`` or ``c[0]``).
+    A bare reference to a non-scalar container (e.g., in ``A is not None``) is renamed as-is.
     """
 
     def __init__(self, arrays: Dict[str, data.Data], mapping: Dict[str, Memlet]) -> None:
@@ -44,13 +43,15 @@ class _InterstateMemletReplacer(MemletReplacer):
         :param arrays: The nested SDFG's data descriptors.
         :param mapping: A mapping from nested container names to the external memlets they are connected to.
         """
-        super().__init__(arrays, self._unsqueeze, set(mapping.keys()) & set(arrays.keys()))
+        super().__init__(arrays, self._rename_memlet, set(mapping.keys()) & set(arrays.keys()))
         self.mapping = mapping
         self.replace_count = 0
 
-    def _unsqueeze(self, memlet: Memlet) -> Memlet:
+    def _rename_memlet(self, memlet: Memlet) -> Memlet:
         self.replace_count += 1
-        return unsqueeze_memlet(memlet, self.mapping[memlet.data])
+        result = copy.deepcopy(memlet)
+        result.data = self.mapping[memlet.data].data
+        return result
 
     def _rename(self, node: ast.Name) -> ast.Name:
         self.replace_count += 1
@@ -96,168 +97,6 @@ def _replace_interstate_edge_reads(sdfg: SDFG, mapping: Dict[str, Memlet]) -> No
             e.data.condition.as_string = astutils.unparse(cond)
             e.data._uncond = None
             e.data._cond_sympy = None
-
-
-def _dealias_sdfg(sdfg: SDFG) -> None:
-    """
-    Renames all data containers in an SDFG tree (i.e., nested SDFGs) to use the same data descriptors
-    as the top-level SDFG. This function takes care of offsetting memlets and internal
-    uses of arrays such that there is one naming system, and no aliasing of managed memory.
-
-    This function operates in-place.
-
-    :param sdfg: The SDFG to operate on.
-    """
-    for nsdfg in sdfg.all_sdfgs_recursive():
-
-        if not nsdfg.parent:
-            continue
-
-        replacements: Dict[str, str] = {}
-        inv_replacements: Dict[str, List[str]] = {}
-        parent_edges_inputs: Dict[str, gr.MultiConnectorEdge[Memlet]] = {}
-        parent_edges_outputs: Dict[str, gr.MultiConnectorEdge[Memlet]] = {}
-        to_unsqueeze: Set[str] = set()
-
-        parent_sdfg = nsdfg.parent_sdfg
-        parent_state = nsdfg.parent
-        parent_node = nsdfg.parent_nsdfg_node
-
-        for name, desc in nsdfg.arrays.items():
-            if desc.transient:
-                continue
-            for edge in parent_state.in_edges_by_connector(parent_node, name):
-                parent_name = edge.data.data
-                assert parent_name in parent_sdfg.arrays
-                if name != parent_name:
-                    parent_edges_inputs[name] = edge
-                    replacements[name] = parent_name
-                    if parent_name in inv_replacements:
-                        inv_replacements[parent_name].append(name)
-                        to_unsqueeze.add(parent_name)
-                    else:
-                        inv_replacements[parent_name] = [name]
-                    # We found an incoming edge for name and we don't expect a second one.
-                    break
-
-            for edge in parent_state.out_edges_by_connector(parent_node, name):
-                parent_name = edge.data.data
-                assert parent_name in parent_sdfg.arrays
-                if name != parent_name:
-                    parent_edges_outputs[name] = edge
-
-                    if replacements.get(name, None) is not None:
-                        # There's an incoming and an outgoing connector with the same name.
-                        # Make sure both map to the same memory in the parent sdfg.
-                        assert replacements[name] == parent_name
-                        assert name in inv_replacements[parent_name]
-                        break
-                    else:
-                        replacements[name] = parent_name
-                        if parent_name in inv_replacements:
-                            inv_replacements[parent_name].append(name)
-                            to_unsqueeze.add(parent_name)
-                        else:
-                            inv_replacements[parent_name] = [name]
-                        # We found an outgoing edge for name and we don't expect a second one.
-                        break
-
-        if to_unsqueeze:
-            for parent_name in to_unsqueeze:
-                parent_arr = parent_sdfg.arrays[parent_name]
-                if isinstance(parent_arr, data.View):
-                    parent_arr = parent_arr.as_array()
-                elif isinstance(parent_arr, data.StructureView):
-                    parent_arr = parent_arr.as_structure()
-                elif isinstance(parent_arr, data.ContainerView):
-                    parent_arr = copy.deepcopy(parent_arr.stype)
-                child_names = inv_replacements[parent_name]
-                # Rewrite inter-state edge reads while the child descriptors still have their original
-                # (e.g., scalar) shapes, so that bare scalar reads are offset like the memlets below.
-                _replace_interstate_edge_reads(
-                    nsdfg,
-                    {name: parent_edges_inputs[name].data
-                     for name in child_names if name in parent_edges_inputs})
-                for name in child_names:
-                    child_arr = copy.deepcopy(parent_arr)
-                    child_arr.transient = False
-                    nsdfg.arrays[name] = child_arr
-                for state in nsdfg.states():
-                    for e in state.edges():
-                        if e.data.is_empty():
-                            continue
-                        if not state.is_leaf_memlet(e):
-                            continue
-
-                        mpath = state.memlet_path(e)
-                        src, dst = mpath[0].src, mpath[-1].dst
-
-                        # We need to take directionality of the memlet into account and unsqueeze either to source or
-                        # destination subset
-                        if isinstance(src, nd.AccessNode) and src.data in child_names:
-                            src_data = src.data
-                            new_src_memlet = unsqueeze_memlet(e.data,
-                                                              parent_edges_inputs[src.data].data,
-                                                              use_src_subset=True)
-                        else:
-                            src_data = None
-                            new_src_memlet = None
-                            # We need to take directionality of the memlet into account
-                        if isinstance(dst, nd.AccessNode) and dst.data in child_names:
-                            dst_data = dst.data
-                            new_dst_memlet = unsqueeze_memlet(e.data,
-                                                              parent_edges_outputs[dst.data].data,
-                                                              use_dst_subset=True)
-                        else:
-                            dst_data = None
-                            new_dst_memlet = None
-
-                        if new_src_memlet is not None:
-                            e.data.src_subset = new_src_memlet.subset
-                        if new_dst_memlet is not None:
-                            e.data.dst_subset = new_dst_memlet.subset
-                        if e.data.data == src_data:
-                            e.data.data = new_src_memlet.data
-                        elif e.data.data == dst_data:
-                            e.data.data = new_dst_memlet.data
-
-                for name in child_names:
-                    for edge in [parent_edges_inputs.get(name, None), parent_edges_outputs.get(name, None)]:
-                        if edge is None:
-                            continue
-
-                        for e in parent_state.memlet_tree(edge):
-                            if e.data.data == parent_name:
-                                e.data.subset = subsets.Range.from_array(parent_arr)
-                            else:
-                                e.data.other_subset = subsets.Range.from_array(parent_arr)
-
-        if replacements:
-            struct_outside_replacements: Dict[str, str] = {}
-            cleaned_replacements = {}
-            for k, val in replacements.items():
-                if '.' in val:
-                    if '.' not in k:
-                        struct_outside_replacements[k] = val
-                    continue
-                else:
-                    cleaned_replacements[k] = val
-            replacements = cleaned_replacements
-
-            symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
-            parent_node.in_connectors = {
-                replacements[c] if c in replacements else c: t
-                for c, t in parent_node.in_connectors.items()
-            }
-            parent_node.out_connectors = {
-                replacements[c] if c in replacements else c: t
-                for c, t in parent_node.out_connectors.items()
-            }
-            for e in parent_state.all_edges(parent_node):
-                if e.src_conn in replacements:
-                    e._src_conn = replacements[e.src_conn]
-                elif e.dst_conn in replacements:
-                    e._dst_conn = replacements[e.dst_conn]
 
 
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:

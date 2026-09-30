@@ -830,7 +830,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     old_intermediate_desc=inter_desc,
                     offset=producer_offset,
                     squeezed_dims=squeezed_dims,
-                    is_scalar=is_scalar,
                 )
 
             # We now handle the MemletTree defined by this edge.
@@ -870,7 +869,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         old_intermediate_desc=inter_desc,
                         offset=producer_offset,
                         squeezed_dims=squeezed_dims,
-                        is_scalar=is_scalar,
                     )
 
             # Now after we have handled the input of the new intermediate node,
@@ -948,7 +946,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             old_intermediate_desc=inter_desc,
                             offset=consumer_offset,
                             squeezed_dims=squeezed_dims,
-                            is_scalar=is_scalar,
                         )
 
                     # Now we have to make sure that all consumers are properly updated.
@@ -984,7 +981,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 old_intermediate_desc=inter_desc,
                                 offset=consumer_offset,
                                 squeezed_dims=squeezed_dims,
-                                is_scalar=is_scalar,
                             )
 
                 # The edge that leaves the second MapEntry was already deleted. We now delete
@@ -1744,29 +1740,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
             return True
 
-        is_integrated = inner_desc.is_equivalent(intermediate.desc(sdfg))
-        if is_integrated:
-            # Depending on `strict_dataflow`, the reduced intermediate may have its degenerate dimensions squeezed
-            allowed_view_ranks = {
-                len(reduced_intermediate_shape),
-                sum(1 for s in reduced_intermediate_shape if s != 1),
-            }
+        if inner_desc.is_equivalent(intermediate.desc(sdfg)):
+            # The connector is the intermediate itself and is reduced with it (see ``dealias.reduce_connector``),
+            # which also restates the views of it whose rank matches the reduced intermediate, with or without its
+            # degenerate dimensions (depending on `strict_dataflow`). A view of a single element has no strides.
+            allowed_view_ranks = {len(reduced_intermediate_shape), sum(1 for s in reduced_intermediate_shape if s != 1)}
             for inner_state in inner_sdfg.states():
-                for inner_node in inner_state.nodes():
-                    if not (isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data):
+                for inner_node in inner_state.data_nodes():
+                    if inner_node.data != inner_data:
                         continue
-                    for inner_edge in itertools.chain(inner_state.in_edges(inner_node),
-                                                      inner_state.out_edges(inner_node)):
-                        other_node = inner_edge.dst if inner_edge.src is inner_node else inner_edge.src
-                        if isinstance(other_node, nodes.NestedSDFG):
-                            # TODO(phimuell): Implement recursive handling.
+                    for other_node in itertools.chain(inner_state.predecessors(inner_node),
+                                                      inner_state.successors(inner_node)):
+                        if not isinstance(other_node, nodes.AccessNode):
+                            continue
+                        view_desc = other_node.desc(inner_sdfg)
+                        if (isinstance(view_desc, data.View) and len(view_desc.shape) not in allowed_view_ranks
+                                and not all(s == 1 for s in view_desc.shape)):
                             return False
-                        if isinstance(other_node, nodes.AccessNode):
-                            view_desc = other_node.desc(inner_sdfg)
-                            #  A view spanning a single element has no stride worth fixing up.
-                            if (isinstance(view_desc, data.View) and len(view_desc.shape) not in allowed_view_ranks
-                                    and not all(s == 1 for s in view_desc.shape)):
-                                return False
             return True
 
         # We do not allow nested handling, i.e. the data can not be passed to another
@@ -1855,7 +1845,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         old_intermediate_desc: Optional[data.Data] = None,
         offset: Optional[subsets.Subset] = None,
         squeezed_dims: Optional[List[int]] = None,
-        is_scalar: bool = False,
     ) -> None:
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         inner_desc = inner_sdfg.arrays[inner_data]

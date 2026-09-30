@@ -208,6 +208,10 @@ class AffineSMemlet(SeparableMemletPattern):
                 # Special case: i:i+stride for a begin:end:stride range
                 if node_rb == result_begin and bre + 1 == node_rs and step == 1:
                     pass
+                # Special case: the same point in every edge, which strides with the map
+                elif (subexprs[0] == subexprs[1] and (step is None or step == 1) and len(set(dim_exprs)) == 1
+                      and multiplier.is_Integer and multiplier > 0):
+                    pass
                 else:
                     # Map ranges where the last index is not known
                     # exactly are not supported by this pattern.
@@ -256,6 +260,10 @@ class AffineSMemlet(SeparableMemletPattern):
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
+
+        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
+        if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
+            return (result_begin, result_end, self.multiplier * node_rs, 1)
 
         # Special case: i:i+stride for a begin:end:stride range. The multiplier must be one:
         # for a single-element access ``(re - rb + 1)`` is 1, so with a unit map stride the length
@@ -1041,22 +1049,24 @@ def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[M
     """
     # We import late to avoid cyclic imports here.
     from dace.sdfg import utils as sdutil
-    from dace.transformation.helpers import unsqueeze_memlet
 
     if direction == 'in':
-        view_node, is_binding = edge.dst, edge.dst_conn == 'views'
+        container, view_node, is_binding = edge.src, edge.dst, edge.dst_conn == 'views'
     else:
-        view_node, is_binding = edge.src, edge.src_conn == 'views'
+        container, view_node, is_binding = edge.dst, edge.src, edge.src_conn == 'views'
     if not is_binding or not isinstance(view_node, nodes.AccessNode):
         return [edge.data]
     view_desc = view_node.desc(state.sdfg)
     if not isinstance(view_desc, data.View):
         return [edge.data]
 
-    # Only a plain slice can be unsqueezed back into the container: a view that reshapes or
-    # permutes has no such correspondence, and the result would not fit the container at all
-    mapping = sdutil.map_view_to_array(view_desc, state.sdfg.arrays[edge.data.data], edge.data.subset)
-    if mapping is None or mapping[1]:
+    container_desc = state.sdfg.arrays[container.data]
+    subset = edge.data.subset if edge.data.data == container.data else edge.data.other_subset
+    if subset is None:
+        subset = subsets.Range.from_array(container_desc)
+    # A view that reshapes or permutes has no dimension mapping to the container
+    mapping = sdutil.map_view_to_array(view_desc, container_desc, subset)
+    if mapping is None:
         return [edge.data]
 
     inner_edges = state.out_edges(view_node) if direction == 'in' else state.in_edges(view_node)
@@ -1064,11 +1074,10 @@ def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[M
     for inner in inner_edges:
         if inner.data.is_empty() or inner.data.data != view_node.data:
             return [edge.data]
-        try:
-            result.append(unsqueeze_memlet(inner.data, edge.data))
-        except (ValueError, NotImplementedError):
-            # The binding memlet is a correct, if coarser, answer
-            return [edge.data]
+        candidate = copy.deepcopy(inner.data)
+        candidate.data = container.data
+        candidate.subset = sdutil.compose_view_subset(mapping[0], subset, inner.data.subset)
+        result.append(candidate)
     return result or [edge.data]
 
 
@@ -1451,8 +1460,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
                                             if border_memlet.subset is not None else 0)
                     border_memlet.dynamic = True
 
-    # Propagate the inside 'border' memlets outside the SDFG by
-    # offsetting, and unsqueezing if necessary.
+    # Propagate the inside 'border' memlets outside the SDFG. Connectors are the containers they are
+    # connected to, so only the container name changes.
     for iedge in parent_state.in_edges(nsdfg_node):
         if iedge.dst_conn in border_memlets['in']:
             internal_memlet = border_memlets['in'][iedge.dst_conn]

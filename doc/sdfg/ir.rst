@@ -693,33 +693,47 @@ control flow in the context of acyclic dataflow. A nested SDFG is defined by the
 which contains a reference to an SDFG object, and a set of input and output connectors. When invoked, the nested SDFG
 will be executed in that context, independently from other instances if parallel, similarly to a function call.
 
-.. figure:: images/nested-sdfg.svg
-  :figwidth: 50%
-  :align: right
-  :alt: Nested SDFG example.
+.. raw:: html
 
-  Nested SDFG example. The graph corresponds to the code ``if input[7] > 5: output[1] = 1; else: output[2] = 2``.
+  <div class="figure align-right" id="nestedsdfg" style="width: 40%">
+    <iframe width="100%" height="400" frameborder="0" src="../_static/embed.html?url=sdfg/nested.sdfg"></iframe>
+  </div>
+
+
+.. code-block:: python
+
+  @dace.program
+  def halve(A: dace.float64[N], B: dace.float64[N]):
+      for i in dace.map[0:N]:
+          x = A[i]
+          while x > 1:
+              x = x / 2
+          B[i] = x
+
 
 To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG.
 Within the nested SDFG, the data descriptors are set to be non-transient, meaning that they act as if they were
 function parameters. A valid SDFG specifies the same data descriptors in the nested SDFG as the data containers
-connected to it in the parent SDFG. In the figure, the input array is externally transient but internally non-transient
-(hence the thick edge). The memlets outside the nested SDFG represent the union of all the internal memlets
-that go into the nested SDFG, and the volume is the sum of all the volumes of the internal memlets.
-See more in :ref:`memprop`.
-
-Nested SDFGs built under the earlier semantics, in which a connector describes the window the outer memlet
-selects out of the container and the memlets inside are written relative to that window, can be brought to
-this form with :func:`dace.sdfg.dealias.convert_legacy_nested_sdfgs`. Such a nested SDFG is not inlined until
-it is converted.
+connected to it in the parent SDFG, and the memlets inside the nested SDFG address those containers the same way
+the parent does. In the example on the right, the loop inside the map requires a nested SDFG, whose connectors
+``A`` and ``B`` describe the entire arrays, and the loop body reads ``A[i]`` and writes ``B[i]``. If a reinterpretation
+or a subset of a container is needed, it is expressed with a view inside the nested SDFG.
+The memlets outside the nested SDFG represent the union of all the internal memlets that go into the nested SDFG, and
+the volume is the sum of all the volumes of the internal memlets. See more in :ref:`memprop`.
 
 To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
 symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
 this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
 
-Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`,
-:class:`~dace.transformation.dataflow.map_fission.MapFission`) work directly with nested SDFGs, and the :ref:`simplify`
-tries to remove/inline them as much as possible.
+Transformations and passes apply within nested SDFGs as they do anywhere else. The :ref:`simplify` pipeline also
+tries to inline nested SDFGs into their parent (e.g., with :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`)
+whenever possible.
+
+.. note::
+  Nested SDFGs built under the earlier semantics, in which a connector describes the window the outer memlet
+  selects out of the container and the memlets inside are written relative to that window, can be brought to
+  this form with :func:`dace.sdfg.dealias.convert_legacy_nested_sdfgs`. Such a nested SDFG is not inlined until
+  it is converted.
 
 
 .. _memprop:

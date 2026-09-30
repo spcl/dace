@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Data-dependent map ranges read the element they were given, not a copy of it.
+"""Data-dependent map ranges read array elements in their bounds directly.
 
-A range like ``dace.map[start:end]`` built from ``start = A[i]`` reads ``A[i]`` itself, so that no
-scalar sits between the two maps and keeps them from being seen as one nested directly inside the
-other. That shortcut only holds while the element still has the value that was read out of it.
+A range like ``dace.map[A[i]:A[i + 1]]`` reads ``A[i]`` and ``A[i + 1]`` as dynamic map inputs, so that no
+scalar copy sits between the map and the scope enclosing it. A bound given through a variable reads the value the
+variable holds.
 """
 import numpy as np
 
@@ -26,15 +26,25 @@ def test_range_reads_the_element_itself():
     @dace.program
     def rowsum(indptr: dace.int32[N + 1], vals: dace.float64[N * N], out: dace.float64[N]):
         for i in range(N):
-            start = indptr[i]
-            end = indptr[i + 1]
-            for j in dace.map[start:end]:
+            for j in dace.map[indptr[i]:indptr[i + 1] - 1]:
                 out[i] += vals[j]
 
-    inputs = _dynamic_inputs(rowsum.to_sdfg(simplify=False))
+    sdfg = rowsum.to_sdfg(simplify=False)
+    inputs = _dynamic_inputs(sdfg)
     assert len(inputs) == 2, inputs
     assert all(memlet.data == 'indptr' for memlet in inputs.values()), inputs
     assert {str(memlet.subset) for memlet in inputs.values()} == {'i', 'i + 1'}, inputs
+
+    # The rest of the bound expression is kept
+    ranges = [str(n.map.range) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+    assert any(r.endswith(' - 1') for r in ranges), ranges
+
+    indptr = np.array([0, 3, 3, 7], dtype=np.int32)
+    vals = np.random.rand(9)
+    out = np.zeros(3)
+    sdfg(indptr=indptr, vals=vals, out=out, N=3)
+    expected = np.array([vals[0:2].sum(), 0.0, vals[3:6].sum()])
+    assert np.allclose(out, expected), out
 
 
 def test_range_keeps_the_value_it_was_given():

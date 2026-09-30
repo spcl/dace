@@ -403,30 +403,6 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> Set[SDFGState]:
     return states
 
 
-def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Memlet, parent_sdfg: dace.SDFG,
-                                  nsdfg: NestedSDFG) -> Memlet:
-    """
-    Restates a border memlet of a nested SDFG, whose subset may be a
-    :class:`~dace.subsets.SubsetUnion`, in terms of the container its connector is connected to.
-
-    :param internal_memlet: The border memlet inside the nested SDFG.
-    :param external_memlet: The memlet on the connector.
-    :param parent_sdfg: The SDFG containing the nested SDFG.
-    :param nsdfg: The nested SDFG node.
-    :return: The internal memlet, expressed in the outer container.
-    """
-    internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
-    external_array = parent_sdfg.arrays[external_memlet.data]
-    if not external_array.is_equivalent(internal_array):
-        raise ValueError(f'Connector "{internal_memlet.data}" of {nsdfg.label} describes '
-                         f'{internal_array}, not the container "{external_memlet.data}" it is connected to. '
-                         'Restate the nested SDFG with dace.sdfg.dealias.convert_legacy_nested_sdfgs.')
-
-    result = copy.deepcopy(internal_memlet)
-    result.data = external_memlet.data
-    return result
-
-
 def _freesyms(expr):
     """
     Helper function that either returns free symbols for sympy expressions
@@ -1033,8 +1009,8 @@ class UnderapproximateWrites(ppl.Pass):
             # filter out subsets that use symbols that are not defined outside of the nsdfg
             _filter_undefined_symbols(border_memlet, outer_symbols)
 
-        # Propagate the inside 'border' memlets outside the SDFG by
-        # offsetting, and unsqueezing if necessary.
+        # Propagate the inside 'border' memlets outside the SDFG. Connectors are the containers they are
+        # connected to, so only the container name changes.
         for edge in parent_state.out_edges(nsdfg_node):
             out_memlet = self.approximation_dict[edge]
             if edge.src_conn in border_memlets:
@@ -1044,7 +1020,9 @@ class UnderapproximateWrites(ppl.Pass):
                     out_memlet.dst_subset = None
                     self.approximation_dict[edge] = out_memlet
                     continue
-                out_memlet = _unsqueeze_memlet_subsetunion(internal_memlet, out_memlet, parent_sdfg, nsdfg_node)
+                # The connector is the container it is connected to, so only the name changes
+                out_memlet = copy.deepcopy(internal_memlet)
+                out_memlet.data = edge.data.data
                 self.approximation_dict[edge] = out_memlet
 
     def _underapproximate_writes_loop(self, sdfg: SDFG, loops: Dict[SDFGState,

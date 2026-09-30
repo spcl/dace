@@ -2014,6 +2014,30 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
     return dimension_mapping, unsqueezed, squeezed
 
 
+def compose_view_subset(mapping: Dict[int, int], subset: sbs.Range, view_subset: sbs.Subset) -> sbs.Range:
+    """
+    Composes a subset in the coordinates of a view into the coordinates of the data container it views, affinely.
+
+    Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the view subset's own step and
+    re-derives the end as ``offset + size - 1``, turning a strided window into a contiguous one holding the same number
+    of elements: ``a[0:N, 0:N][:, 0:N:2]`` folded into ``a[0:N, 0:N//2]``.
+
+    :param mapping: The mapping from view dimensions to container dimensions, as given by ``map_view_to_array``.
+    :param subset: The subset of the container the view covers.
+    :param view_subset: The subset to compose, in the coordinates of the view.
+    :return: The composed subset, in the coordinates of the container. Dimensions the view squeezes keep the index
+             ``subset`` gives them.
+    """
+    if isinstance(view_subset, sbs.Indices):
+        view_subset = sbs.Range.from_indices(view_subset)
+    new_subset: List[Tuple[Any, Any, Any]] = subset.ndrange()
+    for vdim, adim in mapping.items():
+        rb, re, rs = new_subset[adim]
+        vb, ve, vs = view_subset.ranges[vdim]
+        new_subset[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
+    return sbs.Range(new_subset)
+
+
 def check_sdfg(sdfg: SDFG):
     """ Checks that the parent attributes of an SDFG are correct.
 
