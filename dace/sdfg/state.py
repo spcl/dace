@@ -1659,10 +1659,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         return symbols
 
-    def symbols_defined_at_state(self,
-                                 *,
-                                 sdfg_symbols: Optional[Dict[str,
-                                                             dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
+    def symbols_defined_at_state(
+        self,
+        *,
+        sdfg_symbols: Optional[Dict[str, dtypes.typeclass]] = None,
+        region_updates: Optional[Dict[Tuple['ControlFlowBlock', Optional['ControlFlowBlock']],
+                                      List[Dict[str, dtypes.typeclass]]]] = None
+    ) -> Dict[str, dtypes.typeclass]:
         """
         Returns the symbols available to every node of this state, i.e. the part of
         ``symbols_defined_at()`` that does not depend on the node: the symbols of the SDFG, the
@@ -1671,6 +1674,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         :param sdfg_symbols: The result of ``sdfg_symbols()``, for callers that resolve several
                              states of one SDFG; it is computed here if not given.
+        :param region_updates: An optional cache, shared by callers that resolve several states of one SDFG, of the
+                               symbol updates that each enclosing control flow region defines (keyed by the region
+                               and None) and of those of the inter-state edges leading to each enclosing block (keyed
+                               by its region and the block). They only depend on the blocks around them, so they are
+                               computed once and replayed for the other states.
         :return: A dictionary mapping symbol names to their types.
         """
         from dace.sdfg.sdfg import SDFG
@@ -1687,8 +1695,26 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # From the outermost region inward, add the symbols each control flow region defines and the ones of the
         # inter-state edges along the paths to the block of the path it contains
         for graph, block in reversed(list(zip(path[1:], path[:-1]))):
+            # The symbols the region defines only depend on the regions around it
             if graph is not sdfg:
-                symbols.update({k: v for k, v in graph.new_symbols(symbols).items() if v is not None})
+                cached = region_updates.get((graph, None)) if region_updates is not None else None
+                if cached is None:
+                    cached = {k: v for k, v in graph.new_symbols(symbols).items() if v is not None}
+                    if region_updates is not None:
+                        region_updates[(graph, None)] = [cached]
+                    symbols.update(cached)
+                else:
+                    # Replaying the same updates in the same order yields the same symbols (and order)
+                    for update in cached:
+                        symbols.update(update)
+
+            # The symbols of the inter-state edges leading to the block only depend on the block
+            cached = region_updates.get((graph, block)) if region_updates is not None else None
+            if cached is not None:
+                for update in cached:
+                    symbols.update(update)
+                continue
+            updates: List[Dict[str, dtypes.typeclass]] = []
             try:
                 graph.start_block
                 edges = graph.edge_bfs(block, reverse=True)
@@ -1696,7 +1722,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 # Cannot determine starting block (possibly some inter-state edges do not yet exist)
                 edges = graph.edges()
             for e in edges:
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+                update = e.data.new_symbols(sdfg, symbols)
+                symbols.update(update)
+                updates.append(update)
+            if region_updates is not None and block is not self:
+                region_updates[(graph, block)] = updates
 
         return symbols
 
@@ -2672,6 +2702,8 @@ class SymbolResolver:
     def __init__(self) -> None:
         self._per_sdfg: Dict['SDFG', Dict[str, dtypes.typeclass]] = {}
         self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
+        self._region_updates: Dict[Tuple['ControlFlowBlock', Optional['ControlFlowBlock']],
+                                   List[Dict[str, dtypes.typeclass]]] = {}
 
     def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
         state_symbols = self._per_state.get(state)
@@ -2679,7 +2711,8 @@ class SymbolResolver:
             sdfg_symbols = self._per_sdfg.get(state.sdfg)
             if sdfg_symbols is None:
                 sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
-            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
+            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols,
+                                                                                    region_updates=self._region_updates)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
 
