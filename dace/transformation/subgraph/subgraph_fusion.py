@@ -323,10 +323,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # if there is any intersection in any dimension, return False
                         subset_plus = dcpy(access_set)
                         subset_minus = dcpy(access_set)
-                        repl_dict = {
-                            symbolic.pystr_to_symbolic(f'{param}'): symbolic.pystr_to_symbolic(f'{param}-1')
-                            for param in map_entries[0].params
-                        }  # e.g., ['i' -> 'i-1']
+                        # Symbol identity includes the dtype, so shift the very instances the subset carries.
+                        scope_symbols = symbolic.symbols_in([access_set])
+                        params = [symbolic.resolve_symbol(p, scope_symbols) for p in map_entries[0].params]
+                        repl_dict = {param: param - 1 for param in params}  # e.g., ['i' -> 'i-1']
                         subset_minus.replace(repl_dict)
 
                         for (rng, orng) in zip(subset_plus, subset_minus):

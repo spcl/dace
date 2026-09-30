@@ -374,6 +374,10 @@ class UndefinedSymbol(symbol):
         return hash(self.name)
 
 
+#: The name every :class:`UndefinedSymbol` carries. Not a valid symbol name, so nothing else claims it.
+UNDEFINED_NAME = UndefinedSymbol().name
+
+
 class TypedConstant(sympy.AtomicExpr):
     """A typed constant value that participates in symbolic expressions.
 
@@ -747,6 +751,65 @@ def symlist(values):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
+
+
+def symbols_in(values: Iterable[Any]) -> Dict[str, 'symbol']:
+    """
+    Maps symbol names to the symbol instances that occur in ``values``.
+
+    A symbol's identity includes its dtype, so an instance minted from a bare name need not match the equally-named
+    one an expression already carries. Resolving names through this map keeps both sides on a single instance,
+    whatever the dtype. Earlier values win, so pass the authoritative ones first.
+
+    :param values: Subsets or symbolic expressions.
+    :return: Mapping from symbol name to the instance found for it.
+    """
+    pool: Dict[str, symbol] = {}
+    for value in values:
+        try:
+            found = value.symbols
+        except AttributeError:
+            found = symlist(value)
+        for name, sym in found.items():
+            pool.setdefault(name, sym)
+    return pool
+
+
+def resolve_symbol(name: Union[str, sympy.Basic, None], pool: Dict[str, 'symbol']) -> sympy.Basic:
+    """
+    Resolves a symbol name to the instance ``pool`` holds for it, parsing it as usual when the pool has none.
+
+    :param name: A symbol name, or anything :func:`pystr_to_symbolic` accepts.
+    :param pool: Name-to-instance mapping, as returned by :func:`symbols_in`.
+    """
+    resolved = pool.get(str(name))
+    return pystr_to_symbolic(name) if resolved is None else resolved
+
+
+def same_value(a: Any, b: Any) -> bool:
+    """
+    Compares symbolic expressions, or sequences of them, without looking at symbol dtypes.
+
+    Symbol identity includes the dtype, but the value a symbol stands for does not change with the width of the
+    integer carrying it. Comparisons that are about values -- shapes, strides, extents -- must use this, since the
+    same name routinely carries different dtypes on the two sides of a nested SDFG boundary.
+    """
+    if a is b or a == b:
+        return True
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        # Sequence type is part of the comparison, as it is for ``==``: a list never equals a tuple.
+        if type(a) is not type(b) or len(a) != len(b):
+            return False
+        return all(same_value(x, y) for x, y in zip(a, b))
+    if not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
+        return False
+    # Structural comparison with every symbol stripped down to its name and assumptions: the dtype, and
+    # only the dtype, drops out.
+    plain = [
+        expr.subs({s: sympy.Symbol(s.name, **s.assumptions0)
+                   for s in expr.free_symbols if isinstance(s, symbol)}) for expr in (a, b)
+    ]
+    return bool(plain[0] == plain[1])
 
 
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
