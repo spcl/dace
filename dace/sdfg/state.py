@@ -1546,7 +1546,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
         edges_json = []
         for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
-            authority = {**authority_by_node.get(e.src, {}), **authority_by_node.get(e.dst, {})}
+            src_authority = authority_by_node.get(e.src, {})
+            dst_authority = authority_by_node.get(e.dst, {})
+            if src_authority is dst_authority:
+                authority = src_authority
+            else:
+                # Looks names up as ``{**src_authority, **dst_authority}`` would, without copying
+                authority = collections.ChainMap(dst_authority, src_authority)
             with symbolic.serialization_symbol_dtypes(authority):
                 edges_json.append(e.to_json(self))
 
