@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import time
 import warnings
 
-from dace import properties
+from dace import properties, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
@@ -123,7 +123,8 @@ class PatternMatchAndApply(ppl.Pass):
             match._pipeline_results = pipeline_results
             match.permissive = self.permissive
 
-            result = match.apply(graph, tcfg.sdfg)
+            with symbolic.serialization_symbol_dtypes(tcfg.sdfg.symbols, inherit=True):
+                result = match.apply(graph, tcfg.sdfg)
             applied_transformations[type(match).__name__].append(result)
             if self.validate_all:
                 sdfg.validate()
@@ -180,7 +181,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tcfg)
 
-        applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
+        # A transformation builds expressions from strings; parse its SDFG's symbols at their declared dtypes.
+        with symbolic.serialization_symbol_dtypes(tcfg.sdfg.symbols, inherit=True):
+            applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),

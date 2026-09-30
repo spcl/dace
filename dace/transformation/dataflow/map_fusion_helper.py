@@ -148,10 +148,14 @@ def rename_map_parameters(
 
     second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
     # Why is this thing in symbolic and not in replace?
-    symbolic.safe_replace(
-        mapping=repl_dict,
-        replace_callback=second_map_scope.replace_dict,
-    )
+    # The rename parses the new names from strings; type them as the second map declares the old ones.
+    declared = second_map_entry.new_symbols(state.sdfg, state, state.symbols_defined_at(second_map_entry))
+    renamed_dtypes = {repl_dict[p]: dtype for p, dtype in declared.items() if p in repl_dict}
+    with symbolic.serialization_symbol_dtypes(renamed_dtypes, inherit=True):
+        symbolic.safe_replace(
+            mapping=repl_dict,
+            replace_callback=second_map_scope.replace_dict,
+        )
 
     # For some odd reason the replace function does not modify the range and
     #  parameter of the map, so we will do it the hard way.

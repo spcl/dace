@@ -2539,9 +2539,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
-            integer = True
-            nonnegative = None
-            positive = None
+            assumptions = {'integer': True}
 
             start = self._replace_with_global_symbols(symbolic.pystr_to_symbolic(ranges[0][0]))
             stop = self._replace_with_global_symbols(symbolic.pystr_to_symbolic(ranges[0][1]))
@@ -2552,9 +2550,9 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
                 if (conditions == [True, True, True] or (start > stop and step < 0)):
-                    nonnegative = True
+                    assumptions['nonnegative'] = True
                     if start != 0:
-                        positive = True
+                        assumptions['positive'] = True
             except:
                 pass
 
@@ -2563,7 +2561,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # A symbol already declared at another dtype gets a fresh name: one name, one dtype.
             if self.sdfg.symbols.get(loop_var, sym_dtype) != sym_dtype:
                 loop_var = add_symbol(self.sdfg, loop_var, sym_dtype, find_new_name=True)
-            sym_obj = symbolic.symbol(loop_var, sym_dtype, integer=integer, nonnegative=nonnegative, positive=positive)
+            sym_obj = symbolic.symbol(loop_var, sym_dtype, **assumptions)
 
             if loop_var != indices[0]:
                 extra_syms = {indices[0]: sym_obj}
