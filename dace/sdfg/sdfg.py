@@ -1588,9 +1588,10 @@ class SDFG(ControlFlowRegion):
         write_set = set()
         for state in self.states():
             # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_sets()
-            read_set |= rs.keys()
-            write_set |= ws.keys()
+            rs, ws = state._read_and_write_subsets()
+            # NOTE: ``set |= dict.keys()`` creates a new set, so the sets are updated in-place instead
+            read_set.update(rs.keys())
+            write_set.update(ws.keys())
 
         array_names = self.arrays.keys()
         for edge in self.all_interstate_edges():

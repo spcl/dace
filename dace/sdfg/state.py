@@ -803,6 +803,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         Determines what data is read and written in this subgraph, returning
         dictionaries from data containers to all subsets that are read/written.
         """
+        return copy.deepcopy(self._read_and_write_subsets())
+
+    def _read_and_write_subsets(self) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
+        """
+        Determines what data is read and written in this subgraph, returning dictionaries from data containers to all
+        subsets that are read/written. Unlike ``_read_and_write_sets``, the subsets are not copied and may be those of
+        the memlets, so the result must not be modified.
+        """
         from dace.sdfg import utils  # Avoid cyclic import
 
         # Ensures that the `{src,dst}_subset` are properly set.
@@ -861,7 +869,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             for data, accesses in subgraph_write_set.items():
                 write_set[data] += accesses
 
-        return copy.deepcopy((read_set, write_set))
+        return read_set, write_set
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
@@ -870,7 +878,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
-        read_set, write_set = self._read_and_write_sets()
+        read_set, write_set = self._read_and_write_subsets()
         return set(read_set.keys()), set(write_set.keys())
 
     def unordered_arglist(self,
