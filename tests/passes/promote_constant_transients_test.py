@@ -164,6 +164,20 @@ def test_scalar_runtime_single_write_not_promoted():
     assert any(n.data == 'a' for n in s.data_nodes())
 
 
+def test_opaque_transient_written_a_literal_is_not_promoted():
+    """An opaque type (e.g. ``MPI_Request``) has no numpy value, so its literal write stays a write."""
+    sdfg = dace.SDFG('opaque_literal')
+    sdfg.add_array('req', [1], dace.opaque('MPI_Request'), transient=True)
+    s = sdfg.add_state('main')
+    init_t = s.add_tasklet('init', {}, {'out'}, 'out = 0')
+    s.add_edge(init_t, 'out', s.add_access('req'), None, dace.Memlet('req[0]'))
+
+    _run(sdfg)
+
+    assert 'req' not in sdfg.constants
+    assert len(_tasklets(s)) == 1
+
+
 def test_array_double_write_not_marked():
     """An array written in two states is not marked."""
     sdfg = dace.SDFG('array_double')
