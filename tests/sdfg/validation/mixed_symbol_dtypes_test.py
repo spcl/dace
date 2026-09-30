@@ -8,6 +8,7 @@ from dace.sdfg.validation import InvalidSDFGEdgeError, InvalidSDFGNodeError
 
 NARROW = dace.symbol('N', dace.int32)
 WIDE = dace.symbol('N', dace.int64)
+WIDE_POSITIVE = dace.symbol('N', dace.int64, positive=True)
 
 
 def copy_sdfg(src_range: subsets.Range, map_range: subsets.Range) -> dace.SDFG:
@@ -47,8 +48,22 @@ def test_memlet_mixing_two_dtypes_of_one_name_is_invalid():
         sdfg.validate()
 
 
+def test_map_range_mixing_two_assumption_sets_of_one_name_is_invalid():
+    sdfg = copy_sdfg(subsets.Range([(0, WIDE - 1, 1)]), subsets.Range([(0, WIDE - WIDE_POSITIVE, 1)]))
+    with pytest.raises(InvalidSDFGNodeError, match='symbol N appears with assumptions'):
+        sdfg.validate()
+
+
+def test_memlet_mixing_two_assumption_sets_of_one_name_is_invalid():
+    sdfg = copy_sdfg(subsets.Range([(WIDE_POSITIVE - WIDE, WIDE - 1, 1)]), subsets.Range([(0, WIDE - 1, 1)]))
+    with pytest.raises(InvalidSDFGEdgeError, match='symbol N appears with assumptions'):
+        sdfg.validate()
+
+
 if __name__ == '__main__':
     test_one_dtype_per_name_validates()
     test_default_dtype_parse_of_a_declared_symbol_validates()
     test_map_range_mixing_two_dtypes_of_one_name_is_invalid()
     test_memlet_mixing_two_dtypes_of_one_name_is_invalid()
+    test_map_range_mixing_two_assumption_sets_of_one_name_is_invalid()
+    test_memlet_mixing_two_assumption_sets_of_one_name_is_invalid()

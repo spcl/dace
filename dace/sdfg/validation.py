@@ -401,16 +401,19 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
 
 
 def mixed_symbol_dtypes(subset: subsets.Subset) -> Optional[str]:
-    """A name ``subset`` carries at two dtypes, described; the two are distinct sympy symbols, so ``N - N``
-    never cancels and bound comparisons silently fail."""
-    seen: Dict[str, dtypes.typeclass] = {}
+    """A name ``subset`` carries at two dtypes or with two sets of assumptions, described; the two are distinct sympy
+    symbols, so ``N - N`` never cancels and bound comparisons silently fail."""
+    seen: Dict[str, symbolic.symbol] = {}
     for bound in (b for rng in subset.ndrange() for b in rng):
         exprs = (bound.expr, bound.approx) if isinstance(bound, symbolic.SymExpr) else (bound, )
         for sym in (f for e in exprs if isinstance(e, sympy.Basic) for f in e.free_symbols
                     if isinstance(f, symbolic.symbol)):
-            first = seen.setdefault(sym.name, sym.dtype)
-            if first != sym.dtype:
-                return f'symbol {sym.name} appears with dtypes {first} and {sym.dtype}'
+            first = seen.setdefault(sym.name, sym)
+            if first.dtype != sym.dtype:
+                return f'symbol {sym.name} appears with dtypes {first.dtype} and {sym.dtype}'
+            if first.assumptions0 != sym.assumptions0:
+                return (f'symbol {sym.name} appears with assumptions {sorted(first.assumptions0)} '
+                        f'and {sorted(sym.assumptions0)}')
     return None
 
 
