@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
@@ -42,6 +43,12 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
+@functools.lru_cache(maxsize=None)
+def _predates_symbolic_serialization(version: str) -> bool:
+    """ Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format. """
+    return parse_version(version) < parse_version("2.0.0a4")
+
+
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     """
     A backwards compatibility deserializer for symbolic properties. If the version of the
@@ -51,7 +58,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if version is None or _predates_symbolic_serialization(version):
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 

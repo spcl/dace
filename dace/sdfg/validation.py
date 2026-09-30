@@ -592,7 +592,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
+                # Only names with a dot can refer to nested data (``arrays.keys()`` enumerates all of it)
+                if (conn in sdfg.constants_prop or conn in sdfg.symbols
+                        or (conn in sdfg.arrays.keys() if '.' in conn else conn in sdfg.arrays)):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
                             "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,

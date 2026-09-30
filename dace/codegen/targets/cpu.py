@@ -2000,7 +2000,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Declare each map parameter with its inferred type rather than ``auto``, which would take the type of
         # the range start alone (e.g., ``int`` for a literal ``0`` even when the end is a 64-bit symbol)
-        param_types = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node))
+        param_types = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg, node))
 
         def param_ctype(param: str) -> str:
             dtype = param_types.get(param)
@@ -2133,7 +2133,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
-        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+        pe_type = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg,
+                                                                                   node)).get(node.consume.pe_index)
 
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "

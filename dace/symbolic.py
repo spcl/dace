@@ -631,8 +631,17 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
+@lru_cache(maxsize=None)
+def _default_assumptions_of_type(dtype: 'dtypes.typeclass') -> Dict[str, Any]:
+    """
+    Returns the assumptions of a symbol of the given type created without explicit assumptions. They only depend on
+    the type (not on the name), so they are computed once per type. The result must not be modified.
+    """
+    return symbol('x', dtype=dtype).assumptions0
+
+
 def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    return symbol(expr.name, dtype=expr.dtype).assumptions0
+    return _default_assumptions_of_type(expr.dtype)
 
 
 def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
@@ -640,7 +649,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{dtype.to_string()}'
 
-    default_assumptions = _symbol_default_assumptions(symbol(expr.name, dtype=dtype))
+    default_assumptions = _default_assumptions_of_type(dtype)
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue

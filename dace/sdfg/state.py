@@ -2987,7 +2987,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                  is_start_block: bool = False,
                  ensure_unique_name: bool = False,
                  *,
-                 is_start_state: bool = None):
+                 is_start_state: bool = None,
+                 reset_cfg_list: bool = True):
+        """
+        Adds a control flow block to this region.
+
+        :param node: The block to add.
+        :param is_start_block: If True, the block becomes the start block of this region.
+        :param ensure_unique_name: If True, renames the block if its label is already used in this region.
+        :param is_start_state: Deprecated alias of ``is_start_block``.
+        :param reset_cfg_list: If False, does not update the CFG list of the SDFG when adding a control flow region.
+                               Used when building many regions at once (e.g., during deserialization), in which case
+                               the caller must call ``reset_cfg_list`` once the SDFG is complete.
+        """
         if not isinstance(node, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
 
@@ -3009,7 +3021,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             # reports 0 -- the same id as the root and as every other unregistered region.
             # Appending instead would assign positions in insertion order while this assigns
             # them in tree order, so the next reset would silently renumber.
-            self.reset_cfg_list()
+            if reset_cfg_list:
+                self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -3249,7 +3262,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             nci['parent_graph'] = ret
 
             block = dace.serialize.from_json(n, context=nci)
-            ret.add_node(block)
+            # The CFG list is reset once the SDFG is complete (in ``SDFG.from_json``)
+            ret.add_node(block, reset_cfg_list=False)
             nodelist.append(block)
 
         for e in edges:
@@ -3280,7 +3294,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
         CFGs/SDFGs are greater).
         """
-        return self.cfg_list.index(self)
+        cfg_list = self.cfg_list
+        # The index found last time is still correct if this CFG is still at that position
+        index = getattr(self, '_cfg_id_cache', None)
+        if index is None or index >= len(cfg_list) or cfg_list[index] is not self:
+            index = cfg_list.index(self)
+            self._cfg_id_cache = index
+        return index
 
     @property
     def start_block(self):
@@ -3882,8 +3902,8 @@ class LoopRegion(ControlFlowRegion):
                 return dict(self._new_symbols_value)
             self._new_symbols_key = key
             self._new_symbols_value = {}
-            alltypes = copy.copy(symbols)
-            alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
+            # As the key, the inferred type only depends on the data containers named in the header
+            alltypes = collections.ChainMap({n: arrays[n].dtype for n in names if n in arrays}, symbols)
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)
