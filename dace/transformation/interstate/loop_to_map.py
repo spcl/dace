@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -279,6 +279,28 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     if _collision_forces_same_iteration(m1.subset, m2.subset, itersym, varying):
         return False
     return True
+def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> Optional[Set[str]]:
+    """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
+    symbols_that_may_be_used: Set[str] = {itervar}
+    used_before_assignment: Set[str] = set()
+    # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
+    for block in cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False):
+        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
+        used_before_assignment |= ({str(s) for s in block.free_symbols} - symbols_that_may_be_used)
+        for e in block.parent_graph.out_edges(block):
+            used_before_assignment |= e.data.read_symbols() - symbols_that_may_be_used
+            assigned_symbols = set()
+            for k, v in e.data.assignments.items():
+                try:
+                    fsyms = symbolic.pystr_to_symbolic(v).free_symbols
+                except AttributeError:
+                    fsyms = set()
+                if k not in fsyms:
+                    assigned_symbols.add(k)
+            if assigned_symbols & used_before_assignment:
+                return None
+            symbols_that_may_be_used |= e.data.assignments.keys()
+    return symbols_that_may_be_used
 
 
 @properties.make_properties
@@ -393,6 +415,9 @@ class LoopToMap(xf.MultiStateTransformation):
                         return False
 
                     symbols_that_may_be_used |= e.data.assignments.keys()
+        symbols_that_may_be_used |= symbols_assigned_before_use(self.loop, itervar)
+        if symbols_that_may_be_used is None:
+            return False
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
