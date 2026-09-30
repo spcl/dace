@@ -100,6 +100,13 @@ class _SymbolDTypeContext(threading.local):
         self.key_stack.pop()
         return self
 
+    def declare(self, name: str, dtype: 'dtypes.typeclass') -> None:
+        """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
+        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
+            level = {**self.ctx_stack[-1], name: dtype}
+            self.ctx_stack[-1] = types.MappingProxyType(level)
+            self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
         if len(self.ctx_stack) == 0:
@@ -132,8 +139,13 @@ class _SymbolDTypeContext(threading.local):
 _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
+def declare_symbol_dtype(name: str, dtype: 'dtypes.typeclass') -> None:
+    """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
 @contextlib.contextmanager
-def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
+def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inherit: bool = False):
     """
     Temporarily override, while serializing symbolic expressions, the dtype used for
     each scope-declared symbol, restoring the previous mapping on exit. Only concrete
@@ -141,7 +153,10 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
     out so that symbol keeps its own dtype.
 
     :param authority: Mapping from symbol name to its authoritative dtype.
+    :param inherit: Keep the enclosing level's entries that ``authority`` does not override.
     """
+    if inherit:
+        authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
     _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
