@@ -161,12 +161,10 @@ class InsertExplicitCopies(ppl.Pass):
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # Self-copy: subset is the dst side; otherwise the memlet path maps ``data`` to an endpoint.
-            if src_name == dst_name:
-                src_subset, dst_subset = memlet.other_subset, memlet.subset
-            else:
-                src_subset = memlet.get_src_subset(edge, state)
-                dst_subset = memlet.get_dst_subset(edge, state)
+            # The memlet path maps ``data`` to an endpoint; in a self-copy, where both match, ``_is_data_src``
+            # decides, exactly as in copy-edge codegen.
+            src_subset = memlet.get_src_subset(edge, state)
+            dst_subset = memlet.get_dst_subset(edge, state)
 
             # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
             if src_subset is None:
