@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``ipow`` symbolic Function and the ``RelaxIntegerPowers`` pass."""
+import sys
+
 import numpy as np
 import pytest
 import sympy
@@ -191,17 +193,29 @@ def test_end_to_end_complex_power_shape_compiles():
     assert np.allclose(x, ref)
 
 
-def test_rejects_negative_constant_exponent():
-    """A negative constant exponent would wrap the C++ ``unsigned`` -- ``ipow`` rejects it at
-    construction, so a bad relaxation can never reach codegen."""
-    R = symbolic.symbol('R', positive=True, integer=True)
-    for bad in (sympy.Integer(-1), sympy.Integer(-7)):
-        with pytest.raises(ValueError):
-            ipow(R, bad)
-    # ... and even when a symbolic exponent is later driven negative by substitution.
-    K = symbolic.symbol('K', positive=True, integer=True)
+@pytest.mark.parametrize('bad', [sympy.Integer(-1), sympy.Integer(-7), sympy.Rational(-1, 2), sympy.Float(-0.5)])
+def test_ipow_rejects_a_negative_constant_exponent_integral_or_not(bad):
+    """A negative constant is a reciprocal, so it is a ``Pow``; the sign test does not ask for an integer."""
     with pytest.raises(ValueError):
-        ipow(R, K).subs(K, -1)
+        ipow(symbolic.symbol('R', positive=True, integer=True), bad)
+
+
+def test_ipow_leaves_an_exponent_of_unknown_sign_to_the_caller():
+    base = symbolic.symbol('R', positive=True, integer=True)
+    unknown = symbolic.symbol('M', integer=True)
+    assert isinstance(ipow(base, unknown), ipow)
+    with pytest.raises(ValueError):
+        ipow(base, unknown).subs(unknown, -1)
+
+
+def test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass():
+    R = dace.symbol('R', positive=True, integer=True)
+    M = dace.symbol('M', integer=True)
+    sdfg = dace.SDFG('unknown_sign_exponent')
+    sdfg.add_array('u', [R**M], dace.float64)
+    sdfg.add_state().add_access('u')
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+    assert _ipow_count(sdfg) == 0
 
 
 def test_loop_range_direction_from_stride_sign():
@@ -300,3 +314,7 @@ def test_int64_power_compiles_as_an_integer():
     a = np.zeros(8)
     tester(a, R=2, K=3)
     assert np.allclose(a, 1.0)
+
+
+if __name__ == '__main__':
+    sys.exit(pytest.main([__file__]))

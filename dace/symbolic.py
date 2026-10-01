@@ -1162,8 +1162,9 @@ class ipow(sympy.Function):
 
     @classmethod
     def eval(cls, base, exp):
-        # negative constant exp would wrap the C++ ``unsigned`` -> reject at construction
-        if exp.is_Number and exp.is_integer and exp.is_negative:
+        # A negative constant is a reciprocal, which is a ``Pow``, not an ``ipow``; an exponent of unknown
+        # sign is the caller's to prove
+        if exp.is_Number and exp.is_negative:
             raise ValueError(f'ipow exponent must be non-negative, got {exp}')
         if base.is_Number and exp.is_Number and exp.is_integer and exp.is_nonnegative:
             return base**exp
