@@ -1133,8 +1133,13 @@ def test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_wri
 
 
 def test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state():
-    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=False,
-                                                                                  outside_uses_different_symbol=False)
+    # The connector `b` is sized by the inner `inner_symbol`, which is assigned inside the nested SDFG and is
+    # therefore not the outer `inner_symbol` that sizes `T`. Without a symbol mapping, the connector descriptor cannot
+    # be checked against `T`, so the SDFG is invalid.
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError, match='not in the symbol mapping'):
+        _make_sdfg_for_multistate_inlining_with_symbol_promotion(outside_uses_symbol=True,
+                                                                 outside_uses_different_symbol=False,
+                                                                 separate_write_back_state=False)
 
 
 @pytest.mark.parametrize("separate_write_back_state", [True, False])

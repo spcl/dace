@@ -331,24 +331,45 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     :param parent_node: The nested SDFG node, for its symbol mapping.
     :return: True if the two describe the same container.
     """
-    if parent_desc.is_equivalent(inner_desc):
-        return True
+    mapped = restate_in_parent_symbols(inner_desc, parent_node.symbol_mapping)
+    if mapped is inner_desc:
+        # Every symbol the connector is written in means the same inside and outside
+        return parent_desc.is_equivalent(inner_desc)
 
     # Adopting the parent's descriptor is only possible when the nested SDFG knows the symbols it is
     # written in; otherwise it would be left referring to names that mean nothing inside.
     if {str(s) for s in parent_desc.free_symbols} - available_symbols:
         return False
 
-    symrepl = {
-        symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-        for k, v in parent_node.symbol_mapping.items() if str(k) != str(v)
-    }
-    if not symrepl:
-        return False
-
-    mapped = copy.deepcopy(inner_desc)
-    replace_properties_dict(mapped, {}, symrepl)
     return parent_desc.is_equivalent(mapped)
+
+
+def restate_in_parent_symbols(desc: data.Data, symbol_mapping: Dict[str, symbolic.SymbolicType]) -> data.Data:
+    """
+    Restates a nested SDFG's data descriptor in the symbols of its parent, by replacing every symbol the descriptor
+    is written in with the expression the nested SDFG node maps it to. The symbols are replaced simultaneously, so
+    that, e.g., the mapping ``{'N': 'M', 'M': 'N'}`` turns a descriptor of shape ``(N, M)`` into one of shape
+    ``(M, N)``. For example, ``a[N + 1]`` with the mapping ``{'N': 'M + K - 2'}`` is restated as ``a[M + K - 1]``.
+
+    :param desc: The data descriptor, written in the nested SDFG's symbols.
+    :param symbol_mapping: The symbol mapping of the nested SDFG node.
+    :return: The descriptor written in the parent's symbols. If no symbol of the descriptor is mapped to something
+             else, this is ``desc`` itself; otherwise it is a copy.
+    """
+    used = {str(s) for s in desc.free_symbols}
+    repl = {str(k): v for k, v in symbol_mapping.items() if str(k) in used and str(k) != str(v)}
+    if not repl:
+        return desc
+
+    def restate(d: data.Data, m: Dict[str, str]):
+        replace_properties_dict(d, m)
+        if isinstance(d, data.Structure):
+            for member in d.members.values():
+                restate(member, m)
+
+    result = copy.deepcopy(desc)
+    symbolic.safe_replace(repl, lambda m: restate(result, m))
+    return result
 
 
 def _view_strides(container_strides: Tuple[symbolic.SymbolicType, ...],
