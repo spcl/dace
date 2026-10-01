@@ -178,6 +178,13 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _hashable_content(self):
+        # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
+        # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
+        # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
+        # comparing these tuples element-wise, and typeclasses define equality but no ordering.
+        return super()._hashable_content() + (self.dtype.ctype, )
+
     def _eval_subs(self, old, new):
         """
         From sympy: Override this stub if you want to do anything more than
@@ -1764,10 +1771,9 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
 def _construct_function_uncached(func, *args, **kwargs):
     # Construct without SymPy's ``@cacheit`` constructor caches (both
     # ``Function.__new__`` and ``Application.__new__`` are cached, and ``eval``
-    # implementations re-enter them): DaCe symbol equality ignores dtype, so a
-    # cache entry built from an equal-named, different-dtype symbol would
-    # silently substitute that symbol into the result. Symbol-free arguments
-    # hash soundly and keep the regular (evaluating) constructors.
+    # implementations re-enter them) and without evaluation, so that the
+    # deserialized tree is exactly the serialized one. Symbol-free arguments
+    # keep the regular (evaluating) constructors.
     if (isinstance(func, type) and issubclass(func, sympy.core.function.Application)
             and not (set(kwargs) - {'evaluate'}) and not kwargs.get('evaluate', False)
             and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)):
@@ -2127,7 +2133,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             return 'None'
         if isinstance(expr, symbol):
             # Prefer the dtype the enclosing scope declares for this name over the
-            # instance's own (possibly cache-stale) dtype; a name the scope does not
+            # instance's own (possibly default-minted) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
             dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
             kwargs = _symbol_serializer_kwargs(expr, dtype)
@@ -2340,7 +2346,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     typed-symbol metadata instead of depending on SymPy's automatic
     simplification and constructor caches.
     """
-    # Do not cache SymPy objects: SymPy equality/hash ignores DaCe symbol dtype metadata.
+    # SymPy objects bypass the string-keyed parse cache below and are returned as-is (or simplified).
     # Keep SymExpr intact even when simplify=True, as it carries exact and approximate forms.
     if isinstance(expr, SymExpr):
         return expr
@@ -2692,31 +2698,9 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     name, it substitutes them with the last symbol (as they appear in
     s.free_symbols).
     """
-    if not has_duplicate_symbol_names(sym):
-        return sym
     symdict = {s.name: s for s in sym.free_symbols}
     repldict = {s: symdict[s.name] for s in sym.free_symbols}
     return sym.subs(repldict)
-
-
-def has_duplicate_symbol_names(sym: Any) -> bool:
-    """
-    Whether ``sym`` holds two symbols that share a name but not their dtype or assumptions.
-
-    Symbol identity in DaCe is the name, so such a pair always denotes one value -- but SymPy
-    compares assumptions too, keeps both atoms, and then ``k - k`` does not fold to zero.
-
-    :param sym: expression to check; anything that is not symbolic answers False.
-    :return: True if some name occurs on more than one symbol.
-    """
-    if not isinstance(sym, sympy.Basic):
-        return False
-    symbols = sym.free_symbols
-    if len(symbols) < 2:
-        return False
-    # A dict rather than a set: insertion order is defined, so the answer cannot depend on the
-    # hash seed the way a set's iteration would.
-    return len({symbol_atom.name: None for symbol_atom in symbols}) != len(symbols)
 
 
 def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:

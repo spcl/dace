@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import List, Optional, Sequence, Set, Tuple, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -320,15 +320,6 @@ def symbolic_range_tuple(value):
     return tuple(tuple_to_symexpr(v) for v in value)
 
 
-def equalize_range_entry(
-    bounds: Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType]
-) -> Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType]:
-    """``symbolic.equalize_symbol`` on one range entry: a ``(begin, end, step)`` tuple or a single index."""
-    if isinstance(bounds, tuple):
-        return tuple(symbolic.equalize_symbol(entry) for entry in bounds)
-    return symbolic.equalize_symbol(bounds)
-
-
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
@@ -530,8 +521,8 @@ class Range(Subset):
         for i in indices:
             rb, re, rs = self.ranges[i]
             if offset_end:
-                re = symbolic.equalize_symbol(re + mult * off[i])
-            self.ranges[i] = (symbolic.equalize_symbol(rb + mult * off[i]), re, rs)
+                re = re + mult * off[i]
+            self.ranges[i] = (rb + mult * off[i], re, rs)
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
         if other is None:
@@ -545,11 +536,8 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([
-            (symbolic.equalize_symbol(self.ranges[i][0] + mult * off[i]),
-             self.ranges[i][1] if not offset_end else symbolic.equalize_symbol(self.ranges[i][1] + mult * off[i]),
-             self.ranges[i][2]) for i in indices
-        ])
+        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
+                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
 
     def dims(self):
         return len(self.ranges)
@@ -851,11 +839,7 @@ class Range(Subset):
                              "or be not stripped of latter at all.")
 
         if isinstance(other, Range):
-            # Through ``equalize_symbol`` for the same reason ``offset`` does: composition adds a
-            # bound of this subset to one of ``other``, and the two can carry different mints of one
-            # name -- a map parameter's and a string-parsed memlet's. SymPy compares assumptions, so
-            # ``i + (M - i - 1)`` keeps both atoms instead of folding to ``M - 1``.
-            return Range(list(map(equalize_range_entry, new_subset)))
+            return Range(new_subset)
         else:
             raise NotImplementedError
 

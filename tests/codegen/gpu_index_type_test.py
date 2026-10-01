@@ -222,13 +222,11 @@ def test_dynamic_map(step: int):
 
 
 def test_dynamic_map_default_types():
-    # A name of its own: SymPy's cache shares a symbol with every module that declares ``M`` with another type
-    M32 = dace.symbol('M32', dace.int32)
 
     @dace.program
-    def spmv32(A_row: dace.uint32[M32 + 1], A_col: dace.uint32[M32], A_val: dace.float32[M32], x: dace.float32[M32],
-               b: dace.float32[M32]):
-        for i in dace.map[0:M32]:
+    def spmv32(A_row: dace.uint32[M + 1], A_col: dace.uint32[M], A_val: dace.float32[M], x: dace.float32[M],
+               b: dace.float32[M]):
+        for i in dace.map[0:M]:
             for j in dace.map[A_row[i]:A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
