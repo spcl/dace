@@ -135,7 +135,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
