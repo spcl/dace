@@ -768,6 +768,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
+                # Set explicitly: in a self-copy (``B -> A -> B``) the data name alone cannot tell the sides apart
+                e3.data._is_data_src = src_is_data
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -1858,17 +1860,20 @@ class RemoveSliceView(pm.SingleStateTransformation):
         state.remove_node(self.view)
 
     def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
-        # Get offset and size from the space of the view to compose
-        old_subset = edge_subset.min_element()
-        old_size = edge_subset.size()
+        """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
 
-        # Create a new subset in the space of the data container from the offsets and sizes
+        Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the edge
+        subset's own STEP and re-derives the end as ``offset + size - 1``, turning a strided window
+        into a contiguous one holding the same number of elements: ``a[0:N, 0:N][:, 0:N:2]`` folded
+        into ``a[0:N, 0:N//2]``, so the program read the first half of every row instead of its even
+        columns. The step is also missing from the offset, so a strided view of a strided view came
+        out wrong twice over.
+        """
         new_subset: List[Tuple[int, int, int]] = subset.ndrange()
         for vdim, adim in mapping.items():
             rb, re, rs = new_subset[adim]
-            rb += old_subset[vdim]
-            re = rb + old_size[vdim] - 1
-            new_subset[adim] = (rb, re, rs)
+            vb, ve, vs = edge_subset.ranges[vdim]
+            new_subset[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
 
         return subsets.Range(new_subset)
 

@@ -174,6 +174,33 @@ def test_same_name_symbols_with_different_dtypes_serialize_independently():
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
+def test_symbol_dtype_is_part_of_identity():
+    """SymPy's equality, hashing and constructor caches key on ``_hashable_content``. With the dtype left out of it,
+    an expression built around a default-typed symbol is handed back from the cache for the same-name symbol of
+    another dtype, so the typed expression silently loses its dtype."""
+    default = symbolic.symbol('dtype_alias_sym')
+    typed = symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
+
+    assert default != typed
+    assert hash(default) != hash(typed)
+    assert default == symbolic.symbol('dtype_alias_sym')
+    assert typed == symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
+
+    # Prime SymPy's constructor caches with the default-typed symbol first
+    default_expr = default + 2
+    typed_expr = typed + 2
+    assert default_expr != typed_expr
+    assert [s.dtype for s in typed_expr.free_symbols] == [dace.int64]
+
+    serialized = symbolic.serialize_symbolic(typed_expr)
+    assert serialized == '2 + symbol($dtype_alias_sym, dtype=dace.int64)'
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert [s.dtype for s in restored.free_symbols] == [dace.int64]
+
+    # Substitution remains name-based across dtypes
+    assert typed_expr.subs(default, 3) == 5
+
+
 def test_typed_symbol_deserialization_does_not_strip_dtype():
     # Input may not be in canonical order, but dtype must survive a round-trip
     original = '2*(1 + symbol($M, dtype=dace.int16))*symbol($M, dtype=dace.int16)'
@@ -649,6 +676,76 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     j1 = sdfg.to_json()
     j2 = dace.SDFG.from_json(j1).to_json()
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
+
+
+def test_operator_derived_int_floor_roundtrip_preserves_integerness():
+    """The ``__int_floor`` class that Python ``//`` parses to must survive
+    ``serialize_symbolic`` -> ``deserialize_symbolic`` with its ``is_integer``
+    assumption intact, so downstream simplifications and type inferences that
+    rely on the floor being an integer are not silently lost."""
+    expr = symbolic.pystr_to_symbolic('upper_i // 2')
+    assert expr.func.__name__ == '__int_floor'
+    assert expr.is_integer is True
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert restored.func is expr.func
+    assert restored.is_integer is True
+
+
+@pytest.mark.parametrize('expr_str', ['a // b', 'a & b', 'a | b', 'a ^ b', '~a', 'a << b', 'a >> b'])
+def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
+    """Every ``__``-prefixed operator-derived class must round-trip through
+    serialization to the same class (not an opaque ``sympy.Function``),
+    so the printer's ``name.startswith('__')`` check still recognizes them
+    as operators."""
+    expr = symbolic.pystr_to_symbolic(expr_str)
+    assert type(expr).__name__.startswith('__')
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert type(restored) is type(expr)
+
+
+def test_ceiling_of_roundtripped_floor_division_simplifies():
+    """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
+    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
+    because the round-tripped ``__int_floor`` still carries ``is_integer=True``
+    and sympy's ``ceiling._eval`` returns a known-integer argument unchanged."""
+    # ``symbol // 2`` is SymPy's ``floor`` (only ``SymExpr`` defines ``__floordiv__``), which is
+    # integer on its own; the operator class only appears when the expression is parsed.
+    expr = symbolic.pystr_to_symbolic('upper_i // 2 - lower_i')
+    assert any(type(f).__name__ == '__int_floor' for f in expr.atoms(sympy.Function))
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+    ceiling_of_restored = sympy.ceiling(restored)
+
+    assert ceiling_of_restored == restored
+
+
+def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():
+    """A stored ``ceiling`` must not reach the loop bound as a call.
+
+    An SDFG saved before the operator classes round-tripped carries ``ceiling(__int_floor(...))``
+    where the live expression had folded it. ``ceil`` breaks OpenMP's canonical loop form by
+    returning ``double``, and the runtime's ``ceiling`` has no overload for 64-bit integers.
+    """
+    sdfg = dace.SDFG('stored_ceiling')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [dace.symbol('N', dace.int64)], dace.float64)
+    state = sdfg.add_state()
+    end = symbolic.deserialize_symbolic('ceiling(__int_floor($N, 2)) - 1')
+    assert end.atoms(sympy.ceiling)
+    me, mx = state.add_map('m', {'i': subsets.Range([(0, end, 1)])})
+    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    state.add_edge(me, None, tasklet, None, dace.Memlet())
+    state.add_edge(tasklet, 'o', mx, None, dace.Memlet('A[i]'))
+    state.add_edge(mx, None, state.add_write('A'), None, dace.Memlet('A[0:N]'))
+
+    code = sdfg.generate_code()[0].clean_code
+    loops = [line.strip() for line in code.splitlines() if 'for (int64_t i' in line]
+    assert loops
+    assert all('ceil' not in line for line in loops), loops
 
 
 if __name__ == '__main__':
