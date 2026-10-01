@@ -203,6 +203,9 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            if node_re != node_re or node_rb != node_rb or node_rs != node_rs:
+                # UndefinedSymbol hangs in SymPy's expand(), fail early
+                return False
             result_begin = subexprs[0].subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
@@ -212,8 +215,8 @@ class AffineSMemlet(SeparableMemletPattern):
                     # Map ranges where the last index is not known
                     # exactly are not supported by this pattern.
                     return False
-            if (any(s not in defined_vars for s in node_rb.free_symbols)
-                    or any(s not in defined_vars for s in node_re.free_symbols)):
+            # By name: symbols compare by dtype too, and the range may type them differently
+            if not {str(s) for s in node_rb.free_symbols | node_re.free_symbols}.issubset(map(str, defined_vars)):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
                 return False
@@ -428,8 +431,10 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
+        # By name: symbols compare by dtype too, and the memlet, range and context may type them differently
+        used_names = set(map(str, used_symbols))
+        if (not used_names.isdisjoint(map(str, self.params))
+                and not set(map(str, node_range.free_symbols)).issubset(map(str, defined_vars))):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
@@ -1746,13 +1751,14 @@ def propagate_subset(memlets: List[Memlet],
     else:
         defined_variables = set(defined_variables)
 
-    if undefined_variables is not None:
-        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
-    else:
-        undefined_variables = set()
+    # Symbols compare by name *and* dtype, so match (un)defined variables by name
+    undefined_names = set(map(str, undefined_variables)) if undefined_variables is not None else set()
+    if undefined_names:
+        defined_variables = {v for v in defined_variables if str(v) not in undefined_names}
 
     # Propagate subset
-    variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
+    param_symbols = [symbolic.pystr_to_symbolic(p) for p in params]
+    variable_context = [defined_variables, param_symbols]
 
     new_subset = None
     for md in memlets:
@@ -1773,6 +1779,7 @@ def propagate_subset(memlets: List[Memlet],
             subset = src
         else:
             subset = md.subset
+        subset = _with_param_symbols(subset, param_symbols)
 
         for pclass in MemletPattern.extensions():
             pattern = pclass()
@@ -1793,7 +1800,7 @@ def propagate_subset(memlets: List[Memlet],
                     fsyms = _freesyms(s)
                     fsyms_str = set(map(str, fsyms))
                     contains_params = len(fsyms_str & paramset) != 0
-                    contains_undefs = len(fsyms & undefined_variables) != 0
+                    contains_undefs = len(fsyms_str & undefined_names) != 0
                 else:
                     contains_params = False
                     contains_undefs = False
@@ -1801,7 +1808,7 @@ def propagate_subset(memlets: List[Memlet],
                         fsyms = _freesyms(sdim)
                         fsyms_str = set(map(str, fsyms))
                         contains_params |= len(fsyms_str & paramset) != 0
-                        contains_undefs |= len(fsyms & undefined_variables) != 0
+                        contains_undefs |= len(fsyms_str & undefined_names) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:
@@ -1834,12 +1841,39 @@ def propagate_subset(memlets: List[Memlet],
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    if symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                      for s in new_memlet.volume.free_symbols):
+    if symbolic.issymbolic(new_memlet.volume) and not set(map(str, new_memlet.volume.free_symbols)).issubset(
+            map(str, defined_variables)):
         new_memlet.dynamic = True
         new_memlet.volume = 0
 
     return new_memlet
+
+
+def _with_param_symbols(subset: subsets.Subset, params: List[symbolic.symbol]) -> subsets.Subset:
+    """
+    Returns the subset with every symbol named like a parameter replaced by that parameter's own symbol object.
+
+    Parameters are plain names, but a memlet may spell the same name with a symbol of another dtype (e.g., a typed
+    loop variable). Symbols compare by name *and* dtype, and the memlet patterns match parameters structurally, so
+    such a symbol would otherwise pass for a parameter-independent one.
+
+    :param subset: The subset to reconcile. It is not modified; a copy is returned if any symbol is replaced.
+    :param params: The parameter symbols the patterns match against.
+    :return: The subset, or a reconciled copy of it.
+    """
+    if not isinstance(subset, subsets.Range):
+        return subset
+    by_name = {p.name: p for p in params}
+    exprs = [
+        part for dim in subset.ranges for e in dim
+        for part in ((e.expr, e.approx) if isinstance(e, symbolic.SymExpr) else (e, ))
+    ]
+    stale = {s: by_name[s.name] for e in exprs for s in _freesyms(e) if s.name in by_name and s != by_name[s.name]}
+    if not stale:
+        return subset
+    subset = copy.deepcopy(subset)
+    subset.replace(stale)
+    return subset
 
 
 def _freesyms(expr) -> Set:

@@ -359,6 +359,52 @@ def test_reverse_copy():
     assert np.allclose(p, pp)
 
 
+def test_self_copy_through_transient():
+    """ Removing ``tmp`` from ``p[:, 2] -> tmp -> p[:, 3]`` leaves a self-copy, which must keep its direction. """
+    sdfg = dace.SDFG('redarr_self_copy')
+    sdfg.add_array('p', [4, 4], dace.float64)
+    sdfg.add_transient('tmp', [4], dace.float64)
+    state = sdfg.add_state()
+    r = state.add_read('p')
+    tmp = state.add_access('tmp')
+    w = state.add_write('p')
+    state.add_nedge(r, tmp, dace.Memlet('[0:4, 2] -> tmp[0:4]'))
+    state.add_nedge(tmp, w, dace.Memlet('tmp[0:4] -> [0:4, 3]'))
+
+    assert sdfg.apply_transformations(RedundantArray) == 1
+    e, = state.edges()
+    assert str(e.data.src_subset) == '0:4, 2'
+    assert str(e.data.dst_subset) == '0:4, 3'
+
+    p = np.random.rand(4, 4)
+    pp = np.copy(p)
+    pp[:, 3] = pp[:, 2]
+    sdfg(p=p)
+    assert np.allclose(p, pp)
+
+
+def test_reverse_copy_nested_symbolic():
+    """ A symbolic self-copy inlined into a concrete program, where ``R - 1`` and ``R - 2`` become constants. """
+    R = dace.symbol('R', dace.int64)
+
+    @dace.program
+    def inner(p: dace.float64[R, R]):
+        p[:, -1] = p[:, -2]
+
+    @dace.program
+    def redarrtest_nested(p: dace.float64[4, 4]):
+        inner(p)
+
+    # ``R - 1`` and ``R - 2`` are disjoint regardless of how each side's ``R`` is typed: no intermediate copy needed
+    assert not any(s.label.startswith('copy_from_view') for s in inner.to_sdfg(simplify=False).all_states())
+
+    p = np.random.rand(4, 4)
+    pp = np.copy(p)
+    pp[:, -1] = pp[:, -2]
+    redarrtest_nested(p)
+    assert np.allclose(p, pp)
+
+
 C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
 
@@ -539,6 +585,8 @@ if __name__ == '__main__':
     test_view_array_array()
     test_array_array_view()
     test_reverse_copy()
+    test_self_copy_through_transient()
+    test_reverse_copy_nested_symbolic()
     test_conv2d()
     test_padded_conv2d()
     test_redundant_second_copy_isolated()
