@@ -176,11 +176,13 @@ def _initialize_onnx_registry():
                     ONNXAttributeType.Int, ONNXAttributeType.String, ONNXAttributeType.Float, ONNXAttributeType.Tensor
             ]:
                 attrs[name] = Property(dtype=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                                       category='Semantics',
                                        desc=attr.description,
                                        allow_none=True,
                                        default=None if attr.default_value is None else attr.default_value)
             elif attr.attribute_type in [ONNXAttributeType.Ints, ONNXAttributeType.Strings, ONNXAttributeType.Floats]:
                 attrs[name] = ListProperty(element_type=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                                           category='Semantics',
                                            desc=attr.description,
                                            allow_none=True,
                                            default=None if attr.default_value is None else attr.default_value)

@@ -14,7 +14,9 @@ class FFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(name, *args, schedule=schedule, inputs={'_inp'}, outputs={'_out'}, **kwargs)
@@ -25,7 +27,9 @@ class IFFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(name, *args, schedule=schedule, inputs={'_inp'}, outputs={'_out'}, **kwargs)

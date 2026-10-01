@@ -132,7 +132,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
 
     def __init__(self, name, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)

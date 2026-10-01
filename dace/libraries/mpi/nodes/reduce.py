@@ -57,7 +57,7 @@ class Reduce(MPINode):
     }
     default_implementation = "MPI"
 
-    op = dace.properties.Property(dtype=str, default='MPI_SUM')
+    op = dace.properties.Property(dtype=str, default='MPI_SUM', category='Semantics')
 
     def __init__(self, name, op='MPI_SUM', *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)

@@ -1365,9 +1365,9 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     default_implementation = 'pure'
 
     # Properties
-    axes = ListProperty(element_type=int, allow_none=True)
-    wcr = LambdaProperty(default='lambda a, b: a')
-    identity = Property(allow_none=True, to_json=lambda x: str(x))
+    axes = ListProperty(element_type=int, allow_none=True, category='Semantics')
+    wcr = LambdaProperty(default='lambda a, b: a', category='Semantics')
+    identity = Property(allow_none=True, to_json=lambda x: str(x), category='Semantics')
 
     def __init__(self,
                  name,

@@ -380,13 +380,13 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    alpha = properties.SymbolicProperty(allow_none=False, default=1)
-    beta = properties.SymbolicProperty(allow_none=False, default=0)
+    alpha = properties.SymbolicProperty(allow_none=False, default=1, category="Semantics")
+    beta = properties.SymbolicProperty(allow_none=False, default=0, category="Semantics")
 
-    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
+    transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
 
-    n = properties.SymbolicProperty(allow_none=True, default=None)
-    m = properties.SymbolicProperty(allow_none=True, default=None)
+    n = properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    m = properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(name,

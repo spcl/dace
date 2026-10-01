@@ -134,28 +134,40 @@ class StripMining(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    dim_idx = Property(dtype=int, default=-1, desc="Index of dimension to be strip-mined")
-    new_dim_prefix = Property(dtype=str, default="tile", desc="Prefix for new dimension name")
+    dim_idx = Property(dtype=int, default=-1, category='Parameters', desc="Index of dimension to be strip-mined")
+    new_dim_prefix = Property(dtype=str, default="tile", category='Parameters', desc="Prefix for new dimension name")
     tile_size = SymbolicProperty(default=64,
+                                 category='Parameters',
                                  desc="Tile size of strip-mined dimension, "
                                  "or number of tiles if tiling_type=number_of_tiles")
     tile_stride = SymbolicProperty(default=0,
+                                   category='Parameters',
                                    desc="Stride between two tiles of the "
                                    "strip-mined dimension. If zero, it is set "
                                    "equal to the tile size.")
-    tile_offset = SymbolicProperty(default=0, desc="Tile stride offset (negative)")
-    divides_evenly = Property(dtype=bool, default=False, desc="Tile size divides dimension range evenly?")
-    strided = Property(dtype=bool, default=False, desc="Continuous (false) or strided (true) elements in tile")
+    tile_offset = SymbolicProperty(default=0, category='Parameters', desc="Tile stride offset (negative)")
+    divides_evenly = Property(dtype=bool,
+                              default=False,
+                              category='Applicability',
+                              desc="Tile size divides dimension range evenly?")
+    strided = Property(dtype=bool,
+                       default=False,
+                       category='Parameters',
+                       desc="Continuous (false) or strided (true) elements in tile")
 
     tiling_type = EnumProperty(dtype=dtypes.TilingType,
                                default=dtypes.TilingType.Normal,
                                allow_none=True,
+                               category='Parameters',
                                desc="normal: the outerloop increments with tile_size, "
                                "ceilrange: uses ceiling(N/tile_size) in outer range, "
                                "number_of_tiles: tiles the map into the number of provided tiles, "
                                "provide the number of tiles over tile_size")
 
-    skew = Property(dtype=bool, default=False, desc="If True, offsets inner tile back such that it starts with zero")
+    skew = Property(dtype=bool,
+                    default=False,
+                    category='Parameters',
+                    desc="If True, offsets inner tile back such that it starts with zero")
 
     @staticmethod
     def annotates_memlets():

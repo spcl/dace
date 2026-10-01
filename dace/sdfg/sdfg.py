@@ -248,10 +248,12 @@ class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
     """
 
-    nodes = ListProperty(element_type=tuple, desc='Nodes in this group given by [State, Node] id tuples')
-    states = ListProperty(element_type=int, desc='States in this group given by their ids')
-    name = Property(dtype=str, desc='Logical group name')
-    color = Property(dtype=str, desc='Color for the group, given as a hexadecimal string')
+    nodes = ListProperty(element_type=tuple,
+                         category='General',
+                         desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int, category='General', desc='States in this group given by their ids')
+    name = Property(dtype=str, category='General', desc='Logical group name')
+    color = Property(dtype=str, category='General', desc='Color for the group, given as a hexadecimal string')
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
@@ -282,6 +284,7 @@ class InterstateEdge(object):
     assignments = DictProperty(
         key_type=str,
         value_type=str,
+        category='Semantics',
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
         #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
@@ -294,8 +297,8 @@ class InterstateEdge(object):
             k: symbolic.symstr(symbolic.pystr_to_symbolic(v))
             for k, v in d.items()
         }))
-    condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
-    guid = Property(dtype=str, allow_none=False)
+    condition = CodeProperty(category='Semantics', desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False, category='(Debug)')
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
@@ -561,51 +564,71 @@ class SDFG(ControlFlowRegion):
         the `Memlet` class documentation.
     """
 
-    name = Property(dtype=str, desc="Name of the SDFG")
-    arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
+    name = Property(dtype=str, category='General', desc="Name of the SDFG")
+    arg_names = ListProperty(element_type=str,
+                             category='Frontend',
+                             desc='Ordered argument names (used for calling conventions).')
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},
+        category='General',
         desc='Compile-time constants. The dictionary maps between a constant name to '
         'a tuple of its type and the actual constant data.')
     _arrays = Property(dtype=NestedDict,
+                       category='General',
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbols = DictProperty(str, dtypes.typeclass, category='General', desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
-    global_code = DictProperty(str, CodeBlock, desc="Code generated in a global scope on the output files.")
-    init_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_init` function.")
-    exit_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
+    global_code = DictProperty(str,
+                               CodeBlock,
+                               category='Code Generation',
+                               desc="Code generated in a global scope on the output files.")
+    init_code = DictProperty(str,
+                             CodeBlock,
+                             category='Code Generation',
+                             desc="Code generated in the `__dace_init` function.")
+    exit_code = DictProperty(str,
+                             CodeBlock,
+                             category='Code Generation',
+                             desc="Code generated in the `__dace_exit` function.")
 
-    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True)
-    transformation_hist = TransformationHistProperty()
+    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True, category='(Debug)')
+    transformation_hist = TransformationHistProperty(category='(Debug)')
 
-    logical_groups = ListProperty(element_type=LogicalGroup, desc='Logical groupings of nodes and edges')
+    logical_groups = ListProperty(element_type=LogicalGroup,
+                                  category='General',
+                                  desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
+                               category='Scheduling',
                                desc='Whether to generate OpenMP sections in code')
 
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
 
     callback_mapping = DictProperty(str,
                                     str,
+                                    category='Frontend',
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
     using_explicit_control_flow = Property(dtype=bool,
                                            default=False,
+                                           category='(Debug)',
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
     build_folder = Property(
         dtype=str,
         default=None,
         allow_none=True,
+        category='Code Generation',
         desc='Returns the path to the build cache folder for SDFG. For a in dept '
         'description see ``_sdfg_build_folder_getter()``.',
         serialize_if=lambda sdfg: sdfg._build_folder is not None,
