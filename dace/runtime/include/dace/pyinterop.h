@@ -48,8 +48,10 @@ template <typename U, typename... T>
 static DACE_HDFI U Max(U val, T... vals) {
     return max(val, vals...);
 }
+// Deduced, not ``T``: ``abs`` of a complex value is real, so pinning the return to the argument
+// type turns ``Abs(z)`` back into a complex and every comparison on it loses its candidate.
 template <typename T>
-static DACE_HDFI T Abs(T val) {
+static DACE_HDFI auto Abs(T val) {
     return abs(val);
 }
 template <typename T, typename U>

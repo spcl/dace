@@ -1289,11 +1289,7 @@ class FortranIntrinsics:
             return MathFunctions.replace(func_name)
 
         if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
-
-            if hasattr(self.IMPLEMENTATIONS_AST[func_name], "Transformation"):
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation())
-            else:
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].get_transformation(func_name))
+            self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation())
 
         return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
 

@@ -1,11 +1,26 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests different allocation lifetimes. """
+import re
+
 import pytest
 
 import dace
 from dace.codegen.targets import framecode
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.sdfg import infer_types
 import numpy as np
+
+
+def _count_heap_allocs(code: str, ctype: str) -> int:
+    # The transients in these tests use the default alignment; consult the active
+    # cpp_standard: C++ >= 17 emits the aligned form
+    # ``new (std::align_val_t(64)) <type>``, earlier standards the plain form.
+    # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
+    probe = dace.data.Array(dace.float64, [1])
+    if _use_aligned_operator_new(probe):
+        return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
+    return len(re.findall(rf'new\s+{ctype}\b', code))
+
 
 N = dace.symbol('N')
 
@@ -505,7 +520,7 @@ def test_branched_allocation(mode):
     # Make sure array is allocated once or twice, depending on the test
     code = sdfg.generate_code()[0].clean_code
     num_allocs = 2 if mode == 'multivalue' else 1
-    assert code.count('new float') == num_allocs
+    assert _count_heap_allocs(code, 'float') == num_allocs
     assert code.count('delete[]') == num_allocs
 
     sdfg.compile()
@@ -534,7 +549,7 @@ def test_scope_multisize():
 
     # Make sure array is allocated twice
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('new double') == 2
+    assert _count_heap_allocs(code, 'double') == 2
     assert code.count('delete[]') == 2
 
     sdfg()
@@ -580,7 +595,7 @@ def test_multisize():
 
     # Make sure array is allocated once
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('new double') == 1
+    assert _count_heap_allocs(code, 'double') == 1
     assert code.count('delete[]') == 1
 
     res1 = sdfg(cond=np.uint64(0))

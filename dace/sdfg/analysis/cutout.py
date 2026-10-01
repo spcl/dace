@@ -589,7 +589,7 @@ def _transformation_determine_affected_nodes(sdfg: SDFG,
         return affected_nodes
 
     # If strict is not set and a scope node is affected, expand the returned set to include all nodes in that scope.
-    if hasattr(transformation, 'state_id') and transformation.state_id >= 0:
+    if isinstance(transformation, PatternTransformation) and transformation.state_id >= 0:
         state = target_sdfg.node(transformation.state_id)
         expanded = set()
         for node in affected_nodes:

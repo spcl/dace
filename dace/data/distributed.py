@@ -32,10 +32,18 @@ class DistributedDescriptor(Data):
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         raise TypeError(f'{type(self).__name__} descriptors are not Python call arguments')
 
+    # A communicator descriptor allocates nothing.
     @property
     def offset(self):
-        shp = getattr(self, 'shape', [])
-        return [0] * len(shp)
+        return [0] * len(self.shape)
+
+    @property
+    def strides(self):
+        return []
+
+    @property
+    def total_size(self):
+        return 0
 
 
 def _symbols_from_shape(shape) -> Set[symbolic.SymbolicType]:

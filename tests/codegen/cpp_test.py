@@ -4,9 +4,10 @@ from functools import reduce
 from operator import mul
 import warnings
 
-from dace import SDFG, Memlet, dtypes
+from dace import SDFG, Memlet, dtypes, symbol
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.subsets import Range
 
 
@@ -150,7 +151,13 @@ def test_reshape_strides_from_strided_and_offset_range():
 def test_arrays_bigger_than_max_stack_size_get_deallocated():
     # Setup SDFG with array A that is too big to be allocated on the stack.
     sdfg = SDFG("test")
-    sdfg.add_array(name="A", shape=(10000, ), dtype=dtypes.float64, storage=dtypes.StorageType.Register, transient=True)
+    array_a_alignment = 128
+    _, a_desc = sdfg.add_array(name="A",
+                               shape=(10000, ),
+                               dtype=dtypes.float64,
+                               storage=dtypes.StorageType.Register,
+                               transient=True,
+                               alignment=array_a_alignment)
     state = sdfg.add_state("state", is_start_block=True)
     read = state.add_access("A")
     tasklet = state.add_tasklet("dummy", {"a"}, {}, "a = 1")
@@ -167,8 +174,43 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
 
         # In code, assert that we allocate _and_ deallocate on the heap
         code = program_objects[0].clean_code
-        assert code.find("A = new double") > 0, "A is allocated on the heap."
-        assert code.find("delete[] A") > 0, "A is deallocated from the heap."
+        # Consult the active cpp_standard: C++ >= 17 emits the aligned
+        # new/delete forms, earlier standards the plain ones.
+        if _use_aligned_operator_new(a_desc):
+            assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
+            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, "A is deallocated from the heap."
+        else:
+            assert "A = new double" in code, "A is allocated on the heap."
+            assert "delete[] A" in code, "A is deallocated from the heap."
+
+
+def test_at_multiplies_the_coordinate_by_the_array_stride():
+    # A strided range: the offset is coordinate * array stride, with no rational division to cancel.
+    assert Range([(0, 19, 2)]).at([1], [4]) == 8
+
+
+def test_pointer_argument_keeps_a_decimal_literal():
+    # The dot-to-arrow rewrite for struct members must not reach a decimal literal in the index
+    # expression a pointer argument carries: `&A[(0.5 * j)]` became `&A[(0->5 * j)]`.
+    N = symbol('N')
+    nsdfg = SDFG('inner')
+    nsdfg.add_array('a', [N], dtypes.float64)
+    nstate = nsdfg.add_state()
+    tasklet = nstate.add_tasklet('z', {}, {'o'}, 'o = 1.0')
+    nstate.add_edge(tasklet, 'o', nstate.add_write('a'), None, Memlet('a[0]'))
+
+    sdfg = SDFG('pointer_decimal')
+    sdfg.add_symbol('N', dtypes.int64)
+    sdfg.add_array('A', [N], dtypes.float64)
+    state = sdfg.add_state()
+    entry, exit = state.add_map('m', dict(j='0:N'))
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(N='N', j='j'))
+    state.add_nedge(entry, nsdfg_node, Memlet())
+    state.add_memlet_path(nsdfg_node, exit, state.add_write('A'), src_conn='a', memlet=Memlet('A[0.5*j]'))
+
+    code = codegen.generate_code(sdfg)[0].clean_code
+    assert '&A[(0.5 * j)]' in code
+    assert '0->5' not in code
 
 
 if __name__ == '__main__':
@@ -179,3 +221,6 @@ if __name__ == '__main__':
     test_reshape_strides_from_strided_and_offset_range()
 
     test_arrays_bigger_than_max_stack_size_get_deallocated()
+
+    test_at_multiplies_the_coordinate_by_the_array_stride()
+    test_pointer_argument_keeps_a_decimal_literal()

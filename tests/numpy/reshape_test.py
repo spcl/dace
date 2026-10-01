@@ -195,6 +195,28 @@ def test_reinterpret_invalid():
         reint_invalid(A)
 
 
+def test_reinterpret_symbolic_stride_uses_int_floor():
+    """View descriptors must divide with int_floor, never `//`.
+
+    `//` on a symbolic stride builds sympy `floor(expr / d)`, and sym2cpp prints that argument
+    WITHOUT the floor, leaving each term of the sum to truncate on its own. A non-contiguous
+    symbolic stride is the case where the division does not fold away.
+    """
+
+    @dace.program
+    def reint(A: dace.data.Array(dace.int16, [N, 4], strides=[2 * N + 1, 1], total_size=N * (2 * N + 1))):
+        C = A.view(dace.int32)
+        C[:] += 1
+
+    sdfg = reint.to_sdfg(simplify=False)
+    exprs = [
+        str(e) for d in sdfg.arrays.values() if isinstance(d, dace.data.View)
+        for e in (*d.shape, *d.strides, d.total_size)
+    ]
+    assert any('int_floor' in e for e in exprs), exprs
+    assert not any('floor' in e.replace('int_floor', '') for e in exprs), exprs
+
+
 if __name__ == "__main__":
     test_reshape()
     test_reshape_dst()
@@ -207,3 +229,4 @@ if __name__ == "__main__":
     test_reinterpret_smaller()
     test_reinterpret_larger()
     test_reinterpret_invalid()
+    test_reinterpret_symbolic_stride_uses_int_floor()

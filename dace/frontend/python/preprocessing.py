@@ -3,6 +3,7 @@ import ast
 import collections
 import copy
 from dataclasses import dataclass
+import functools
 import inspect
 import numbers
 import numpy
@@ -751,12 +752,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
-        from dace.frontend.python.interface import in_program, inline  # Avoid import loop
+        from dace.frontend.python.interface import in_program, inline, is_always_inline  # Avoid import loop
 
         if hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
+        # Callees marked with ``@dace.always_inline`` are folded regardless of the ``resolve_functions`` setting
+        always_inline = False
         try:
             global_func = astutils.evalnode(node.func, self.globals)
 
@@ -767,15 +770,21 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             if global_func is inline:
                 return node
 
-            if self.resolve_functions:
+            always_inline = is_always_inline(global_func)
+            if self.resolve_functions or always_inline:
                 global_val = astutils.evalnode(node, self.globals)
             else:
                 global_val = node
         except SyntaxError:
+            if always_inline:
+                raise DaceSyntaxError(
+                    None, node, f'Cannot evaluate the call to "{astutils.unparse(node.func)}" at compile time, '
+                    'even though it is annotated with @dace.always_inline. Make sure all of its arguments are '
+                    'compile-time constants.')
             return self.generic_visit(node)
 
         newnode = None
-        if self.resolve_functions and global_val is not node:
+        if global_val is not node:
             # Without this check, casts don't generate code
             if not isinstance(global_val, dtypes.typeclass):
                 newnode = self.global_value_to_node(global_val,
@@ -784,6 +793,11 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                                                     recurse=True)
                 if newnode is not None:
                     return newnode
+                if always_inline:
+                    raise DaceSyntaxError(
+                        None, node, f'The result of "{astutils.unparse(node.func)}" (of type '
+                        f'{type(global_val).__name__}) cannot be inlined into the program, even though the '
+                        'function is annotated with @dace.always_inline.')
         elif not isinstance(global_func, dtypes.typeclass):
             callables = not self.do_not_detect_callables
             newnode = self.global_value_to_node(global_func,
@@ -1320,14 +1334,14 @@ class CallTreeResolver(ast.NodeVisitor):
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
 
+        # "objname" holds the name of the "self" argument, if any
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
             parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
+            objname = False
         else:
             parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
-
-        # Handle "self" argument
-        objname = getattr(function, 'objname', False)
+            objname = function.objname
 
         nargs = len(posargs)
         arg_ind = 0
@@ -1508,6 +1522,26 @@ def find_disallowed_statements(node: ast.AST):
     return None
 
 
+@functools.lru_cache(maxsize=1, typed=True)
+def mpi4py_is_usable() -> bool:
+    """Whether ``mpi4py.MPI`` can actually be imported.
+
+    Installed is not the same as usable. An mpi4py wheel carries no MPI of its own -- it ``dlopen``s
+    ``libmpi`` when the ``MPI`` submodule is first imported -- so on a machine with the package but
+    no MPI runtime that import raises ``RuntimeError: cannot load MPI library``, NOT ``ImportError``.
+    A caller that only guards for ``ImportError`` then lets that escape, and every ``@dace.program``
+    fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
+    same thing to DaCe -- there is no MPI -- so both answer False here.
+
+    Importing the submodule does not initialize MPI, so this stays side-effect-free on the parse path.
+    """
+    try:
+        from mpi4py import MPI  # noqa: F401
+    except Exception:  # noqa: BLE001 -- any failure to reach MPI means it is unavailable
+        return False
+    return True
+
+
 class MPIResolver(ast.NodeTransformer):
     """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
 
@@ -1608,10 +1642,9 @@ def preprocess_dace_program(f: Callable[..., Any],
         #del global_vars[mod]
         global_vars[modval] = newmod
 
-    try:
+    # Guard the availability check only, so a genuine error inside the visitor still surfaces.
+    if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    except (ImportError, ModuleNotFoundError):
-        pass
     src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)

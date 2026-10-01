@@ -15,6 +15,7 @@ import sys
 import numpy as np
 
 from dace import data as dt, dtypes, hooks, symbolic
+from dace.sdfg import nodes
 from dace.codegen import exceptions as cgx
 from dace.config import Config
 
@@ -234,6 +235,9 @@ class CompiledSDFG(object):
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._exit.restype = ctypes.c_int
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
+        # Present exactly when a GPU target emitted its init/exit pair, which is a sharper test than
+        # the ``has_gpu_code`` heuristic below.
+        self._gpu_last_error = self.get_exported_function('__dace_gpu_last_error', restype=ctypes.c_int)
 
         # Cache SDFG return values
         self._return_syms: Dict[str, Any] = None
@@ -264,19 +268,20 @@ class CompiledSDFG(object):
             warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
                           ' arguments. This is allowed but deprecated.')
 
-        self.has_gpu_code = False
-        self.external_memory_types = set()
-        for _, _, aval in self._sdfg.arrays_recursive():
-            if aval.storage in dtypes.GPU_STORAGES:
-                self.has_gpu_code = True
-                break
-            if aval.lifetime == dtypes.AllocationLifetime.External:
-                self.external_memory_types.add(aval.storage)
-        if not self.has_gpu_code:
-            for node, _ in self._sdfg.all_nodes_recursive():
-                if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
-                    self.has_gpu_code = True
-                    break
+        if any(aval.storage == dtypes.StorageType.GPU_Global for _, _, aval in self._sdfg.arrays_recursive()):
+            self.has_gpu_code = True
+        elif any(
+                isinstance(node, (nodes.EntryNode, nodes.ExitNode,
+                                  nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+                for node, _ in self._sdfg.all_nodes_recursive()):
+            self.has_gpu_code = True
+        else:
+            self.has_gpu_code = False
+
+        self.external_memory_types = {
+            aval.storage
+            for _, _, aval in self._sdfg.arrays_recursive() if aval.lifetime == dtypes.AllocationLifetime.External
+        }
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
@@ -436,7 +441,9 @@ class CompiledSDFG(object):
         return self._libhandle
 
     def finalize(self):
-        if self._exit is not None:
+        # ``fast_call`` unloads the library when a call fails, which leaves every cached function
+        # pointer dangling, so an uninitialized handle must never be called through.
+        if self._exit is not None and self._initialized is True:
             res: int = self._exit(self._libhandle)
             self._initialized = False
             if res != 0:
@@ -571,21 +578,17 @@ with open(r"{temp_path}", "wb") as f:
                 if self.do_not_execute is False:
                     self._cfunc(self._libhandle, *callargs)
 
-            # Optionally get errors from call
-            if do_gpu_check and self.has_gpu_code:
-                from dace.codegen import common  # Circular import; Must be here to avoid import in hot path.
-                try:
-                    lasterror = common.get_gpu_runtime().get_last_error_string()
-                except RuntimeError as ex:
-                    warnings.warn(f'Could not get last error from GPU runtime: {ex}')
-                    lasterror = None
-
-                if lasterror is not None:
+            # Optionally get errors from call. Read what this SDFG's generated code recorded rather than
+            # the GPU runtime's last-error slot, which is per-host-thread and shared process-wide.
+            if do_gpu_check and self._gpu_last_error is not None:
+                lasterror: int = self._gpu_last_error(self._libhandle)
+                if lasterror != 0:
                     raise RuntimeError(
                         f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
             return
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
+            self._initialized = False
             raise
 
     def __del__(self):

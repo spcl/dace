@@ -358,6 +358,25 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
+def test_gpu_callback_without_stream_warns():
+    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn.
+    @dace_inhibitor
+    def cb_no_stream(arr):
+        arr *= 2
+
+    @dace.program
+    def gpucallback(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        cb_no_stream(tmp)
+        A[:] = tmp
+
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = gpucallback.to_sdfg()
+    with pytest.warns(UserWarning, match="not stream-aware"):
+        sdfg.generate_code()
+
+
 def test_bad_closure():
     """
     Testing functions that should not be in the closure (must be implemented as
@@ -1134,6 +1153,7 @@ if __name__ == '__main__':
     test_reorder_nested()
     test_callback_samename()
     test_gpu_callback()
+    test_gpu_callback_without_stream_warns()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()

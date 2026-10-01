@@ -201,6 +201,34 @@ def test_replace_dict_inner_loop():
     assert "jn" not in {str(s) for s in sdfg.arglist()}
 
 
+def test_unroll_loop_with_negative_iterate_values():
+    """A descending loop must unroll every iteration, under a label that stays a valid name once
+    the iterate goes negative."""
+    sdfg = dace.SDFG('negative_iterate_loop_sdfg')
+    for_cfg = LoopRegion(label='size_3_countdown',
+                         condition_expr=CodeBlock('i > -5'),
+                         loop_var='i',
+                         initialize_expr=CodeBlock('i = 0'),
+                         update_expr=CodeBlock('i = i - 1'),
+                         sdfg=sdfg)
+    sdfg.add_node(for_cfg, is_start_block=True)
+    body = ControlFlowRegion(label='for_body', sdfg=sdfg, parent=for_cfg)
+    for_cfg.add_node(body, is_start_block=True)
+    body.add_state(label='s1', is_start_block=True)
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+    assert applied == 1
+    sdfg.validate()
+
+    loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
+    assert len(loops) == 0
+    # i = 0, -1, -2, -3, -4. The body is a ControlFlowRegion, so each iteration inlines to two
+    # states, plus the predecessor prepended because the loop is its region's start block.
+    assert sdfg.number_of_nodes() == 11
+    assert len([n for n in sdfg.nodes() if n.label.endswith('_for_body')]) == 5
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
@@ -209,3 +237,4 @@ if __name__ == "__main__":
     test_melt_kernel()
     test_triang_elim()
     test_replace_dict_inner_loop()
+    test_unroll_loop_with_negative_iterate_values()

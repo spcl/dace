@@ -155,11 +155,22 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):
         return self.dtype.ctype
+
+    def num_elements(self):
+        """ The number of elements in this data descriptor, i.e., the product of its shape. Unlike ``total_size``,
+        this does not include any pre- or post-padding. """
+        return _prod(self.shape)
+
+    @property
+    def total_size_in_bytes(self) -> symbolic.SymbolicType:
+        """ The total allocated size of this data descriptor in bytes, i.e., ``total_size`` times the size of its
+        element type, including any padding. """
+        return self.total_size * self.dtype.bytes
 
     def strides_from_layout(
         self,
@@ -193,7 +204,7 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
+                dimsize = symbolic.align(self.shape[dim], alignment)
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -284,6 +295,9 @@ class Scalar(Data):
     def total_size(self):
         return 1
 
+    def num_elements(self):
+        return 1
+
     @property
     def offset(self):
         return [0]
@@ -369,10 +383,13 @@ class Array(Data):
          used to ensure that a specific index is aligned as a form of pre-padding (that element may not necessarily be
          the first element, e.g., in the case of halo or "ghost cells" in stencils).
        * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
-         the ``shape`` elements, but if pre- or post-padding is involved it may be larger.
-       * ``alignment`` provides alignment guarantees (in bytes) of the first element in the allocated array. This is
-         used by allocators in the code generator to ensure certain addresses are expected to be aligned, e.g., for
-         vectorization.
+         the ``shape`` elements, but if pre- or post-padding is involved it may be larger. The number of elements
+         without padding is available from ``num_elements()``.
+       * ``alignment`` serves as an alignment _hint_ that might or might not be honored, depending on the backend and
+         selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
+         no alignment requirements.
+         The GPU backend ignores the alignment hint entirely. The CPU backend will use aligned ``new`` allocations if
+         requested and C++17 and later is used, otherwise normal ``new`` expressions are used.
        * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
          element's index after padding and alignment. This mimics a language feature prominent in scientific languages
          such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
@@ -426,7 +443,7 @@ class Array(Data):
                          default=False,
                          desc='This pointer may alias with other pointers in the same function')
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment hint in bytes.')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
     optional = Property(dtype=bool,
@@ -1172,7 +1189,7 @@ class View:
                                    name=viewed_container.name,
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    debuginfo=debuginfo)
         elif isinstance(viewed_container, ContainerArray):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
@@ -1183,7 +1200,7 @@ class View:
                                    strides=viewed_container.strides,
                                    offset=viewed_container.offset,
                                    may_alias=viewed_container.may_alias,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    alignment=viewed_container.alignment,
                                    debuginfo=debuginfo,
                                    total_size=viewed_container.total_size,
@@ -1199,7 +1216,7 @@ class View:
                                strides=viewed_container.strides,
                                offset=viewed_container.offset,
                                may_alias=viewed_container.may_alias,
-                               lifetime=viewed_container.lifetime,
+                               lifetime=dtypes.AllocationLifetime.Scope,
                                alignment=viewed_container.alignment,
                                debuginfo=debuginfo,
                                total_size=viewed_container.total_size,
@@ -1264,8 +1281,9 @@ class Reference:
         if debuginfo is not None:
             result.debuginfo = debuginfo
 
-        # References are always transient
+        # References are always transient and bound where they are used
         result.transient = True
+        result.lifetime = dtypes.AllocationLifetime.Scope
         return result
 
 

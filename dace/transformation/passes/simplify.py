@@ -21,6 +21,7 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
+from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -29,6 +30,7 @@ SIMPLIFY_PASSES = [
     ControlFlowRaising,
     FuseStates,
     OptionalArrayInference,
+    SymbolPropagation,
     ConstantPropagation,
     DeadDataflowElimination,
     DeadStateElimination,
@@ -42,7 +44,7 @@ SIMPLIFY_PASSES = [
     EmptyLoopElimination,
 ]
 
-_nonrecursive_passes = [
+_recursive_passes = [
     ScalarToSymbolPromotion,
     DeadDataflowElimination,
     DeadStateElimination,
@@ -115,7 +117,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
+            if not p.__explicit_cf_compatible__:
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
@@ -126,7 +128,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               'for more information.')
                 return None
 
-        if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
+        if type(p) in _recursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
@@ -140,7 +142,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
         if self.verbose:
             if ret is not None:
-                if type(p) not in _nonrecursive_passes:
+                if type(p) not in _recursive_passes:
                     rep = p.report(ret)
                 else:
                     # Create report from recursive application

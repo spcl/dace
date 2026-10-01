@@ -7,7 +7,8 @@ from typing import List, Optional, Set, Tuple, Union
 from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             ReturnBlock)
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError, InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -118,6 +119,11 @@ class DeadStateElimination(ppl.Pass):
             if node in visited:
                 continue
             visited.add(node)
+
+            # Control flow does not continue past a return, break, or continue block, so anything
+            # reachable only through one of them is dead.
+            if isinstance(node, (ReturnBlock, BreakBlock, ContinueBlock)):
+                continue
 
             # First, check for unconditional edges
             unconditional = None

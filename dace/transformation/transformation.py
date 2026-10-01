@@ -20,6 +20,7 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import inspect
 from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
@@ -96,7 +97,7 @@ class PatternTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 
@@ -672,6 +673,21 @@ class PatternNode(Generic[T]):
         return state.node(node_id)
 
 
+def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.CodeNode) -> None:
+    """Add to ``expansion`` the wired connectors a pass added to ``node`` (e.g., a GPU stream).
+
+    Connectors without edges stay behind, since an expansion may rename its edges in place.
+    """
+    wired_in = {e.dst_conn for e in state.in_edges(node)}
+    wired_out = {e.src_conn for e in state.out_edges(node)}
+    for conn, ctype in node.in_connectors.items():
+        if conn in wired_in and conn not in expansion.in_connectors and conn not in expansion.out_connectors:
+            expansion.add_in_connector(conn, dtype=ctype)
+    for conn, ctype in node.out_connectors.items():
+        if conn in wired_out and conn not in expansion.out_connectors and conn not in expansion.in_connectors:
+            expansion.add_out_connector(conn, dtype=ctype)
+
+
 @make_properties
 class ExpandTransformation(PatternTransformation):
     """
@@ -723,8 +739,13 @@ class ExpandTransformation(PatternTransformation):
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
+
+            carry_over_connectors(state, node, expansion)
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
+
+        # The node the expansion replaces is the one the user asked to measure.
+        expansion.instrument = node.instrument
 
         expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
@@ -831,7 +852,7 @@ class SubgraphTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 

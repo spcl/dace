@@ -3,6 +3,8 @@
     dataflow multigraph representation. """
 
 import ast
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -19,11 +21,55 @@ from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_expr_type
+from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
 
 # -----------------------------------------------------------------------------
+
+
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict['dace.SDFG', Set[str]]]] = contextvars.ContextVar(
+    'nested_used_symbols_memo', default=None)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
 
 
 @make_properties
@@ -260,6 +306,11 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """ Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+            without inferring their types. """
+        return set(self.new_symbols(sdfg, state, {}).keys())
+
     def infer_connector_types(self, sdfg, state):
         """
         Infers and fills remaining connectors (i.e., set to None) with their
@@ -379,6 +430,10 @@ class CodeNode(Node):
     @property
     def free_symbols(self) -> Set[str]:
         return set().union(*[v.free_symbols for v in self.location.values()])
+
+    def has_side_effects(self, sdfg) -> bool:
+        """True if running this node may do more than write its outputs."""
+        return False
 
 
 @make_properties
@@ -557,25 +612,6 @@ class Tasklet(CodeNode):
             return self.label
 
 
-@make_properties
-class RTLTasklet(Tasklet):
-    """ A specialized tasklet, which is a functional computation procedure
-        that can only access external data specified using connectors.
-
-        This tasklet is specialized for tasklets implemented in System Verilog
-        in that it adds support for adding metadata about the IP cores in use.
-    """
-    # TODO to be replaced when enums have embedded properties
-    ip_cores = DictProperty(key_type=str, value_type=dict, desc="A set of IP cores used by the tasklet.")
-
-    @property
-    def __jsontype__(self):
-        return 'Tasklet'
-
-    def add_ip_core(self, module_name, name, vendor, version, params):
-        self.ip_cores[module_name] = {'name': name, 'vendor': vendor, 'version': version, 'params': params}
-
-
 # ------------------------------------------------------------------------------
 
 
@@ -671,6 +707,12 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    def has_side_effects(self, sdfg) -> bool:
+        """True if any nested node has side effects. ``sdfg`` unused: inner ones apply."""
+        return any(
+            isinstance(node, CodeNode) and not isinstance(node, NestedSDFG) and node.has_side_effects(parent.sdfg)
+            for node, parent in self.sdfg.all_nodes_recursive())
+
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
 
@@ -678,7 +720,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.
@@ -862,17 +910,27 @@ class MapEntry(EntryNode):
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
-        # Add map params
-        for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
-
-        # Handle the dynamic map ranges.
+        # Dynamic map ranges first: a bound may name one, and the connector type is the declared
+        # answer for it. Inferring the parameter without them falls back to the dtype the bound's
+        # symbol instance happens to carry, and that is not a stable property -- symbol identity is
+        # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
+        # its names untyped, while deserialization rebuilds them from the declared table. The same
+        # map would then report two different parameter types across a save/load round trip.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
+        # Add map params
+        known = {**symbols, **_constant_types(sdfg), **result}
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
+
         return result
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
@@ -888,7 +946,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -1052,6 +1110,13 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
     def __init__(self,
                  label,
                  params,
@@ -1179,7 +1244,7 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        result = set(self._consume.num_pes.free_symbols)
+        result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
         return result - dyn_inputs
@@ -1187,7 +1252,11 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes,
+                                                                     symbols={
+                                                                         **symbols,
+                                                                         **_constant_types(sdfg)
+                                                                     })
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
@@ -1342,6 +1411,11 @@ class LibraryNode(CodeNode):
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty(allow_none=True)
+    # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
+    # node, and expansion carries this onto whatever the node expands into.
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1354,12 +1428,10 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    @property
-    def has_side_effects(self) -> bool:
+    def has_side_effects(self, sdfg) -> bool:
         """
         Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
-        when expanded.
-        This method is meant to be extended by subclasses.
+        when expanded. ``sdfg`` is unused; taken to match :class:`CodeNode`.
         """
         return False
 

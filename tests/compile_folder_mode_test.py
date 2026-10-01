@@ -1,13 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import builtins
 import numpy as np
 import pytest
 import uuid
 import pathlib
 import copy
 import re
+import tempfile
+from unittest import mock
 
 import dace
 from dace.codegen import compiler as sdfg_compiler
+
+
+@pytest.fixture
+def tmp_path() -> pathlib.Path:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield pathlib.Path(tmp_dir)
 
 
 def _make_test_sdfg() -> dace.SDFG:
@@ -137,7 +146,7 @@ def test_production_folder_mode():
     assert not version_file.exists()
 
     with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'``{build_folder}`` does not appear to be a valid build folder.')):
+                       match=re.escape(f'``{build_folder}`` does not appear to be a valid old-style build folder.')):
         sdfg_compiler.get_folder_mode(build_folder)
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
@@ -222,6 +231,123 @@ def test_build_with_scheme_one_and_then_switch():
     )
 
 
+def _expected_binary_path(
+    build_folder: pathlib.Path,
+    sdfg_name: str,
+    folder_mode: str,
+    lib_extension: str,
+) -> pathlib.Path:
+    if folder_mode == "development":
+        return build_folder / "build" / f"lib{sdfg_name}.{lib_extension}"
+    assert folder_mode == "production"
+    return build_folder / f"lib{sdfg_name}.{lib_extension}"
+
+
+def _test_get_binary_name_detects_folder_mode_switch_impl(
+    build_folder: pathlib.Path,
+    version1: str,
+    version2: str,
+) -> None:
+    sdfg_name = "some_sdfg"
+    lib_extension = "so"
+    build_folder.mkdir()
+
+    with dace.config.temporary_config() as conf:
+        # The configuration keeps naming `version1`; after the switch only the
+        #  `FOLDER_MODE` file knows about `version2`, so `get_binary_name()` must
+        #  take the mode from the folder and not from the configuration.
+        conf.set('compiler', 'build_folder_mode', value=version1)
+
+        sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode=version1)
+        assert sdfg_compiler.get_folder_mode(build_folder) == version1
+
+        lib1_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg_name, lib_extension=lib_extension)
+        assert lib1_path == _expected_binary_path(build_folder, sdfg_name, version1, lib_extension)
+
+        # Now switch the folder to the second mode; the configuration still says `version1`.
+        sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode=version2)
+        assert sdfg_compiler.get_folder_mode(build_folder) == version2
+
+        lib2_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg_name, lib_extension=lib_extension)
+        assert lib2_path == _expected_binary_path(build_folder, sdfg_name, version2, lib_extension)
+        assert lib1_path != lib2_path
+
+
+def test_get_binary_name_detects_folder_mode_switch(tmp_path):
+    _test_get_binary_name_detects_folder_mode_switch_impl(
+        build_folder=tmp_path / "dev_to_prod",
+        version1="development",
+        version2="production",
+    )
+    _test_get_binary_name_detects_folder_mode_switch_impl(
+        build_folder=tmp_path / "prod_to_dev",
+        version1="production",
+        version2="development",
+    )
+
+
+def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
+    # An old-style development folder that was generated but never compiled, i.e.
+    #  there is no `FOLDER_MODE` file and no `build` folder. Such a folder is
+    #  inconsistent, thus probing must return `None` and `get_binary_name()` must
+    #  fall back to the configuration instead of raising.
+    build_folder = tmp_path / "old_style_never_compiled"
+    build_folder.mkdir()
+    for sub_folder in ["map", "src", "include", "sample"]:
+        (build_folder / sub_folder).mkdir()
+
+    assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
+    with pytest.raises(NotADirectoryError,
+                       match=re.escape(f'The old-style folder ``{build_folder}`` is inconsistent.')):
+        sdfg_compiler.get_folder_mode(build_folder)
+
+    for folder_mode in ["development", "production"]:
+        with dace.config.temporary_config() as conf:
+            conf.set('compiler', 'build_folder_mode', value=folder_mode)
+            lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
+        assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
+
+
+def test_get_folder_mode_probes_unrecognized_folder_mode_file(tmp_path):
+    # A `FOLDER_MODE` file that is empty or names no known mode does not tell the folder mode,
+    #  thus probing must return `None` and `get_binary_name()` must fall back to the configuration.
+    for i, content in enumerate(["", "\n", "unknown_mode"]):
+        build_folder = tmp_path / f"folder_{i}"
+        build_folder.mkdir()
+        (build_folder / "FOLDER_MODE").write_text(content)
+
+        assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
+
+        for folder_mode in ["development", "production"]:
+            with dace.config.temporary_config() as conf:
+                conf.set('compiler', 'build_folder_mode', value=folder_mode)
+                lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
+            assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
+
+
+def test_folder_mode_file_is_never_observed_incomplete(tmp_path):
+    # Another process may probe `FOLDER_MODE` while the folder is generated again, thus
+    #  the file is inspected every time the generator opens a file.
+    build_folder = tmp_path / "regenerated"
+    build_folder.mkdir()
+    sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode="development")
+    version_file = build_folder / "FOLDER_MODE"
+    observed = []
+
+    def observing_open(*args, **kwargs):
+        opened = builtins.open(*args, **kwargs)
+        observed.append(version_file.read_text())
+        return opened
+
+    with mock.patch.object(sdfg_compiler, "open", observing_open, create=True):
+        sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode="production")
+
+    assert observed
+    assert set(observed) == {"development"}
+    assert version_file.read_text() == "production"
+    assert [p.name for p in build_folder.iterdir() if p.name.startswith("FOLDER_MODE")] == ["FOLDER_MODE"]
+
+
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
@@ -238,3 +364,11 @@ if __name__ == '__main__':
     test_production_folder_mode()
     test_already_loaded_and_comple_again()
     test_build_with_scheme_one_and_then_switch()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_binary_name_detects_folder_mode_switch(pathlib.Path(tmp_dir))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_folder_mode_probes_inconsistent_old_style_folder(pathlib.Path(tmp_dir))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_folder_mode_probes_unrecognized_folder_mode_file(pathlib.Path(tmp_dir))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_folder_mode_file_is_never_observed_incomplete(pathlib.Path(tmp_dir))

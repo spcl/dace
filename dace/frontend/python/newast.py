@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections.abc
 from collections import OrderedDict
 import copy
 import itertools
@@ -31,7 +32,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 from dace.utils import until
 
@@ -319,6 +320,21 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
+def is_affine_in(expr, sym) -> bool:
+    """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
+    expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
+    matches = [f for f in expr.free_symbols if str(f) == str(sym)]
+    return not matches or (expr.is_polynomial(matches[0]) and sympy.degree(expr, matches[0]) <= 1)
+
+
+def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
+    for n, ostep in enumerate(orng.strides()):
+        if ostep == 1:
+            continue
+        rb, re, rs = irng.ranges[n]
+        irng.ranges[n] = (symbolic.int_floor(rb, ostep), symbolic.int_floor(re, ostep), symbolic.int_floor(rs, ostep))
+
+
 def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
     for dim in subset:
         if not isinstance(dim, tuple):
@@ -345,6 +361,39 @@ def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'Program
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
+
+
+def _subset_symbols(subset: subsets.Subset) -> Set[symbolic.symbol]:
+    result = set()
+    for dim in subset:
+        if not isinstance(dim, tuple):
+            dim = [dim]
+        for r in dim:
+            if isinstance(r, symbolic.SymExpr):
+                r = r.expr
+            if symbolic.issymbolic(r):
+                result.update(s for s in r.free_symbols if isinstance(s, symbolic.symbol))
+    return result
+
+
+def _retype_symbols_like(subset: subsets.Subset, reference: subsets.Subset) -> subsets.Subset:
+    """
+    Replaces the symbols of a subset, by name, with the same-named symbols of another subset.
+
+    Symbols compare by name *and* dtype, and a memlet built from a string carries default-typed symbols. Without this,
+    bounds of the two subsets could not be ordered (e.g., ``N - 1`` and ``N - 2`` if ``N`` is typed in only one).
+
+    :param subset: The subset whose symbols to replace. It is not modified; a copy is returned if any symbol differs.
+    :param reference: The subset whose symbols to use.
+    :return: The subset, or a retyped copy of it.
+    """
+    by_name = {s.name: s for s in _subset_symbols(reference)}
+    repl = {s: by_name[s.name] for s in _subset_symbols(subset) if s.name in by_name and s != by_name[s.name]}
+    if not repl:
+        return subset
+    subset = copy.deepcopy(subset)
+    subset.replace(repl)
+    return subset
 
 
 def add_indirection_subgraph(sdfg: SDFG,
@@ -412,9 +461,11 @@ def add_indirection_subgraph(sdfg: SDFG,
                         toreplace = 'index_' + fname + '_' + str(len(accesses[fname]) - 1)
 
                     if direct_assignment:
-                        # newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
-                        newsubset[dimidx] = r.subs(expr, toreplace)
-                        r = newsubset[dimidx]
+                        # A point range keeps its (begin, end, step) shape. Writing the substituted
+                        # bound back on its own left a bare expression where the subset holds
+                        # tuples -- the malformed state the tuple check above exists to survive.
+                        r = r.subs(expr, toreplace)
+                        newsubset[dimidx] = (r, r, newsubset[dimidx][2])
                     else:
                         rng = list(newsubset[dimidx])
                         rng[i] = rng[i].subs(expr, toreplace)
@@ -702,14 +753,14 @@ class TaskletTransformer(ExtNodeTransformer):
         if name is not None:
             name += '_' + str(tasklet_ast.lineno)
         else:
-            name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
+            name = tasklet_ast.name if isinstance(tasklet_ast, ast.FunctionDef) else 'tasklet_%d' % tasklet_ast.lineno
 
         if self.lang is None:
             self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
-                                   set(self.inputs.keys()),
-                                   set(self.outputs.keys()),
+                                   self.inputs.keys(),
+                                   self.outputs.keys(),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
@@ -754,8 +805,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -1093,6 +1145,67 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+#: What ``DefinedNames.lookup`` returns for a name that is not defined.
+MISSING = object()
+
+
+class DefinedNames(collections.abc.Mapping):
+    """The names a :class:`ProgramVisitor` can resolve, as a view over its tables.
+
+    A lookup walks the sources in reverse merge order and stops at the first hit, so it never
+    builds the merged dict; :meth:`materialize` builds it for the sites that spread every name.
+    """
+
+    __slots__ = ('pv', )
+
+    def __init__(self, pv: 'ProgramVisitor') -> None:
+        self.pv = pv
+
+    def lookup(self, name: str) -> Any:
+        pv = self.pv
+        arrays = pv.sdfg.arrays
+        value = pv.globals.get(name)
+        if value is not None and preprocessing.mpi4py_is_usable():
+            from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
+            if isinstance(value, MPI.Comm):
+                return value
+        # `get`, not `in`: the NestedDict's `in` also resolves struct members, which the merge does not copy.
+        desc = arrays.get(name)
+        if desc is not None:
+            return desc
+        sdfg_name = pv.variables.get(name)
+        if sdfg_name in pv.sdfg.symbols:
+            return pv.sdfg.symbols[sdfg_name]
+        if '.' in name and name in arrays and name in pv.variables.values():
+            return arrays[name]
+        if sdfg_name in arrays:
+            return arrays[sdfg_name]
+        scope_name = pv.scope_vars.get(name)
+        if scope_name in pv.scope_arrays:
+            return pv.scope_arrays[scope_name]
+        if scope_name in arrays:
+            return arrays[scope_name]
+        return value if isinstance(value, symbolic.symbol) else MISSING
+
+    def __getitem__(self, name: str) -> Any:
+        value = self.lookup(name)
+        if value is MISSING:
+            raise KeyError(name)
+        return value
+
+    def __contains__(self, name: str) -> bool:
+        return self.lookup(name) is not MISSING
+
+    def __iter__(self) -> Iterable[str]:
+        return iter(self.materialize())
+
+    def __len__(self) -> int:
+        return len(self.materialize())
+
+    def materialize(self) -> Dict[str, Any]:
+        return self.pv.defined_dict()
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1356,7 +1469,11 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
+    def defined(self) -> DefinedNames:
+        return DefinedNames(self)
+
+    def defined_dict(self) -> Dict[str, Any]:
+        """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
         result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
@@ -1370,16 +1487,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
-        try:
+        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
+        # ImportError, so the availability question belongs in one place (see the helper's docstring).
+        if preprocessing.mpi4py_is_usable():
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
-            pass
 
         return result
 
@@ -1650,24 +1762,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 1:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
-                elif len(values) == 2:
-                    result[name] = symbolic.symbol(
-                        name,
-                        dtypes.result_type_of(infer_expr_type(values[0], {
-                            **self.defined,
-                            **dyn_inputs
-                        }), infer_expr_type(values[1], {
-                            **self.defined,
-                            **dyn_inputs
-                        })))
-                elif len(values) == 3:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
                         "You may use up to 3 arguments (start:stop:step).")
+                result[name] = symbolic.symbol(
+                    name, infer_iteration_symbol_type(*bounds, symbols={
+                        **self.defined,
+                        **dyn_inputs
+                    }))
 
         return result
 
@@ -2202,6 +2308,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         memlet = Memlet.simple(vname, str(irng))
@@ -2221,6 +2328,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         orig_shape = orng.size()
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]
@@ -2293,6 +2401,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if self._find_access(memlet.data, scope_memlet.subset, 'w'):
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
@@ -2312,6 +2421,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = [d for d in orig_shape if d != 1]
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]
@@ -2480,9 +2590,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
 
             sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
+                                      infer_iteration_symbol_type(ranges[0][0],
+                                                                  ranges[0][1],
+                                                                  ranges[0][2],
+                                                                  symbols=self.sdfg.symbols),
                                       integer=integer,
                                       nonnegative=nonnegative,
                                       positive=positive)
@@ -2595,7 +2706,45 @@ class ProgramVisitor(ExtNodeVisitor):
         cond = astutils.unparse(parsed_node)
         cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
 
+        # Register any free symbols used in the condition (e.g., ``dace.symbol`` objects that appear nowhere else in
+        # the program) so that they become part of the SDFG's symbols and thus of its argument list.
+        self._add_symbols_from_condition(node, cond)
+
         return cond, cond_else, test_region
+
+    def _add_symbols_from_condition(self, node: ast.AST, cond: str) -> None:
+        """
+        Adds the free symbols of a (loop or branch) condition string to the SDFG symbols, if they are not already
+        defined as symbols, variables, or data containers.
+
+        :param node: The AST node of the condition (used for error reporting).
+        :param cond: The condition as a Python expression string.
+        """
+        try:
+            symcond = pystr_to_symbolic(cond)
+        except Exception:
+            # Conditions that cannot be represented symbolically (e.g., involving callbacks or attributes)
+            # do not introduce new symbols.
+            return
+        if not symbolic.issymbolic(symcond):
+            return
+        for atom in symcond.free_symbols:
+            if not symbolic.issymbolic(atom, self.sdfg.constants):
+                continue
+            astr = str(atom)
+            # ``None`` is represented by a placeholder symbol in symbolic expressions (e.g., ``B is None``)
+            if astr == 'NoneSymbol':
+                continue
+            # Check for undefined variables
+            if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+                raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
+            # Add to global SDFG symbols if not a scalar
+            if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
+                # Prefer the dtype of the originally-declared symbol object (if any), since re-parsing the condition
+                # string creates a fresh symbol with the default dtype.
+                defined = self.defined.get(astr, None)
+                dtype = defined.dtype if isinstance(defined, symbolic.symbol) else atom.dtype
+                self.sdfg.add_symbol(astr, dtype)
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2638,19 +2787,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
-
-        # Add symbols from test as necessary
-        symcond = pystr_to_symbolic(loop_cond)
-        if symbolic.issymbolic(symcond):
-            for atom in symcond.free_symbols:
-                if symbolic.issymbolic(atom, self.sdfg.constants):
-                    astr = str(atom)
-                    # Check for undefined variables
-                    if astr not in self.defined:
-                        raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
-                    # Add to global SDFG symbols if not a scalar
-                    if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
-                        self.sdfg.add_symbol(astr, atom.dtype)
 
         # Handle else clause
         if node.orelse:
@@ -2738,10 +2874,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
-                node.decorator_list, list) and len(node.decorator_list) > 0 and hasattr(
-                    node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
-                        node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and len(node.decorator_list) > 0 and hasattr(
+                node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
+                    node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -3262,8 +3397,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3747,7 +3883,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
-                read_rng = self.views[result][1].subset
+                # The view's memlet is built from a string, so match its symbols to the target's by name
+                read_rng = _retype_symbols_like(self.views[result][1].subset, new_rng)
                 try:
                     needs_copy = not (new_rng.intersects(read_rng) == False)
                 except TypeError:
@@ -3781,7 +3918,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
                 wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
+                memlet = Memlet(data=new_name, subset=str(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
                 with_wcr = False
@@ -3810,7 +3947,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
+                    memlet = Memlet(data=new_name, subset=str(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name
@@ -4362,6 +4499,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 outputs[arrname] = dace.Memlet.from_array(new_arrname, newarr)
                 rets.append(new_arrname)
 
+        # A callee cannot be given fewer elements than it declares (differently-shaped arguments are allowed)
+        size_mapping = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            for k, v in (mapping or {}).items() if isinstance(v, (str, int, sympy.Basic))
+        }
+        for a, m in itertools.chain(inputs.items(), outputs.items()):
+            if not isinstance(m, Memlet) or a not in sdfg.arrays or a.startswith('__return'):
+                continue
+            inner_desc = sdfg.arrays[a]
+            if not isinstance(inner_desc, data.Array) or inner_desc.transient:
+                continue
+            inner_size = sympy.Integer(1)
+            for s in inner_desc.shape:
+                inner_size *= symbolic.pystr_to_symbolic(s)
+            if size_mapping:
+                inner_size = inner_size.subs(size_mapping, simultaneous=True)
+            outer_size = symbolic.pystr_to_symbolic(m.subset.num_elements())
+            if (inner_size > outer_size) == True:
+                raise DaceSyntaxError(
+                    self, node, f'Argument "{a}" in call to "{funcname}" is declared with {inner_size} elements '
+                    f'(shape {tuple(inner_desc.shape)}), but the given argument only has {outer_size} elements '
+                    f'(shape {tuple(self.sdfg.arrays[m.data].shape)})')
+
         # Update strides
         inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}
         for a, m in itertools.chain(inputs.items(), outputs.items()):
@@ -4422,8 +4582,8 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
-        skip_args = getattr(node, 'skip_args', [])
-        skip_kwargs = getattr(node, 'skip_keywords', [])
+        skip_args = node.skip_args
+        skip_kwargs = node.skip_keywords
 
         # Infer the type of the function arguments and return value
         argtypes = []
@@ -4482,19 +4642,19 @@ class ProgramVisitor(ExtNodeVisitor):
             for child in ast.iter_child_nodes(anode):
                 if child is node:
                     parent = anode
-                    parent_is_toplevel = getattr(anode, 'toplevel', False)
+                    parent_is_toplevel = anode.toplevel
                     break
                 if hasattr(child, 'func') and hasattr(child.func, 'oldnode'):
                     # Check if the AST node is part of a failed parse
                     if child.func.oldnode is node:
                         parent = anode
-                        parent_is_toplevel = getattr(anode, 'toplevel', False)
+                        parent_is_toplevel = anode.toplevel
                         break
                 if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
                     for subchild in child.elts:
                         if subchild is node:
                             parent = anode
-                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            parent_is_toplevel = anode.toplevel
                             break
                     if parent is not None:
                         break
@@ -4738,10 +4898,8 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 if hasattr(func, "name"):
                     name = func.name
-                elif hasattr(func, "__class__"):
-                    name = func.__class__.__name__
                 else:
-                    name = "call"
+                    name = type(func).__name__
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
                 self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
@@ -5215,8 +5373,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
             if func is None:
-                op1name = getattr(op1type, '__name__', op1type)
-                op2name = getattr(op2type, '__name__', op2type)
+                op1name = op1type.__name__ if isinstance(op1type, type) else op1type
+                op2name = op2type.__name__ if isinstance(op2type, type) else op2type
                 raise DaceSyntaxError(self, node, f'Operator {opname} is not defined for types {op1name} and {op2name}')
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))

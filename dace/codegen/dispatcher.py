@@ -436,7 +436,7 @@ class TargetDispatcher(object):
 
         # If this node depends on any environments, register this for
         # generating header code later
-        if hasattr(node, "environments"):
+        if isinstance(node, nodes.CodeNode):
             self._used_environments |= node.environments
 
         # Check if the node satisfies any predicates that delegate to a

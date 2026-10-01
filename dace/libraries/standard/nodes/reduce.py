@@ -318,13 +318,9 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         outer_loops = len(axes) != input_dims
 
-        # ``collapse(1)`` is a no-op (the default); only emit the clause when it collapses >1 loop.
-        def collapse_clause(ndims):
-            return 'collapse(%d) ' % ndims if ndims > 1 else ''
-
         # Create OpenMP clause
         if outer_loops:
-            code = ('#pragma omp parallel for ' + collapse_clause(output_dims)).rstrip() + '\n'
+            code = '#pragma omp parallel for collapse({cdim})\n'.format(cdim=output_dims)
         else:
             code = ''
 
@@ -345,9 +341,10 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         if node.identity is not None:
             code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
-        # Reduction OpenMP clause (``collapse(1)`` is the no-op default, so drop it for a single axis)
-        code += ('#pragma omp parallel for ' + collapse_clause(len(axes)) +
-                 'reduction({rtype}: {oexpr})\n'.format(rtype=omptype, oexpr=outexpr))
+        # Reduction OpenMP clause
+        code += '#pragma omp parallel for collapse({cdim}) ' \
+          'reduction({rtype}: {oexpr})\n'.format(cdim=len(axes), rtype=omptype,
+            oexpr=outexpr)
 
         # Reduction loops
         for i, axis in enumerate(sorted(axes)):
@@ -546,12 +543,16 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_use = 'num_segments, {it}, {it} + 1'.format(it=iterator_use)
             reduce_range_call = '%s, %s' % (num_segments, segment_size)
 
-        # Call CUB to get the storage size, allocate and free it
+        # Call CUB to get the storage size, allocate and free it. Every one of these is checked: CUB
+        # reads a null workspace as "only report the size", so a failed query, a zero-byte allocation
+        # (which hands back a null pointer) or a failed one all turn the reduction below into a
+        # silent no-op that leaves the output untouched.
         cuda_initcode.write(
             """
-            cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop});
-            cudaMalloc(&__cub_storage_{sdfg}_{state}_{node}, __cub_ssize_{sdfg}_{state}_{node});
+            DACE_GPU_CHECK(cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
+                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop}));
+            DACE_GPU_CHECK(cudaMalloc(&__cub_storage_{sdfg}_{state}_{node},
+                                      __cub_ssize_{sdfg}_{state}_{node} ? __cub_ssize_{sdfg}_{state}_{node} : 1));
 """.format(sdfg=sdfg.name,
            state=state_id,
            node=node_id,
@@ -563,16 +564,19 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
            kname=kname), state.parent_graph, state_id, node)
 
         cuda_exitcode.write(
-            'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(sdfg=sdfg.name, state=state_id, node=node_id),
-            state.parent_graph, state_id, node)
+            'DACE_GPU_CHECK(cudaFree(__cub_storage_{sdfg}_{state}_{node}));'.format(sdfg=sdfg.name,
+                                                                                    state=state_id,
+                                                                                    node=node_id), state.parent_graph,
+            state_id, node)
 
-        # Write reduction function definition
+        # Returns CUB's status rather than checking it: the check macro needs ``__state``, which this
+        # function has no reason to take.
         cuda_globalcode.write("""
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
-void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
+cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
 {{
-cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
-                            input, output, {reduce_range_use}{redop}, stream);
+return cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
+                                   input, output, {reduce_range_use}{redop}, stream);
 }}
         """.format(id=idstr,
                    intype=input_data.dtype.ctype,
@@ -586,15 +590,16 @@ cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
         # Write reduction function definition in caller file
         host_globalcode.write(
             """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
         """.format(id=idstr,
                    reduce_range_def=reduce_range_def,
                    intype=input_data.dtype.ctype,
                    outtype=output_data.dtype.ctype), state.parent_graph, state_id, node)
 
         # Call reduction function where necessary
-        host_localcode.write('__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'.format(
-            id=idstr, reduce_range_call=reduce_range_call))
+        host_localcode.write(
+            'DACE_GPU_CHECK(__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream));'.format(
+                id=idstr, reduce_range_call=reduce_range_call))
 
         # Make tasklet
         tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
@@ -903,7 +908,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         isqdim = insubset.squeeze()
         raw_input_data = sdfg.arrays[inedge.data.data]
         raw_output_data = sdfg.arrays[outedge.data.data]
-        warp_size = 64 if common.get_gpu_backend() == 'hip' else 32
+        warp_size = common.gpu_warp_size()
 
         in_type = raw_input_data.dtype
 

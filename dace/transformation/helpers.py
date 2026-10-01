@@ -5,6 +5,7 @@ import copy
 import itertools
 import warnings
 from networkx import MultiDiGraph
+from ordered_set import OrderedSet
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
@@ -820,7 +821,7 @@ def isolate_nested_sdfg(
     #  a backwards search starting from the nodes that serves as input to the nested
     #  SDFG. It is important that these nodes, that serves as input to the nested
     #  SDFG are also belonging to this set. But they are only added if they needed.
-    pre_nodes: Set[nodes.Node] = set()
+    pre_nodes: OrderedSet[nodes.Node] = OrderedSet()
     to_visit: List[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
         input_node: nodes.AccessNode = iedge.src
@@ -840,7 +841,7 @@ def isolate_nested_sdfg(
     #  as input to the nested SDFG and the nested SDFG itself.
     #  Note that the AccessNodes serving as input and output of the nested SDFG
     #  belonging to the pre and post set, respectively, as well.
-    middle_nodes: Set[nodes.Node] = {nsdfg_node}
+    middle_nodes: OrderedSet[nodes.Node] = OrderedSet((nsdfg_node, ))
     for iedge in state.in_edges(nsdfg_node):
         if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
             if test_if_applicable:
@@ -865,10 +866,8 @@ def isolate_nested_sdfg(
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
-    post_nodes: Set[nodes.Node] = {
-        node
-        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
-    }
+    post_nodes: OrderedSet[nodes.Node] = OrderedSet(node for node in state.nodes()
+                                                    if (node not in pre_nodes) and (node not in middle_nodes))
 
     # The second reason, are read dependencies, for this we have to look at the incoming
     #  edges and add any node that we need.
@@ -1961,7 +1960,7 @@ def replace_sdfg_dtypes(
 def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     # Swap nodes
     for node, _ in sdfg.all_nodes_recursive():
-        if hasattr(node, "in_connectors"):
+        if isinstance(node, nodes.Node):
             for in_con_name, in_con_type in node.in_connectors.items():
                 if in_con_type == from_type:
                     node.in_connectors[in_con_name] = to_type
@@ -1971,7 +1970,6 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
                         node.in_connectors[in_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
 
-        if hasattr(node, "out_connectors"):
             for out_con_name, out_con_type in node.out_connectors.items():
                 if out_con_type == from_type:
                     node.out_connectors[out_con_name] = to_type
@@ -2040,7 +2038,7 @@ def _change_struct_type(descriptor: dtypes.struct, from_type: typeclass, to_type
 
 def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     """Change member types for descriptors with members attribute."""
-    if not hasattr(descriptor, "members"):
+    if not isinstance(descriptor, data.Structure):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
     for member_name, member_descriptor in descriptor.members.items():

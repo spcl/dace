@@ -397,25 +397,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # stream, mirroring the _idx flush in _generate_Tasklet.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
-    def heap_alloc_stmt(self,
-                        alloc_name: str,
-                        ctype: str,
-                        arrsize: str,
-                        alignment: int = 0,
-                        sdfg: Optional['SDFG'] = None,
-                        nodedesc: Optional[dt.Data] = None,
-                        data_name: Optional[str] = None) -> str:
-        # Same aligned ``new[]`` as the base generator (paired with the base ``delete[]``), but
-        # route the element count through a generated ``<array>_size(...)`` helper when worthwhile
-        # (see _register_size_function) so the allocation extent reads as a named function; fall back
-        # to the classic ``sym2cpp(total_size)`` string (``arrsize``) otherwise.
-        count = arrsize
-        if sdfg is not None and nodedesc is not None and data_name is not None:
-            registered = self._register_size_function(data_name, nodedesc)
-            if registered is not None:
-                fnname, call_args = registered
-                count = '%s(%s)' % (fnname, ', '.join(call_args))
-        return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
+    def heap_array_count(self, sdfg, data_name, desc, count) -> str:
+        # Name the allocation extent through an ``<array>_size(...)`` helper when worthwhile.
+        registered = self._register_size_function(data_name, desc)
+        if registered is None:
+            return count
+        fnname, call_args = registered
+        return '%s(%s)' % (fnname, ', '.join(call_args))
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG

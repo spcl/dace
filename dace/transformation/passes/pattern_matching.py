@@ -97,7 +97,7 @@ class PatternMatchAndApply(ppl.Pass):
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
             if sdfg.root_sdfg.using_explicit_control_flow:
-                if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
+                if not xform.__explicit_cf_compatible__:
                     warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                   ' due to incompatibility with experimental control flow blocks. If the ' +
                                   'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -216,8 +216,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 applied_anything = False
                 for xform in xforms:
                     if sdfg.root_sdfg.using_explicit_control_flow:
-                        if (not hasattr(xform, '__explicit_cf_compatible__')
-                                or xform.__explicit_cf_compatible__ == False):
+                        if not xform.__explicit_cf_compatible__:
                             warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                           ' due to incompatibility with experimental control flow blocks. If the ' +
                                           'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -382,10 +381,9 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
     Helper function that tries to instantiate a pattern match into a
     transformation object.
     """
-    subgraph = {
-        nxpattern.nodes[j]['node']: graph.node_id(collapsed_graph.nodes[i]['node'])
-        for i, j in subgraph.items()
-    }
+    # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
+    # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
+    subgraph = {nxpattern.nodes[j]['node']: i for i, j in subgraph.items()}
 
     try:
         if isinstance(xform, xf.PatternTransformation):
@@ -402,7 +400,7 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                     setattr(match, oname, oval)
 
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
+            if not match.__explicit_cf_compatible__:
                 warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
                               ' due to incompatibility with experimental control flow blocks. If the ' +
                               'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -465,6 +463,8 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
                 matcher = _node_matcher
             elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
                 matcher = _edge_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 0:
+                matcher = _unconnected_pair_matcher
             else:
                 matcher = _subgraph_isomorphism_matcher
 
@@ -490,6 +490,31 @@ def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
     for nid in digraph:
         if node_pred(digraph.nodes[nid], pnode):
             yield {nid: pnid}
+
+
+def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match two pattern nodes that are not connected by an edge.
+
+        Yields the same matches in the same order as ``_subgraph_isomorphism_matcher``, whose
+        subgraph isomorphisms are induced: ordered pairs of distinct nodes that satisfy the node
+        predicate, are not adjacent in either direction and have no self-edge. VF2 runs its
+        feasibility test on every graph node for the second pattern node, once per candidate for
+        the first, which dominates the matching time on large states.
+    """
+    first, second = nxpattern
+    first_pattern_node = nxpattern.nodes[first]
+    second_pattern_node = nxpattern.nodes[second]
+
+    def candidates(pattern_node):
+        return [
+            nid for nid in digraph if node_pred(digraph.nodes[nid], pattern_node) and not digraph.has_edge(nid, nid)
+        ]
+
+    second_candidates = candidates(second_pattern_node)
+    for u in candidates(first_pattern_node):
+        for v in second_candidates:
+            if u is not v and not digraph.has_edge(u, v) and not digraph.has_edge(v, u):
+                yield {u: first, v: second}
 
 
 def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):

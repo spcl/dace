@@ -1,14 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
 import numpy
+import ml_dtypes
 import re
 from sympy import Float, Integer
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from dace.config import Config
 
@@ -35,11 +38,38 @@ class StorageType(ExtensibleAttributeEnum):
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
     GPU_Global = auto()  #: GPU global memory
-    GPU_Shared = auto()  #: On-GPU shared memory
+
+    @dataclass(frozen=True)
+    class GPU_Shared:
+        """
+        On-GPU shared memory.
+
+        ``StorageType.GPU_Shared`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to choose how the memory is allocated, e.g., ``StorageType.GPU_Shared(dynamic=True)``.
+        """
+        #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
+        #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
+        dynamic: Optional[bool] = None
+
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
+
+
+def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
+    """
+    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
+
+    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
+    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
+             the case for the bare template).
+    """
+    if storage != StorageType.GPU_Shared:
+        raise ValueError(f'Expected a GPU_Shared storage type, got {storage}')
+    if storage._is_template:
+        return None
+    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
@@ -227,6 +257,9 @@ _CTYPES = {
     numpy.uintc: "dace::uint",
     numpy.uint64: "uint64_t",
     numpy.float16: "dace::float16",
+    ml_dtypes.bfloat16: "dace::bfloat16",
+    ml_dtypes.float8_e4m3fn: "dace::float8_e4m3fn",
+    ml_dtypes.float8_e5m2: "dace::float8_e5m2",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
@@ -256,6 +289,10 @@ _FFI_CTYPES = {
     numpy.float64: ctypes.c_double,
     numpy.complex64: ctypes.c_uint64,
     numpy.complex128: ctypes.c_longdouble,
+    # Low-precision types: marshalled as their raw integer storage.
+    ml_dtypes.bfloat16: ctypes.c_uint16,
+    ml_dtypes.float8_e4m3fn: ctypes.c_uint8,
+    ml_dtypes.float8_e5m2: ctypes.c_uint8,
 }
 
 # Number of bytes per data type
@@ -281,6 +318,23 @@ _BYTES = {
     numpy.float64: 8,
     numpy.complex64: 8,
     numpy.complex128: 16,
+    ml_dtypes.bfloat16: 2,
+    ml_dtypes.float8_e4m3fn: 1,
+    ml_dtypes.float8_e5m2: 1,
+}
+
+#: Width of Python's scalar types, per ``compiler.default_data_types``.
+_DEFAULT_DATA_TYPES = {
+    'python': {
+        int: numpy.int64,
+        float: numpy.float64,
+        complex: numpy.complex128
+    },
+    'c': {
+        int: numpy.int32,
+        float: numpy.float32,
+        complex: numpy.complex64
+    },
 }
 
 
@@ -304,30 +358,15 @@ class typeclass(object):
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
 
-        config_data_types = Config.get('compiler', 'default_data_types')
-
-        if wrapped_type is int:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.int64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.int32
-            else:
+        # Only Python's scalar types consult the configuration; every other type paid the lookup.
+        if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
+            config_data_types = Config.get('compiler', 'default_data_types')
+            widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
+            if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is float:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.float64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.float32
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is complex:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.complex128
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.complex64
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is bool:
+            wrapped_type = widths[wrapped_type]
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
@@ -527,6 +566,14 @@ def result_type_of(lhs, *rhs):
     if numpy.issubdtype(rhs_, numpy.integer):
         return lhs
     # Both sides are floating point numbers
+    # A complex type is not simply a wider float: half its width is the imaginary part, so its real
+    # component is only ``itemsize // 2``. Comparing byte widths alone therefore ties complex64 with
+    # float64 and lets argument order settle it -- ``result_type_of(complex64, double)`` answered
+    # ``double`` and dropped the imaginary part, while the same two the other way round answered
+    # ``complex64`` and dropped half the real precision. Where exactly one side is complex, take
+    # numpy's rule: the result is complex and wide enough for the other side's precision.
+    if numpy.issubdtype(lhs_, numpy.complexfloating) != numpy.issubdtype(rhs_, numpy.complexfloating):
+        return typeclass(numpy.promote_types(lhs_, rhs_).type)
     if size_lhs > size_rhs:
         return lhs
     return rhs  # RHS is bigger
@@ -1178,6 +1225,9 @@ if TYPE_CHECKING:
     class uint32(_DaCeArray, npt.NDArray[numpy.uint32]): ...
     class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
     class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
+    class bfloat16(_DaCeArray, npt.NDArray): ...
+    class float8_e4m3fn(_DaCeArray, npt.NDArray): ...
+    class float8_e5m2(_DaCeArray, npt.NDArray): ...
     class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
     class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
@@ -1199,6 +1249,14 @@ else:
     uint32 = typeclass(numpy.uint32)
     uint64 = typeclass(numpy.uint64)
     float16 = typeclass(numpy.float16)
+    # Low-precision types backed by ml_dtypes scalars (numpy-registered), named
+    # verbatim as ml_dtypes names them. E4M3 is the finite ``fn`` variant
+    # (max +-448, no inf) -- the hardware E4M3 of NVIDIA __nv_fp8_e4m3 / AMD /
+    # OCP training. Backed by dace::bfloat16 / dace::float8_e4m3fn / dace::float8_e5m2 in
+    # runtime/include/dace/types.h -- bit-identical to the CUDA/HIP native types.
+    bfloat16 = typeclass(ml_dtypes.bfloat16)
+    float8_e4m3fn = typeclass(ml_dtypes.float8_e4m3fn)
+    float8_e5m2 = typeclass(ml_dtypes.float8_e5m2)
     float32 = typeclass(numpy.float32)
     float64 = typeclass(numpy.float64)
     complex64 = typeclass(numpy.complex64)
@@ -1227,6 +1285,9 @@ def dtype_to_typeclass(dtype=None):
         numpy.uint64: uint64,
         numpy.uintc: uint32,
         numpy.float16: float16,
+        ml_dtypes.bfloat16: bfloat16,
+        ml_dtypes.float8_e4m3fn: float8_e4m3fn,
+        ml_dtypes.float8_e5m2: float8_e5m2,
         numpy.float32: float32,
         numpy.float64: float64,
         numpy.complex64: complex64,
@@ -1239,6 +1300,10 @@ def dtype_to_typeclass(dtype=None):
         return DTYPE_TO_TYPECLASS
     return DTYPE_TO_TYPECLASS[dtype]
 
+
+FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}
+
+INT_TYPES = {int8, int16, int32, int64, uintp, uint8, uint16, uint32, uint64}
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
@@ -1256,6 +1321,9 @@ TYPECLASS_TO_STRING = {
     int32: "dace::int32",
     int64: "dace::int64",
     float16: "dace::float16",
+    bfloat16: "dace::bfloat16",
+    float8_e4m3fn: "dace::float8_e4m3fn",
+    float8_e5m2: "dace::float8_e5m2",
     float32: "dace::float32",
     float64: "dace::float64",
     complex64: "dace::complex64",
@@ -1272,6 +1340,9 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
     uint32: 'u32',
     uint64: 'u64',
     float16: 'f16',
+    bfloat16: 'bf16',
+    float8_e4m3fn: 'e4m3fn',
+    float8_e5m2: 'e5m2',
     float32: 'f32',
     float64: 'f64',
 }
@@ -1294,7 +1365,7 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
 
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
-    "uint64", "float16", "float32", "float64", "complex64", "complex128"
+    "uint64", "float16", "bfloat16", "float8_e4m3fn", "float8_e5m2", "float32", "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]
@@ -1602,9 +1673,14 @@ def is_gpu_array(obj: Any) -> bool:
         # variables that require grad, or KeyError when a boolean array is used
         return False
 
-    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
-        if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
+    try:
+        if hasattr(obj, 'data') and hasattr(obj.data, 'ptr') and hasattr(obj, 'device') and getattr(
+                obj.device, 'id', -1) >= 0:  # CuPy special case with HIP
             return True
+    except (ValueError, TypeError):
+        # numpy arrays of extension dtypes (ml_dtypes bf16/fp8) raise when building a
+        # buffer for .data; they are host arrays, so fall through to the False below.
+        pass
 
     return False
 
