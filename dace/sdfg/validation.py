@@ -429,6 +429,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
 
+    # Hoisted out of the per-edge loop below: the config cannot change mid-validation
+    validate_undefs = Config.get_bool('experimental', 'validate_undefs')
+
     # Reference check
     if id(state) in references:
         raise InvalidSDFGError(
@@ -844,7 +847,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                                    eid)
 
             # Test subset and other_subset for undefined symbols
-            if Config.get_bool('experimental', 'validate_undefs'):
+            if validate_undefs:
                 # TODO: Traverse by scopes and accumulate data
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols - set(defined_symbols.keys()))
