@@ -39,6 +39,38 @@ def test_single_target_parentheses():
 
 
 @dace.program
+def single_target_tuple(a: dace.float32[1], b: dace.float32[1], c: dace.float32[2]):
+    c = (a, b)
+
+
+def test_single_target_tuple():
+    a = np.zeros((1, ), dtype=np.float32)
+    b = np.zeros((1, ), dtype=np.float32)
+    c = np.zeros((2, ), dtype=np.float32)
+    a[0] = np.pi
+    b[0] = 2 * np.pi
+    single_target_tuple(a=a, b=b, c=c)
+    assert (c[0] == a[0])
+    assert (c[1] == b[0])
+
+
+@dace.program
+def single_target_tuple_with_definition(a: dace.float32[1], b: dace.float32[1]):
+    c = (a, b)
+    return c
+
+
+def test_single_target_tuple_with_definition():
+    a = np.zeros((1, ), dtype=np.float32)
+    b = np.zeros((1, ), dtype=np.float32)
+    a[0] = np.pi
+    b[0] = 2 * np.pi
+    c = single_target_tuple_with_definition(a=a, b=b)
+    assert (c[0] == a[0])
+    assert (c[1] == b[0])
+
+
+@dace.program
 def multiple_targets(a: dace.float32[1]):
     b, c = a, 2 * a
     return b, c
@@ -243,6 +275,8 @@ def test_augassign_to_compiletime_scalar():
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
+    test_single_target_tuple()
+    test_single_target_tuple_with_definition()
     test_multiple_targets()
     test_multiple_targets_parentheses()
     test_multiple_targets_unpacking()
