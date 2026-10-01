@@ -3090,24 +3090,15 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(self,
-                                  states=None,
-                                  validate=True,
-                                  validate_all=False,
-                                  simplify=True,
-                                  host_maps=False,
-                                  pin_host_loop_maps=False):
+    def apply_gpu_transformations(self, validate=True, simplify=True, host_maps=False, pin_host_loop_maps=False):
         """ Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
-            :param states: unused; kept so a caller passing it keeps working.
             :param validate: validate the SDFG afterwards.
-            :param validate_all: as ``validate``.
             :param simplify: simplify afterwards, folding the copy states the offloading inserted.
-            :param host_maps: which maps keep a HOST schedule, so the maps under them become the
-                              kernels. ``False`` (the default), ``None`` and ``[]`` name none and run
-                              no heuristics; ``True`` derives them; a list names them outright, each
-                              as a map label or as the ``MapEntry`` itself. A map holding a callback
-                              stays on the host whatever this says -- a kernel cannot issue one.
+            :param host_maps: maps that keep a host schedule, so the maps under them become the kernels:
+                              ``False``, ``None`` or ``[]`` name none, ``True`` derives them, a list names
+                              them as labels or ``MapEntry`` nodes. A map holding a callback stays on the host
+                              whatever this says.
             :param pin_host_loop_maps: keep a serial host loop's small maps on the host when offloading them
                                        would copy what they share with the loop's host code every iteration.
             :note: This is an in-place operation on the SDFG.
@@ -3116,14 +3107,11 @@ class SDFG(ControlFlowRegion):
         from dace.transformation import pass_pipeline as ppl
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        # The pipeline runs ControlFlowRaising first, which the offloading depends on.
         ppl.Pipeline([OffloadToAccelerator(host_maps=host_maps,
                                            pin_host_loop_maps=pin_host_loop_maps)]).apply_pass(self, {})
-        # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
-        # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:
             self.simplify()
-        if validate or validate_all:
+        if validate:
             self.validate()
 
     def expand_library_nodes(self, recursive=True):

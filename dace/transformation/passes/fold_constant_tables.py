@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fold literal-filled tables into SDFG constants."""
 import ast
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from ordered_set import OrderedSet
@@ -12,7 +12,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 
 #: Per table: the state that fills it, and the fill tasklets with the index and value each writes.
-Fill = Tuple[SDFGState, Dict[nodes.Tasklet, Tuple[int, object]]]
+Fill = tuple[SDFGState, dict[nodes.Tasklet, tuple[int, object]]]
 
 
 @properties.make_properties
@@ -33,7 +33,7 @@ class FoldConstantTables(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.Nodes
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[OrderedSet[str]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> OrderedSet[str] | None:
         """
         :return: the names of the folded tables, or None if there is none.
         """
@@ -51,10 +51,10 @@ class FoldConstantTables(ppl.Pass):
         return OrderedSet(folded) or None
 
 
-def literal_fills(sdfg: SDFG) -> Dict[str, Fill]:
+def literal_fills(sdfg: SDFG) -> dict[str, Fill]:
     """Transient 1-D tables whose every element is written once, by a tasklet assigning a literal, in one state
     outside every loop, and that nothing else writes."""
-    fills: Dict[str, Fill] = {}
+    fills: dict[str, Fill] = {}
     refused: OrderedSet[str] = OrderedSet(sdfg.constants)
     for state in sdfg.states():
         for node in state.data_nodes():
@@ -75,7 +75,7 @@ def literal_fills(sdfg: SDFG) -> Dict[str, Fill]:
     }
 
 
-def literal_write(state: SDFGState, edge) -> Optional[Tuple[int, object]]:
+def literal_write(state: SDFGState, edge) -> tuple[int, object] | None:
     """``(index, value)`` when ``edge`` comes from an input-less tasklet assigning a literal to one element."""
     tasklet = edge.src
     if not isinstance(tasklet, nodes.Tasklet) or state.in_degree(tasklet) or state.out_degree(tasklet) != 1:

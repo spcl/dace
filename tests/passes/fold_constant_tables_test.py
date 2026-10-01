@@ -13,8 +13,8 @@ TABLE = (2.0, 3.0, 4.0, -99.0)
 def table_then_use(skip: int = -1, looped: bool = False, rewrite: bool = False) -> dace.SDFG:
     """``table[k] = TABLE[k]`` by one tasklet per element, then ``out[i] = table[i] * 2``.
 
-    ``skip`` leaves one element unfilled, ``looped`` puts the fill in a loop, ``rewrite`` writes ``table[0]`` again
-    in the second state.
+    ``skip`` leaves one element unfilled, ``looped`` fills inside a loop, ``rewrite`` writes ``table[0]`` again in
+    the second state.
     """
     sdfg = dace.SDFG(f'table_then_use_{skip + 1}_{looped}_{rewrite}')
     sdfg.add_array('out', [len(TABLE)], dace.float64)

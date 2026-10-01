@@ -56,14 +56,8 @@ def test_write_subset():
     assert np.array_equal(ref, val)
 
 
-def test_a_fully_overwritten_array_is_not_staged_down_first():
-    """An array nothing reads, that a map overwrites entirely, needs no host-to-device copy.
-
-    Its entry value cannot be observed, so staging it down transfers the whole array on every call
-    and then discards it. The copy-out still has to happen, which is what makes the elision safe
-    only when the device writes ALL of it.
-    """
-
+def test_write_full():
+    """An array nothing reads, that a map overwrites entirely, needs no host-to-device copy; the copy-out remains."""
     M, N = dace.symbol('M'), dace.symbol('N')
 
     @dace.program
@@ -85,9 +79,8 @@ def test_a_fully_overwritten_array_is_not_staged_down_first():
 
 
 def test_a_partially_written_array_keeps_its_copy_in():
-    """The control for the elision above: a map covering only part of the array must still be staged
-    down, because the copy-out sends the whole device buffer back and the untouched elements have to
-    be the ones the caller passed in, not whatever the allocation held."""
+    """A map covering only part of the array is staged down: the copy-out returns the whole device buffer, so the
+    elements the map skips must be the caller's."""
 
     M = dace.symbol('M')
 
@@ -106,10 +99,8 @@ def test_a_partially_written_array_keeps_its_copy_in():
 
 
 def test_an_indirect_write_keeps_its_copy_in():
-    """``A[x[i], y[j]]`` carries the WHOLE array as its subset -- that is where it might land -- while
-    writing 256 of the 400 elements. A covering subset is therefore not proof the array is fully
-    written, and the volume is what says so; without that second test the copy-in is dropped and the
-    144 elements the scatter misses come back as whatever the allocation held."""
+    """``A[x[i], y[j]]`` carries the whole array as its subset while writing 256 of the 400 elements: a covering
+    subset is not proof of a full write, the volume is, so the copy-in stays."""
 
     @dace.program
     def write_subset_dynamic(A: dace.int32[20, 20], x: dace.int32[20], y: dace.int32[20]):
@@ -169,17 +160,14 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+    sdfg.apply_gpu_transformations(simplify=False)
 
     sdfg.validate()
 
 
 def test_free_tasklet_connectorless_dependency_edge():
-    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge --
-    e.g. an edge sequencing a reduction-init tasklet -- must wrap in the GPU_Device map
-    without crashing. Pre-fix the connector rebuild did ``'IN_' + e.dst_conn`` and threw
-    ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
-    dependency edge with no IN_/OUT_ connector."""
+    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge, e.g. one sequencing a
+    reduction-init tasklet, is wrapped in the GPU_Device map as a dependency edge without an IN_/OUT_ connector."""
     sdfg = dace.SDFG("gcode_depedge")
     arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
     state = sdfg.add_state("main")
@@ -194,14 +182,14 @@ def test_free_tasklet_connectorless_dependency_edge():
     state.add_nedge(seed, follow, dace.memlet.Memlet())
 
     sdfg.validate()
-    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+    sdfg.apply_gpu_transformations(simplify=False)
     sdfg.validate()
 
 
 if __name__ == '__main__':
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
-    test_a_fully_overwritten_array_is_not_staged_down_first()
+    test_write_full()
     test_a_partially_written_array_keeps_its_copy_in()
     test_an_indirect_write_keeps_its_copy_in()
     test_write_subset_dynamic()

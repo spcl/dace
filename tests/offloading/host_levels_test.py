@@ -28,7 +28,7 @@ def row_sums_with_a_device_reduce() -> dace.SDFG:
 
 
 def test_a_map_around_a_host_issued_library_call_launches_it_from_the_host():
-    """Inside a kernel the cub device reduce did not compile; the map now stays host code around the call."""
+    """A cub device reduce cannot be issued from a kernel, so the map around it stays host code."""
     sdfg = row_sums_with_a_device_reduce()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()

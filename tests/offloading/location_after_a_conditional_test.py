@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A container only the later arm of a conditional writes on the device is copied back for a host read after it.
 
-Location propagation walked the IR in pre-order, so the conditional's close node forwarded its locations
-once its FIRST arm reached it. A transient only the second arm writes then had no location in the blocks
-after the conditional, and the host read behind them was renamed to a host twin nothing declared.
+The blocks after a conditional know the locations every arm leaves, not only the first.
 """
 import numpy as np
 import pytest

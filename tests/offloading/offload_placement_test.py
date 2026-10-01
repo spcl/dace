@@ -2,7 +2,6 @@
 """Where ``OffloadToAccelerator`` places data and copies: one graph per defect, plus its numeric companion."""
 import numpy as np
 import pytest
-from ordered_set import OrderedSet
 
 import dace
 from dace import data, dtypes
@@ -11,20 +10,13 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading import offloading_helpers as helpers
-from dace.transformation.passes.offloading.offloading_helpers import traverse_IR
-from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
 #: Extent of the ordering-edge graph.
 LENGTH = 16
 
 
 def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
-    """A device map over ``A``, then a state whose HOST tasklet writes ``A[0]``.
-
-    The interstate edge between them reads ``C``, which is what makes the pass build an edge node
-    for the second state -- and an edge node carries the same block object as the state node that
-    follows it.
-    """
+    """A device map over ``A``, then a state whose HOST tasklet writes ``A[0]``, behind an interstate edge reading ``C``."""
     sdfg = dace.SDFG('host_tasklet_behind_an_interstate_read')
     sdfg.add_array('A', [256], dace.float64)
     sdfg.add_array('C', [256], dace.int64)
@@ -42,12 +34,7 @@ def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
 
 
 def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
-    """An edge node decides about the interstate edges REACHING a block, not about the block.
-
-    It holds the same block object as the state node behind it, so letting its decision fall
-    through to the block renamed dataflow the state node had already placed on the host -- tsvc
-    ``s315``, where a host tasklet writing ``a`` came out writing ``a_gpu``.
-    """
+    """A host tasklet behind an interstate read keeps writing the host array (tsvc ``s315``)."""
     sdfg = host_tasklet_behind_an_interstate_read()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
@@ -76,7 +63,7 @@ def two_host_tasklets_beside_a_kernel_then_an_interstate_read() -> dace.SDFG:
                              external_edges=True)
     sdfg.add_edge(mixed, after, dace.InterstateEdge(assignments={'k': 'B[0]'}))
     sdfg.validate()
-    # What ``apply_gpu_storage`` does to a signature; the edge now reads device memory until copies exist.
+    # What ``apply_gpu_storage`` does to a signature; the edge reads device memory until copies exist.
     for desc in sdfg.arrays.values():
         desc.storage = dtypes.StorageType.GPU_Global
     return sdfg
@@ -121,10 +108,7 @@ def test_the_fused_wrappers_compute_what_the_host_tasklets_computed():
 
 
 def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
-    """A guard whose FIRST arm is a host loop, a kernel, then an edge reading ``A[0]``.
-
-    Nothing before the edge touches ``A``, so only propagation carries its location to the edge.
-    """
+    """A guard whose first arm is a host loop and whose second is a kernel, then an edge reading ``A[0]``; nothing before the edge touches ``A``."""
     sdfg = dace.SDFG('fallback_arm_first_then_an_interstate_read')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [4], dace.int64, storage=dtypes.StorageType.GPU_Global)
@@ -163,13 +147,7 @@ def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
 
 
 def test_a_join_hands_on_the_locations_its_later_arm_carries():
-    """QE vexx_k: the edge read ``iexx_istart_host``, a copy nobody made.
-
-    The fallback arm's tail does not propagate into the guard's close, so only the parallel arm
-    carries ``A`` there. Walked depth-first, the close and everything after it were visited from the
-    fallback arm first, before the parallel arm arrived: the edge was renamed onto the host twin
-    while its predecessor recorded no location for ``A``, so no copy was placed.
-    """
+    """The edge after a conditional reads ``A`` where the later arm left it, and the copy for that read exists (QE vexx_k)."""
     sdfg = fallback_arm_first_then_an_interstate_read()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
@@ -193,13 +171,8 @@ def test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes():
 
 
 def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
-    """One state whose top level holds a device map and a free region with two roots.
-
-    The two roots differ in exactly what the bug turned on: ``scale`` reads an array, so wrapping
-    the region rewires a real edge for it; ``seed`` reads nothing, so it has no edge to rewire and
-    only an ordering edge can put it under the entry. Both feed ``combine``, which is what makes
-    them one region rather than two -- and what makes leaving one behind an invalid path rather
-    than a missed wrap (tsvc s252's shape).
+    """One state holding a device map and a free region with two roots feeding ``combine``: ``scale`` reads an array,
+    ``seed`` reads nothing, so only an ordering edge can put it under the wrapper's entry (tsvc ``s252``).
     """
     sdfg = dace.SDFG('free_computation_with_a_reading_and_a_sourceless_tasklet')
     sdfg.add_array('A', [256], dace.float64)
@@ -230,12 +203,7 @@ def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
 
 
 def test_a_wrapped_region_puts_every_root_under_its_entry():
-    """A size-1 wrapper holds the whole region, including the parts with nothing to rewire.
-
-    Leaving one root outside is not a missing optimization: the rest of the region IS in the scope,
-    so the edge between them runs from inside the map to outside it and validation rejects the
-    graph -- tsvc ``s252``, ``sink node _Add_ should be a data node``.
-    """
+    """A size-1 wrapper holds the whole region: a root left outside makes an edge run from inside the map to outside it."""
     sdfg = free_computation_with_a_reading_and_a_sourceless_tasklet()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
@@ -309,11 +277,8 @@ def test_a_host_copy_out_of_a_kernel_output_is_not_a_kernel_write():
 
 
 def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
-    """A hybrid state whose free tasklet writes a scalar, and a second state that reads it.
-
-    ``pick`` reads device data, so the size-1 wrapper pulls it in -- and the ``acc`` access node it
-    writes comes with it. Nothing then crosses the ``MapExit``, which is the only boundary the
-    placement analysis looked at.
+    """A hybrid state whose free tasklet writes a scalar, and a second state that reads it: the size-1 wrapper pulls
+    the tasklet and the scalar's access node in, so nothing crosses the ``MapExit``.
     """
     sdfg = dace.SDFG('kernel_writing_a_scalar_a_later_state_reads')
     sdfg.add_array('A', [256], dace.float64)
@@ -328,9 +293,8 @@ def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
     acc = produce.add_access('acc')
     produce.add_edge(produce.add_read('B'), None, pick, 'inp', dace.Memlet('B[0]'))
     produce.add_edge(pick, 'out', acc, None, dace.Memlet('acc[0]'))
-    # A second consumer INSIDE the region is what makes ``acc`` interior. Without it the access node
-    # is the region's last node, the wrapper leaves it outside the ``MapExit``, and the old
-    # boundary-only analysis already saw it -- so the shape under test would not be durbin's.
+    # A second consumer inside the region makes ``acc`` interior; as the region's last node it would stay outside
+    # the ``MapExit``.
     use = produce.add_tasklet('use', {'inp': None}, {'out': None}, 'out = inp * 3.0')
     produce.add_edge(acc, None, use, 'inp', dace.Memlet('acc[0]'))
     produce.add_edge(use, 'out', produce.add_write('B'), None, dace.Memlet('B[1]'))
@@ -344,12 +308,8 @@ def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
 
 
 def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
-    """A scalar goes into a kernel BY VALUE, so a kernel that writes one loses the write.
-
-    No error is raised and no launch fails -- polybench durbin ran to completion and returned wrong
-    numbers, because every iteration read the host ``alpha`` the previous kernel had only written to
-    its own stack. The write is observable outside the kernel, so the descriptor has to be device
-    memory and the parameter a pointer.
+    """A scalar enters a kernel by value, so a kernel that writes one loses the write: the descriptor has to be device
+    memory and the parameter a pointer (polybench durbin).
     """
     sdfg = kernel_writing_a_scalar_a_later_state_reads()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
@@ -379,13 +339,7 @@ def copy_blocks_for(sdfg: dace.SDFG, name: str):
 
 
 def indirect_read_only_sdfg() -> dace.SDFG:
-    """``idx`` read by a parallel map AND by a sequential data-dependent loop, and written by neither.
-
-    The map is the parallel consumer: it reads ``idx[i]`` to place its result, which is the indirect
-    access an index array exists for. The loop is the sequential one: each step's index is the
-    PREVIOUS step's value, so it cannot be a map and it is host code. Nothing writes ``idx``, so the
-    two sides can never disagree about it -- which is the whole reason one copy is enough.
-    """
+    """``idx`` is read by a parallel map and by a sequential data-dependent loop (host code), and written by neither."""
     sdfg = dace.SDFG('indirect_read_only')
     sdfg.add_array('idx', [16], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('data', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
@@ -413,12 +367,8 @@ def indirect_read_only_sdfg() -> dace.SDFG:
 
 
 def test_a_read_only_array_both_sides_read_is_copied_exactly_once():
-    """The duplicate is made once at entry, not once per crossing.
-
-    ``idx`` is read on both sides and written by neither, so the host copy can never go stale: one
-    copy at entry serves every host read for the rest of the run. Counting is the assertion that
-    separates this from the read-write placement, which has to copy on every crossing to stay
-    coherent -- and the loop here would make that one copy per iteration.
+    """``idx`` is read on both sides and written by neither, so one copy at entry serves every host read; a read-write
+    container would be copied on every crossing, once per loop iteration here.
     """
     sdfg = indirect_read_only_sdfg()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
@@ -432,12 +382,8 @@ def test_a_read_only_array_both_sides_read_is_copied_exactly_once():
 
 
 def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
-    """A container only host code touches gets a home, not a kernel.
-
-    The alternative the pass reaches for -- declaring the state hybrid and lifting the tasklet into
-    a size-1 map -- is correct but pays a kernel launch per iteration for a scalar accumulation.
-    Staging it costs one copy each way for the whole run, and the write-back is what makes the
-    caller's array hold the answer.
+    """A container only host code touches gets a home, not a kernel: one copy each way for the whole run instead of a
+    size-1 kernel launch per iteration.
     """
     sdfg = indirect_read_only_sdfg()
     # `total` is touched by the host loop alone: no map, no library node, nothing on the device.
@@ -455,11 +401,7 @@ def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
 
 
 def cpu_heap_sdfg() -> dace.SDFG:
-    """One map writing a non-transient array, with every descriptor on ``CPU_Heap``.
-
-    That is the storage ``auto_optimize(DeviceType.CPU)`` leaves behind, and the shape the rename
-    below was blind to.
-    """
+    """One map writing a non-transient array, with every descriptor on ``CPU_Heap`` (what ``auto_optimize`` for the CPU leaves)."""
     sdfg = dace.SDFG('cpu_heap_offload')
     for name in ('A', 'B'):
         sdfg.add_array(name, [32], dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
@@ -471,13 +413,8 @@ def cpu_heap_sdfg() -> dace.SDFG:
 
 
 def test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy():
-    """A host array the offloading puts on the device must be RENAMED at every device access.
-
-    The rename asked whether the descriptor's storage was ``Default``, which is one host storage of
-    several: after ``auto_optimize`` for the CPU every array carries ``CPU_Heap`` instead, so the
-    test was False and the kernel kept writing the HOST array, while the copy-back overwrote it with
-    a device buffer nothing had written. vadv came back exactly as it went in -- a wrong answer with
-    a valid graph, which is why this is asserted on the graph and not only through a result.
+    """A host array put on the device is renamed at every device access, whichever host storage it was declared with;
+    asserted on the graph because a wrong rename still validates (npbench vadv).
     """
     sdfg = cpu_heap_sdfg()
     sdfg.apply_gpu_transformations(simplify=False)
@@ -507,67 +444,35 @@ def test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy():
             'reaches the device buffer that is copied back')
 
 
-#: Blocks in a chain, comfortably past CPython's 1000-frame default. CloudSC canonicalized for the
-#: GPU carries about twice this, which is the graph that produced the failure below.
+#: States in a chain, comfortably past CPython's 1000-frame default. CloudSC canonicalized for the GPU
+#: carries about twice this.
 LONG_CHAIN = 5000
 
 
-def ir_chain(length: int):
-    """``(open, [states])`` for one section holding ``length`` states in a row.
+def empty_chain_then_kernel(length: int) -> dace.SDFG:
+    """``length`` empty states in a row, then a kernel over ``A``."""
+    sdfg = dace.SDFG('empty_chain_then_kernel')
+    sdfg.add_array('A', [LENGTH], dace.float64)
+    previous = sdfg.add_state('first', is_start_block=True)
+    for index in range(length - 1):
+        previous = sdfg.add_state_after(previous, f'empty_{index}')
+    last = sdfg.add_state_after(previous, 'kernel')
+    last.add_mapped_tasklet('scale', {'i': f'0:{LENGTH}'}, {'a': dace.Memlet('A[i]')},
+                            'o = a * 2.0', {'o': dace.Memlet('A[i]')},
+                            external_edges=True)
+    return sdfg
 
-    The shape the IR pass builds for straight-line code: ``open -> s0 -> ... -> sN-1 -> close``.
+
+def test_the_placement_does_not_recurse_once_per_block():
+    """The placement spends no Python frame per block, so a chain longer than the interpreter's recursion limit
+    offloads, and the copy-in of ``A`` crosses the whole chain: nothing in it touches ``A``.
     """
-    sdfg = dace.SDFG('ir_chain')
-    region = sdfg.add_state('section')
-    open_node = OffloadingIRNode.new_open_node(region)
-    states = [
-        OffloadingIRNode.new_state_node(sdfg.add_state(f's{i}'), OrderedSet(), OrderedSet()) for i in range(length)
-    ]
-    previous = open_node
-    for state in states:
-        previous.append_node(state)
-        previous = state
-    previous.append_node(open_node.close)
-    return open_node, states
-
-
-def test_the_ir_walk_does_not_recurse_once_per_block():
-    """The IR holds one node per state and per interstate edge, so its chain is as long as the
-    program has blocks. Walking it by RECURSION spends one Python frame per block and overran the
-    interpreter stack on the first application-sized kernel: CloudSC canonicalized for the GPU died
-    with ``RecursionError: maximum recursion depth exceeded`` inside ``apply_gpu_transformations``,
-    which stopped its whole GPU canonicalization (and with it every CPF device render of it).
-
-    A chain is also the case where the answer is obvious, so this asserts the RESULT as well as the
-    absence of the crash: the one tail of a straight line is its last state."""
-    open_node, states = ir_chain(LONG_CHAIN)
-    assert open_node.get_all_tails() == [states[-1]]
-
-
-def test_traverse_ir_does_not_recurse_once_per_block():
-    """:func:`~dace.transformation.passes.offloading.offloading_helpers.traverse_IR` walks the same
-    chain and had the same stack cost. It visits every node exactly once, in the order the
-    recursion did -- which is what the collected labels check."""
-    open_node, states = ir_chain(LONG_CHAIN)
-    seen = []
-    traverse_IR(open_node, seen.append)
-    assert seen == [open_node] + states + [open_node.close]
-
-
-def test_a_tail_contributes_none_of_its_remaining_siblings():
-    """The recursive walk stopped at the FIRST child that was the close node and skipped the rest,
-    which is what makes a branching section report one tail per arm rather than per edge. The
-    iterative walk has to keep that, so a node with a close child and a further child contributes
-    itself and nothing below that child."""
-    sdfg = dace.SDFG('ir_branch')
-    open_node = OffloadingIRNode.new_open_node(sdfg.add_state('section'))
-    head = OffloadingIRNode.new_state_node(sdfg.add_state('head'), OrderedSet(), OrderedSet())
-    skipped = OffloadingIRNode.new_state_node(sdfg.add_state('skipped'), OrderedSet(), OrderedSet())
-    open_node.append_node(head)
-    head.append_node(open_node.close)
-    head.append_node(skipped)
-    skipped.append_node(open_node.close)
-    assert open_node.get_all_tails() == [head]
+    sdfg = empty_chain_then_kernel(LONG_CHAIN)
+    # The chain is structured already; ControlFlowRaising, which the pipeline would run first, is quadratic in it.
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    first = sdfg.start_block
+    assert first.label.startswith('copy_A_'), first.label
+    assert sdfg.number_of_nodes() == LONG_CHAIN + 3
 
 
 @pytest.mark.gpu
@@ -584,10 +489,7 @@ def test_a_cpu_heap_array_survives_the_round_trip():
 
 
 def ordering_edge_after_a_kernel() -> dace.SDFG:
-    """A kernel writes ``A``; an empty memlet orders the read of scalar ``s`` by a second kernel after it.
-
-    CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
-    """
+    """A kernel writes ``A``; an empty memlet orders the read of scalar ``s`` by a second kernel after it (CloudSC ``zpsupsatsrce``)."""
     sdfg = dace.SDFG('ordering_edge_after_a_kernel')
     sdfg.add_array('A', [LENGTH], dace.float64)
     sdfg.add_array('B', [LENGTH], dace.float64)
@@ -683,7 +585,7 @@ def per_iteration_scratch() -> dace.SDFG:
 
 
 def test_a_transient_one_kernel_uses_is_a_register():
-    """GPUTransformSDFG made such a transient a register; left in GPU_Global a block-wide reduce refuses it."""
+    """A transient only one kernel accesses is a register: in ``GPU_Global`` a block-wide reduce refuses it."""
     sdfg = per_iteration_scratch()
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()
@@ -883,7 +785,7 @@ def host_accumulator_beside_a_kernel_in_a_loop(length: int) -> dace.SDFG:
 
 @pytest.mark.parametrize('length', [1, 4])
 def test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length):
-    """A length-1 ``PE`` becomes a staged scalar, which inherited ``GPU_Global`` and was then read on the host."""
+    """A length-1 host accumulator is staged as a scalar that stays on the host, not wrapped into a kernel."""
     sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()

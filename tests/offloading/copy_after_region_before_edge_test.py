@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A loop whose kernel writes an array the next interstate edge reads on the host gets its copy after the loop.
 
-The loop's IR node is a CLOSE, which has no block of its own, and a copy in front of an interstate edge is
-placed AFTER the node: with neither side a block the offloader raised "invalid: both states are None", which
-made bdf_newton_krylov unsupported on the canon GPU column.
+A loop is not a state, and a copy in front of an interstate edge is placed after the block the edge leaves.
 """
 import numpy as np
 import pytest

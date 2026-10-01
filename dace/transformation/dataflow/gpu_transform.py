@@ -21,12 +21,6 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
     fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
-    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=False)
-
-    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=False)
-
-    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
-
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
@@ -93,14 +87,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             cnode = self.reduce
             nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
 
-        # Avoiding import loops
-        from dace.transformation import pass_pipeline as ppl
-        from dace.transformation.passes.offloading import OffloadToAccelerator
-
-        # The nested SDFG this just built is a whole program as far as the offloading is concerned,
-        # which is the only offloader there is: it decides placement from the control flow and
-        # copies where the location changes.
-        ppl.Pipeline([OffloadToAccelerator()]).apply_pass(nsdfg_node.sdfg, {})
+        nsdfg_node.sdfg.apply_gpu_transformations(validate=False)
 
         # Inline back as necessary
         sdfg.simplify()

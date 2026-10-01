@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A loop whose body ends in a conditional copies its host writes back to the device once per iteration.
 
-Every branch of the conditional is a tail of the loop body and each one resolves to the same ConditionalBlock,
-so the offloader stacked one identical ``A -> A_gpu`` copy state after it per branch: 24 in a row after one
-CLOUDSC branch, 11704 repeated copies over the whole graph.
+The copy follows the conditional once, not once per branch.
 """
 import collections
 

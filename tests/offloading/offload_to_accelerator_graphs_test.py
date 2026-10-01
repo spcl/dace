@@ -631,9 +631,8 @@ def test_single_element_copy():
 def device_map_state_sdfg(host_writer_between: bool, reads_b: bool = False) -> dace.SDFG:
     """Two device states, and ``B`` first touched on the device in the second of them.
 
-    With ``host_writer_between`` a host state writing ``B`` sits between the two, which is what
-    pins ``B``'s copy to that point instead of letting it move up. With ``reads_b`` the second map
-    also reads ``B``, so its entry value is observed and has to be staged down.
+    With ``host_writer_between`` a host state writing ``B`` sits between the two, which pins ``B``'s copy below it.
+    With ``reads_b`` the second map also reads ``B``, so its entry value is observed and has to be staged down.
     """
     sdfg = dace.SDFG("device_map_states_" + ("pinned" if host_writer_between else "free"))
     sdfg.add_array("A", [20], dace.float64)
@@ -683,11 +682,8 @@ def writes_container(state: dace.SDFGState, name: str) -> bool:
 
 
 def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array():
-    """A copy for an array first used on the device late must not split the device states.
-
-    ``B`` is only touched in the second of two device states, so the copy that puts it on the
-    device is placed between them -- a host state in the middle of a run of kernels, which is
-    exactly what a caller fusing that run into one persistent kernel cannot swallow.
+    """``B`` is only touched in the second of two device states, so its copy moves above the first: no host state sits
+    in the middle of a run of kernels that a persistent-kernel fusion would have to swallow.
     """
     sdfg = device_map_state_sdfg(host_writer_between=False, reads_b=True)
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -729,10 +725,7 @@ def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
 
 
 def read_only_input_sdfg() -> dace.SDFG:
-    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule.
-
-    ``C`` is touched by nothing at all, the case that must not be placed anywhere.
-    """
+    """``A`` is read and never written, ``B`` is written, ``C`` is untouched and must not be placed anywhere."""
     sdfg = dace.SDFG("read_only_input")
     sdfg.add_array("A", [20], dace.float64)
     sdfg.add_array("B", [20], dace.float64)
@@ -763,12 +756,8 @@ def laplace_program(A: dace.float64[N], T: dace.int64):
 
 
 def test_a_never_written_input_is_not_copied_back_to_the_host():
-    """Only a container something wrote is restored; the twin that makes it readable still stands.
-
-    A container never moves -- a twin is staged on the other side and the accesses are pointed at
-    it -- so its home copy goes stale only once something writes the twin. Restoring a read-only
-    one copies bytes already in place, and that write is what a nested SDFG's input-only connector
-    refuses.
+    """Only a container something wrote is restored: a twin is staged on the other side, so the home copy goes stale
+    only once something writes the twin, and restoring a read-only one writes through an input-only connector.
     """
     sdfg = read_only_input_sdfg()
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -796,13 +785,8 @@ def test_a_container_nothing_touches_is_left_where_it_started():
 
 
 def test_a_map_over_a_read_only_container_survives_being_nested():
-    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way.
-
-    laplace is the shape that exposes it: one map reads ``A`` and writes ``tmp``, the next reads
-    ``tmp`` and writes ``A``, so whichever map is nested holds one container it never writes.
-    Copying that one back writes through a connector the nested SDFG only has as an input, which
-    validation refuses: "Data descriptor A is written to, but only given to nested SDFG as an
-    input connector".
+    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way: laplace's maps each
+    hold one container they never write, and copying it back would write through an input-only connector.
     """
     sdfg = laplace_program.to_sdfg()
     matches = list(Optimizer(sdfg).get_pattern_matches(patterns=[GPUTransformMap]))
@@ -819,11 +803,7 @@ def test_a_map_over_a_read_only_container_survives_being_nested():
 
 
 def view_on_both_sides_sdfg() -> dace.SDFG:
-    """``C_view`` aliases ``C``, and the two are read on different sides of the machine.
-
-    npbench mandelbrot2 has this shape: one state reads the view inside a kernel, another reads it
-    from host code, and a view carries one storage.
-    """
+    """``C_view`` aliases ``C``, and the two are read on different sides of the machine (npbench mandelbrot2)."""
     sdfg = dace.SDFG("view_on_both_sides")
     sdfg.add_array("C", [4, 5], dace.float64)
     sdfg.add_array("out", [20], dace.float64)
@@ -852,11 +832,8 @@ def view_on_both_sides_sdfg() -> dace.SDFG:
 
 
 def test_a_view_of_a_staged_container_is_staged_with_it():
-    """A view follows the container it aliases onto whichever side that container was staged to.
-
-    Left behind, the alias names a buffer on the other side and the dispatcher refuses the access it
-    cannot make ("Illegal copy!"), because one descriptor carries one storage and the view is read
-    from a kernel in one state and from host code in another.
+    """A view follows the container it aliases onto whichever side that container was staged to: one descriptor
+    carries one storage, so a view read from a kernel and from host code needs a twin per side.
     """
     sdfg = view_on_both_sides_sdfg()
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -871,9 +848,9 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
                 continue
             origin = helpers.view_origin(state, node)
             assert origin is not None, f"{node.data} in {state.label} aliases nothing"
-            assert views[node.data].storage == sdfg.arrays[origin].storage, (
+            assert views[node.data].storage == sdfg.arrays[origin.data].storage, (
                 f"{node.data} ({views[node.data].storage}) does not live where "
-                f"{origin} ({sdfg.arrays[origin].storage}) does")
+                f"{origin.data} ({sdfg.arrays[origin.data].storage}) does")
 
 
 def two_arm_branch_sdfg(arms_meet: bool, big_arm_padding: int = 0) -> dace.SDFG:

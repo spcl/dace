@@ -42,7 +42,7 @@ def test_warp_softmax(vector_length=1):
     sdfg.expand_library_nodes()
     sdfg.simplify()
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)
-    sdfg.apply_gpu_transformations(validate_all=True, simplify=False)
+    sdfg.apply_gpu_transformations(simplify=False)
     assert sdfg.apply_transformations(WarpTiling) == 1
     sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion], validate_all=True)
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)

@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Maps the offloading keeps on the HOST, and the things it must never offload at all.
+"""Maps the offloading keeps on the host, and the things it must never offload.
 
-Structural tests: they assert which schedule each map came out with, so they do not need a GPU.
-The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
+Structural tests asserting the schedule each map gets, so no GPU is needed.
 """
 import numpy as np
 import pytest
@@ -12,8 +11,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops, provably_moves_less
-from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
+from dace.transformation.passes.offloading.host_maps import find_host_maps, maps_pinned_by_host_loops, provably_moves_less
+from dace.transformation.passes.offloading.offloading_helpers import callback_symbol_names, is_callback_tasklet
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")
@@ -33,10 +32,8 @@ def icon_zekinh_gather(
     z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
     z_ekinh: dace.float64[NB, NLEV, NPROMA],
 ):
-    """ICON ``velocity_zekinh_block``: cell-from-edges bilinear interpolation.
-
-    The canonical "parent map only launches" shape -- ``jb`` over blocks exists to launch the
-    ``jk``/``jc`` work under it, and its body's extents do not mention ``jb``.
+    """ICON ``velocity_zekinh_block``: the parent map over blocks only launches the ``jk``/``jc`` work under it, and
+    its body's extents do not mention ``jb``.
     """
     for jb in dace.map[0:NB]:
         for jk, jc in dace.map[0:NLEV, 0:NPROMA]:
@@ -66,11 +63,7 @@ def zekinh_sdfg() -> dace.SDFG:
 
 
 def test_without_host_maps_the_outer_map_is_the_kernel():
-    """The control: with nothing named, the outer map is offloaded and its body is sequential.
-
-    Without this the pinning tests below could pass while doing nothing, because they would be
-    asserting the schedule the pass produces anyway.
-    """
+    """The control: with nothing named, the outer map is offloaded and its body is sequential."""
     sdfg = zekinh_sdfg()
     outer = outer_map_label(sdfg)
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
@@ -120,11 +113,7 @@ def test_auto_finds_the_launching_map_that_the_default_offloads():
 
 
 def test_auto_declines_a_map_that_does_its_own_work():
-    """The negative control: a parent map that COMPUTES is not a launcher, so auto leaves it alone.
-
-    Without this, ``test_auto_finds_...`` would also pass an implementation that called every outer
-    map a host map.
-    """
+    """A parent map that computes is not a launcher, so auto leaves it alone."""
 
     @dace.program
     def computes_at_the_top(A: dace.float64[16, 8], B: dace.float64[16, 8]):
@@ -136,39 +125,32 @@ def test_auto_declines_a_map_that_does_its_own_work():
     sdfg = computes_at_the_top.to_sdfg(simplify=False)
     outer = next(n.map.label for n, p in sdfg.all_nodes_recursive()
                  if isinstance(n, nodes.MapEntry) and p.entry_node(n) is None and 'i' in n.map.params)
-    assert host_maps(sdfg, True) == host_maps(sdfg, None), 'a computing map is not auto-detected'
+    assert find_host_maps(sdfg, True) == find_host_maps(sdfg, None), 'a computing map is not auto-detected'
 
     ppl.Pipeline([OffloadToAccelerator(host_maps=True)]).apply_pass(sdfg, {})
     assert map_schedules(sdfg)[outer] == dace.ScheduleType.GPU_Device
 
 
 def test_the_spellings_that_name_no_host_maps_agree() -> None:
-    """``False`` is the default and runs no heuristics; ``None`` and ``[]`` say the same thing.
-
-    ``[]`` matters on its own: a caller that computes the list and finds it empty must get "none",
-    not "derive them for me".
+    """``False`` is the default and runs no heuristics; ``None`` and ``[]`` say the same, so a caller whose computed
+    list is empty gets none.
     """
     sdfg = zekinh_sdfg()
     for spec in (False, None, []):
-        assert not host_maps(sdfg, spec), f'{spec!r} must name no host maps'
-    assert host_maps(sdfg, True), 'True runs the heuristics'
+        assert not find_host_maps(sdfg, spec), f'{spec!r} must name no host maps'
+    assert find_host_maps(sdfg, True), 'True runs the heuristics'
 
 
 def test_host_maps_rejects_anything_that_is_not_a_label_or_a_map():
     sdfg = zekinh_sdfg()
     with pytest.raises(TypeError, match='map labels or MapEntry nodes'):
-        host_maps(sdfg, [object()])
+        find_host_maps(sdfg, [object()])
     with pytest.raises(TypeError, match='None, a bool or a list'):
-        host_maps(sdfg, 'nblks')
+        find_host_maps(sdfg, 'nblks')
 
 
 def test_apply_gpu_transformations_forwards_host_maps() -> None:
-    """The public entry point reaches the same decision the pass does.
-
-    ``apply_gpu_transformations`` is how callers outside this package offload, so a ``host_maps``
-    the pass honours but the method drops is a feature nobody can use. Asserting the two agree keeps
-    the parameter plumbed.
-    """
+    """``apply_gpu_transformations`` reaches the same decision as the pass."""
     through_pass = zekinh_sdfg()
     outer = outer_map_label(through_pass)
     ppl.Pipeline([OffloadToAccelerator(host_maps=[outer])]).apply_pass(through_pass, {})
@@ -189,11 +171,7 @@ def test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map() ->
 
 
 def test_a_frontend_callback_is_never_offloaded():
-    """Neither kind of callback can run on the device, so nothing around one is offloaded.
-
-    This is what ``host_data=['__pystate']`` and ``exclude_tasklets`` were pinning by hand against
-    the transformation this pass replaces: the pass derives it from the callback itself.
-    """
+    """Neither kind of callback can run on the device, so nothing around one is offloaded."""
 
     @dace_inhibitor
     def host_only(x):
@@ -209,7 +187,7 @@ def test_a_frontend_callback_is_never_offloaded():
                for stype in sdfg.symbols.values()), 'the fixture must produce a real callback'
     callbacks = [
         node for node, parent in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.Tasklet) and is_callback_tasklet(node, sdfg)
+        if isinstance(node, nodes.Tasklet) and is_callback_tasklet(node, callback_symbol_names(sdfg))
     ]
     assert callbacks, 'the detector must recognise a frontend-generated callback'
 
@@ -221,10 +199,8 @@ def test_a_frontend_callback_is_never_offloaded():
 
 
 def callback_in_a_map_sdfg() -> dace.SDFG:
-    """A map whose body calls back into Python, wired the way the frontend wires one.
-
-    Built by hand because the frontend declines to create a callback whose result is assigned
-    inside a ``dace.map`` -- the shape still has to be handled, however it is reached.
+    """A map whose body calls back into Python, wired the way the frontend wires one; built by hand because the
+    frontend declines a callback whose result is assigned inside a ``dace.map``.
     """
     sdfg = dace.SDFG('callback_in_a_map')
     sdfg.add_array('A', [8], dace.float64)
@@ -247,7 +223,7 @@ def test_a_map_around_a_callback_stays_on_the_host():
     """A kernel cannot issue a callback, so the map holding one is host code, not a launch."""
     sdfg = callback_in_a_map_sdfg()
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert entry in host_maps(sdfg, None), 'a map around a callback is host code without being named'
+    assert entry in find_host_maps(sdfg, None), 'a map around a callback is host code without being named'
 
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
@@ -255,11 +231,7 @@ def test_a_map_around_a_callback_stays_on_the_host():
 
 
 def test_a_sequential_scan_in_a_loop_region_is_not_offloaded():
-    """``__1d_scan``: a scan carries its value across iterations, so it has no parallel map in it.
-
-    The transformation this pass replaces wrapped the loop body's tasklet in a size-1 GPU map, which
-    is one kernel launch per scan step. Nothing here may become a map at all.
-    """
+    """``__1d_scan`` carries its value across iterations, so nothing in it becomes a map or a kernel."""
     sdfg = dace.SDFG('scan_1d')
     sdfg.add_array('out', [16], dace.float64)
     sdfg.add_scalar('carry', dace.float64, transient=True)

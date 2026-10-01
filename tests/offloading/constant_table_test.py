@@ -1,10 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A table filled once with literals and read by kernels becomes an SDFG constant, so no copy ships it down.
 
-The shape of CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``: filled by input-less tasklets in one state, read by
-kernels in later states. A constant is declared on both sides, so neither the host nor a kernel needs a copy.
+The shape of CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``. A constant is declared on both sides.
 """
-from typing import Optional
 
 import numpy as np
 import pytest
@@ -19,12 +17,12 @@ N = 16
 TABLE = (1.0, 2.0, 0.5, -3.0)
 
 
-def fill_then_kernel(host_read: Optional[str] = None, looped: bool = False, scalar_entry: bool = False) -> dace.SDFG:
+def fill_then_kernel(host_read: str | None = None, looped: bool = False, scalar_entry: bool = False) -> dace.SDFG:
     """``table`` filled by tasklets in one state, read as ``table[i % 4]`` by a map in the next.
 
-    ``host_read`` adds a host read: ``interstate`` of ``table[1]`` on the edge between the states, ``tasklet`` of
-    ``table[2]`` by a host tasklet after the kernel. ``looped`` puts the fill inside a loop, and ``scalar_entry``
-    fills one element from the scalar ``s`` instead of a literal.
+    ``host_read`` adds a host read of ``table[1]`` on the edge between the states (``interstate``) or of ``table[2]``
+    by a tasklet after the kernel (``tasklet``); ``looped`` fills inside a loop; ``scalar_entry`` fills one element
+    from the scalar ``s``.
     """
     sdfg = dace.SDFG(f'fill_then_kernel_{host_read}_{looped}_{scalar_entry}')
     sdfg.add_array('x', [N], dace.float64)
@@ -110,9 +108,8 @@ def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_rea
         np.testing.assert_array_equal(first, [TABLE[2]])
 
 
-@pytest.mark.gpu
 def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel():
-    """Host code and the kernel each see one declaration; passed as an argument too, it was declared twice."""
+    """Host code and the kernel each declare the table once, and the kernel takes it as no argument."""
     sdfg = offloaded()
     objects = sdfg.generate_code()
     host = next(obj.clean_code for obj in objects if '__program_' in obj.clean_code and obj.language == 'cpp')
