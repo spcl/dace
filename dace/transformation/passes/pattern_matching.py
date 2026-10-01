@@ -109,11 +109,10 @@ class PatternMatchAndApply(ppl.Pass):
                                   'for more information.')
                     continue
 
-            # Find only the first match
-            try:
-                match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
-            except StopIteration:
+            # Find only the first match. No metadata: the cached one covers all transformations and would
+            #  override `[xform]`.
+            match = next(match_patterns(sdfg, [xform], permissive=self.permissive, states=self.states), None)
+            if match is None:
                 continue
 
             tcfg = sdfg.cfg_list[match.cfg_id]
@@ -234,7 +233,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     while applied:
                         applied = False
                         matched_pattern = next(
-                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on the cached order of transformations.
+                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on
+                            #  the cached order of transformations.
                             match_patterns(sdfg,
                                            permissive=self.permissive,
                                            patterns=[xform],
@@ -274,7 +274,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                # `print_match()` needs the control flow region the match belongs to, not this pass, hence `cfg_list[cfg_id]`.
+                # `match` is the last applied transformation. `print_match()` needs the control flow region
+                #  it belongs to, not this pass.
                 assert match is not None
                 tcfg = sdfg.cfg_list[match.cfg_id]
                 raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.", sdfg,

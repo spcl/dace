@@ -1,13 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Tuple
+from typing import Any, List, Tuple
 from unittest import mock
 
 import pytest
 
 import dace
-from dace.sdfg.validation import InvalidSDFGError
-from dace.transformation.dataflow import MapFusionVertical, TrivialMapElimination
+from dace.sdfg import validation
+from dace.transformation import dataflow, transformation as xf
 from dace.transformation.passes import pattern_matching
+
+# The transformations of the pass, in this order. Each one matches once in the SDFG of `_make_sdfg()`.
+_TRANSFORMATIONS = (dataflow.MapFusionVertical, dataflow.TrivialMapElimination)
 
 
 def _add_maps(state: dace.SDFGState, chain: List[Tuple[str, str]]) -> None:
@@ -48,21 +51,22 @@ def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> Tuple[List[str], i
     applied = []
     original_apply = pattern_matching.PatternMatchAndApplyRepeated._apply_and_validate
 
-    def _record(self, match, *args, **kwargs):
+    def _record(self: pattern_matching.PatternMatchAndApplyRepeated, match: xf.PatternTransformation, *args: Any,
+                **kwargs: Any) -> None:
         applied.append(type(match).__name__)
-        return original_apply(self, match, *args, **kwargs)
+        original_apply(self, match, *args, **kwargs)
 
     with (mock.patch.object(pattern_matching.PatternMatchAndApplyRepeated, "_apply_and_validate", _record),
           mock.patch.object(pattern_matching, "match_patterns", side_effect=pattern_matching.match_patterns) as spy):
         sdfg.apply_transformations_repeated(
-            [MapFusionVertical(), TrivialMapElimination()],
+            [xform() for xform in _TRANSFORMATIONS],
             validate=False,
             order_by_transformation=order_by_transformation,
         )
     return applied, spy.call_count
 
 
-def test_order_by_transformation():
+def test_order_by_transformation() -> None:
     ordered, unordered = _make_sdfg(), _make_sdfg()
 
     applied_ordered, enumerations_ordered = _apply(ordered, True)
@@ -77,23 +81,32 @@ def test_order_by_transformation():
 
     # Ordered: per transformation, one enumeration per application plus the final empty one, and
     #  since something was applied, one more round of empty enumerations.
-    assert enumerations_ordered == len(applied_ordered) + 2 * 2
+    assert enumerations_ordered == len(applied_ordered) + 2 * len(_TRANSFORMATIONS)
     # Unordered: one enumeration per application, plus the final empty one.
     assert enumerations_unordered == len(applied_unordered) + 1
 
 
+def test_apply_first_match_per_transformation() -> None:
+    # `PatternMatchAndApply` applies, for each transformation in order, the first match of that transformation.
+    sdfg = _make_sdfg()
+    applied = pattern_matching.PatternMatchAndApply([xform() for xform in _TRANSFORMATIONS],
+                                                    validate=False).apply_pass(sdfg, {})
+    assert list(applied.keys()) == ["MapFusionVertical", "TrivialMapElimination"]
+    assert all(len(results) == 1 for results in applied.values())
+
+
 @pytest.mark.parametrize("order_by_transformation, last_applied", [(True, "TrivialMapElimination"),
                                                                    (False, "MapFusionVertical")])
-def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool, last_applied: str):
+def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool, last_applied: str) -> None:
     # Both transformations apply, in the order `test_order_by_transformation` established for this SDFG and
     #  mode; `last_applied` here is the second (last) one of that order, not just any applied transformation.
     sdfg = _make_sdfg()
-    failure = InvalidSDFGError("invalid", sdfg, None)
+    failure = validation.InvalidSDFGError("invalid", sdfg, None)
 
     with mock.patch.object(dace.SDFG, "validate", side_effect=failure):
-        with pytest.raises(InvalidSDFGError, match=f"after applying {last_applied}") as info:
+        with pytest.raises(validation.InvalidSDFGError, match=f"after applying {last_applied}") as info:
             sdfg.apply_transformations_repeated(
-                [MapFusionVertical(), TrivialMapElimination()],
+                [xform() for xform in _TRANSFORMATIONS],
                 validate=True,
                 order_by_transformation=order_by_transformation,
             )
@@ -102,5 +115,6 @@ def test_validation_failure_names_last_applied_transformation(order_by_transform
 
 if __name__ == "__main__":
     test_order_by_transformation()
+    test_apply_first_match_per_transformation()
     test_validation_failure_names_last_applied_transformation(True, "TrivialMapElimination")
     test_validation_failure_names_last_applied_transformation(False, "MapFusionVertical")
