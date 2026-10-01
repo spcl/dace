@@ -217,8 +217,6 @@ def broadcast_to(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str,
     NumPy's zero-stride view, whose writes would all alias."""
     from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
 
-    if isinstance(arr, (list, tuple)) and len(arr) == 1:
-        arr = arr[0]
     desc = sdfg.arrays[arr]
     if isinstance(shape, (str, symbolic.symbol, Integral)):
         shape = [shape]

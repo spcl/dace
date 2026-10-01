@@ -4,7 +4,7 @@
 taken from its own memlet, which covers Fortran's scalar ``MERGE`` variants too."""
 import dace
 from dace import library, nodes
-from dace.libraries.standard.helper import broadcast_map_expansion
+from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -47,11 +47,17 @@ class MergeLibraryNode(nodes.LibraryNode):
     def validate(self, sdfg, state):
         """:returns: The edges on the true, false, mask and output connectors, in that order.
 
-        :raises ValueError: unless each connector has exactly one edge.
+        :raises ValueError: unless each connector has exactly one edge and every input broadcasts to the output.
         """
         edges = [[e for e in state.in_edges(self) if e.dst_conn == c]
                  for c in (self.TRUE_CONNECTOR_NAME, self.FALSE_CONNECTOR_NAME, self.MASK_CONNECTOR_NAME)]
         edges.append([e for e in state.out_edges(self) if e.src_conn == self.OUTPUT_CONNECTOR_NAME])
         if any(len(es) != 1 for es in edges):
             raise ValueError(f"{type(self).__name__} expects exactly one edge per connector")
+        result = edges[3][0].data.subset.size()
+        for edge in (es[0] for es in edges[:3]):
+            try:
+                broadcast_indices(edge.data.subset.size(), result)
+            except ValueError as ex:
+                raise ValueError(f"{type(self).__name__}: {edge.dst_conn}: {ex}") from ex
         return tuple(es[0] for es in edges)

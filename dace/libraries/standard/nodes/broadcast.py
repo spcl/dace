@@ -4,9 +4,9 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, symbolic
+from dace import SDFG, SDFGState, memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.standard.helper import broadcast_axes, broadcast_map_expansion
+from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -57,19 +57,14 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Broadcast requires a `_src` input")
         if len(out_edges) != 1 or out_edges[0].src_conn != "_dst":
             raise ValueError("Broadcast requires a `_dst` output")
-        src_shape = in_edges[0].data.subset.size()
         dst_shape = out_edges[0].data.subset.size()
         axis = None if self.dim is None else self.dim - 1
         if axis is not None and not 0 <= axis < len(dst_shape):
             raise ValueError(f"Broadcast: dim={self.dim} out of range for dst rank-{len(dst_shape)}")
-        aligned = broadcast_axes(dst_shape, len(src_shape), axis)
-        if len(aligned) != len(src_shape):
-            raise ValueError(f"Broadcast: a rank-{len(src_shape)} src cannot broadcast to rank-{len(dst_shape)} dst")
-        # Only a proven mismatch refuses: symbolic extents that cannot be decided are the caller's.
-        for k, (extent, target) in enumerate(zip(src_shape, aligned)):
-            if extent != 1 and symbolic.equal(extent, target) is False:
-                raise ValueError(
-                    f"Broadcast: src axis {k} has extent {extent}, which neither is 1 nor matches {target}")
+        try:
+            broadcast_indices(in_edges[0].data.subset.size(), dst_shape, axis)
+        except ValueError as ex:
+            raise ValueError(f"Broadcast: {ex}") from ex
         return in_edges[0], out_edges[0], axis
 
 
