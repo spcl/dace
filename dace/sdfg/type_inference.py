@@ -145,6 +145,15 @@ def _range_bound_type(bound, symbols) -> dtypes.typeclass:
         expr = symbolic.pystr_to_symbolic(bound)
     except Exception:
         expr = None
+    # A SymExpr (e.g., the end of a tiled range) is emitted as its exact expression
+    if isinstance(expr, SymExpr):
+        expr = expr.expr
+    # Range bounds are integers, but the Python frontend may produce integral floats for them (``2**3`` is
+    # ``8.0``, as in NumPy); type those as the integer literals they equal
+    if isinstance(expr, sympy.Basic):
+        integral_floats = {a: sympy.Integer(int(a)) for a in expr.atoms(sympy.Float) if float(a).is_integer()}
+        if integral_floats:
+            expr = bound = expr.xreplace(integral_floats)
     # sympy.Integer holds exactly the untyped integer literals: a TypedConstant declares its own
     # dtype and is not one. Each literal is typed as the corresponding C literal would be: the
     # default type if it fits, otherwise 64-bit signed (``sym2cpp`` prints it with ``LL``). This
