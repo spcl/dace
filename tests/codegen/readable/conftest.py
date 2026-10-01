@@ -6,21 +6,13 @@ kernel cannot take down pytest. GPU kernels run in-process (CUDA does not surviv
 tolerance, as their reduction and atomic order is not reproducible.
 """
 import copy
+import ctypes
 import functools
 import os
 import shutil
 import signal
 import subprocess
 import tempfile
-
-# dace imports mpi4py lazily, which calls MPI_Init; keep Open MPI off UCX so that it cannot stall
-os.environ.setdefault("OMPI_MCA_pml", "ob1")
-os.environ.setdefault("OMPI_MCA_btl", "self,vader")
-os.environ.setdefault("UCX_VFS_ENABLE", "n")
-os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
-
-# One thread keeps the summation order of reductions fixed, which the bit-exact comparison needs
-os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import numpy as np
 import pytest
@@ -88,6 +80,16 @@ def waitpid_with_timeout(pid, timeout):
         raise RuntimeError(f"isolated kernel run failed (wait status={status})")
 
 
+def use_one_openmp_thread():
+    """Fixes the summation order of reductions, which the bit-exact comparison needs. A libgomp the process
+    already loaded has read ``OMP_NUM_THREADS`` and is set directly; a later load reads the variable."""
+    os.environ["OMP_NUM_THREADS"] = "1"
+    with open("/proc/self/maps") as maps:
+        loaded = {line.split()[-1] for line in maps if "libgomp" in line}
+    for path in loaded:
+        ctypes.CDLL(path).omp_set_num_threads(1)
+
+
 def run_isolated(build_and_run, timeout=300):
     """Runs ``build_and_run() -> dict[str, ndarray]`` in a forked child, which returns its arrays through a
     temporary ``.npz``. A crash or timeout raises ``RuntimeError``."""
@@ -96,6 +98,7 @@ def run_isolated(build_and_run, timeout=300):
     pid = os.fork()
     if pid == 0:  # child
         try:
+            use_one_openmp_thread()
             outputs = build_and_run()
             np.savez(path, **{name: to_host(value) for name, value in outputs.items()})
             os._exit(0)
