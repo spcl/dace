@@ -755,6 +755,9 @@ class NestedSDFG(CodeNode):
                 raise ValueError('Parent SDFG not properly set for nested SDFG node')
 
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
+            # Connector descriptors are compared as if written in the parent's symbols (see ``Data.is_equivalent``)
+            replacements = dace.symbolic.symbol_replacements(self.symbol_mapping)
+            connector_symbols: Set[str] = set()
             for conn in sorted(connectors):
                 if conn in self.sdfg.symbols:
                     raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
@@ -768,6 +771,7 @@ class NestedSDFG(CodeNode):
                 # nested SDFG for every name it uses, it cannot be compared with the external one.
                 inner_desc = self.sdfg.arrays[conn]
                 desc_symbols = {str(s) for s in inner_desc.free_symbols}
+                connector_symbols |= desc_symbols
                 undeclared = sorted(desc_symbols - self.sdfg.symbols.keys())
                 if undeclared:
                     raise ValueError(f'Connector "{conn}" has a data descriptor ({inner_desc}) that uses symbols '
@@ -780,10 +784,8 @@ class NestedSDFG(CodeNode):
 
                 # Verify that the internal data descriptor, restated in the symbols of the parent SDFG, is equivalent
                 # to the external data descriptor connected to the connector.
-                from dace.sdfg import dealias  # Avoids circular import
                 edge = next(iter(state.edges_by_connector(self, conn)))
-                if not sdfg.arrays[edge.data.data].is_equivalent(
-                        dealias.restate_in_parent_symbols(inner_desc, self.symbol_mapping)):
+                if not inner_desc.is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=replacements):
                     raise ValueError(
                         f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
                         f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
@@ -825,8 +827,7 @@ class NestedSDFG(CodeNode):
                 raise ValueError(f'Symbols {undeclared_symbols} are mapped into the nested SDFG but not declared in it')
 
             # The shapes of connector descriptors are not "used" by the nested SDFG, but they are given by the mapping
-            for conn in connectors:
-                symbols |= {str(s) for s in self.sdfg.arrays[conn].free_symbols}
+            symbols |= connector_symbols
             extra_symbols = self.symbol_mapping.keys() - symbols
             if len(extra_symbols) > 0:
                 # TODO: Elevate to an error?

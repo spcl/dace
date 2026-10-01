@@ -2,11 +2,11 @@
 """ A module that contains type definitions for distributed SDFGs. """
 import copy
 from numbers import Integral
-from typing import Sequence, Set, Union
+from typing import Optional, Sequence, Set, Union
 
 import dace.dtypes as dtypes
 from dace import symbolic, serialize
-from dace.data.core import Data
+from dace.data.core import Data, SymbolMapping
 from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
@@ -23,8 +23,24 @@ class DistributedDescriptor(Data):
     def clone(self):
         return copy.deepcopy(self)
 
-    def is_equivalent(self, other):
-        return type(self) is type(other) and self == other
+    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+        if type(self) is not type(other):
+            return False
+        replacements = symbolic.symbol_replacements(symbol_mapping)
+        if replacements is None:
+            return self == other
+
+        # Descriptors are compared as a whole, so every symbolic property is restated
+        restated = copy.copy(self)
+        for prop, value in self.properties():
+            if value is None:
+                continue
+            if isinstance(prop, ShapeProperty):
+                setattr(restated, prop.attr_name,
+                        [v.xreplace(replacements) if isinstance(v, symbolic.sympy.Basic) else v for v in value])
+            elif isinstance(prop, SymbolicProperty) and isinstance(value, symbolic.sympy.Basic):
+                setattr(restated, prop.attr_name, value.xreplace(replacements))
+        return restated == other
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         raise TypeError(f'{type(self).__name__} descriptors are not SDFG call arguments')

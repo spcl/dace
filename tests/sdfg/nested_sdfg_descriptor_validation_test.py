@@ -155,6 +155,44 @@ def test_mapped_expression_after_integration():
     sdfg.validate()
 
 
+def test_is_equivalent_symbol_mapping_array():
+    N, M, K = (dace.symbol(s) for s in 'NMK')
+    inner = dace.data.Array(dace.float64, [N + 1, M])
+    assert inner.is_equivalent(dace.data.Array(dace.float64, [M + K, N]), symbol_mapping={'N': 'M + K - 1', 'M': 'N'})
+    # The mapping replaces all symbols at once
+    assert inner.is_equivalent(dace.data.Array(dace.float64, [M + 1, N]), symbol_mapping={'N': 'M', 'M': 'N'})
+    assert not inner.is_equivalent(dace.data.Array(dace.float64, [N + 1, M]), symbol_mapping={'N': 'M', 'M': 'N'})
+    # Without a mapping, the descriptors are compared as written
+    assert inner.is_equivalent(dace.data.Array(dace.float64, [N + 1, M]))
+
+
+def test_is_equivalent_symbol_mapping_strides():
+    N, M, P = (dace.symbol(s) for s in 'NMP')
+    inner = dace.data.Array(dace.float64, [N, M], strides=[P, 1])
+    assert inner.is_equivalent(dace.data.Array(dace.float64, [N, M], strides=[M + 2, 1]), symbol_mapping={'P': 'M + 2'})
+    assert not inner.is_equivalent(dace.data.Array(dace.float64, [N, M], strides=[M, 1]), symbol_mapping={'P': 'M + 2'})
+
+
+def test_is_equivalent_symbol_mapping_stream():
+    N, M = (dace.symbol(s) for s in 'NM')
+    inner = dace.data.Stream(dace.float64, buffer_size=N, shape=[N])
+    assert inner.is_equivalent(dace.data.Stream(dace.float64, buffer_size=2 * M, shape=[2 * M]),
+                               symbol_mapping={'N': '2 * M'})
+    assert not inner.is_equivalent(dace.data.Stream(dace.float64, buffer_size=N, shape=[2 * M]),
+                                   symbol_mapping={'N': '2 * M'})
+
+
+def test_is_equivalent_symbol_mapping_structure():
+    N, M = (dace.symbol(s) for s in 'NM')
+    inner = dace.data.Structure({'a': dace.data.Array(dace.float64, [N]), 'b': dace.data.Scalar(dace.int32)}, 'inner')
+    outer = dace.data.Structure({
+        'a': dace.data.Array(dace.float64, [M - 1]),
+        'b': dace.data.Scalar(dace.int32)
+    }, 'outer')
+    assert inner.is_equivalent(outer, symbol_mapping={'N': 'M - 1'})
+    assert not inner.is_equivalent(outer, symbol_mapping={'N': 'M'})
+
+
 if __name__ == '__main__':
     test_mapped_expression()
     test_mapped_expression_in_inner_shape()
@@ -168,3 +206,7 @@ if __name__ == '__main__':
     test_unmapped_inner_symbol()
     test_mapped_symbol_not_declared()
     test_mapped_expression_after_integration()
+    test_is_equivalent_symbol_mapping_array()
+    test_is_equivalent_symbol_mapping_strides()
+    test_is_equivalent_symbol_mapping_stream()
+    test_is_equivalent_symbol_mapping_structure()

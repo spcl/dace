@@ -2333,6 +2333,32 @@ _PYSTR2SYM_locals = {
 _PYSTR2SYM_locals.update(_sympy_clash)
 
 
+def symbol_replacements(
+        symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]]) -> Optional[Dict[sympy.Basic, sympy.Basic]]:
+    """
+    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that replaces all
+    of its symbols simultaneously through ``xreplace``. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols
+    rather than replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+
+    :param symbol_mapping: A mapping from symbol names or symbols to expressions, or None.
+    :return: The replacement dictionary, or None if the mapping replaces nothing.
+    """
+    if not symbol_mapping:
+        return None
+    result = {}
+    for key, value in symbol_mapping.items():
+        value = value if isinstance(value, sympy.Basic) else pystr_to_symbolic(value)
+        if isinstance(key, str):
+            # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
+            if isinstance(value, sympy.Symbol) and value.name == key:
+                continue
+            key = pystr_to_symbolic(key)
+        elif key == value:
+            continue
+        result[key] = value
+    return result or None
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """
     The visitor reconstructs symbolic expressions with non-evaluating SymPy

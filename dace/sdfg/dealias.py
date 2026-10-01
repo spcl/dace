@@ -6,7 +6,7 @@ from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
 from typing import Callable, Dict, List, Optional, Set, Tuple
 import ast
@@ -331,8 +331,8 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     :param parent_node: The nested SDFG node, for its symbol mapping.
     :return: True if the two describe the same container.
     """
-    mapped = restate_in_parent_symbols(inner_desc, parent_node.symbol_mapping)
-    if mapped is inner_desc:
+    renamed = {str(k) for k, v in parent_node.symbol_mapping.items() if str(k) != str(v)}
+    if not any(str(s) in renamed for s in inner_desc.free_symbols):
         # Every symbol the connector is written in means the same inside and outside
         return parent_desc.is_equivalent(inner_desc)
 
@@ -341,35 +341,7 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     if {str(s) for s in parent_desc.free_symbols} - available_symbols:
         return False
 
-    return parent_desc.is_equivalent(mapped)
-
-
-def restate_in_parent_symbols(desc: data.Data, symbol_mapping: Dict[str, symbolic.SymbolicType]) -> data.Data:
-    """
-    Restates a nested SDFG's data descriptor in the symbols of its parent, by replacing every symbol the descriptor
-    is written in with the expression the nested SDFG node maps it to. The symbols are replaced simultaneously, so
-    that, e.g., the mapping ``{'N': 'M', 'M': 'N'}`` turns a descriptor of shape ``(N, M)`` into one of shape
-    ``(M, N)``. For example, ``a[N + 1]`` with the mapping ``{'N': 'M + K - 2'}`` is restated as ``a[M + K - 1]``.
-
-    :param desc: The data descriptor, written in the nested SDFG's symbols.
-    :param symbol_mapping: The symbol mapping of the nested SDFG node.
-    :return: The descriptor written in the parent's symbols. If no symbol of the descriptor is mapped to something
-             else, this is ``desc`` itself; otherwise it is a copy.
-    """
-    used = {str(s) for s in desc.free_symbols}
-    repl = {str(k): v for k, v in symbol_mapping.items() if str(k) in used and str(k) != str(v)}
-    if not repl:
-        return desc
-
-    def restate(d: data.Data, m: Dict[str, str]):
-        replace_properties_dict(d, m)
-        if isinstance(d, data.Structure):
-            for member in d.members.values():
-                restate(member, m)
-
-    result = copy.deepcopy(desc)
-    symbolic.safe_replace(repl, lambda m: restate(result, m))
-    return result
+    return inner_desc.is_equivalent(parent_desc, symbol_mapping=parent_node.symbol_mapping)
 
 
 def _view_strides(container_strides: Tuple[symbolic.SymbolicType, ...],
