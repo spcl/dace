@@ -127,6 +127,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
+        # A map output that flows straight into an enclosing scope's exit has no container to fuse through.
+        if not all(isinstance(n, nodes.AccessNode) for n in out_nodes):
+            return False
+
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             return False
