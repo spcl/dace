@@ -321,6 +321,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
             # Allocation lifetime checks
+            if isinstance(desc, (dt.View, dt.Reference)) and desc.lifetime != dtypes.AllocationLifetime.Scope:
+                raise InvalidSDFGError(
+                    f'View or reference "{name}" has {desc.lifetime} allocation lifetime; views and references '
+                    'only support Scope lifetime', sdfg, None)
             if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
                     and desc.storage == dtypes.StorageType.Register):
                 raise InvalidSDFGError(
@@ -424,6 +428,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # when the node is None, so the value validate_sdfg threaded down is the same one.
     if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
+
+    # Hoisted out of the per-edge loop below: the config cannot change mid-validation
+    validate_undefs = Config.get_bool('experimental', 'validate_undefs')
 
     # Reference check
     if id(state) in references:
@@ -831,7 +838,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
-            if Config.get_bool('experimental', 'validate_undefs'):
+            if validate_undefs:
                 # TODO: Traverse by scopes and accumulate data
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols - set(defined_symbols.keys()))
@@ -1065,10 +1072,12 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
+        from dace.sdfg.state import SDFGState  # Avoid import loop
         state = self.sdfg.node(self.state_id)
         locinfo = ''
 
-        if self.node_id is not None:
+        # A control flow block that is not a state has no nodes to index into
+        if self.node_id is not None and isinstance(state, SDFGState):
             from dace.sdfg.nodes import Node
             node: Node = state.node(self.node_id)
             nodestr = f', node {node}'
@@ -1110,9 +1119,11 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
+        from dace.sdfg.state import SDFGState  # Avoid import loop
         state = self.sdfg.node(self.state_id)
 
-        if self.edge_id is not None:
+        # A control flow block that is not a state has no edges to index into
+        if self.edge_id is not None and isinstance(state, SDFGState):
             e = state.edges()[self.edge_id]
             edgestr = ", edge %s (%s:%s -> %s:%s)" % (
                 str(e.data),

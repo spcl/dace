@@ -17,8 +17,6 @@ jobs:
         with:
           python-version: '3.11'
           enable-cache: true
-          pyproject-file: pyproject.toml
-          cache-dependency-glob: pyproject.toml
 
       - name: Set up C++ compiler
         run: |

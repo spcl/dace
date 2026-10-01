@@ -61,7 +61,7 @@ def test_libnode():
 def test_nesting():
 
     @dace.program
-    def nest2(a: dace.float64[10]):
+    def nest2(a: dace.float64[5]):
         a += 1
 
     @dace.program

@@ -5,6 +5,7 @@ import ast
 import abc
 import collections
 import copy
+import re
 import inspect
 import itertools
 import warnings
@@ -764,12 +765,24 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        if isinstance(sdfg.start_block, AbstractControlFlowRegion):
-            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        try:
+            start_block = sdfg.start_block
+        except ValueError:
+            # The start block is ambiguous while the SDFG is still being built
+            start_block = None
+        if isinstance(start_block, AbstractControlFlowRegion):
+            update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
         for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
             if isinstance(edge.dst, AbstractControlFlowRegion):
                 update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+        regions = []
+        region = state.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            update_if_not_none(defined_syms, region.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -967,6 +980,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
+                # Views allocate no memory, so their storage does not move them outside the subgraph
+                elif isinstance(desc, dt.View):
+                    continue
                 # Check for allocation constraints that would
                 # enforce array to be allocated outside subgraph
                 elif desc.lifetime == dtypes.AllocationLifetime.Scope:
@@ -1615,7 +1631,71 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     pass
         return result
 
-    def symbols_defined_at(self, node: nd.Node) -> Dict[str, dtypes.typeclass]:
+    def sdfg_symbols(self) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns the symbols of the SDFG this state belongs to: its own symbols and the free symbols
+        of its data descriptors. The same for every state of that SDFG, and the expensive part of
+        ``symbols_defined_at_state()``, which is why it can be resolved separately.
+
+        :return: A dictionary mapping symbol names to their types.
+        """
+        from dace.sdfg.sdfg import SDFG
+
+        sdfg: SDFG = self.sdfg
+
+        symbols = collections.OrderedDict(sdfg.symbols)
+        # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries
+        for desc in sdfg.arrays.values():
+            for s in desc.free_symbols:
+                symbols.setdefault(s.name, s.dtype)
+
+        return symbols
+
+    def symbols_defined_at_state(self,
+                                 *,
+                                 sdfg_symbols: Optional[Dict[str,
+                                                             dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns the symbols available to every node of this state, i.e. the part of
+        ``symbols_defined_at()`` that does not depend on the node: the symbols of the SDFG, the
+        ones defined on the inter-state edges and the ones the enclosing control flow regions
+        define.
+
+        :param sdfg_symbols: The result of ``sdfg_symbols()``, for callers that resolve several
+                             states of one SDFG; it is computed here if not given.
+        :return: A dictionary mapping symbol names to their types.
+        """
+        from dace.sdfg.sdfg import SDFG
+
+        sdfg: SDFG = self.sdfg
+
+        symbols = collections.OrderedDict(self.sdfg_symbols() if sdfg_symbols is None else sdfg_symbols)
+
+        # The blocks from this state up to the SDFG, each one nested in the next
+        path = [self]
+        while path[-1] is not sdfg and path[-1].parent_graph is not None:
+            path.append(path[-1].parent_graph)
+
+        # From the outermost region inward, add the symbols each control flow region defines and the ones of the
+        # inter-state edges along the paths to the block of the path it contains
+        for graph, block in reversed(list(zip(path[1:], path[:-1]))):
+            if graph is not sdfg:
+                symbols.update({k: v for k, v in graph.new_symbols(symbols).items() if v is not None})
+            try:
+                graph.start_block
+                edges = graph.edge_bfs(block, reverse=True)
+            except ValueError:
+                # Cannot determine starting block (possibly some inter-state edges do not yet exist)
+                edges = graph.edges()
+            for e in edges:
+                symbols.update(e.data.new_symbols(sdfg, symbols))
+
+        return symbols
+
+    def symbols_defined_at(self,
+                           node: nd.Node,
+                           *,
+                           state_symbols: Optional[Dict[str, dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
         """
         Returns all symbols available to a given node.
         The symbols a node can access are a combination of the global SDFG
@@ -1623,6 +1703,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         and symbols defined in scope entries in the path to this node.
 
         :param node: The given node.
+        :param state_symbols: The result of ``symbols_defined_at_state()`` of this state, for
+                              callers that resolve many nodes while the SDFG does not change; it is
+                              computed here if not given.
         :return: A dictionary mapping symbol names to their types.
         """
         from dace.sdfg.sdfg import SDFG
@@ -1632,21 +1715,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         sdfg: SDFG = self.sdfg
 
-        # Start with global symbols
-        symbols = collections.OrderedDict(sdfg.symbols)
-        for desc in sdfg.arrays.values():
-            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-
-        # Add symbols from inter-state edges along the path to the state
-        try:
-            start_state = sdfg.start_state
-            for e in sdfg.predecessor_state_transitions(start_state):
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-        except ValueError:
-            # Cannot determine starting state (possibly some inter-state edges
-            # do not yet exist)
-            for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+        symbols = collections.OrderedDict(self.symbols_defined_at_state() if state_symbols is None else state_symbols)
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -1737,19 +1806,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             location=location,
             side_effects=side_effects,
             debuginfo=debuginfo,
-        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
-            name,
-            inputs,
-            outputs,
-            code,
-            language,
-            state_fields=state_fields,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
-            location=location,
-            side_effects=side_effects,
-            debuginfo=debuginfo,
         )
         self.add_node(tasklet)
         return tasklet
@@ -1827,9 +1883,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -1839,9 +1896,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
-                    sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+                    sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
 
@@ -2019,11 +2074,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if len(inputs) == 0:
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
+        # Every edge below propagates through this one scope: resolve its symbols once
+        symbols = SymbolResolver()
+
         if external_edges:
             for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[inp], map_entry, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[inp]
                 edges.append(self.add_edge(inpnode, None, map_entry, "IN_" + inp, outer_memlet))
@@ -2054,7 +2112,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
-                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True)
+                    outer_memlet = sdprop.propagate_memlet(self, tomemlet[out], map_exit, True, symbols=symbols)
                 else:
                     outer_memlet = tomemlet[out]
                 edges.append(self.add_edge(map_exit, "OUT_" + out, outnode, None, outer_memlet))
@@ -2588,6 +2646,33 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         # Use the new expand interface
         return node.expand(self, implementation, **expansion_kwargs)
+
+
+class SymbolResolver:
+    """Resolves the symbols visible at a node, reusing the part that only depends on the state.
+
+    ``SDFGState.symbols_defined_at_state()`` is the same answer for every node of one state, and
+    callers such as memlet propagation ask for many nodes of the same state. Pass one resolver to
+    the entry points that belong together; each of them makes its own if it is not given one.
+
+    The reuse is per state on purpose: what a state sees depends on the control flow regions
+    around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
+    data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
+    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
+    """
+
+    def __init__(self) -> None:
+        self._per_sdfg: Dict['SDFG', Dict[str, dtypes.typeclass]] = {}
+        self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
+
+    def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
+        state_symbols = self._per_state.get(state)
+        if state_symbols is None:
+            sdfg_symbols = self._per_sdfg.get(state.sdfg)
+            if sdfg_symbols is None:
+                sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
+            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
+        return state.symbols_defined_at(node, state_symbols=state_symbols)
 
 
 @make_properties
@@ -3323,6 +3408,8 @@ class LoopRegion(ControlFlowRegion):
         self.update_before_condition = update_before_condition
         self.unroll = unroll
         self.unroll_factor = unroll_factor
+        self._new_symbols_key = None
+        self._new_symbols_value = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3634,7 +3721,7 @@ class LoopRegion(ControlFlowRegion):
 
     def replace_meta_accesses(self, replacements):
         if self.loop_variable in replacements:
-            self.loop_variable = replacements[self.loop_variable]
+            self.loop_variable = str(replacements[self.loop_variable])
         replace_in_codeblock(self.loop_condition, replacements)
         if self.init_statement:
             replace_in_codeblock(self.init_statement, replacements)
@@ -3781,6 +3868,20 @@ class LoopRegion(ControlFlowRegion):
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:
+            # Reuse the inferred type while the header text and the types of the names it reads are unchanged
+            texts = (self.loop_variable, self.init_statement.as_string, self.loop_condition.as_string,
+                     self.update_statement.as_string if self.update_statement else '')
+            if self._new_symbols_key is not None and self._new_symbols_key[0] == texts:
+                names = self._new_symbols_key[1]
+            else:
+                names = tuple(sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts)))))
+            arrays = self.sdfg.arrays
+            key = (texts, names, tuple(symbols.get(n)
+                                       for n in names), tuple(arrays[n].dtype if n in arrays else None for n in names))
+            if key == self._new_symbols_key:
+                return dict(self._new_symbols_value)
+            self._new_symbols_key = key
+            self._new_symbols_value = {}
             alltypes = copy.copy(symbols)
             alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
             l_end = loop_analysis.get_loop_end(self)
@@ -3790,7 +3891,8 @@ class LoopRegion(ControlFlowRegion):
                                                   infer_expr_type(l_end, alltypes))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
-                return {self.loop_variable: inferred_type}
+                self._new_symbols_value = {self.loop_variable: inferred_type}
+            return dict(self._new_symbols_value)
         return {}
 
     def replace_dict(self,
@@ -3800,7 +3902,7 @@ class LoopRegion(ControlFlowRegion):
                      replace_keys: bool = True):
         if replace_keys:
             if self.loop_variable and self.loop_variable in repl:
-                self.loop_variable = repl[self.loop_variable]
+                self.loop_variable = str(repl[self.loop_variable])
 
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
@@ -3845,6 +3947,11 @@ class LoopRegion(ControlFlowRegion):
 
 @make_properties
 class ConditionalBlock(AbstractControlFlowRegion):
+    """
+    A control flow region that represents conditional code exectution (if/elif/else).
+
+    Add branches with `add_branch(condition, region)`, where the condition is optional.
+    """
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
