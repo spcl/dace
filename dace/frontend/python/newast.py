@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections.abc
 from collections import OrderedDict
 import copy
 import itertools
@@ -319,6 +320,13 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
+def is_affine_in(expr, sym) -> bool:
+    """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
+    expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
+    matches = [f for f in expr.free_symbols if str(f) == str(sym)]
+    return not matches or (expr.is_polynomial(matches[0]) and sympy.degree(expr, matches[0]) <= 1)
+
+
 def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
     for n, ostep in enumerate(orng.strides()):
         if ostep == 1:
@@ -353,6 +361,39 @@ def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'Program
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
+
+
+def _subset_symbols(subset: subsets.Subset) -> Set[symbolic.symbol]:
+    result = set()
+    for dim in subset:
+        if not isinstance(dim, tuple):
+            dim = [dim]
+        for r in dim:
+            if isinstance(r, symbolic.SymExpr):
+                r = r.expr
+            if symbolic.issymbolic(r):
+                result.update(s for s in r.free_symbols if isinstance(s, symbolic.symbol))
+    return result
+
+
+def _retype_symbols_like(subset: subsets.Subset, reference: subsets.Subset) -> subsets.Subset:
+    """
+    Replaces the symbols of a subset, by name, with the same-named symbols of another subset.
+
+    Symbols compare by name *and* dtype, and a memlet built from a string carries default-typed symbols. Without this,
+    bounds of the two subsets could not be ordered (e.g., ``N - 1`` and ``N - 2`` if ``N`` is typed in only one).
+
+    :param subset: The subset whose symbols to replace. It is not modified; a copy is returned if any symbol differs.
+    :param reference: The subset whose symbols to use.
+    :return: The subset, or a retyped copy of it.
+    """
+    by_name = {s.name: s for s in _subset_symbols(reference)}
+    repl = {s: by_name[s.name] for s in _subset_symbols(subset) if s.name in by_name and s != by_name[s.name]}
+    if not repl:
+        return subset
+    subset = copy.deepcopy(subset)
+    subset.replace(repl)
+    return subset
 
 
 def add_indirection_subgraph(sdfg: SDFG,
@@ -764,8 +805,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -1103,6 +1145,67 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+#: What ``DefinedNames.lookup`` returns for a name that is not defined.
+MISSING = object()
+
+
+class DefinedNames(collections.abc.Mapping):
+    """The names a :class:`ProgramVisitor` can resolve, as a view over its tables.
+
+    A lookup walks the sources in reverse merge order and stops at the first hit, so it never
+    builds the merged dict; :meth:`materialize` builds it for the sites that spread every name.
+    """
+
+    __slots__ = ('pv', )
+
+    def __init__(self, pv: 'ProgramVisitor') -> None:
+        self.pv = pv
+
+    def lookup(self, name: str) -> Any:
+        pv = self.pv
+        arrays = pv.sdfg.arrays
+        value = pv.globals.get(name)
+        if value is not None and preprocessing.mpi4py_is_usable():
+            from mpi4py import MPI  # Avoid a hard mpi4py dependency at import time
+            if isinstance(value, MPI.Comm):
+                return value
+        # `get`, not `in`: the NestedDict's `in` also resolves struct members, which the merge does not copy.
+        desc = arrays.get(name)
+        if desc is not None:
+            return desc
+        sdfg_name = pv.variables.get(name)
+        if sdfg_name in pv.sdfg.symbols:
+            return pv.sdfg.symbols[sdfg_name]
+        if '.' in name and name in arrays and name in pv.variables.values():
+            return arrays[name]
+        if sdfg_name in arrays:
+            return arrays[sdfg_name]
+        scope_name = pv.scope_vars.get(name)
+        if scope_name in pv.scope_arrays:
+            return pv.scope_arrays[scope_name]
+        if scope_name in arrays:
+            return arrays[scope_name]
+        return value if isinstance(value, symbolic.symbol) else MISSING
+
+    def __getitem__(self, name: str) -> Any:
+        value = self.lookup(name)
+        if value is MISSING:
+            raise KeyError(name)
+        return value
+
+    def __contains__(self, name: str) -> bool:
+        return self.lookup(name) is not MISSING
+
+    def __iter__(self) -> Iterable[str]:
+        return iter(self.materialize())
+
+    def __len__(self) -> int:
+        return len(self.materialize())
+
+    def materialize(self) -> Dict[str, Any]:
+        return self.pv.defined_dict()
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1366,7 +1469,11 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
-    def defined(self):
+    def defined(self) -> DefinedNames:
+        return DefinedNames(self)
+
+    def defined_dict(self) -> Dict[str, Any]:
+        """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
         result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
@@ -1380,11 +1487,6 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
-        # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
         # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
         # ImportError, so the availability question belongs in one place (see the helper's docstring).
         if preprocessing.mpi4py_is_usable():
@@ -1660,10 +1762,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) in (1, 3):
-                    bounds = values[:1]
-                elif len(values) == 2:
-                    bounds = values
+                if len(values) in (1, 2, 3):
+                    # The start and stop of the range; the step does not change the type of the iterate
+                    bounds = values[:2]
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
@@ -3296,8 +3397,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3786,7 +3888,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
-                read_rng = self.views[result][1].subset
+                # The view's memlet is built from a string, so match its symbols to the target's by name
+                read_rng = _retype_symbols_like(self.views[result][1].subset, new_rng)
                 try:
                     needs_copy = not (new_rng.intersects(read_rng) == False)
                 except TypeError:
@@ -3820,7 +3923,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
                 wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
+                memlet = Memlet(data=new_name, subset=str(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
                 with_wcr = False
@@ -3849,7 +3952,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
+                    memlet = Memlet(data=new_name, subset=str(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name

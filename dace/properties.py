@@ -17,7 +17,7 @@ from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
@@ -74,6 +74,10 @@ class PropertyError(Exception):
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
+
+    #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
+    attr_name: Optional[str] = None
+    private_name: Optional[str] = None
 
     def __init__(
             self,
@@ -179,16 +183,17 @@ class Property(Generic[T]):
         # If a custom getter is specified, use it
         if self.getter:
             return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
         # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+        name = self.private_name
+        if name is None:
+            raise RuntimeError("Attribute name not set")
+        return getattr(obj, name)
 
     def __set__(self, obj, val):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
+        if self.private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -218,7 +223,7 @@ class Property(Generic[T]):
                 and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        setattr(obj, self.private_name, val)
 
     # Python Properties of this Property class
 
@@ -346,6 +351,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.private_name = "_" + name  # precomputed: __get__/__set__ must not rebuild it per access
         prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
@@ -715,6 +721,10 @@ class EnumProperty(Property):
                 return None
             if isinstance(s, dtype):
                 return s
+            if isinstance(s, dict) and issubclass(dtype, dace.attr_enum.ExtensibleAttributeEnum):
+                # An instance of a template member, stored with its attributes
+                self._undefined_val = None
+                return dtype.from_json(s)
             try:
                 self._undefined_val = None
                 return dtype[s]
@@ -729,10 +739,13 @@ class EnumProperty(Property):
         self._undefined_val = None
 
         def g(obj):
-            if self._undefined_val is None:
-                return dace.serialize.to_json(obj)
-            else:
+            if self._undefined_val is not None:
                 return self._undefined_val
+            if isinstance(obj, dace.attr_enum.ExtensibleAttributeEnum) and obj._is_template:
+                # The property knows its enumeration, so an uninstantiated template is stored as its name, like any
+                # other member (and as before the member became a template)
+                return obj._name_
+            return dace.serialize.to_json(obj)
 
         self._to_json = g
         self._to_string = g

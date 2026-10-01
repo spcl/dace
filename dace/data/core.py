@@ -166,6 +166,12 @@ class Data:
         this does not include any pre- or post-padding. """
         return _prod(self.shape)
 
+    @property
+    def total_size_in_bytes(self) -> symbolic.SymbolicType:
+        """ The total allocated size of this data descriptor in bytes, i.e., ``total_size`` times the size of its
+        element type, including any padding. """
+        return self.total_size * self.dtype.bytes
+
     def strides_from_layout(
         self,
         *dimensions: int,
@@ -198,9 +204,7 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
-                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
-                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
+                dimsize = symbolic.align(self.shape[dim], alignment)
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
