@@ -320,6 +320,13 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
+def is_affine_in(expr, sym) -> bool:
+    """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
+    expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
+    matches = [f for f in expr.free_symbols if str(f) == str(sym)]
+    return not matches or (expr.is_polynomial(matches[0]) and sympy.degree(expr, matches[0]) <= 1)
+
+
 def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
     for n, ostep in enumerate(orng.strides()):
         if ostep == 1:
@@ -765,8 +772,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3356,8 +3364,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3875,7 +3884,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
                 wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
+                memlet = Memlet(data=new_name, subset=str(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
                 with_wcr = False
@@ -3904,7 +3913,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
+                    memlet = Memlet(data=new_name, subset=str(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name
