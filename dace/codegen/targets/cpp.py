@@ -25,7 +25,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, propagation
+from dace.sdfg import nodes, graph as gr, propagation, utils as sdutil
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -750,6 +750,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
             return dst
+
+        # Writes through views conflict on the viewed container
+        dst = sdutil.get_last_view_node(dfg, dst) or dst
 
         if dfg.in_degree(dst) > 0:
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):

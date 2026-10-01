@@ -90,6 +90,9 @@ class PAPIInstrumentation(InstrumentationProvider):
         PAPIInstrumentation._counters = PAPIInstrumentation._counters or set(
             ast.literal_eval(Config.get('instrumentation', 'papi', 'default_counters')))
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def get_unique_number(self):
         ret = self._unique_counter
         self._unique_counter += 1
@@ -564,7 +567,7 @@ class PAPIUtils(object):
                 # To not have hidden elements that get added again later, we
                 # also replace the values in the other itvars...
                 for k, v in retparams.items():
-                    newv = symbolic.pystr_to_symbolic(str(v))
+                    newv = symbolic.pystr_to_symbolic(v)
 
                     tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:

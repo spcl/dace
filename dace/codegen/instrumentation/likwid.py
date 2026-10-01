@@ -122,6 +122,9 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         except KeyError:
             self._default_events = "CLOCK"
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.parent is not None:
             return
@@ -370,6 +373,9 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
             self._default_events = Config.get('instrumentation', 'likwid', 'default_events')
         except KeyError:
             self._default_events = "FLOPS_SP"
+
+    def writes_to_report(self) -> bool:
+        return True
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.parent is not None:
