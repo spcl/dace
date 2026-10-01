@@ -154,7 +154,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     CATEGORY: str = 'Helper'
 
     order_by_transformation = properties.Property(dtype=bool,
-                                                  default=True,
+                                                  default=False,
                                                   desc='Whether or not to order by transformation.')
 
     def __init__(self,
@@ -165,7 +165,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                  states: Optional[List[SDFGState]] = None,
                  print_report: Optional[bool] = None,
                  progress: Optional[bool] = None,
-                 order_by_transformation: bool = True) -> None:
+                 order_by_transformation: bool = False) -> None:
         super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
         self.order_by_transformation = order_by_transformation
 
