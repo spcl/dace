@@ -397,16 +397,19 @@ def test_insert_view_dst_round_trip_numerical():
     assert np.all(A[0] == 0) and np.all(A[2:] == 0)
 
 
-def test_insert_self_copy_subset_is_dst_side():
-    """Self-copy ``p -> p``: ``subset`` maps to ``_out`` (dst), ``other_subset`` to ``_in`` (src); reversing them
-    would silently produce a backwards copy."""
-    sdfg = dace.SDFG("self_copy_subset_dst")
+@pytest.mark.parametrize("memlet", ["[0:4, 3] -> p[0:4, 4]", "p[0:4, 3] -> [0:4, 4]"],
+                         ids=["data_is_dst", "data_is_src"])
+def test_insert_self_copy_direction(memlet):
+    """Self-copy ``p -> p``: both endpoints match ``data``, so the memlet's ``_is_data_src`` decides which of
+    ``subset``/``other_subset`` is the source (as in copy-edge codegen); reversing them would silently produce a
+    backwards copy."""
+    sdfg = dace.SDFG("self_copy_direction")
     sdfg.add_array("p", [4, 5], dace.float64)
 
     st = sdfg.add_state("s")
     a = st.add_access("p")
     b = st.add_access("p")
-    st.add_edge(a, None, b, None, Memlet(data="p", subset="0:4, 4", other_subset="0:4, 3"))
+    st.add_edge(a, None, b, None, Memlet(memlet))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
@@ -417,8 +420,8 @@ def test_insert_self_copy_subset_is_dst_side():
     in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
     out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
 
-    assert str(in_e.data.subset) == "0:4, 3", (f"src side should read column 3 (other_subset); got {in_e.data.subset}")
-    assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
+    assert str(in_e.data.subset) == "0:4, 3", f"src side should read column 3; got {in_e.data.subset}"
+    assert str(out_e.data.subset) == "0:4, 4", f"dst side should write column 4; got {out_e.data.subset}"
 
 
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
