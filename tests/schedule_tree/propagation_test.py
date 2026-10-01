@@ -8,7 +8,6 @@ from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as t
 from dace.properties import CodeBlock
 
 import numpy as np
-import pytest
 
 
 def test_stree_propagation_forloop():
@@ -30,7 +29,6 @@ def test_stree_propagation_forloop():
     assert list(node_types[2].output_memlets()) == [memlet]
 
 
-@pytest.mark.skip("Suboptimal memlet propagation: https://github.com/spcl/dace/issues/2293")
 def test_stree_propagation_symassign():
     # Manually create a schedule tree
     N = dace.symbol('N')
@@ -58,7 +56,6 @@ def test_stree_propagation_symassign():
     assert list(stree.children[0].input_memlets()) == [dace.Memlet('A[0:20]', volume=N - 1)]
 
 
-@pytest.mark.skip("Suboptimal memlet propagation: https://github.com/spcl/dace/issues/2293")
 def test_stree_propagation_dynset():
     H = dace.symbol('H')
     nnz = dace.symbol('nnz')
