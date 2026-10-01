@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the :class:`Broadcast` library node: Fortran ``SPREAD`` and the right-aligned NumPy rule."""
+import itertools
+
 import numpy as np
 import pytest
 
@@ -8,10 +10,13 @@ from dace.libraries.standard.nodes import Broadcast
 
 N = dace.symbol('N', dace.int64, nonnegative=True)
 
+#: One compiled library per built SDFG: a reused name would load the previous case's library.
+BUILD_IDS = itertools.count()
+
 
 def build(src_shape, dst_shape, dim, src_dtype=dace.float64, dst_dtype=dace.float64, src_memlet=None, **desc):
     """One Broadcast from ``src`` to ``dst``; the memlets cover the whole arrays unless ``src_memlet`` is given."""
-    sdfg = dace.SDFG('broadcast')
+    sdfg = dace.SDFG(f'broadcast_{next(BUILD_IDS)}')
     sdfg.add_array('src', list(src_shape), src_dtype, **desc.get('src', {}))
     sdfg.add_array('dst', list(dst_shape), dst_dtype, **desc.get('dst', {}))
     state = sdfg.add_state()
