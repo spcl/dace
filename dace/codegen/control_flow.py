@@ -18,6 +18,22 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
+def falls_through(region: AbstractControlFlowRegion) -> bool:
+    """
+    Whether ``control_flow_region_to_code`` lowers ``region`` without a ``goto`` that can skip over a block: every
+    block has at most one out-edge and that edge is unconditional. A conditional out-edge is lowered to a jump to the
+    region exit, and an unstructured region to arbitrary jumps. Such a jump may cross a declaration in a block that
+    is not wrapped in its own C scope.
+    """
+    if isinstance(region, UnstructuredControlFlow):
+        return False
+    for block in region.nodes():
+        out_edges = region.out_edges(block)
+        if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
+            return False
+    return True
+
+
 def _clean_loop_body(body: str) -> str:
     """ Cleans loop body from extraneous continue statements. """
     if body.endswith('continue;\n'):
@@ -216,10 +232,7 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         expr += '__state_{}_{}:;\n'.format(region.cfg_id, re.sub(r'\s+', '_', node.label))
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
-                # dispatch_state returns the state body as a string (its declarations stream into a
-                # local buffer), so it is generated first and the C scope wrapped around it only when
-                # needed. Legacy always wraps (byte-identical); the readable generator drops the scope
-                # for a state that declares nothing into it -- see DaCeCodeGenerator.state_needs_brace.
+                # The body is generated first so the target can decide whether it needs its own C scope.
                 body = dispatch_state(node)
                 if codegen.state_needs_brace(node):
                     expr += '{\n' + body + '\n}\n'

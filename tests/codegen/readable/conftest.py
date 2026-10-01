@@ -1,24 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared fixtures + skip gates for the experimental "readable" CPU code generator.
+"""Shared helpers for the readable CPU code generator tests.
 
-This suite proves that the experimental generator
-(``compiler.cpu.implementation = experimental``) is numerically equivalent to the
-``legacy`` generator across the npbench, polybench, tsvc and tsvc_2_5 corpora, on
-CPU and GPU.
-
-The readable generator is developed in a parallel task and is not ready yet.
-:func:`experimental_available` gates the whole suite: until the generator is
-wired up it returns ``False`` and every test skips, so
-``pytest tests/codegen/readable`` is green today and flips on automatically once
-the feature lands.
-
-The gate is deliberately stronger than "did it raise": today the code generator
-ignores the ``implementation`` key and silently falls back to legacy (byte-
-identical output), so an exception-only probe would wrongly report the feature as
-ready. The probe therefore also requires the experimental output to *differ* from
-legacy on a trivial SDFG (the readable form emits per-array ``_idx`` index
-functions and ``const``/``constexpr`` initialization, which legacy never does).
+CPU kernels are compared bit-exactly against the legacy generator and run in a forked child, so that a crashing
+kernel cannot take down pytest. GPU kernels run in-process (CUDA does not survive a fork) and are compared with a
+tolerance, as their reduction and atomic order is not reproducible.
 """
+import copy
 import functools
 import os
 import shutil
@@ -26,26 +13,21 @@ import signal
 import subprocess
 import tempfile
 
-# dace lazily ``from mpi4py import MPI`` inside ``to_sdfg`` (auto-calls
-# ``MPI_Init``); steer Open MPI off UCX before that import so it cannot stall.
-# ``setdefault`` defers to any externally-provided configuration.
+# dace imports mpi4py lazily, which calls MPI_Init; keep Open MPI off UCX so that it cannot stall
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
-# Pin a single OpenMP thread so parallel reductions accumulate in a deterministic order. The
-# suite compares the legacy and experimental generators BIT-EXACTLY on CPU; with more than one
-# thread a reduction's summation order is non-deterministic and the two runs (both multi-threaded)
-# would differ by rounding on FP-heavy kernels -- a thread-scheduling artifact, not a code-generator
-# difference. ``setdefault`` defers to an externally-provided value.
+# One thread keeps the summation order of reductions fixed, which the bit-exact comparison needs
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import numpy as np
 import pytest
 
 import dace
-from dace.config import Config, set_temporary
+
+from dace.config import set_temporary
 
 #: The two CPU code generators under test.
 LEGACY = "legacy"
@@ -55,66 +37,13 @@ IMPLEMENTATION_KEY = ("compiler", "cpu", "implementation")
 
 
 def use_implementation(implementation):
-    """Context manager pinning ``compiler.cpu.implementation`` for a codegen run."""
+    """Pins ``compiler.cpu.implementation`` for a code generation run."""
     return set_temporary(*IMPLEMENTATION_KEY, value=implementation)
 
 
-def trivial_elementwise_sdfg(name):
-    """A tiny ``b[i] = a[i] + 1`` map SDFG, built with the low-level API.
-
-    Constructed directly (not via ``@dace.program``) so the probe is self-
-    contained and works from any interpreter.
-    """
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("a", [8], dace.float64)
-    sdfg.add_array("b", [8], dace.float64)
-    state = sdfg.add_state("main")
-    read, write = state.add_read("a"), state.add_write("b")
-    entry, exit_node = state.add_map("m", {"i": "0:8"})
-    tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp + 1.0")
-    state.add_memlet_path(read, entry, tasklet, dst_conn="inp", memlet=dace.Memlet("a[i]"))
-    state.add_memlet_path(tasklet, exit_node, write, src_conn="out", memlet=dace.Memlet("b[i]"))
-    return sdfg
-
-
-def generated_code(sdfg):
-    """Concatenated generated C++ for ``sdfg`` (codegen only, no compile)."""
-    return "\n".join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
-
-
-@functools.lru_cache(maxsize=1)
-def experimental_available():
-    """True iff the experimental readable CPU generator is wired up and active.
-
-    All of the following must hold, else the feature is "not ready" and the whole
-    suite skips:
-
-    1. the ``compiler.cpu.implementation`` config key exists;
-    2. code generation under ``experimental`` does not raise on a trivial SDFG;
-    3. that generated code DIFFERS from the ``legacy`` output for the same SDFG
-       (a silent legacy fallback -- today's state -- produces identical bytes).
-    """
-    try:
-        Config.get(*IMPLEMENTATION_KEY)
-    except Exception:  # noqa: BLE001 - key absent -> feature not present
-        return False
-    try:
-        # One SDFG object generated under each config: the ONLY difference is the
-        # generator, so this is deterministic (unlike two separately-built SDFGs,
-        # whose names DaCe may deduplicate, spuriously diverging the output).
-        sdfg = trivial_elementwise_sdfg("readable_probe")
-        with use_implementation(LEGACY):
-            legacy_code = generated_code(sdfg)
-        with use_implementation(EXPERIMENTAL):
-            experimental_code = generated_code(sdfg)
-    except Exception:  # noqa: BLE001 - generator under development raised -> not ready
-        return False
-    return experimental_code != legacy_code
-
-
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def gpu_available():
-    """True iff a CUDA device is usable (cupy device count, else ``nvidia-smi -L``)."""
+    """Whether a CUDA device is usable."""
     try:
         import cupy
         return cupy.cuda.runtime.getDeviceCount() > 0
@@ -131,7 +60,7 @@ def gpu_available():
 
 
 def to_host(value):
-    """Return a host numpy array for ``value`` (handles cupy device arrays)."""
+    """A host array for ``value``, which may be a cupy array."""
     if type(value).__module__.split(".")[0] == "cupy":
         import cupy
         return cupy.asnumpy(value)
@@ -139,7 +68,7 @@ def to_host(value):
 
 
 def waitpid_with_timeout(pid, timeout):
-    """``os.waitpid`` with a SIGALRM deadline; SIGKILL the child on timeout."""
+    """``os.waitpid`` that kills the child after ``timeout`` seconds."""
 
     def on_alarm(signum, frame):
         raise TimeoutError
@@ -160,17 +89,8 @@ def waitpid_with_timeout(pid, timeout):
 
 
 def run_isolated(build_and_run, timeout=300):
-    """Run ``build_and_run() -> Dict[str, ndarray]`` in a forked child process.
-
-    Repo rule: always fork when running compiled kernels -- an experimental
-    kernel that segfaults must not take down the pytest process. The child
-    marshals its output arrays through a temporary ``.npz``; a crash or timeout
-    surfaces as a ``RuntimeError`` in the parent.
-
-    Reserved for CPU runs. CUDA and ``os.fork`` are incompatible (a CUDA context
-    initialized in the parent is unusable after fork), so GPU cases run in-process
-    (see the test drivers).
-    """
+    """Runs ``build_and_run() -> dict[str, ndarray]`` in a forked child, which returns its arrays through a
+    temporary ``.npz``. A crash or timeout raises ``RuntimeError``."""
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
     pid = os.fork()
@@ -193,7 +113,7 @@ def run_isolated(build_and_run, timeout=300):
 
 
 def tolerance_for(dtype):
-    """``(rtol, atol)`` matched to precision: fp64 tight, fp32 relaxed, ints exact."""
+    """``(rtol, atol)`` for a dtype."""
     dt = np.dtype(dtype)
     if dt.kind in "iub":
         return 0.0, 0.0
@@ -202,7 +122,7 @@ def tolerance_for(dtype):
 
 
 def max_abs_diff(legacy, experimental):
-    """Max |legacy - experimental| for an error message (best effort)."""
+    """The largest absolute difference, for the failure message."""
     try:
         return float(np.nanmax(np.abs(legacy.astype(np.complex128) - experimental.astype(np.complex128))))
     except Exception:  # noqa: BLE001
@@ -210,14 +130,7 @@ def max_abs_diff(legacy, experimental):
 
 
 def assert_outputs_equivalent(legacy, experimental, target, label=""):
-    """Assert the readable generator reproduced the legacy outputs.
-
-    On CPU the two runs use the same SDFG, host compiler and inputs, so a
-    deterministic legacy result must be reproduced BIT-EXACTLY (the repo rule:
-    treat any discrepancy as a real bug, not a tolerance question). On GPU, where
-    reduction/atomic ordering is not reproducible, compare with a tight dtype-
-    aware tolerance.
-    """
+    """Asserts the readable outputs equal the legacy ones: exactly on CPU, within a dtype tolerance on GPU."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
     assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
@@ -236,16 +149,6 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
                                                  f"max|diff|={max_abs_diff(lv, ev):.3e}")
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures
-# --------------------------------------------------------------------------- #
-@pytest.fixture
-def require_experimental():
-    """Skip the test unless the readable generator is wired up (see the gate)."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
-
-
 @pytest.fixture
 def require_gpu():
     """Skip the test unless a CUDA device is present."""
@@ -258,16 +161,73 @@ def require_gpu():
     pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
 ])
 def target(request):
-    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with
-    ``-m gpu``) and additionally skips when no CUDA device is available."""
+    """The code generation target; the GPU variant is marked ``gpu`` and skipped without a device."""
     if request.param == "gpu" and not gpu_available():
         pytest.skip("no CUDA-capable GPU available")
     return request.param
 
 
-@pytest.fixture(params=[LEGACY, EXPERIMENTAL])
-def codegen_variant(request):
-    """A single CPU generator implementation. Available for future single-variant
-    tests; the equivalence tests here drive both variants within one test and
-    compare, so they do not consume this fixture."""
-    return request.param
+def heap_pipeline_1d(name, shape, rng, alignment=0):
+    """``T[i] = A[i] + 1`` then ``B[i] = T[i] * 2`` over ``rng``, with ``T`` a heap transient of ``shape``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [shape], dace.float64)
+    sdfg.add_array('B', [shape], dace.float64)
+    sdfg.add_transient('T', [shape], dace.float64, storage=dace.StorageType.CPU_Heap, alignment=alignment)
+
+    write = sdfg.add_state('write')
+    read_a, write_t = write.add_read('A'), write.add_write('T')
+    entry, exit_node = write.add_map('write_map', {'i': rng})
+    add = write.add_tasklet('add_one', {'a'}, {'o'}, 'o = a + 1.0')
+    write.add_memlet_path(read_a, entry, add, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    write.add_memlet_path(add, exit_node, write_t, src_conn='o', memlet=dace.Memlet('T[i]'))
+
+    read = sdfg.add_state_after(write, 'read')
+    read_t, write_b = read.add_read('T'), read.add_write('B')
+    entry2, exit2 = read.add_map('read_map', {'i': rng})
+    mul = read.add_tasklet('mul_two', {'t'}, {'o'}, 'o = t * 2.0')
+    read.add_memlet_path(read_t, entry2, mul, dst_conn='t', memlet=dace.Memlet('T[i]'))
+    read.add_memlet_path(mul, exit2, write_b, src_conn='o', memlet=dace.Memlet('B[i]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def run_variant(build, name, implementation, base, target='cpu'):
+    """Builds and runs one variant on a copy of ``base`` and returns its arrays. CPU runs in a forked child, GPU
+    in-process."""
+
+    def work():
+        sdfg = build(name)
+        if target == 'gpu':
+            sdfg.apply_gpu_transformations()
+        arrays = copy.deepcopy(base)
+        sdfg.compile()(**arrays)
+        return {key: value for key, value in arrays.items() if isinstance(value, np.ndarray)}
+
+    with use_implementation(implementation):
+        return work() if target == 'gpu' else run_isolated(work)
+
+
+def assert_bit_exact(build, base_name, base):
+    """Asserts that both generators give bit-identical outputs and returns them as (legacy, readable)."""
+    legacy = run_variant(build, base_name + '_legacy', LEGACY, base)
+    experimental = run_variant(build, base_name + '_experimental', EXPERIMENTAL, base)
+    assert set(legacy) == set(experimental)
+    for key in legacy:
+        assert np.array_equal(legacy[key], experimental[key]), f'{base_name}: output {key} is not bit-exact'
+    return legacy, experimental
+
+
+def experimental_code(build, name):
+    """The generated C++ of the host code object under the readable generator."""
+    with use_implementation(EXPERIMENTAL):
+        return build(name).generate_code()[0].clean_code
+
+
+def generated_for(build, name, implementation, gpu=False):
+    """All generated code of ``build`` under ``implementation``."""
+    with use_implementation(implementation):
+        sdfg = build(name)
+        if gpu:
+            sdfg.apply_gpu_transformations()
+        return '\n'.join(obj.clean_code or obj.code for obj in sdfg.generate_code())

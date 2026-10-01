@@ -356,12 +356,13 @@ required:
                         description: >
                             Selects the CPU code generator. ``legacy`` uses the classic
                             connector-based tasklet codegen (copy-in / compute / copy-out
-                            blocks). ``experimental_readable`` emits human-readable code: one
-                            ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
-                            function per array, connector-free tasklets that access arrays
-                            directly, and ``const``/``constexpr`` initialization for
-                            write-once data. This flag also governs GPU-kernel tasklets,
-                            which are emitted through the shared CPU generator instance.
+                            blocks). ``experimental_readable`` emits readable code: an
+                            ``<array>_idx(...)`` index function per array, tasklets that access
+                            arrays directly without connector temporaries, ``constexpr``
+                            constants and ``const`` bindings for write-once data, and no C scope
+                            where it declares nothing. It also governs the tasklets of GPU
+                            kernels, which are emitted through the shared CPU generator
+                            instance.
 
                     parallel_transfer_min_elements:
                         type: int

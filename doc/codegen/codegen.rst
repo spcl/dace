@@ -123,6 +123,26 @@ were requested by the code generators (e.g., link with CUBLAS). The compiler int
 folders in :func:`~dace.codegen.compiler.generate_program_folder` and invokes the CMake compiler in :func:`~dace.codegen.compiler.configure_and_compile`.
 
 
+Readable CPU Code Generator
+---------------------------
+
+Setting ``compiler.cpu.implementation`` to ``experimental_readable`` selects :class:`~dace.codegen.targets.experimental_cpu.ExperimentalCPUCodeGen`
+instead of the legacy CPU generator. It emits code that is meant to be read:
+
+  * Array offsets appear once per array, in a generated ``<array>_idx(...)`` function (and the extent of a heap array in
+    ``<array>_size(...)``).
+  * Tasklet connectors are inlined where this is safe (:class:`~dace.transformation.passes.inline_tasklet_connectors.InlineTaskletConnectors`),
+    so a tasklet accesses its arrays directly and an element-wise tasklet is a single line.
+  * Transients that only store literals are SDFG constants, emitted as ``constexpr``
+    (:class:`~dace.transformation.passes.promote_constant_transients.PromoteConstantTransients`). A transient that one
+    assignment tasklet writes, and that is read only after it in the same scope, is bound ``const`` at the write.
+  * The C scope of a map or a state is dropped when it declares nothing. A state keeps its scope if a jump in its region
+    could cross a declaration (:func:`~dace.codegen.control_flow.falls_through`).
+
+GPU kernels emit their tasklets through the same CPU generator instance, so they follow the same rules. ``compiler.format_code``
+formats the result with ``clang-format``. The legacy output is unchanged when the option is not set.
+
+
 .. _runtime:
 
 C++ Runtime Headers

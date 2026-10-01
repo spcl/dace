@@ -19,7 +19,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -44,6 +44,11 @@ def _use_aligned_operator_new(desc: data.Data) -> bool:
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
+
+    # Frame tasklet bodies with ``// Tasklet code`` and ``////`` separator lines
+    tasklet_banners = True
+    # Lowers the Python body of a tasklet to C++
+    keyword_remover = cpp.DaCeKeywordRemover
 
     title = "CPU"
     target_name = "cpu"
@@ -111,11 +116,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of traversed nodes
         self._generated_nodes = set()
-
-        # id(Map) -> whether its MapEntry opened an encapsulating C scope, so the matching MapExit
-        # closes exactly the braces that were opened. Keyed on the Map, which the entry and exit
-        # nodes share (they are reached through different subgraph views). See map_scope_needs_brace.
-        self._map_scope_braced: Dict[int, bool] = {}
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
@@ -1007,20 +1007,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
-        wcr_desc = sdfg.arrays[memlet.data]
-        ptrname = self.ptr(memlet.data, wcr_desc, sdfg)
-        # Resolve the target's defined type from declared_arrays first, falling
-        # back to defined_vars (mirrors the non-WCR out-memlet branch in
-        # process_out_memlets). A reduction target that was hoisted/inlined out of
-        # its allocating scope (e.g. an inlined pure-Reduce output) is declared at
-        # a broader scope but no longer on the live defined_vars stack at the write
-        # site; declared_arrays still carries its Pointer type.
-        is_global = wcr_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                                          dtypes.AllocationLifetime.External)
-        try:
-            defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
-        except KeyError:
-            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+        ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
+        defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
             ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
         else:
@@ -1118,9 +1106,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
-                if uconn and not self._connector_needs_copy(node, uconn):
-                    # Inlined by InlineTaskletConnectors: the body writes the array
-                    # directly, so no copy-out is emitted.
+                if uconn and not self.connector_needs_copy(node, uconn):
                     continue
                 if not uconn:
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
@@ -1417,23 +1403,10 @@ class CPUCodeGen(TargetCodeGenerator):
     #########################################################################
     # Dynamically-called node dispatchers
 
-    def tasklet_body_comment(self, node: nodes.Tasklet) -> str:
-        """Comment above a tasklet's unparsed body (overridable; the readable generator drops it)."""
-        return "// Tasklet code (%s)\n" % node.label
-
-    def tasklet_body_open_marker(self, node: nodes.Tasklet) -> str:
-        """Separator before a tasklet's unparsed body (overridable; the readable generator drops it)."""
-        return "\n    ///////////////////\n"
-
-    def tasklet_body_close_marker(self, node: nodes.Tasklet) -> str:
-        """Separator after a tasklet's unparsed body."""
-        return "    ///////////////////\n\n"
-
     def emit_tasklet_body_block(self, callsite_stream: CodeIOStream, cfg: ControlFlowRegion, state_id: int,
                                 node: nodes.Tasklet, inner_body: str, postamble: str, has_locals: bool) -> None:
-        """Emit a tasklet body in its own C++ scope block (overridable; the readable generator collapses
-        a connector-free single-statement tasklet onto one brace-free line). ``has_locals`` is True when
-        copy-in/out or code->code locals were declared, forcing the block."""
+        """Emits a tasklet body in its own C++ scope. ``has_locals`` is True when copy-in/out or code->code
+        locals were declared, so the scope cannot be dropped."""
         callsite_stream.write('{', cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
@@ -1481,9 +1454,7 @@ class CPUCodeGen(TargetCodeGenerator):
             src_node = state_dfg.memlet_path(edge)[0].src
 
             if edge.dst_conn:  # Not (None or "")
-                if not self._connector_needs_copy(node, edge.dst_conn):
-                    # Inlined by InlineTaskletConnectors: the body accesses the
-                    # array directly, so no copy-in temporary is emitted.
+                if not self.connector_needs_copy(node, edge.dst_conn):
                     continue
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
@@ -1534,9 +1505,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
 
             if edge.src_conn:
-                if not self._connector_needs_copy(node, edge.src_conn):
-                    # Inlined by InlineTaskletConnectors: the body writes the
-                    # array directly, so no out-connector temporary is declared.
+                if not self.connector_needs_copy(node, edge.src_conn):
                     continue
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
@@ -1553,7 +1522,7 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_node = state_dfg.memlet_path(edge)[-1].dst
             if edge.src_conn is None:
                 continue
-            if not self._connector_needs_copy(node, edge.src_conn):
+            if not self.connector_needs_copy(node, edge.src_conn):
                 continue
             cdtype = node.out_connectors[edge.src_conn]
             ctype = cdtype.ctype
@@ -1602,12 +1571,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
-        inner_stream.write(codegen.tasklet_body_open_marker(node), cfg, state_id, node)
+        if codegen.tasklet_banners:
+            inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
 
         codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
                                 self._ldepth, self._toplevel_schedule)
 
-        inner_stream.write(codegen.tasklet_body_close_marker(node), cfg, state_id, node)
+        if codegen.tasklet_banners:
+            inner_stream.write("    ///////////////////\n\n", cfg, state_id, node)
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
@@ -1632,11 +1603,7 @@ class CPUCodeGen(TargetCodeGenerator):
             instr.on_node_end(sdfg, cfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
 
         callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
-        # A tasklet with no copy-in/out temporaries and no code->code locals can be
-        # emitted without its own scope block (used by the readable code generator to
-        # collapse a connector-free element-wise tasklet onto a single line).
-        has_locals = (bool(arrays) or bool(tasklet_out_connectors) or locals_defined
-                      or bool(after_memlets_stream.getvalue().strip()))
+        has_locals = bool(arrays or tasklet_out_connectors or locals_defined or after_memlets_stream.getvalue().strip())
         codegen.emit_tasklet_body_block(callsite_stream, cfg, state_id, node, inner_stream.getvalue(),
                                         after_memlets_stream.getvalue(), has_locals)
         callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
@@ -1650,23 +1617,16 @@ class CPUCodeGen(TargetCodeGenerator):
         cpp.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                             toplevel_schedule, self)
 
-    def make_keyword_remover(self, sdfg, memlets):
-        """AST transformer used to lower a Python tasklet body to C++. A hook so ``cpp.unparse_tasklet``
-        does not hard-code the class; the readable generator overrides it to also inline array accesses."""
-        return cpp.DaCeKeywordRemover(sdfg, memlets, sdfg.constants, self)
-
-    def _connector_needs_copy(self, node, conn):
-        """Whether a tasklet connector needs a copy-in/out temporary. Always True here; the readable
-        generator returns False for connectors InlineTaskletConnectors rewrote into direct accesses."""
+    def connector_needs_copy(self, node: nodes.CodeNode, conn: str) -> bool:
+        """Whether a connector needs a copy-in/out temporary."""
         return True
 
     def heap_array_count(self, sdfg: SDFG, data_name: str, desc: data.Data, count: str) -> str:
-        """Element-count expression of a CPU heap allocation (the readable generator names it)."""
+        """The element count in the allocation of a heap array."""
         return count
 
-    def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg):
-        """C++ body of a native (C++/library) tasklet as it should be emitted. Verbatim here; the
-        readable generator overrides this to inline connector accesses (direct array/base-pointer)."""
+    def rewrite_cpp_tasklet_body(self, node: nodes.Tasklet, sdfg: SDFG, state_dfg: SDFGState) -> str:
+        """The C++ code of a native tasklet as emitted."""
         return type(node).__properties__["code"].to_string(node.code)
 
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
@@ -2000,9 +1960,8 @@ class CPUCodeGen(TargetCodeGenerator):
         map_header = ""
 
         # Encapsulate map with a C scope
-        needs_brace = self.map_scope_needs_brace(sdfg, state_dfg, node)
-        self._map_scope_braced[id(node.map)] = needs_brace
-        if needs_brace:
+        # TODO: Refactor out of MapEntry generation (generate_scope_header?)
+        if self.map_scope_needs_brace(sdfg, state_dfg, node):
             callsite_stream.write('{', cfg, state_id, node)
 
         # Define all input connectors of this map entry
@@ -2163,8 +2122,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result.write(outer_stream.getvalue())
 
-        # Close the encapsulating C scope only if the matching MapEntry opened one.
-        if self._map_scope_braced.pop(id(node.map), True):
+        if self.map_scope_needs_brace(sdfg, state_dfg, map_node):
             callsite_stream.write('}', cfg, state_id, node)
 
     def _generate_ConsumeEntry(
@@ -2389,10 +2347,8 @@ class CPUCodeGen(TargetCodeGenerator):
     # Methods for subclasses to override
 
     def map_scope_needs_brace(self, sdfg: SDFG, state_dfg: SDFGState, node: nodes.MapEntry) -> bool:
-        """Whether the map's encapsulating C scope (``{ ... }``) must be emitted. It bounds only what is
-        declared ahead of the loop headers (dynamic map inputs, scope preamble, instrumentation locals,
-        OpenMP ``declare reduction``), not scope-lifetime transients (scoped by the innermost loop body).
-        Always True here; the readable generator overrides it to drop braces that bound nothing."""
+        """Whether the map's encapsulating C scope must be emitted. It is a pure function of the entry, as the
+        matching exit recomputes it to close exactly what was opened."""
         return True
 
     def generate_scope_preamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):

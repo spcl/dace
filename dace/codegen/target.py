@@ -106,6 +106,11 @@ class TargetCodeGenerator(object):
         """
         pass
 
+    def state_needs_brace(self, state: SDFGState) -> bool:
+        """ Whether the body of a non-empty state must be wrapped in its own C scope. Called after the body
+            was generated. """
+        return True
+
     def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                        function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for an SDFG state scope (from a scope-entry node
