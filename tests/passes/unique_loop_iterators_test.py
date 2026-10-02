@@ -3,10 +3,10 @@
 
 import dace
 import numpy as np
-import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.equalize_symbol_dtypes import equalize
 
 
 @dace.program
@@ -848,5 +848,46 @@ def test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value
     assert sdfg.free_symbols == {'N'} and C[0] == 3
 
 
+def test_the_renamed_iterator_keeps_the_dtype_its_loop_declares():
+    """The new name is parsed from text; read at the default dtype it would be a symbol of its own, distinct from
+    the int64 iterator the loop and its memlets spell."""
+    n = dace.symbol('n_unique_dtype', dtype=dace.int64)
+
+    @dace.program
+    def two_loops(A: dace.float64[n], B: dace.float64[n]):
+        for i in range(n):
+            A[i] = A[i] + 1.0
+        for i in range(n):
+            B[i] = A[i] * 2.0
+
+    sdfg = two_loops.to_sdfg(simplify=False)
+    equalize(sdfg)
+
+    assert UniqueLoopIterators().apply_pass(sdfg, {})
+
+    assert equalize(sdfg) is None, 'the rename spelled an iterator at a dtype its loop does not declare'
+    sdfg.validate()
+
+
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    test_nested_sdfg_symbol_mapping()
+    test_loop_var_reconstruction()
+    test_nested_loops()
+    test_loop_var_in_tasklet_body()
+    test_loop_var_on_interstate_edge()
+    test_loop_bound_with_indirect_array()
+    test_while_loop_no_induction_var()
+    test_large_nested_map_for_for_map_program()
+    test_no_postamble_drops_dead_symbol_declaration()
+    test_no_postamble_clears_loop_var_for_inner_accumulator()
+    test_postamble_preserves_symbol_declaration()
+    test_idempotent_skips_already_unique_iterators()
+    test_value_preserving_sibling_kbound_loops()
+    test_disambiguates_fission_cloned_iterators()
+    test_triply_nested_loops_unique_and_value_preserving()
+    test_negative_step_loop_value_preserving()
+    test_seeds_counter_past_existing_loop_it_names()
+    test_seeds_counter_past_existing_map_params()
+    test_loop_and_map_coexist_no_collision_value_preserving()
+    test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value()
+    test_the_renamed_iterator_keeps_the_dtype_its_loop_declares()

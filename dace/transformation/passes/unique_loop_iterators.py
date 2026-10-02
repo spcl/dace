@@ -22,7 +22,7 @@ import sympy
 
 import dace
 from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, sdfg_scope_symbols
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis import ControlFlowBlockReachability
@@ -226,6 +226,7 @@ class UniqueLoopIterators(ppl.Pass):
         """
         renamed: Set[str] = set()
         array_names = frozenset(sdfg.arrays.keys())
+        base = sdfg_scope_symbols(sdfg)
         # Loop-variable names that more than one LoopRegion in THIS SDFG shares.
         # LoopFission clones a loop into siblings that keep the same
         # ``_loop_it_<N>`` name, which then aliases (e.g. LoopToMap refuses to
@@ -257,7 +258,12 @@ class UniqueLoopIterators(ppl.Pass):
                 # names (from fission) still fall through to be disambiguated.
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{self._next_id}"
-            self._rename_one_loop_var(cfg, old_name, new_name)
+            # The rename parses ``new_name`` from text, so it is typed as the loop declares ``old_name``, and later
+            # passes that parse the loop variable find the dtype the loop now has.
+            declared = cfg.new_symbols(base).get(old_name)
+            dace.symbolic.declare_symbol_dtype(new_name, declared)
+            with dace.symbolic.serialization_symbol_dtypes({new_name: declared}, inherit=True):
+                self._rename_one_loop_var(cfg, old_name, new_name)
             renamed.add(new_name)
 
             if self.assign_loop_iterator_post_value:
