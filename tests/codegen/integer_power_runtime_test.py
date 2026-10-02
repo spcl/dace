@@ -67,10 +67,8 @@ EMIT = {
 }
 
 
-@pytest.fixture(scope='module')
-def results(tmp_path_factory):
+def run_driver(directory: Path) -> dict:
     """Compiles all cases into one program under UBSan, which aborts on the first undefined behaviour."""
-    directory = tmp_path_factory.mktemp('integer_power')
     lines = ['#include <cstdio>', '#include <complex>', '#include <dace/dace.h>', 'int main() {']
     lines += [EMIT[kind].format(name=name, expression=expression) for name, (expression, kind, _) in CASES.items()]
     lines += ['return 0;', '}']
@@ -89,6 +87,11 @@ def results(tmp_path_factory):
     return {line.split()[0]: line.split()[1:] for line in run.stdout.splitlines()}
 
 
+@pytest.fixture(scope='module')
+def results(tmp_path_factory):
+    return run_driver(tmp_path_factory.mktemp('integer_power'))
+
+
 @pytest.mark.parametrize('name', CASES)
 def test_the_power_matches_numpy(name, results):
     _, kind, expected = CASES[name]
@@ -99,3 +102,11 @@ def test_the_power_matches_numpy(name, results):
         np.testing.assert_allclose(float(got[0]), expected, rtol=1e-6)
     else:
         np.testing.assert_allclose(complex(float(got[0]), float(got[1])), expected, atol=1e-12)
+
+
+if __name__ == '__main__':
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        all_results = run_driver(Path(directory))
+    for case in CASES:
+        test_the_power_matches_numpy(case, all_results)

@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``ipow`` symbolic Function and the ``RelaxIntegerPowers`` pass."""
-import sys
 
 import numpy as np
 import pytest
@@ -317,4 +316,25 @@ def test_int64_power_compiles_as_an_integer():
 
 
 if __name__ == '__main__':
-    sys.exit(pytest.main([__file__]))
+    test_ipow_lowers_to_cpp_ipow()
+    test_ipow_roundtrips_through_serialization()
+    test_ipow_survives_property_json_roundtrip_and_folds()
+    test_ipow_is_integer_and_positive()
+    test_ipow_folds_constant_power()
+    test_interval_proves_radix_decomposition()
+    test_interval_refuses_unbounded_iterator()
+    test_relaxes_pow_inside_loop()
+    test_relaxes_pow_inside_map_and_nested_sdfg()
+    test_relaxes_under_dynamic_map_symbol()
+    test_refuses_unprovable_and_negative_exponents()
+    test_end_to_end_complex_power_shape_compiles()
+    for bad in (sympy.Integer(-1), sympy.Integer(-7), sympy.Rational(-1, 2), sympy.Float(-0.5)):
+        test_ipow_rejects_a_negative_constant_exponent_integral_or_not(bad)
+    test_ipow_leaves_an_exponent_of_unknown_sign_to_the_caller()
+    test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass()
+    test_loop_range_direction_from_stride_sign()
+    test_ordered_range_accepts_raw_int_step()
+    test_refuses_pow_under_unknown_sign_stride()
+    test_descending_loop_still_relaxes()
+    test_loop_condition_off_by_one_not_relaxed()
+    test_int64_power_compiles_as_an_integer()
