@@ -41,9 +41,6 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  # ``experimental_cuda`` is a CUDA target as much as ``cuda``: the CUDA code generator
-  # defaults to the experimental implementation, so omitting it leaves the generated file
-  # compiled as plain C++, where every CUDA symbol it emits is undeclared.
   if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)

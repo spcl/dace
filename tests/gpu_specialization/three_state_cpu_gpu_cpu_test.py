@@ -19,7 +19,6 @@ sync tasklets exist anywhere inside the NestedSDFG that lives inside the GPU ker
 (c) the SDFG validates.
 """
 import dace
-import pytest
 
 from dace.codegen import common
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
@@ -214,5 +213,6 @@ def test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_sync_at_root_with_nsdfg_inside_gpu_device_map()
+    test_a_host_write_to_an_array_the_queued_copy_reads_waits_for_the_stream()
+    test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit()

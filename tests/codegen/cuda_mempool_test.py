@@ -4,6 +4,12 @@ import re
 import dace
 import pytest
 
+
+def count_frees_on_stream_zero(code: str, name: str) -> int:
+    """``cudaFreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
+    return len(re.findall(rf'cudaFreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)', code))
+
+
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)
 
 
@@ -146,8 +152,7 @@ def test_memory_pool_multistate():
 
     code = sdfg.generate_code()[0].clean_code
     assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFreeAsync(pooled, __state->gpu_context->streams[0]') == 1 or code.count(
-        'cudaFreeAsync(pooled, gpu_stream0') == 1
+    assert count_frees_on_stream_zero(code, 'pooled') == 1
 
     # Test code
     import cupy as cp
@@ -201,8 +206,7 @@ def test_memory_pool_if_states(cnd):
     sdfg.validate()
     code = sdfg.generate_code()[0].clean_code
     assert code.count('cudaMallocAsync') == 1
-    assert code.count(f'cudaFreeAsync({tmp}, __state->gpu_context->streams[0]') == 1 or code.count(
-        f'cudaFreeAsync({tmp}, gpu_stream0') == 1
+    assert count_frees_on_stream_zero(code, tmp) == 1
 
     # Test code
     import cupy as cp
@@ -250,8 +254,11 @@ def test_pooled_array_is_freed_once(lifetime):
 
 
 if __name__ == '__main__':
+    for lifetime in [dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent]:
+        test_pooled_array_is_freed_once(lifetime)
     test_memory_pool()
     test_memory_pool_state()
     test_memory_pool_tasklet()
     test_memory_pool_multistate()
-    test_memory_pool_if_states()
+    for cnd in [0, 1]:
+        test_memory_pool_if_states(cnd)

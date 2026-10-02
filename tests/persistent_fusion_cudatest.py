@@ -369,6 +369,7 @@ def test_persistent_fusion_interstate():
 
 
 # Actual execution
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     test_persistent_fusion()
     test_persistent_fusion_interstate()

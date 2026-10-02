@@ -1,21 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end test: a ``__field_operator_testee`` SDFG round-trips through
-serialise/deserialise while still compiling and producing the right result.
-
-Captures the structural skeleton of the original SDFG:
-
-  * top-level state with Tasklets writing Register-storage Scalars, a
-    NestedSDFG (the scan body's stand-in), GPU_Global Array transients, and
-    copy Tasklets feeding output Arrays;
-  * two ConditionalBlocks guarded by a host symbol (``metrics_level >= 10``),
-    mirroring the metrics-entry / metrics-exit pattern.
-
-The test compiles the SDFG once (driving the GPU pipeline), saves it to disk
-*after* the pipeline has run, reloads it from disk, compiles again, and
-finally runs the binary to check the numerical result. The mid-flight
-serialise/deserialise is the load-bearing assertion -- per-node
-``gpu_stream_id`` and all post-pipeline wiring must survive the round-trip.
-"""
+"""A ``__field_operator_testee`` SDFG (register scalars, a nested SDFG, ``GPU_Global`` transients, and two
+conditionals guarded by ``metrics_level >= 10``) compiles, round-trips through serialization after the GPU pipeline
+ran, compiles again and computes the right result: ``gpu_stream_id`` and the wiring must survive."""
 import os
 import tempfile
 
@@ -159,3 +145,8 @@ def test_field_operator_roundtrip_and_run():
     exp_0, exp_1 = _expected(n, m)
     np.testing.assert_allclose(out_0, exp_0)
     np.testing.assert_allclose(out_1, exp_1)
+
+
+if __name__ == '__main__':
+    test_field_operator_compile()
+    test_field_operator_roundtrip_and_run()

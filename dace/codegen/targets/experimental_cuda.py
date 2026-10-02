@@ -927,8 +927,9 @@ class KernelSpec:
         self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(kernel_map_entry, list(self.grid_dims),
                                                                       self.chiplets)
-        self.index_types: Dict[str, dtypes.typeclass] = common.gpu_map_index_types(sdfg, kernel_parent_state,
-                                                                                   kernel_map_entry)
+        self.index_types: Dict[str, dtypes.typeclass] = common.gpu_map_index_types(
+            sdfg, kernel_parent_state, kernel_map_entry,
+            cudaCodeGen._frame.symbols_defined_at(kernel_parent_state, kernel_map_entry))
 
         if cudaCodeGen.backend not in ['cuda', 'hip']:
             raise ValueError(f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "

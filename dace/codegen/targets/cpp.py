@@ -1069,7 +1069,14 @@ def native_site(sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, state: SDFGSt
     return cpf_lowering.NativeSite(names, f'{cfg.cfg_id}_{state_id}_{state.node_id(node)}')
 
 
-def current_stream_declaration(sdfg: SDFG, state_dfg: SDFGState, node: nodes.Tasklet) -> Optional[str]:
+def legacy_cuda_codegen(codegen):
+    """The legacy CUDA code generator in use, or ``None`` when the experimental one is."""
+    from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+    return next((target for target in codegen._dispatcher.used_targets if isinstance(target, CUDACodeGen)), None)
+
+
+def current_stream_declaration(sdfg: SDFG, state_dfg: SDFGState, node: nodes.Tasklet,
+                               legacy_cuda: bool) -> Optional[str]:
     """The ``__dace_current_stream`` local a host tasklet touching GPU memory declares, if any.
 
     The experimental codegen carries the stream in a ``gpuStream_t`` in-connector, which the legacy
@@ -1088,7 +1095,7 @@ def current_stream_declaration(sdfg: SDFG, state_dfg: SDFGState, node: nodes.Tas
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         stream = common.gpu_stream_expr(node._cuda_stream) if max_streams >= 0 else 'nullptr'
         return f'{backend}Stream_t __dace_current_stream = {stream};'
-    if Config.get('compiler', 'cuda', 'implementation') == 'legacy':
+    if legacy_cuda:
         # Library code (e.g. the cuBLAS environment) names the stream even when none is assigned.
         return f'{backend}Stream_t __dace_current_stream = nullptr;'
     return None
@@ -1123,7 +1130,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
-        stream_declaration = current_stream_declaration(sdfg, state_dfg, node)
+        stream_declaration = current_stream_declaration(sdfg, state_dfg, node, legacy_cuda_codegen(codegen) is not None)
         if stream_declaration is not None:
             callsite_stream.write(stream_declaration, cfg, state_id, node)
 
@@ -1178,12 +1185,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # ``synchronize_streams`` is a legacy-codegen helper.
-            if Config.get('compiler', 'cuda', 'implementation') != 'legacy':
-                return
-            from dace.codegen.targets import cuda  # Avoid import loop
-            try:
-                gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
-            except StopIteration:
+            gpu_codegen = legacy_cuda_codegen(codegen)
+            if gpu_codegen is None:
                 return
             # The tasklet's own code names the stream through the local defined above, so the
             # synchronization it may need must name the same expression.

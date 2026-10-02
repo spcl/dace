@@ -1,16 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The default GPU stream model: every kernel launches on stream 0 and the program synchronises
-once, rather than spreading kernels over several streams and syncing each one.
+"""Default stream model: every kernel on stream 0 and one synchronization at the end.
 
-This is the schedule CLOUDSC needs. Its whole computation runs on the device (bar some scalar
-init), so consecutive kernels are dependent and there is nothing for extra streams to overlap --
-one stream plus a single terminal sync is both correct and the cheapest schedule. The legacy
-backend instead hands out four streams and emits eight syncs for the same graph.
-
-The kernels here are nested inside a host ``nblocks`` map, the CLOUDSC shape, which also exercises
-the stream lookup fixed in ``KernelSpec.__init__``.
-
-Codegen-only: no GPU and no nvcc required.
+Dependent kernels have nothing to overlap, so this is the cheapest correct schedule (the legacy backend uses four
+streams and eight syncs). The kernels sit in a host ``nblocks`` map, the CLOUDSC shape. Codegen only.
 """
 import re
 
@@ -60,14 +52,18 @@ def build_multi_kernel_sdfg() -> dace.SDFG:
     return sdfg
 
 
-@pytest.fixture(scope='module')
-def generated_source() -> str:
+def generate_source() -> str:
     sdfg = build_multi_kernel_sdfg()
     sdfg.validate()
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         objects = sdfg.generate_code()
-    assert any(obj.language == 'cu' for obj in objects), 'no CUDA code object was generated'
+    assert any(obj.title == 'CUDA' for obj in objects), 'no CUDA code object was generated'
     return '\n'.join(obj.clean_code for obj in objects)
+
+
+@pytest.fixture(scope='module')
+def generated_source() -> str:
+    return generate_source()
 
 
 def test_every_kernel_is_generated(generated_source: str):
@@ -84,3 +80,10 @@ def test_synchronises_once(generated_source: str):
     """One stream sync for the whole program, not one per kernel."""
     syncs = re.findall(r'(?:cuda|hip)StreamSynchronize', generated_source)
     assert len(syncs) == 1, f'expected a single sync, found {len(syncs)}'
+
+
+if __name__ == '__main__':
+    source = generate_source()
+    test_every_kernel_is_generated(source)
+    test_all_kernels_use_stream_zero(source)
+    test_synchronises_once(source)

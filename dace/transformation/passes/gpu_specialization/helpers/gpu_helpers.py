@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared utilities for the GPU-specialization passes: stream names, node and connector
-predicates, and the stream-wiring idempotency signal."""
+"""Shared utilities of the GPU-specialization passes."""
 from typing import Dict, List, Optional
 
 from ordered_set import OrderedSet
@@ -10,8 +9,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import is_in_scope
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
-# Imported from the libnode layer so producers and the scheduler cannot drift. Named after the
-# legacy ambient-stream symbol, so the expanded IR is valid under either codegen.
+# The legacy ambient-stream symbol, so expanded code is valid under either codegen.
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
 
 #: Threads in one warp; a map nested in a kernel with provably fewer iterations stays one thread's loop.
@@ -28,16 +26,12 @@ def get_gpu_stream_array_name() -> str:
 
 
 def is_stream_wiring_applied(sdfg: SDFG) -> bool:
-    """Whether wiring already produced the ``gpu_streams`` array. Only wiring is single-shot;
-    scheduling persists per node in ``Node.gpu_stream_id``."""
+    """Whether wiring already produced ``gpu_streams``; scheduling persists in ``Node.gpu_stream_id``."""
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
-    """Outermost-first chain of ``MapEntry`` nodes with ``schedule`` enclosing ``node``.
-
-    The ``scope_dict`` cache is invalidated first: earlier passes may have left it stale.
-    """
+    """Outermost-first chain of the ``schedule`` maps enclosing ``node``; earlier passes may leave the scope cache stale."""
     state._clear_scopedict_cache()
     sdict = state.scope_dict()
     chain: List[nodes.MapEntry] = []
@@ -71,11 +65,7 @@ def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
 
 
 def weakly_connected_node_sets(graph) -> List[OrderedSet]:
-    """Weakly-connected components of ``graph``'s dataflow, in state node order.
-
-    ``networkx`` yields plain sets in hash order, so both the components and their contents are
-    re-sorted by node insertion index -- callers schedule off this and must not vary per run.
-    """
+    """Weakly connected components of ``graph``, in node order (networkx yields hash order, which varies per run)."""
     import networkx as nx
     order = {node: index for index, node in enumerate(graph.nodes())}
     components = [sorted(c, key=order.__getitem__) for c in nx.weakly_connected_components(graph.nx)]
@@ -98,21 +88,19 @@ def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def is_gpu_kernel_launcher(node) -> bool:
-    """True for a ``GPU_Device`` kernel ``MapEntry`` -- the launcher binds the stream handle on enter."""
+    """True for a ``GPU_Device`` kernel entry, which binds the stream handle on entry."""
     return isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device
 
 
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
-    """Nodes that *take* a GPU stream: a kernel ``MapEntry``, a GPU Copy/Fill libnode, or a lowered
-    runtime-call Tasklet. AccessNodes are memory references, not consumers."""
+    """A kernel entry, a GPU copy or fill library node, or a lowered runtime-call tasklet."""
     return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_fill_libnode(node, sdfg, state)
             or is_already_lowered_gpu_runtime_call(node))
 
 
 def is_already_lowered_gpu_runtime_call(node) -> bool:
-    """A Tasklet issuing a stream-bound GPU runtime call, detected by a ``gpuStream_t``
-    in-connector or a :data:`STREAM_CONNECTOR` reference in its body. Pipeline sync tasklets are
-    excluded -- they are not consumers in the WCC sense."""
+    """A tasklet issuing a stream-bound runtime call: a ``gpuStream_t`` in-connector or :data:`STREAM_CONNECTOR` in its
+    body. Pipeline sync tasklets are excluded."""
     if not isinstance(node, nodes.Tasklet):
         return False
     if is_pipeline_sync_tasklet(node):

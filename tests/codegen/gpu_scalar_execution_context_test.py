@@ -90,5 +90,5 @@ def test_register_scalar_update(persistent):
 if __name__ == '__main__':
     test_global_scalar_update()
     test_shared_scalar_update()
-    test_register_scalar_update(False)
-    test_register_scalar_update(True)
+    for persistent in [False, True]:
+        test_register_scalar_update(persistent)

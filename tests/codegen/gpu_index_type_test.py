@@ -30,8 +30,6 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = 'cuda', **config) -> str:
     """Generates the GPU code of ``sdfg`` for the given backend, with the given ``compiler.cuda`` entries set."""
     with dace.config.temporary_config():
         dace.config.Config.set('compiler', 'cuda', 'backend', value=backend)
-        # The expected code below is the legacy code generator's
-        dace.config.Config.set('compiler', 'cuda', 'implementation', value='legacy')
         # The expected code below assumes the default block size, whatever a local configuration file sets
         dace.config.Config.set('compiler', 'cuda', 'default_block_size', value='32,1,1')
         for key, value in config.items():
@@ -166,9 +164,8 @@ def test_threadblock_map_keeps_its_own_type():
     assert _declaration(code, 'j') == 'int j = threadIdx.x;'
 
 
-@pytest.mark.parametrize('implementation', ['legacy', 'experimental'])
-def test_nested_device_map(implementation):
-    sdfg = dace.SDFG(f'nested_device_index_type_{implementation}')
+def nested_device_map_code() -> str:
+    sdfg = dace.SDFG('nested_device_index_type')
     sdfg.add_array('A', [N, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
     outer_entry, outer_exit = state.add_map('outer', {'i': '0:N'}, schedule=dace.ScheduleType.GPU_Device)
@@ -183,15 +180,22 @@ def test_nested_device_map(implementation):
                           src_conn='o',
                           memlet=dace.Memlet('A[i, j]'))
 
-    code = _cuda_code(sdfg, implementation=implementation)
-    if implementation == 'experimental':
-        # The experimental codegen lowers the nested device map into one two-dimensional kernel map first
-        assert _declaration(code, 'b_i') == 'int64_t b_i = static_cast<int64_t>(blockIdx.y);'
-        assert _declaration(code, 'i') == 'int64_t i = (threadIdx.y + b_i);'
-        assert _declaration(code, 'j') == 'int64_t j = (threadIdx.x + b_j);'
-    else:
-        assert _declaration(code, 'i') == 'int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);'
-        assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
+    return _cuda_code(sdfg)
+
+
+@pytest.mark.old_gpu_codegen_only
+def test_nested_device_map():
+    code = nested_device_map_code()
+    assert _declaration(code, 'i') == 'int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);'
+    assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
+
+
+@pytest.mark.new_gpu_codegen_only
+def test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map():
+    code = nested_device_map_code()
+    assert _declaration(code, 'b_i') == 'int64_t b_i = static_cast<int64_t>(blockIdx.y);'
+    assert _declaration(code, 'i') == 'int64_t i = (threadIdx.y + b_i);'
+    assert _declaration(code, 'j') == 'int64_t j = (threadIdx.x + b_j);'
 
 
 def test_nested_sdfg_receives_wide_index():
@@ -340,16 +344,16 @@ if __name__ == '__main__':
     test_each_dimension_takes_its_own_type()
     test_threadblock_map_keeps_its_own_type()
     test_nested_device_map()
+    test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map()
     test_nested_sdfg_receives_wide_index()
     test_persistent_map()
-    test_dynamic_map(1)
-    test_dynamic_map(2)
+    for step in [1, 2]:
+        test_dynamic_map(step)
     test_dynamic_map_default_types()
     test_chiplet_distribution()
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
     test_block_index_products_beyond_32_bits()
     test_persistent_indices_beyond_32_bits()
-    test_dynamic_map_with_64bit_row_pointers(True, 64)
-    test_dynamic_map_with_64bit_row_pointers(True, 128)
-    test_dynamic_map_with_64bit_row_pointers(False, 128)
+    for fine_grained, block_size in [(True, 64), (True, 128), (False, 128)]:
+        test_dynamic_map_with_64bit_row_pointers(fine_grained, block_size)

@@ -122,6 +122,26 @@ def test_extended():
 
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
+def test_stream_count_read_at_apply():
+    """A strategy built before ``set_temporary`` still honors the stream count active at apply time."""
+
+    @dace.program
+    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
+        for i in dace.map[0:128:1]:
+            B[i] = A[i]
+        for i in dace.map[0:128:1]:
+            D[i] = C[i]
+
+    sdfg = independent_copies.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=1):
+        gpu_stream_pipeline.apply_pass(sdfg, {})
+    stream_ids = {n.gpu_stream_id for n in sdfg.states()[0].nodes() if n.gpu_stream_id is not None}
+    assert stream_ids == {0}, f"One concurrent stream allowed, got stream ids {stream_ids}."
+
+
+@pytest.mark.gpu
+@pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness():
     """Element-wise computation: CPU vs. GPU parity."""
     import numpy as np
@@ -550,3 +570,19 @@ def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
         f"expected a ``__dace_current_stream`` gpuStream_t in-connector, got {dict(cp.in_connectors)}"
     assert any(e.dst_conn == '__dace_current_stream' for e in state.in_edges(cp)), \
         "the ``__dace_current_stream`` connector must be fed by a wired gpu_streams edge"
+
+
+if __name__ == '__main__':
+    test_three_kernels_dependent_and_independent()
+    test_empty_state()
+    test_single_copy_library_node()
+    test_single_fill_library_node()
+    test_conditional_gpu_kernel_in_sequential_map()
+    test_libnode_expansion_propagates_stream_to_child_libnode()
+    test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes()
+    test_preexpanded_legacy_ambient_stream_tasklet_is_wired()
+    test_basic()
+    test_extended()
+    test_stream_count_read_at_apply()
+    test_numerical_correctness()
+    test_numerical_correctness_complex()

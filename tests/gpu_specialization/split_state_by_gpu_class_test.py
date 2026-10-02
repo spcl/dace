@@ -12,7 +12,6 @@ rewrite rules:
 * mixed WCC ``GPU -> CPU -> GPU`` or cycles  -> refuse, state untouched
 """
 import dace
-import pytest
 
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_state_top_level, NodeKind)
 from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import SplitStateByGPUClass
@@ -224,5 +223,9 @@ def test_pure_cpu_state_is_unchanged():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_cpu_prefix_chain_splits_into_two_states()
+    test_cpu_suffix_chain_splits_into_two_states()
+    test_cpu_prefix_and_suffix_chain_splits_into_three_states()
+    test_independent_cpu_and_gpu_wccs_split_into_two_states()
+    test_pure_gpu_state_is_unchanged()
+    test_pure_cpu_state_is_unchanged()

@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`InferGPUGridAndBlockSize`: reconciling an explicit ``gpu_block_size`` with the
-sizes of nested ``GPU_ThreadBlock`` maps."""
+"""Reconciling an explicit ``gpu_block_size`` with the sizes of nested ``GPU_ThreadBlock`` maps."""
 import dace
 import pytest
 
@@ -8,8 +7,7 @@ from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import In
 
 
 def _kernel_with_nested_threadblock(user_block_size, tb_extent: int) -> tuple:
-    """A ``GPU_Device`` kernel with ``gpu_block_size = user_block_size`` wrapping a single nested
-    ``GPU_ThreadBlock`` map of range ``0:tb_extent``. Returns ``(sdfg, state, dev_entry)``."""
+    """``(sdfg, state, kernel entry)`` of a kernel with ``gpu_block_size = user_block_size`` around one thread-block map."""
     sdfg = dace.SDFG('infer_block')
     sdfg.add_array('A', [tb_extent], dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=False)
     state = sdfg.add_state('s')
@@ -88,3 +86,4 @@ if __name__ == '__main__':
     test_infer_block_size_conflict_with_larger_threadblock_map()
     test_infer_block_size_matching_user_and_threadblock_no_conflict()
     test_infer_block_size_non_3d_user_size_matching_no_conflict()
+    test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols()

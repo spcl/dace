@@ -30,14 +30,6 @@ GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
 SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
 
 
-def input_edges(state, node, connector: str) -> list:
-    return [e for e in state.in_edges(node) if e.dst_conn == connector]
-
-
-def output_edges(state, node, connector: str) -> list:
-    return [e for e in state.out_edges(node) if e.src_conn == connector]
-
-
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
@@ -227,7 +219,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         # installed, which lands back on the CPU library this exists to avoid.
         actual_sdfg = sdfg if (sdfg is not None and not isinstance(sdfg, str)) else state.parent
         if self.implementation is None:
-            in_edges = input_edges(state, self, "_a")
+            in_edges = list(state.in_edges_by_connector(self, "_a"))
             if in_edges:
                 outer = state.memlet_path(in_edges[0])[0].src
                 if isinstance(outer, dace.sdfg.nodes.AccessNode):
@@ -241,12 +233,12 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        # Filter on the data connector: the GPU stream pipeline attaches a non-dataflow in-edge.
-        in_edges = input_edges(state, self, "_a")
+        # The GPU stream pipeline attaches a non-dataflow in-edge, so select the data connector.
+        in_edges = list(state.in_edges_by_connector(self, "_a"))
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = output_edges(state, self, "_b")
+        out_edges = list(state.out_edges_by_connector(self, "_b"))
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data

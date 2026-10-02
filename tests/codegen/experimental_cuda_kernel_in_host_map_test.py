@@ -1,10 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A GPU_Device map nested inside a host-scheduled map (the CLOUDSC shape: an outer block loop
-orchestrates on the host, the compute map inside it is the kernel).
-
-The stream edge then reaches the kernel map entry *through* the enclosing MapEntry, so the
-dynamic-map-input source is that MapEntry and not the ``gpu_streams`` AccessNode.
-"""
+"""A ``GPU_Device`` map inside a host map (the CLOUDSC shape): the stream edge reaches the kernel through the
+enclosing map entry, not from the ``gpu_streams`` access node."""
 import dace
 from dace import dtypes
 

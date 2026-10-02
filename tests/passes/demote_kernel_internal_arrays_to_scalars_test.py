@@ -185,12 +185,8 @@ def test_block_reduce_output_not_scalarized_end_to_end():
     direct (un-expanded) pass invocation does not catch.
     """
     sdfg = _build_block_reduction()
-    old_impl = dace.Config.get('compiler', 'cuda', 'implementation')
-    try:
-        dace.Config.set('compiler', 'cuda', 'implementation', value='experimental')
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         code = '\n'.join(o.code for o in sdfg.generate_code())
-    finally:
-        dace.Config.set('compiler', 'cuda', 'implementation', value=old_impl)
     assert not re.search(r'\bfloat\s+tB\s*;', code), 'reduce output tB was wrongly scalarized'
 
 
@@ -284,4 +280,3 @@ if __name__ == '__main__':
     test_cpp_tasklet_neighbor_not_demoted()
     test_nested_sdfg_neighbor_does_not_crash()
     test_gpu_scheduled_nested_map_boundary_not_demoted()
-    print('ok')

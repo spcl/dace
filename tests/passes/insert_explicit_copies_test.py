@@ -1327,7 +1327,6 @@ def test_a_stage_in_copy_competing_with_a_write_is_lifted_and_ordered_before_it(
     sdfg = competing_stage_in_sdfg()
 
     InsertExplicitCopies().apply_pass(sdfg, {})
-    sdfg.validate()
 
     assert lifted_copy_orders_before(sdfg, "patch")
     a, b = np.arange(_N_STAGE, dtype=np.float64), np.zeros(_N_STAGE)

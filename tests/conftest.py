@@ -279,11 +279,8 @@ def pytest_collection_modifyitems(config, items):
     except Exception:
         return  # If dace config is unavailable, don't interfere with collection.
 
-    skip_old = pytest.mark.skip(reason="Requires legacy CUDA codegen (compiler.cuda.implementation=legacy)")
-    skip_new = pytest.mark.skip(reason="Requires experimental CUDA codegen (compiler.cuda.implementation=experimental)")
-
     for item in items:
         if 'old_gpu_codegen_only' in item.keywords and impl != 'legacy':
-            item.add_marker(skip_old)
+            item.add_marker(pytest.mark.skip(reason='Requires the legacy CUDA codegen'))
         if 'new_gpu_codegen_only' in item.keywords and impl != 'experimental':
-            item.add_marker(skip_new)
+            item.add_marker(pytest.mark.skip(reason='Requires the experimental CUDA codegen'))
