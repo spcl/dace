@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A size computed in the program can be used as an array shape.
 
 ``nt = Nt + 1; np.empty(nt)`` needs ``nt`` as a symbol, but it is a data descriptor. The size is
@@ -12,6 +12,11 @@ import pytest
 import dace
 
 N = dace.symbol('N')
+
+
+def run(program, **arguments):
+    """Runs the program as the frontend built it; where simplify() places an allocation is not what is tested."""
+    program.to_sdfg(simplify=False)(**arguments)
 
 
 @dace.program
@@ -75,7 +80,7 @@ def test_scalar_size_as_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    size_from_empty(a, np.int64(nt), out, N=n)
+    run(size_from_empty, a=a, Nt=np.int64(nt), out=out, N=n)
     assert np.allclose(out, a * 2.0)
 
 
@@ -84,7 +89,7 @@ def test_size_descriptor_survives_its_use_as_a_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    size_read_after_use(a, np.int64(nt), out, N=n)
+    run(size_read_after_use, a=a, Nt=np.int64(nt), out=out, N=n)
     assert np.allclose(out, a + (nt + 1))
 
 
@@ -92,7 +97,7 @@ def test_size_can_be_reassigned_after_use_as_a_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    size_reassigned_after_use(a, np.int64(nt), out, N=n)
+    run(size_reassigned_after_use, a=a, Nt=np.int64(nt), out=out, N=n)
     assert np.allclose(out, a + 99)
 
 
@@ -102,7 +107,7 @@ def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
     A single shared symbol gave both the last value written, so ``np.sum(b)`` returned 2.0 not 64.0.
     """
     out = np.zeros(1)
-    two_arrays_from_reassigned_size(np.int64(64), out)
+    run(two_arrays_from_reassigned_size, Nt=np.int64(64), out=out)
     assert np.isclose(out[0], 64.0)
 
 
@@ -113,7 +118,7 @@ def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
     and the access goes out of bounds.
     """
     out = np.zeros(1)
-    size_reused_as_index(out)
+    run(size_reused_as_index, out=out)
     assert np.isclose(out[0], 2.0)
 
 
@@ -164,7 +169,7 @@ def test_size_symbol_is_assigned_before_the_allocation():
 def test_a_size_one_array_is_read_through_a_subscript():
     """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
     out = np.zeros(4)
-    size_from_size_one_array(np.array([4], dtype=np.int64), out)
+    run(size_from_size_one_array, nt=np.array([4], dtype=np.int64), out=out)
     assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
 
 
@@ -184,7 +189,7 @@ def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
 def test_the_fill_constructors_accept_a_computed_size(program, expected):
     """zeros/ones/full build their transient on their own path, which also has to promote the size."""
     out = np.zeros(1)
-    program(np.int64(3), out)
+    run(program, Nt=np.int64(3), out=out)
     assert np.isclose(out[0], expected)
 
 
