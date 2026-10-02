@@ -46,7 +46,7 @@ checks that only validate the program.
        the corresponding ``dace.comm`` library calls. Skipped silently if
        ``mpi4py`` is not installed.
    * - :class:`~dace.frontend.python.preprocessing.ModuloConverter`
-     - Rewrites Python's ``a % b`` to ``PyMod(a, b)``, because a bare ``%`` in an SDFG is C's modulo (see
+     - Rewrites Python's ``a % b`` to ``PyMod(a, b)``, which names the floored modulo explicitly (see
        :ref:`division-modulo`). Runs after constant folding.
    * - :func:`~dace.frontend.python.preprocessing.find_disallowed_statements`
      - Walks the AST and raises a ``TypeError`` if any statement listed in

@@ -60,7 +60,7 @@ def test():
     auto result = 0;
     while (((i < woo) && (i > 0))) {
         for (auto j : range(i)) {
-            result += dace::math::pow(py_floor(2, 1), j);
+            result += dace::math::pow((2 / 1), j);
         }
     }
     return result;

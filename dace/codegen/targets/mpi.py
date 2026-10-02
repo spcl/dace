@@ -137,8 +137,9 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
             callsite_stream.write('{\n', cfg, state_id, map_header)
             callsite_stream.write(
                 '%s %s = %s + __dace_comm_rank * (%s);\n' %
-                (symtypes[var], var, cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
-                 cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
+                (symtypes[var], var, cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True), c_operators=True),
+                 cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True), c_operators=True)), cfg, state_id,
+                map_header)
 
         self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
 

@@ -337,7 +337,8 @@ class CPPUnparser:
                  type_inference=False,
                  defined_symbols=None,
                  language=dace.dtypes.Language.CPP,
-                 data_names=None):
+                 data_names=None,
+                 c_operators=False):
 
         self.f = file
         #: The names among ``defined_symbols`` that are data, declared at exactly their dtype.
@@ -355,6 +356,7 @@ class CPPUnparser:
         self.locals = locals
         self.firstfill = True
         self.language = language
+        self.c_operators = c_operators
 
         self.dispatch(tree)
         print("", file=self.f)
@@ -402,13 +404,9 @@ class CPPUnparser:
             types = tuple(self.c_type(node) for node in arguments)
         self.write(runtime_call(name, [self.render(node) for node in arguments], types))
 
-    def c_typed_funcop(self, op: ast.operator) -> bool:
-        """Whether the C dialect prints the operator ``op`` as a typed helper call (``//`` and ``%``)."""
-        return cpf_lowering.standalone_c() and isinstance(op, (ast.FloorDiv, ast.Mod))
-
     def c_float_mod(self, op: ast.operator, left: ast.AST, right: ast.AST) -> bool:
-        """Whether the C dialect prints ``left % right`` as ``c_mod``: C has no ``%`` on floating point."""
-        return (isinstance(op, ast.Mod) and cpf_lowering.standalone_c()
+        """Whether the C dialect prints the C ``left % right`` as ``c_mod``: C has no ``%`` on floating point."""
+        return (isinstance(op, ast.Mod) and self.c_operators and cpf_lowering.standalone_c()
                 and self.c_type(ast.BinOp(left=left, op=op, right=right)) in cpf_lowering.C_FLOATING_RANKS)
 
     def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
@@ -508,7 +506,8 @@ class CPPUnparser:
             types = (self.c_type(node.left), self.c_type(node.right))
             if any(dtype is None for dtype in types):
                 return None
-            return cpf_lowering.c_helper_dispatch('py_floor' if isinstance(node.op, ast.FloorDiv) else 'c_mod', types)
+            return cpf_lowering.c_helper_dispatch(
+                'py_floor' if isinstance(node.op, ast.FloorDiv) else ('c_mod' if self.c_operators else 'py_mod'), types)
         elif isinstance(node, ast.BinOp) and not isinstance(node.op, ast.MatMult):
             operands = [node.left, node.right]
         elif isinstance(node, ast.IfExp):
@@ -737,15 +736,14 @@ class CPPUnparser:
     def _AugAssign(self, t):
         self.fill()
         self.dispatch(t.target)
+        if self._is_floored(t.op):
+            self.write(" = ")
+            self._modulo_call(self.floored_functions[type(t.op)], t.target, t.value)
         # Operations that require a function call
-        if self.c_float_mod(t.op, t.target, t.value):
+        elif self.c_float_mod(t.op, t.target, t.value):
             operands = [t.target, t.value]
             self.write(" = " + runtime_call('c_mod', [self.render(node)
                                                       for node in operands], self.c_argument_types(operands)))
-        elif t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
-            operands = [t.target, t.value]
-            self.write(" = " + runtime_call(self.funcops[t.op.__class__.__name__][1],
-                                            [self.render(node) for node in operands], self.c_argument_types(operands)))
         elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(" = " + func + "(")
@@ -1297,7 +1295,6 @@ class CPPUnparser:
         "Mod": "%"
     }
     funcops = {
-        "FloorDiv": (",", "py_floor"),
         "MatMult": (",", "dace::gemm"),
     }
     #: Arithmetic ops folded over two complex literal operands (see _BinOp).
@@ -1344,11 +1341,11 @@ class CPPUnparser:
         # int/complex mixed arithmetic (illegal for std::complex) is emitted.
         if self._complex_literal_fold(t):
             return
+        if self._is_floored(t.op):
+            self._modulo_call(self.floored_functions[type(t.op)], t.left, t.right)
         # Operations that require a function call
-        if self.c_float_mod(t.op, t.left, t.right):
+        elif self.c_float_mod(t.op, t.left, t.right):
             self.emit_call('c_mod', [t.left, t.right])
-        elif t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
-            self.emit_call(self.funcops[t.op.__class__.__name__][1], [t.left, t.right])
         elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(func + "(")
@@ -1553,11 +1550,45 @@ class CPPUnparser:
         "Mod": "py_mod",
         "PyMod": "py_mod",
         "FtnModulo": "ftn_modulo",
+        "PyFloor": "py_floor",
+        "int_floor": "py_floor",
     }
+
+    floored_functions = {ast.Mod: "PyMod", ast.FloorDiv: "PyFloor"}
+
+    def _is_floored(self, op: ast.operator) -> bool:
+        """ Python's ``%`` and ``//`` floor, except in a symbolic expression, which has chosen its operators. """
+        return isinstance(op, ast.FloorDiv) or (isinstance(op, ast.Mod) and not self.c_operators)
+
+    def _is_nonnegative_integer(self, node: ast.AST) -> bool:
+        """ Whether ``node`` is an integer that is provably nonnegative: a literal or a variable of unsigned type. """
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, int) and not isinstance(node.value, bool) and node.value >= 0
+        if isinstance(node, ast.Name):
+            ctype = self.defined_symbols.get(node.id)
+            if ctype is None and self.locals is not None:
+                ctype = self.locals.get_name_type_associations().get(node.id)
+            return isinstance(ctype, dtypes.typeclass) and np.issubdtype(ctype.type, np.unsignedinteger)
+        return False
+
+    def _modulo_call(self, function: str, left: ast.AST, right: ast.AST):
+        """ ``function`` is a key of ``modulo_calls``: C's operators are used where they agree with a floored one. """
+        if function in ("PyMod", "Mod", "FtnModulo", "PyFloor", "int_floor") and self._is_nonnegative_integer(
+                left) and self._is_nonnegative_integer(right):
+            self.write("(")
+            self.dispatch(left)
+            self.write(" / " if function in ("PyFloor", "int_floor") else " % ")
+            self.dispatch(right)
+            self.write(")")
+        else:
+            self.emit_call(self.modulo_calls[function], [left, right])
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
+            if t.func.id in self.modulo_calls and len(t.args) == 2 and not t.keywords:
+                self._modulo_call(t.func.id, *t.args)
+                return
             if t.func.id in self._typecast_funcs:
                 self.write(self.typecast(self._typecast_funcs[t.func.id], ', '.join(self.render(e) for e in t.args)))
                 return
@@ -1740,7 +1771,7 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, data_names=None):
+def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, data_names=None, c_operators=False):
     strio = StringIO()
     CPPUnparser(node,
                 0,
@@ -1748,7 +1779,8 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, dat
                 strio,
                 expr_semicolon=expr_semicolon,
                 defined_symbols=defined_symbols,
-                data_names=data_names)
+                data_names=data_names,
+                c_operators=c_operators)
     return strio.getvalue().strip()
 
 
@@ -1776,10 +1808,10 @@ def cpp_assignment(target: str, value, defined_symbols=None) -> str:
 
 
 # Code can either be a string or a function
-def py2cpp(code, expr_semicolon=True, defined_symbols=None):
+def py2cpp(code, expr_semicolon=True, defined_symbols=None, c_operators=False):
     if isinstance(code, str):
         try:
-            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
+            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols, c_operators=c_operators)
         except SyntaxError:
             return code
     elif isinstance(code, ast.AST):
@@ -1790,7 +1822,8 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         from dace import symbolic
         return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
                           expr_semicolon,
-                          defined_symbols=defined_symbols)
+                          defined_symbols=defined_symbols,
+                          c_operators=True)
     elif isinstance(code, int):
         return str(code)
     elif code.__class__.__name__ == 'function':
@@ -1813,13 +1846,14 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def pyexpr2cpp_cached(expr, dialect):
+def pyexpr2cpp_cached(expr, dialect, c_operators):
     # ``dialect`` is unread here and is a parameter only so that it reaches this memoization key.
     # Without it the first spelling of an expression wins for the life of the process, and a
     # standalone-C rendering reads back the C++ text an earlier RUNTIME call cached.
-    return py2cpp(expr, expr_semicolon=False)
+    return py2cpp(expr, expr_semicolon=False, c_operators=c_operators)
 
 
-def pyexpr2cpp(expr):
-    """The C++ (or standalone C) spelling of a Python expression, memoized per dialect."""
-    return pyexpr2cpp_cached(expr, cpf_lowering.active_dialect())
+def pyexpr2cpp(expr, c_operators=False):
+    """The C++ (or standalone C) spelling of a Python expression, memoized per dialect. ``c_operators`` is set for
+    the output of ``symstr(..., cpp_mode=True)``, where a ``%`` is already C's."""
+    return pyexpr2cpp_cached(expr, cpf_lowering.active_dialect(), c_operators)

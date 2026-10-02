@@ -254,6 +254,8 @@ def _symbol_spec(name, dtype, assumptions) -> Tuple[str, 'dtypes.typeclass', Dic
     assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
     if 'integer' not in assumptions and numpy.any(is_integer):
         assumptions['integer'] = True
+    if 'nonnegative' not in assumptions and any(issubclass(k, numpy.unsignedinteger) for k in dkeys):
+        assumptions['nonnegative'] = True
     return name, dtype, assumptions
 
 
@@ -1832,6 +1834,11 @@ class int_floor(DaceFunction):
     def _eval_is_integer(self):
         return True
 
+    def _eval_is_nonnegative(self):
+        if self.args[0].is_nonnegative and self.args[1].is_positive:
+            return True
+        return None
+
 
 class __int_floor(int_floor):
     """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
@@ -1844,21 +1851,62 @@ class __int_floor(int_floor):
 operator_int_floor = __int_floor
 
 
+class PyMod(DaceFunction):
+    """ Python's modulo, the meaning of ``%``: the quotient is floored, so the result takes the sign of the divisor. """
+
+    @classmethod
+    def eval(cls, x, y):
+        if y == 0:
+            return None
+        folded = sympy.Mod(x, y)  # SymPy's Mod is floored too, so everything it simplifies holds here
+        if not isinstance(folded, sympy.Mod):
+            return folded
+        if folded.args != (x, y):
+            return cls(*folded.args)
+        return None
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_positive:
+            return True
+        return None
+
+
 class CMod(DaceFunction):
-    """ C's truncating modulo, the meaning of ``%`` in an SDFG. """
+    """ C's modulo, asked for explicitly (Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated, so the result
+        takes the sign of the dividend (``fmod`` for floating point). """
 
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number and y != 0:
-            return x - y * sympy.Integer(int(x / y))
+            quotient = x / y
+            return x - y * (sympy.floor(quotient) if quotient >= 0 else sympy.ceiling(quotient))
         if x.is_nonnegative and y.is_positive:
-            return sympy.Mod(x, y)
+            return PyMod(x, y)  # both roundings agree, so simplification sees a single form
+        return None
 
     def _eval_is_integer(self):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
-MODULO_FUNCTIONS = {'CMod': CMod, 'FtnMod': CMod, 'Mod': sympy.Mod, 'PyMod': sympy.Mod, 'FtnModulo': sympy.Mod}
+# Fortran's MOD truncates and MODULO floors, like C and Python
+FtnMod = CMod
+FtnModulo = PyMod
+
+# Python's ``//`` floors
+PyFloor = int_floor
+
+# Spellings of the modulo and floor-division functions in symbolic strings
+MODULO_FUNCTIONS = {
+    'PyMod': PyMod,
+    'CMod': CMod,
+    'FtnMod': CMod,
+    'FtnModulo': PyMod,
+    'PyFloor': int_floor,
+    'Mod': sympy.Mod,
+}
 
 
 class int_ceil(DaceFunction):
@@ -2802,7 +2850,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: '__left_shift',
         ast.RShift: '__right_shift',
         ast.FloorDiv: '__int_floor',
-        ast.Mod: 'CMod',
+        ast.Mod: 'PyMod',
     }
 
     def visit_UnaryOp(self, node):
@@ -3124,7 +3172,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(CMod, a, b)
+        return _construct_function_uncached(PyMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -3854,6 +3902,11 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
     return simplify(e.subs(relaxed)).is_nonnegative is True
 
 
+def nonnegative_integers(*operands) -> bool:
+    """ Whether C's ``%`` and ``/`` on ``operands`` agree with the floored ones, which is so on nonnegative integers. """
+    return all(operand.is_integer and operand.is_nonnegative for operand in operands)
+
+
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
@@ -3929,8 +3982,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
-        if self.cpp_mode and str(expr.func) == 'int_floor':
-            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         # Explicit numeric typecasts (``int32(x)`` / ``float64(x)`` ...)
         # -> the matching ``dace::<type>(x)`` C++ cast (the same form the
         # tasklet-body ``dace.<type>(x)`` lowers to via cppunparse), so a
@@ -3995,9 +4046,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         binop = {'bitwise_and': '&', 'bitwise_or': '|', 'bitwise_xor': '^', 'left_shift': '<<', 'right_shift': '>>'}
         if base in binop and as_operator:
             return '((%s) %s (%s))' % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
-        # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
-        # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
+        # ``int_floor`` floors: it divides with ``//`` in Python, and with C's ``/`` in C++ if that agrees (the bare
+        # name keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
         if base == 'int_floor' and as_operator:
+            if self.cpp_mode and not nonnegative_integers(*expr.args):
+                return self._print_binary_call('py_floor', expr)
             op = '/' if self.cpp_mode else '//'
             return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
         if str(expr.func) == 'ipow' and self.cpp_mode:
@@ -4177,21 +4230,27 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return None
         return cpf_lowering.c_common_type(types)
 
-    def _print_Mod(self, expr):
-        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
-        dividend, divisor = expr.args
-        if dividend.is_nonnegative and divisor.is_positive:
-            return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))
-        if self.cpp_mode:
-            return self._print(sympy.Function('py_mod')(dividend, divisor))
-        return 'Mod(%s, %s)' % (self._print(dividend), self._print(divisor))
+    def _print_binary_call(self, name: str, expr):
+        return '%s(%s, %s)' % (name, self._print(expr.args[0]), self._print(expr.args[1]))
+
+    def _print_PyMod(self, expr):
+        # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
+        if not self.cpp_mode or nonnegative_integers(*expr.args):
+            return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return self._print_binary_call('py_mod', expr)
+
+    _print_Mod = _print_PyMod  # SymPy's own Mod is floored as well
 
     def _print_CMod(self, expr):
-        dividend, divisor = (self._print(argument) for argument in expr.args)
+        if not self.cpp_mode:
+            return self._print_binary_call('CMod', expr)
         # C has no ``%`` on floating point.
         if self.dialect is cpf_lowering.Dialect.STANDALONE_C and self.c_type(expr) in cpf_lowering.C_FLOATING_RANKS:
-            return cpf_lowering.c_helper_call('c_mod', (dividend, divisor), self.c_argument_types(expr.args))
-        return '((%s) %% (%s))' % (dividend, divisor)
+            return cpf_lowering.c_helper_call('c_mod', tuple(self._print(a) for a in expr.args),
+                                              self.c_argument_types(expr.args))
+        if all(arg.is_integer for arg in expr.args):
+            return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return self._print_binary_call('c_mod', expr)
 
     def _print_floor(self, expr):
         """sympy ``floor(...)`` printer.

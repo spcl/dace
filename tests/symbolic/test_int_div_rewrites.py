@@ -6,6 +6,8 @@ folded a unit denominator. That asymmetry leaked: ``strides_from_layout`` pads w
 ``alignment=1``, so every symbolic descriptor came back carrying an ``int_ceil(N, 1)`` that never
 folded back to ``N``. Both functions now share the unit-denominator and exact-division rules.
 """
+import re
+
 import numpy as np
 import pytest
 import sympy
@@ -103,7 +105,7 @@ def test_ceiling_of_an_integer_prints_as_its_argument():
     assert isinstance(stored, sympy.ceiling)
     assert stored.args[0].is_integer
 
-    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
+    assert symstr(stored, cpp_mode=True) == '(py_floor(N, 2))'
 
 
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
@@ -187,11 +189,12 @@ def divide_in_a_program(name: str, numerator: str, p: int) -> int:
     return int(out[0])
 
 
-def test_int_floor_truncates_toward_zero_in_the_generated_code():
-    """The semantics every rule above is measured against. C integer division truncates, so a
-    negative numerator does not round down -- which is why the split is gated on the numerator being
-    nonnegative rather than taken unconditionally."""
-    assert divide_in_a_program('negative', '3 - 2*P', 5) == -1, 'int_floor is C truncation, not floor'
+def test_int_floor_floors_in_the_generated_code():
+    """The semantics every rule above is measured against: ``int_floor`` is Python's ``//``, so a negative
+    numerator rounds down. That is why the split is gated on the numerator being nonnegative rather
+    than taken unconditionally: C integer division, which the generated code uses where the operands are
+    provably nonnegative, truncates."""
+    assert divide_in_a_program('negative', '3 - 2*P', 5) == -2, 'int_floor floors'
     # Positive control: where truncation and flooring agree, the same path must still be right.
     assert divide_in_a_program('positive', '2*P + 3', 5) == 2
 
@@ -205,7 +208,7 @@ if __name__ == '__main__':
         test_numeric_operands_fold(*args)
     test_a_numerator_that_can_go_negative_is_never_split()
     test_a_strided_slice_extent_folds_to_its_trip_count()
-    test_int_floor_truncates_toward_zero_in_the_generated_code()
+    test_int_floor_floors_in_the_generated_code()
     test_ceiling_of_index_arithmetic_is_integer_typed()
     test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating()
 
@@ -235,8 +238,8 @@ def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
     predicate that makes OpenMP reject an ``omp for``.
     """
     emitted = symstr(deserialize_symbolic('floor(__int_floor($N, 2) + 1)'), cpp_mode=True)
-    assert 'floor(' not in emitted, emitted
-    assert '/' in emitted, emitted
+    assert not re.search(r'(?<![\w])floor\(', emitted), emitted
+    assert '/' in emitted or 'py_floor(' in emitted, emitted
 
 
 def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():

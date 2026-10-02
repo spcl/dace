@@ -380,6 +380,67 @@ simplification sees a single form. Printed back, SymPy's ``Mod`` reads ``a % b``
 ``Mod(a, b)`` otherwise, so a serialized SDFG loads with the meaning it was saved with.
 
 
+.. _division-modulo:
+
+Division and Modulo Semantics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
+remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
+takes the sign of the divisor:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rounding of the quotient
+     - ``-7`` and ``3``
+     - ``7`` and ``-3``
+   * - truncating (C ``%``, Fortran ``MOD``)
+     - ``-1``
+     - ``1``
+   * - floored (Python ``%``, Fortran ``MODULO``)
+     - ``2``
+     - ``-2``
+
+Python code and symbolic expressions have Python's semantics: in Python tasklets, inter-state edge conditions and
+assignments, memlet subsets, map ranges and every other symbolic expression, ``%`` is floored modulo and ``//`` is
+floored division. Only C++ tasklets, which are not translated, keep C's ``%`` and ``/``. C's modulo is available in
+the other code by its name:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Spelling
+     - Semantics
+     - Used by
+     - Generated C++
+   * - ``a % b``, ``PyMod(a, b)``, ``FtnModulo(a, b)``
+     - floored
+     - Python code and symbolic expressions; ``numpy.mod`` and ``numpy.remainder``
+     - ``a % b`` if both operands are provably nonnegative integers, ``py_mod(a, b)`` otherwise
+   * - ``a // b``, ``PyFloor(a, b)``, ``int_floor(a, b)``
+     - floored division
+     - Python code and symbolic expressions; ``numpy.floor_divide``
+     - ``a / b`` if both operands are provably nonnegative integers, ``py_floor(a, b)`` otherwise
+   * - ``CMod(a, b)``, ``FtnMod(a, b)``
+     - truncating
+     - code that asks for C's modulo, such as Fortran's ``MOD``; ``numpy.fmod``
+     - ``a % b`` on integers, ``cpp_mod(a, b)`` otherwise (``fmod`` on floating point)
+
+``FtnMod`` and ``FtnModulo`` name Fortran's ``MOD`` and ``MODULO``: they are other names of
+:class:`~dace.symbolic.CMod` and :class:`~dace.symbolic.PyMod`, and ``PyFloor`` is another name of ``int_floor``.
+Operands are provably nonnegative if they are nonnegative literals, variables of unsigned type, or symbols that
+SymPy knows to be nonnegative. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
+``dace/runtime/include/dace/math.h`` and work on the host and the device. As in NumPy, floating-point ``PyMod`` and
+``PyFloor`` follow the NumPy algorithm, and a zero divisor is not handled.
+
+In symbolic expressions, constants fold with the rounding of their spelling (``PyMod(-7, 3)`` is ``2``,
+``CMod(-7, 3)`` is ``-1``), and ``PyMod`` takes the simplifications of SymPy's ``Mod``, such as
+``PyMod(i + N, N) == PyMod(i, N)``. When the dividend is provably nonnegative and the divisor provably positive the
+two roundings agree, and ``CMod`` becomes ``PyMod`` so that simplification sees a single form. SymPy's own ``Mod`` is
+floored and is printed like ``PyMod``.
+
+
 .. _connectors:
 
 Connectors

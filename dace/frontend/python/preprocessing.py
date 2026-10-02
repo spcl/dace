@@ -1677,7 +1677,7 @@ class MPIResolver(ast.NodeTransformer):
 
 
 class ModuloConverter(ast.NodeTransformer):
-    """ Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's. """
+    """ Rewrites Python's ``a % b`` to ``PyMod(a, b)``, which names the floored modulo explicitly. """
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
         node = self.generic_visit(node)
