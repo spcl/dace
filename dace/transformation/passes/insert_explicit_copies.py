@@ -282,8 +282,11 @@ class InsertExplicitCopies(ppl.Pass):
             outer = find_outer(state, edge)
         except RuntimeError:
             return False
-        # One container passing through the scope with one subset moves nothing
+        # One container passing through the scope with one subset moves nothing. A stage-in node that only renames
+        # it is dropped, so that no copy onto itself is emitted for it either.
         if inner_node.data == outer.data and edge.data.other_subset is None:
+            if stage_in:
+                drop_scope_alias(state, edge, inner_node)
             return False
         outer_desc = sdfg.arrays[outer.data]
         # A dtype change is fine: the copy node's selector lowers a converting copy to a casting tasklet.
