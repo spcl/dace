@@ -1930,8 +1930,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         node = dfg_scope.source_nodes()[0]
 
         # Get the thread/block index types
-        state = cfg.node(state_id)
-        index_types = common.gpu_map_index_types(sdfg, state, node, self._frame.symbols_defined_at(state, node))
+        index_types = common.gpu_map_index_types(sdfg, cfg.node(state_id), node)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -2071,8 +2070,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
-        index_types = common.gpu_map_index_types(sdfg, dfg, scope_entry,
-                                                 self._frame.symbols_defined_at(dfg, scope_entry))
+        index_types = common.gpu_map_index_types(sdfg, dfg, scope_entry)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
