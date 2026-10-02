@@ -214,6 +214,17 @@ def test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass():
     assert ipow_count(sdfg) == 0
 
 
+def test_an_unsigned_exponent_is_relaxed_by_the_pass():
+    R = dace.symbol('R', positive=True, integer=True)
+    M = dace.symbol('M', dace.uint32)
+    sdfg = dace.SDFG('unsigned_exponent')
+    sdfg.add_symbol('M', dace.uint32)
+    sdfg.add_array('u', [R**M], dace.float64)
+    sdfg.add_state().add_access('u')
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+    assert ipow_count(sdfg) > 0
+
+
 def test_loop_range_direction_from_stride_sign():
     """``loop_range`` orders (low, high) by the stride sign, and refuses when the sign is
     unknown -- a wrong direction guess would relax a negative exponent."""
@@ -295,10 +306,10 @@ def test_loop_condition_off_by_one_not_relaxed():
 
 
 def test_int64_power_compiles_as_an_integer():
-    """``pow`` on int64 symbols must stay integral: as a double it is neither a legal OpenMP
-    controlling predicate nor a pointer offset, and the generated code fails to build."""
+    """A power of int64 symbols the pass proves non-negative lowers to ``ipow`` and stays integral: as a
+    double it is neither a legal OpenMP controlling predicate nor a pointer offset."""
     R = dace.symbol('R', dtype=dace.int64)
-    K = dace.symbol('K', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64, nonnegative=True)
 
     @dace.program
     def tester(A: dace.float64[R**K]):
@@ -327,6 +338,7 @@ if __name__ == '__main__':
         test_ipow_rejects_a_negative_constant_exponent_integral_or_not(bad)
     test_ipow_leaves_an_exponent_of_unknown_sign_to_the_caller()
     test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass()
+    test_an_unsigned_exponent_is_relaxed_by_the_pass()
     test_loop_range_direction_from_stride_sign()
     test_ordered_range_accepts_raw_int_step()
     test_refuses_pow_under_unknown_sign_stride()

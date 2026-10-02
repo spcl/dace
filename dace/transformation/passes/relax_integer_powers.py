@@ -14,7 +14,7 @@ from typing import Any
 
 import sympy
 
-from dace import SDFG, data, subsets, symbolic
+from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -43,9 +43,13 @@ class SignFacts:
         for desc in sdfg.arrays.values():
             if isinstance(desc, data.Array):
                 syms |= desc.free_symbols
+        # An unsigned dtype is a sign fact sympy's assumptions do not carry
+        unsigned = frozenset(name for name, dtype in sdfg.symbols.items()
+                             if type(dtype) is dtypes.typeclass and dtype.as_numpy_dtype().kind == 'u')
+        nonnegative = frozenset(s.name for s in syms if s.is_nonnegative and not s.is_positive)
         return SignFacts(positive=frozenset(s.name for s in syms if s.is_positive),
-                         nonnegative=frozenset(s.name for s in syms if s.is_nonnegative and not s.is_positive),
-                         integer=frozenset(s.name for s in syms if s.is_integer))
+                         nonnegative=nonnegative | unsigned,
+                         integer=frozenset(s.name for s in syms if s.is_integer) | unsigned)
 
     def assumptions(self, symbols: Iterable[sympy.Symbol]) -> list[sympy.logic.boolalg.Boolean]:
         facts = []
