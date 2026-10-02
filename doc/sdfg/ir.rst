@@ -364,9 +364,7 @@ the other code by its name:
 ``FtnMod`` and ``FtnModulo`` name Fortran's ``MOD`` and ``MODULO``: they are other names of
 :class:`~dace.symbolic.CMod` and :class:`~dace.symbolic.PyMod`, and ``PyFloor`` is another name of ``int_floor``.
 Operands are provably nonnegative if they are nonnegative literals, variables of unsigned type, or symbols that
-SymPy knows to be nonnegative. Code generation first runs :class:`~dace.transformation.passes.nonnegative_map_symbols.NonnegativeMapSymbols`,
-which declares the parameter of a map starting at a nonnegative value, and the extent ``N`` of a range ``0:N``, as
-nonnegative symbols within the map. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
+SymPy knows to be nonnegative. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
 ``dace/runtime/include/dace/math.h`` and work on the host and the device. As in NumPy, floating-point ``PyMod`` and
 ``PyFloor`` follow the NumPy algorithm, and a zero divisor is not handled.
 

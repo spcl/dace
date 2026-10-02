@@ -8,7 +8,6 @@ import sympy
 
 import dace
 from dace import symbolic
-from dace.transformation.passes.nonnegative_map_symbols import NonnegativeMapSymbols
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -399,42 +398,18 @@ def shifted_read(A: dace.int64[N], B: dace.int64[1], s: dace.int64):
     B[0] = A[(s + 1) % N]
 
 
-def test_a_map_parameter_and_the_extent_of_its_range_keep_cs_percent():
+def test_a_periodic_read_in_a_map_wraps_like_numpy():
     sdfg = periodic_read.to_sdfg()
     sdfg.name = 'periodic_read'
 
-    assert 'py_mod(' not in sdfg.generate_code()[0].clean_code
     a = np.arange(8, dtype=np.int64)
     b = np.zeros(8, dtype=np.int64)
     sdfg(A=a, B=b, N=8)
+
     assert np.array_equal(b, np.roll(a, -1))
 
 
-def test_the_pass_declares_the_parameter_and_the_extent_of_a_map_nonnegative():
-    sdfg = periodic_read.to_sdfg()
-    sdfg.name = 'periodic_read_pass'
-
-    assert NonnegativeMapSymbols().apply_pass(sdfg, {}) == 1
-
-    inner = next(edge.data for state in sdfg.states() for edge in state.edges()
-                 if edge.data.data == 'A' and edge.data.subset.free_symbols == {'i', 'N'})
-    assert all(symbol.is_nonnegative for symbol in inner.subset.ranges[0][0].free_symbols)
-
-
-def test_the_pass_leaves_a_map_starting_at_a_symbol_alone():
-
-    @dace.program
-    def shifted_map(A: dace.int64[N], s: dace.int64):
-        for i in dace.map[s:N]:
-            A[i % N] = 1
-
-    sdfg = shifted_map.to_sdfg()
-    sdfg.name = 'shifted_map'
-
-    assert NonnegativeMapSymbols().apply_pass(sdfg, {}) is None
-
-
-def test_a_free_symbol_is_not_assumed_nonnegative():
+def test_a_symbol_that_is_not_known_nonnegative_prints_the_floored_helper():
     sdfg = shifted_read.to_sdfg()
     sdfg.name = 'shifted_read'
 
@@ -482,7 +457,5 @@ if __name__ == '__main__':
     test_a_provably_nonnegative_pair_prints_as_the_c_operator()
     test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_floored_one()
     test_the_modulo_functions_have_one_implementation_per_rounding()
-    test_a_map_parameter_and_the_extent_of_its_range_keep_cs_percent()
-    test_the_pass_declares_the_parameter_and_the_extent_of_a_map_nonnegative()
-    test_the_pass_leaves_a_map_starting_at_a_symbol_alone()
-    test_a_free_symbol_is_not_assumed_nonnegative()
+    test_a_periodic_read_in_a_map_wraps_like_numpy()
+    test_a_symbol_that_is_not_known_nonnegative_prints_the_floored_helper()

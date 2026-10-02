@@ -17,7 +17,6 @@ from dace.sdfg import infer_types
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.nonnegative_map_symbols import NonnegativeMapSymbols
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
@@ -221,9 +220,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-
-    # Where a map range shows a symbol nonnegative, say so, so that % and // print as C's operators
-    NonnegativeMapSymbols().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
