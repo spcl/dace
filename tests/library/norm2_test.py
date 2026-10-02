@@ -7,7 +7,8 @@ from dace.libraries.standard.nodes import Norm2
 
 
 def _build(in_shape, dtype, dim=None):
-    sdfg = dace.SDFG(f"norm2_dim{dim}")
+    shape_tag = '_'.join(map(str, in_shape))
+    sdfg = dace.SDFG(f"norm2_dim{dim}_{shape_tag}_{dtype.to_string()}")
     sdfg.add_array("v", list(in_shape), dtype)
     if dim is None:
         sdfg.add_array("r", [1], dtype)
