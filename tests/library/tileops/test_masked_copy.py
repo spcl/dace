@@ -257,6 +257,15 @@ def test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(st
         node.validate(sdfg, state)
 
 
+def test_a_view_is_never_the_tile_of_a_copy():
+    from dace.libraries.tileops.nodes.masked_copy import is_load
+    sdfg = dace.SDFG("masked_copy_views")
+    sdfg.add_view("V", (8, ), dace.float64, storage=Storage.Register)
+    sdfg.add_array("T", (8, ), dace.float64, storage=Storage.Register, transient=True)
+    assert is_load(sdfg.arrays["V"], sdfg.arrays["T"], "c")
+    assert not is_load(sdfg.arrays["T"], sdfg.arrays["V"], "c")
+
+
 def test_a_transposed_window_is_not_a_masked_copy():
     sdfg = build_store("transposed", (20, 6), "2:10, 1:5", (4, 8), dace.float64, "pure")
     with pytest.raises(ValueError, match="does not transpose or reshape"):
@@ -306,6 +315,7 @@ if __name__ == "__main__":
         test_a_copy_within_one_storage_reads_its_direction_off_the_transient_tile(tile_storage, True, False, False)
         test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(tile_storage, False, False)
         test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(tile_storage, True, True)
+    test_a_view_is_never_the_tile_of_a_copy()
     test_a_transposed_window_is_not_a_masked_copy()
     test_a_masked_copy_does_not_convert_dtypes()
     test_the_mask_must_be_a_register_tile_of_the_widths()

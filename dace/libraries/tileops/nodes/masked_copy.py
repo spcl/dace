@@ -36,21 +36,26 @@ LOAD_STORAGES = frozenset({
 STORE_STORAGES = frozenset({(destination, source) for source, destination in LOAD_STORAGES})
 
 
+def holds_a_tile(desc: dace.data.Data) -> bool:
+    """Whether a data container can be the tile of a masked copy: a transient that owns its elements, so no view."""
+    return desc.transient and not isinstance(desc, dace.data.View)
+
+
 def is_load(source: dace.data.Data, destination: dace.data.Data, label: str) -> bool:
     """Whether a masked copy from ``source`` to ``destination`` loads a tile (else it stores one).
 
     The storages tell the tile from the array. The same storage on both sides (``Default``, or ``Register``) does not,
-    so the descriptors do: the transient side is the tile. A pair that is neither, or that both rules read as the other
-    direction, is refused instead of guessed.
+    so the descriptors do: the tile is the transient side, which owns its elements (a view of an array is no tile). A
+    pair that is neither, or that both rules read as the other direction, is refused instead of guessed.
 
     :raises NotImplementedError: If the storages are no masked load or store, or the direction is ambiguous.
     """
     pair = (source.storage, destination.storage)
     loads, stores = pair in LOAD_STORAGES, pair in STORE_STORAGES
     if loads and stores:
-        if destination.transient and not source.transient:
+        if holds_a_tile(destination) and not holds_a_tile(source):
             return True
-        if source.transient and not destination.transient:
+        if holds_a_tile(source) and not holds_a_tile(destination):
             return False
         raise NotImplementedError(f"{label}: {pair[0]} to {pair[1]} does not say whether it loads or stores a tile; "
                                   f"exactly one of the two data containers must be the transient tile.")
@@ -124,7 +129,7 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
     switches off, without reading their source: a masked tail of the window may lie past the end of the array. A store
     writes the active lanes and leaves the others of the destination as they are. The storages of the two sides tell
     the two apart (:data:`LOAD_STORAGES`); the same storage on both (``Default``, or ``Register``) is read off the
-    descriptors, the transient one being the tile, and an ambiguous pair raises.
+    descriptors, the transient one that is no view being the tile, and an ambiguous pair raises.
 
     Without ``has_mask`` there is no ``_mask`` connector and every lane is active. The node does not copy a
     window onto one of other extents (a transposed tile) or of another dtype.
