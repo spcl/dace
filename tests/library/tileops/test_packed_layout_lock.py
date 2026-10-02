@@ -99,7 +99,7 @@ def test_validate_accepts_scalar_descriptor_as_noop():
 # end-to-end through TileGather / TileScatter
 
 
-def test_tileload_refuses_padded_source_at_validate():
+def test_tile_gather_refuses_padded_source_at_validate():
     """A wired ``_src`` with padded strides triggers ``NotImplementedError``."""
     sdfg = dace.SDFG("tl_padded")
     sdfg.add_array("Src", (8, 16), dace.float64, strides=(20, 1), transient=False)
@@ -115,7 +115,7 @@ def test_tileload_refuses_padded_source_at_validate():
         node.validate(sdfg, state)
 
 
-def test_tilestore_refuses_padded_dest_at_validate():
+def test_tile_scatter_refuses_padded_dest_at_validate():
     """A wired ``_dst`` with padded strides triggers ``NotImplementedError``."""
     sdfg = dace.SDFG("ts_padded")
     sdfg.add_array("Src", (4, 8), dace.float64, transient=True)

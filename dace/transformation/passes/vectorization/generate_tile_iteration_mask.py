@@ -15,8 +15,11 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
-                                                                                   TILE_K1_TAIL_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SCALAR_TAIL_MARKER,
+    TILE_K1_TAIL_MARKER,
+)
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
                                                                            map_body_nodes, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,

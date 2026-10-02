@@ -4,16 +4,16 @@ import dace
 from dace import library, properties
 from dace.sdfg import nodes
 
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import IsaCall
-from ..kinds import TILE
-from ..operands import (LaneOperands, Operand, check_operands, edge_ctype, elementwise_tasklet,
-                        has_lane_invariant_output, input_connectors, operands_share_output_type, output_edge,
-                        validate_elementwise)
-from ..ops import BINARY_OPS
-from ..validation import promotion_ok
-from .tile_op import TileOp
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import IsaCall
+from dace.libraries.tileops.kinds import TILE
+from dace.libraries.tileops.operands import (LaneOperands, Operand, check_operands, edge_ctype, elementwise_tasklet,
+                                             has_lane_invariant_output, input_connectors, operands_share_output_type,
+                                             output_edge, validate_elementwise)
+from dace.libraries.tileops.ops import BINARY_OPS
+from dace.libraries.tileops.validation import promotion_ok
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
 
 @library.expansion

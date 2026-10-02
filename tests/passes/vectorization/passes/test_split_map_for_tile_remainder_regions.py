@@ -16,10 +16,8 @@ from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
-    SplitMapForTileRemainder,
-    TILE_MAIN_MARKER,
-)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.helpers.isolation import exit_code
 from tests.passes.vectorization.tile_assertions import assert_tiled

@@ -17,6 +17,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileGather, TileReduce
 from dace.transformation.passes.canonicalize import canonicalize
+from tests.passes.vectorization.tile_assertions import sdfg_masked_loads
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -111,7 +112,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
 
 def test_1d_indirect_stencil_emits_tilegather():
     """The 1D data gather lowers to a :class:`TileGather` (gather) lib node naming the gathered dim,
-    fed by a second :class:`TileGather` that materialises the per-lane index tile. Checked on the
+    fed by a masked load that materialises the per-lane index tile. Checked on the
     orchestrator's output, before ``expand_library_nodes`` collapses both to their ``pure`` form --
     the numerical test above cannot see the difference between a real gather and a scalar fallback
     that happens to compute the same values."""
@@ -123,7 +124,7 @@ def test_1d_indirect_stencil_emits_tilegather():
     assert gathers, f"expected a TileGather (gather) for the 1D data gather, got {[n.label for n in loads]}"
     assert all(tuple(node.gather_dims) == (0, ) for node in gathers), \
         f"the only gathered dim is the single data dim: {[tuple(n.gather_dims) for n in gathers]}"
-    assert len(loads) > len(gathers), "the gather reads its lane indices through a TileGather of its own"
+    assert sdfg_masked_loads(sdfg), "the gather reads its lane indices through a masked load of its own"
 
 
 @pytest.mark.parametrize("m,n", [(16, 16), (8, 24), (12, 17)])
@@ -228,3 +229,17 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     total = np.zeros(1)
     sdfg(a=a.copy(), s=total, N=n)
     np.testing.assert_allclose(total[0], a.sum(), rtol=1e-12, atol=1e-12)
+
+
+if __name__ == '__main__':
+    test_classify_tile_access_indirect_returns_gather()
+    test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(16)
+    test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(17)
+    test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(23)
+    test_1d_indirect_stencil_emits_tilegather()
+    test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(16, 16)
+    test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(8, 24)
+    test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(12, 17)
+    test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only()
+    test_reduction_with_wcr_lowers_to_tile_reduce((8, ))
+    test_reduction_with_wcr_lowers_to_tile_reduce((4, 8))

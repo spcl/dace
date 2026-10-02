@@ -189,7 +189,7 @@ def test_accepts_unsigned_index_dtype(idx_dtype):
     assert "(long long)(_idx_0[" in gather_lane_offset((0, ), (4, 8), "_idx_0")
 
 
-def test_tilestore_gather_dims_symmetric():
+def test_tile_scatter_gather_dims_symmetric():
     """TileScatter mirrors TileGather's gather_dims surface."""
     sdfg = dace.SDFG("ts_g")
     _add_one_constant(sdfg)

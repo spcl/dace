@@ -15,8 +15,8 @@ import numpy as np
 
 import dace
 from dace import properties
-from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileGather, TileMaskGen, TileReduce, TileScatter,
-                                    TileUnop)
+from dace.libraries.tileops import (MaskedCopyLibraryNode, TileBinop, TileIota, TileITE, TileGather, TileMaskGen,
+                                    TileReduce, TileScatter, TileUnop)
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import CodeBlock, Tasklet
 from dace.sdfg.state import SDFGState
@@ -1305,7 +1305,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                    iter_vars: Tuple[str, ...]) -> bool:
-        # Lower ``_o = IT(cond, val)`` to a masked ``TileScatter`` + a plain value copy.
+        # Lower ``_o = IT(cond, val)`` to a masked store + a plain value copy.
         out_conn, cond_conn, val_arg, _val_is_sym = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1315,7 +1315,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         store = self._find_downstream_store(inner_state, out_edge)
         if store is None:
             raise NotImplementedError(f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
-                                      f"{out_edge.dst!r} does not feed a single downstream ``TileScatter._src``. The "
+                                      f"{out_edge.dst!r} does not feed a single downstream store. The "
                                       f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
                                       f"(no store / fan-out to several stores) is not yet handled.")
         cond_edge = in_edges[cond_conn]
@@ -1330,15 +1330,22 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return self._convert_one(inner_state, tasklet, iter_vars)
 
     def _find_downstream_store(self, inner_state: SDFGState, out_edge):
-        # Return the single downstream ``TileScatter`` fed (via its ``_src``) by this tasklet's output tile, or ``None``
-        # when there is not exactly one.
+        # Return the single downstream store (a ``TileScatter`` or a storing ``MaskedCopyLibraryNode``) this tasklet's
+        # output tile feeds, or ``None`` when there is not exactly one.
         from dace.sdfg.nodes import AccessNode
+
+        def feeds_a_store(edge) -> bool:
+            if isinstance(edge.dst, TileScatter):
+                return edge.dst_conn == edge.dst.INPUT_CONNECTOR_NAME
+            return (isinstance(edge.dst, MaskedCopyLibraryNode) and edge.dst_conn == edge.dst.INPUT_CONNECTOR_NAME
+                    and edge.dst.stores(inner_state))
+
         dst = out_edge.dst
-        if isinstance(dst, TileScatter) and out_edge.dst_conn == "_src":
+        if feeds_a_store(out_edge):
             return dst
         if not isinstance(dst, AccessNode):
             return None
-        stores = [e.dst for e in inner_state.out_edges(dst) if isinstance(e.dst, TileScatter) and e.dst_conn == "_src"]
+        stores = [e.dst for e in inner_state.out_edges(dst) if feeds_a_store(e)]
         return stores[0] if len(stores) == 1 else None
 
     def _resolve_cond_tile(self, inner_state: SDFGState, cond_edge):

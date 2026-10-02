@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import dace
 from dace.ordered import OrderedSet
-from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce,
-                                    TileScatter, TileUnop)
+from dace.libraries.tileops import (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather,
+                                    TileMaskGen, TileMMA, TileReduce, TileScatter, TileUnop)
 
 # Spelled out, not imported from the pass: the assertion audits production code, not restates it.
-TILE_NODE_TYPES = (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce, TileScatter,
-                   TileUnop)
+TILE_NODE_TYPES = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA,
+                   TileReduce, TileScatter, TileUnop)
 
 REFUSAL_HINT = ("VectorizeMultiDim.apply_pass catches VectorizeUnsupported, calls warnings.warn and "
                 "restore_sdfg_in_place, then returns None -- a total refusal hands back the pristine "
@@ -21,9 +21,31 @@ def tile_library_nodes(sdfg: dace.SDFG) -> list[dace.nodes.LibraryNode]:
     """Tile lib nodes anywhere in ``sdfg``, nested SDFGs included.
 
     :param sdfg: SDFG to scan.
-    :returns: Every ``TileGather`` / ``TileBinop`` / ``TileScatter`` / ... node reachable from ``sdfg``.
+    :returns: Every ``MaskedCopyLibraryNode`` / ``TileBinop`` / ``TileScatter`` / ... node reachable from ``sdfg``.
     """
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
+
+
+def masked_loads(state: dace.SDFGState) -> list[MaskedCopyLibraryNode]:
+    """The masked copies of ``state`` that fill a tile from an array."""
+    return [n for n in state.nodes() if isinstance(n, MaskedCopyLibraryNode) and not n.stores(state)]
+
+
+def masked_stores(state: dace.SDFGState) -> list[MaskedCopyLibraryNode]:
+    """The masked copies of ``state`` that write a tile into an array."""
+    return [n for n in state.nodes() if isinstance(n, MaskedCopyLibraryNode) and n.stores(state)]
+
+
+def sdfg_masked_loads(sdfg: dace.SDFG) -> list[MaskedCopyLibraryNode]:
+    """The masked loads anywhere in ``sdfg``, nested SDFGs included."""
+    return [
+        n for n, state in sdfg.all_nodes_recursive() if isinstance(n, MaskedCopyLibraryNode) and not n.stores(state)
+    ]
+
+
+def sdfg_masked_stores(sdfg: dace.SDFG) -> list[MaskedCopyLibraryNode]:
+    """The masked stores anywhere in ``sdfg``, nested SDFGs included."""
+    return [n for n, state in sdfg.all_nodes_recursive() if isinstance(n, MaskedCopyLibraryNode) and n.stores(state)]
 
 
 def assert_tiled(vectorized: dace.SDFG, untransformed: dace.SDFG, what: str = "") -> None:

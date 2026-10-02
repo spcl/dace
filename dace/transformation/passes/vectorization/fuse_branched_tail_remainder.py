@@ -32,8 +32,8 @@ from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (MASKED_TAIL_MARKER,
-                                                                                   SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 
 #: Tail markers this pass folds into the ``else`` arm. ``__masked_tail`` is a tile body placed as
 #: is; ``__scalar_tail`` is a step-1 body that needs the lane loop around it.

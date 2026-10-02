@@ -4,9 +4,8 @@
 Lane ``l`` of a ``W``-wide tile evaluates the index expression at ``iter_var + l``, so
 ``a[i * inc]`` touches ``inc`` cells apart -- the contiguous ``i*inc : i*inc + W`` window that
 :class:`WidenAccesses` used to emit named the wrong cells for every ``inc != 1`` while the
-``tile_load`` / ``tile_store`` intrinsics strode by ``inc`` regardless (they take the stride from
-``dim_strides``, not from the memlet). The memlet was therefore a lie about which cells the map
-iteration touches, which every downstream analysis and ``validate`` reads.
+``tile_load`` / ``tile_store`` intrinsics strode by ``inc`` regardless. The memlet was therefore a lie
+about which cells the map iteration touches, which every downstream analysis and ``validate`` reads.
 """
 import os
 
@@ -19,11 +18,11 @@ import pytest
 
 import dace
 from dace import subsets
-from dace.libraries.tileops.nodes.tile_scatter import TileScatter
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
+from tests.passes.vectorization.tile_assertions import masked_stores
 
 N = dace.symbol('N')
 
@@ -71,14 +70,12 @@ def test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback(i
     assert step == 1
 
 
-def assert_window_strides_by(store, edge, stride_name: str, width: int = 8):
-    """The store window must be ``beg : beg + stride*W : stride`` with ``stride`` the node's own
-    per-lane stride. Every comparison stays inside the SDFG's own symbol instances -- a
-    ``pystr_to_symbolic(name)`` here would mint a differently-assumed symbol and ``inc - inc``
-    would not cancel."""
+def assert_window_strides_by(edge, stride_name: str, width: int = 8):
+    """The store window must be ``beg : beg + stride*W : stride``, its step being the per-lane stride of the masked
+    copy. Every comparison stays inside the SDFG's own symbol instances -- a ``pystr_to_symbolic(name)`` here would
+    mint a differently-assumed symbol and ``inc - inc`` would not cancel."""
     beg, end, step = edge.data.subset.ranges[0]
     assert dace.symbolic.symstr(step) == stride_name, f'window step {step} is not the lane stride'
-    assert dace.symbolic.symstr(list(store.dim_strides)[0]) == stride_name
     assert dace.symbolic.simplify(end - beg - width * step + 1) == 0, f'window {edge.data.subset} is not {width} lanes'
 
 
@@ -114,11 +111,12 @@ def test_strided_store_window_matches_the_intrinsic_stride():
     """
     sdfg, refusals = canonicalized_and_vectorized(strided_store)
     assert not refusals, refusals
-    stores = [(n, e) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-              if isinstance(n, TileScatter) for e in st.out_edges(n) if e.src_conn == '_dst']
+    stores = [
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in masked_stores(st) for e in st.out_edges(n)
+    ]
     assert stores, 'kernel was not tiled -- nothing to check'
-    for node, edge in stores:
-        assert_window_strides_by(node, edge, 'n3')
+    for edge in stores:
+        assert_window_strides_by(edge, 'n3')
 
     a, b = np.random.rand(64), np.random.rand(64)
     ref = a.copy()
@@ -141,11 +139,12 @@ def test_promoted_product_index_reaches_the_tile_store_as_a_stride():
     stranded in a parent-declared scalar, which used to narrow the tile to lane 0."""
     sdfg, refusals = canonicalized_and_vectorized(symbolic_index_rmw)
     assert not refusals, refusals
-    stores = [(n, e) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-              if isinstance(n, TileScatter) for e in st.out_edges(n) if e.src_conn == '_dst']
+    stores = [
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in masked_stores(st) for e in st.out_edges(n)
+    ]
     assert stores, 'kernel was not tiled -- nothing to check'
-    for node, edge in stores:
-        assert_window_strides_by(node, edge, 'inc')
+    for edge in stores:
+        assert_window_strides_by(edge, 'inc')
 
     a, b = np.random.rand(64), np.random.rand(64)
     got = a.copy()
@@ -187,3 +186,14 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
     got = np.zeros(n * n)
     sdfg.compile()(flat=got, aa=aa, bb=bb, N=n)
     assert np.allclose(got.reshape(n, n), aa + bb, rtol=1e-12, atol=1e-12)
+
+
+if __name__ == '__main__':
+    test_symbolic_lane_stride_becomes_the_window_step()
+    test_affine_lane_stride_keeps_the_offset_and_strides_by_the_coefficient()
+    test_unit_stride_window_is_unchanged()
+    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback('i % 4')
+    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback('-i')
+    test_strided_store_window_matches_the_intrinsic_stride()
+    test_promoted_product_index_reaches_the_tile_store_as_a_stride()
+    test_linearized_multi_var_index_is_refused_not_broadcast()

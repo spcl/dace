@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``MaskedCopyLibraryNode``: a copy between a global array and a register tile that a per-lane mask gates."""
 from dataclasses import dataclass
+from typing import Any
 
 import dace
 from dace import dtypes, library, properties
@@ -10,15 +11,15 @@ from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 
-from ..alignment import align_template_arg
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import require_k1
-from ..lanes import nested_loops, tile_offset
-from ..validation import validate_mask_descriptor_lock
-from .tile_op import TileOp
+from dace.libraries.tileops.alignment import align_template_arg
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
-MASK_CONNECTOR_NAME = "_cpy_mask"
+MASK_CONNECTOR_NAME = "_mask"
 
 #: The ``(source, destination)`` storages of a masked load, which fills the tile and zeroes its inactive lanes without
 #: reading their source.
@@ -28,6 +29,8 @@ LOAD_STORAGES = frozenset({
     (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register),
     (dtypes.StorageType.Default, dtypes.StorageType.Register),
     (dtypes.StorageType.Default, dtypes.StorageType.Default),
+    # A later pass may give an array of registers (a reduction buffer) the storage of its tile.
+    (dtypes.StorageType.Register, dtypes.StorageType.Register),
 })
 #: The ``(source, destination)`` storages of a masked store, which writes the active lanes only.
 STORE_STORAGES = frozenset({(destination, source) for source, destination in LOAD_STORAGES})
@@ -36,9 +39,9 @@ STORE_STORAGES = frozenset({(destination, source) for source, destination in LOA
 def is_load(source: dace.data.Data, destination: dace.data.Data, label: str) -> bool:
     """Whether a masked copy from ``source`` to ``destination`` loads a tile (else it stores one).
 
-    The storages tell the tile from the array. ``Default`` on both sides does not, so the descriptors do: the transient
-    side is the tile. A pair that is neither, or that both rules read as the other direction, is refused instead of
-    guessed.
+    The storages tell the tile from the array. The same storage on both sides (``Default``, or ``Register``) does not,
+    so the descriptors do: the transient side is the tile. A pair that is neither, or that both rules read as the other
+    direction, is refused instead of guessed.
 
     :raises NotImplementedError: If the storages are no masked load or store, or the direction is ambiguous.
     """
@@ -114,16 +117,16 @@ class ExpandMaskedCopyCUDA(ExpandTileIsa):
 
 @library.node
 class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
-    """A :class:`~dace.libraries.standard.nodes.copy.node.CopyLibraryNode` of a tile that ``_cpy_mask`` gates per lane.
+    """A :class:`~dace.libraries.standard.nodes.copy.node.CopyLibraryNode` of a tile that ``_mask`` gates per lane.
 
     The tile is a register (or shared) array of ``widths`` and the other side a window of a global array, which the
     memlet gives its offset, extents and steps. A load fills the tile with the window and zeroes the lanes the mask
     switches off, without reading their source: a masked tail of the window may lie past the end of the array. A store
     writes the active lanes and leaves the others of the destination as they are. The storages of the two sides tell
-    the two apart (:data:`LOAD_STORAGES`); ``Default`` on both is read off the descriptors, the transient one being
-    the tile, and an ambiguous pair raises.
+    the two apart (:data:`LOAD_STORAGES`); the same storage on both (``Default``, or ``Register``) is read off the
+    descriptors, the transient one being the tile, and an ambiguous pair raises.
 
-    Without ``has_mask`` there is no ``_cpy_mask`` connector and every lane is active. The node does not copy a
+    Without ``has_mask`` there is no ``_mask`` connector and every lane is active. The node does not copy a
     window onto one of other extents (a transposed tile) or of another dtype.
     """
 
@@ -142,10 +145,10 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         dtype=bool,
         allow_none=False,
         default=True,
-        desc="Whether the ``_cpy_mask`` input connector gates the lanes.",
+        desc="Whether the ``_mask`` input connector gates the lanes.",
     )
 
-    def __init__(self, name: str, widths: tuple[int, ...], has_mask: bool = True, **kwargs):
+    def __init__(self, name: str, widths: tuple[int, ...], has_mask: bool = True, **kwargs: Any):
         if not 1 <= len(widths) <= 3:
             raise ValueError(f"MaskedCopyLibraryNode: widths must have length in {{1, 2, 3}}, got {widths!r}")
         super().__init__(name, **kwargs)
@@ -154,7 +157,12 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         if has_mask:
             self.add_in_connector(MASK_CONNECTOR_NAME)
 
-    def validate(self, sdfg, state, allow_cross_storage=True):
+    def validate(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        allow_cross_storage: bool = True,
+    ) -> tuple[str, dace.data.Data, dace.subsets.Subset, str, dace.data.Data, dace.subsets.Subset]:
         """Resolve the two data edges like the copy does, and check the mask and the pair of storages.
 
         :returns: ``(inp_name, inp, in_subset, out_name, out, out_subset)``
@@ -185,6 +193,13 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
                                           tuple(self.widths))
         return INPUT_CONNECTOR_NAME, inp, in_subset, OUTPUT_CONNECTOR_NAME, out, out_subset
 
+    def stores(self, state: dace.SDFGState) -> bool:
+        """Whether this copy stores a tile into an array, as the storages and descriptors of its sides say."""
+        sdfg = state.sdfg
+        inp = sdfg.arrays[next(state.in_edges_by_connector(self, INPUT_CONNECTOR_NAME)).data.data]
+        out = sdfg.arrays[next(state.out_edges_by_connector(self, OUTPUT_CONNECTOR_NAME)).data.data]
+        return not is_load(inp, out, self.label)
+
     def lanes(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Lanes:
         validated = self.validate(sdfg, state)
         inp, in_subset, out, out_subset = validated[1], validated[2], validated[4], validated[5]
@@ -196,9 +211,9 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         lanes = self.lanes(sdfg, state)
         lane_names = [f"__l{dim}" for dim in range(len(lanes.extents))]
         source = " + ".join(f"({lane} * ({symstr(stride)}))"
-                            for lane, stride in zip(lane_names, lanes.in_strides, strict=True))
+                            for lane, stride in zip(lane_names, lanes.in_strides, strict=True)) or "0"
         destination = " + ".join(f"({lane} * ({symstr(stride)}))"
-                                 for lane, stride in zip(lane_names, lanes.out_strides, strict=True))
+                                 for lane, stride in zip(lane_names, lanes.out_strides, strict=True)) or "0"
         mask = f"{MASK_CONNECTOR_NAME}[{tile_offset(lanes.extents, lane_names)}]"
         read = f"{INPUT_CONNECTOR_NAME}[{source}]"
         write = f"{OUTPUT_CONNECTOR_NAME}[{destination}]"

@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileScatter`` — write a K-dim tile back into a global array.
+"""``TileScatter``: the stores of a tile that a masked copy cannot express, as a loop over the lanes.
 
-Symmetric to :class:`TileGather`; the pure expansion emits a CPP tasklet
-that walks the K-fold nested index space.
+Symmetric to :class:`~dace.libraries.tileops.nodes.tile_gather.TileGather`.
 """
 
 import sympy
@@ -12,57 +11,18 @@ from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 
-from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from ..alignment import align_template_arg, k1_array_stride
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import require_k1
-from ..operands import edge_ctype, output_edge
-from .tile_op import TileOp
-from ..lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
-from ..operands import scalar_operand_ref
-from ..validation import validate_mask_descriptor_lock, validate_packed_layout
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from dace.libraries.tileops.expansions import ExpandTilePure
+from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.lanes import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
+                                          resolve_gather_deps, tile_offset)
+from dace.libraries.tileops.operands import scalar_operand_ref
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 
 
 @library.expansion
 class ExpandTileScatterPure(ExpandTilePure):
     pass
-
-
-@library.expansion
-class ExpandTileScatterScalar(ExpandTileIsa):
-    environments = [TileOpsScalar]
-    backend = "scalar"
-
-
-@library.expansion
-class ExpandTileScatterAVX512(ExpandTileIsa):
-    environments = [TileOpsAVX512]
-    backend = "avx512"
-
-
-@library.expansion
-class ExpandTileScatterAVX2(ExpandTileIsa):
-    environments = [TileOpsAVX2]
-    backend = "avx2"
-
-
-@library.expansion
-class ExpandTileScatterNeon(ExpandTileIsa):
-    environments = [TileOpsNeon]
-    backend = "neon"
-
-
-@library.expansion
-class ExpandTileScatterSVE(ExpandTileIsa):
-    environments = [TileOpsSVE]
-    backend = "sve"
-
-
-@library.expansion
-class ExpandTileScatterCUDA(ExpandTileIsa):
-    environments = [TileOpsCUDA]
-    backend = "cuda"
 
 
 def stride_dim_may_scatter(p: int, dst_dims: tuple[int, ...] | None, gather_dims: tuple[int, ...]) -> bool:
@@ -87,24 +47,21 @@ def stride_dim_may_scatter(p: int, dst_dims: tuple[int, ...] | None, gather_dims
 
 @library.node
 class TileScatter(TileOp):
-    """Store a K-dim tile back into a global array.
+    """Store a K-dim tile into a global array in a way a masked copy cannot.
 
-    ``_src`` is the tile transient (``widths``-shaped); ``_dst`` carries
-    the full memlet of the destination array with the out-edge's subset
-    selecting the tile region. ``dim_strides`` records per-tile-dim
-    strides into the destination view.
+    ``_src`` is the tile and ``_dst`` carries the memlet of the destination array, which selects the tile region. The
+    lanes address it through ``dim_strides`` (``0`` collapses a dim and needs ``wcr``), ``dst_dims`` (a transposed
+    tile) or ``_idx_<d>`` index tiles (``gather_dims``); ``src_kind`` broadcasts a scalar or a symbol to every lane
+    instead. A window the tile copies lane for lane is
+    :class:`~dace.libraries.tileops.nodes.masked_copy.MaskedCopyLibraryNode`. The only lowering is the loop over the
+    lanes.
     """
 
-    implementations = {
-        "pure": ExpandTileScatterPure,
-        "scalar": ExpandTileScatterScalar,
-        "avx512": ExpandTileScatterAVX512,
-        "avx2": ExpandTileScatterAVX2,
-        "neon": ExpandTileScatterNeon,
-        "sve": ExpandTileScatterSVE,
-        "cuda": ExpandTileScatterCUDA,
-    }
+    implementations = {"pure": ExpandTileScatterPure}
     default_implementation = "pure"
+
+    INPUT_CONNECTOR_NAME = "_src"
+    OUTPUT_CONNECTOR_NAME = "_dst"
 
     dim_strides = properties.ListProperty(
         # ``pystr_to_symbolic`` accepts both int and symbolic (e.g. ``ssym``)
@@ -411,27 +368,6 @@ class TileScatter(TileOp):
         return nodes.Tasklet(
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(inputs),
-            outputs={"_dst": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
-
-    def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
-        # A broadcast source has no ``_src`` tile for the header to stream, and the header has no per-lane index.
-        return self.src_kind == TILE and not self.gather_dims
-
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
-        vlen = require_k1(self)
-        destination = output_edge(state, self, "_dst")
-        stride = k1_array_stride(self, sdfg, destination, self.dst_dims)
-        masked = "true" if self.has_mask else "false"
-        mask_argument = "_mask" if self.has_mask else "nullptr"
-        align = align_template_arg(self, state, sdfg, destination, backend, vlen)
-        code = (f"dace::tileops::tile_store<{edge_ctype(sdfg, destination)}, {vlen}, {masked}{align}>"
-                f"(_dst, _src, {mask_argument}, {stride});")
-        return nodes.Tasklet(
-            label=f"{self.label}_{backend}",
-            inputs=dict.fromkeys(["_src", "_mask"] if self.has_mask else ["_src"]),
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,

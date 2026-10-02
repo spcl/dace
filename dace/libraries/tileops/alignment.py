@@ -6,23 +6,29 @@ place on an even element has nothing between ``half2`` and a per-element ``LDG.E
 offset of an access, the ranges of the enclosing maps and the divisibility guarantees the vectorizer records, and
 yields the alignment and the shift of the access from the aligned window the widened word covers.
 """
-from __future__ import annotations
-
 import warnings
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
 
 import dace
 from dace.data import Data
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.nodes import Node, Tasklet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.symbolic import SymbolicType, symstr
+from dace.symbolic import SymbolicType
 
-if TYPE_CHECKING:
-    from .nodes.tile_gather import TileGather
-    from .nodes.tile_scatter import TileScatter
+#: Suffix of the label of the map a tile-remainder split leaves fully in bounds. The vectorizer writes it and the proof
+#: below reads it: a tiled dim of such a map has an extent that is a whole number of tiles.
+TILE_MAIN_MARKER = "__tile_main"
+
+#: Label of the state holding the vectorizer's runtime divisibility guards. That state IS the record the proof reads
+#: back (:func:`guarded_stride_divisors`), so a fact can never outlive the abort-on-violation check that establishes it.
+TILE_GUARD_STATE_LABEL = "tile_even_range_check"
+
+#: Tasklet-label prefix of a guarded stride-parity fact, spelled ``<prefix><symbol>_<modulus>``. The symbol name is an
+#: identifier and the modulus an integer, so an ``rpartition('_')`` reads the pair back exactly.
+STRIDE_GUARD_PREFIX = "tile_stride_div_"
 
 # Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
 # figure is the gpuMalloc/gpuMallocAsync contract (256 B). Anything else is unknown and gets no
@@ -48,7 +54,7 @@ def base_align_bytes(arr: Data) -> int:
 
 
 def enclosing_param_ranges(
-    node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG
+    node: Node, parent_state: SDFGState, parent_sdfg: SDFG
 ) -> tuple[dict[str, tuple[SymbolicType, SymbolicType, SymbolicType]], list[tuple[SymbolicType, int]]]:
     """``({param: (start, end, step)}, [(extent, width)])`` for the map scopes enclosing ``node``.
 
@@ -63,9 +69,6 @@ def enclosing_param_ranges(
     and otherwise guards with a host-side abort. Nothing here re-derives the guarantee; it reads
     the marker the guarantee is recorded under.
     """
-    from dace.sdfg.sdfg import SDFG
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
-
     ranges, even, cur_node, state, sdfg = {}, [], node, parent_state, parent_sdfg
     while state is not None:
         entry = state.entry_node(cur_node)
@@ -124,6 +127,31 @@ def even_extent_substitutions(even: list[tuple[SymbolicType, int]]) -> dict[Symb
     return subs
 
 
+def guarded_stride_divisors(sdfg: SDFG) -> dict[str, int]:
+    """``{symbol: modulus}`` for every stride-divisibility fact ``sdfg`` CHECKS before it runs.
+
+    Read off the guard tasklets themselves, not off a parallel bookkeeping structure: the fact and the abort that
+    enforces it are the same node, so the proof can never widen an access on a promise nothing tests. No guard state
+    gives an empty dict, and the proof stays on whatever it can show unaided (a constant stride), which is the
+    per-element path for a symbolic one.
+
+    :param sdfg: SDFG to read the guards of (this level only, not nested ones).
+    :returns: Symbol name -> the modulus its value is checked to be a nonzero multiple of.
+    """
+    facts: dict[str, int] = {}
+    for state in sdfg.states():
+        # ``add_state_before`` uniquifies a duplicate label, hence the prefix test.
+        if not state.label.startswith(TILE_GUARD_STATE_LABEL):
+            continue
+        for node in state.nodes():
+            if not isinstance(node, Tasklet) or not node.label.startswith(STRIDE_GUARD_PREFIX):
+                continue
+            name, separator, modulus = node.label[len(STRIDE_GUARD_PREFIX):].rpartition("_")
+            if separator and name and modulus.isdigit():
+                facts[name] = int(modulus)
+    return facts
+
+
 def stride_divisor_facts(parent_sdfg: SDFG) -> dict[str, int]:
     """``{symbol: modulus}`` for the stride-parity facts guarded anywhere up ``parent_sdfg``'s chain.
 
@@ -138,9 +166,6 @@ def stride_divisor_facts(parent_sdfg: SDFG) -> dict[str, int]:
     refused from there outward rather than translated -- a wrong translation would be exactly the
     unchecked promise this is built to avoid.
     """
-    from dace.sdfg.sdfg import SDFG
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import guarded_stride_divisors
-
     facts, sdfg, rebound = {}, parent_sdfg, set()
     while isinstance(sdfg, SDFG):
         for name, modulus in guarded_stride_divisors(sdfg).items():
@@ -189,7 +214,7 @@ def base_offset_is_visible(sdfg: SDFG, name: str) -> bool:
     return True
 
 
-def linear_base_offset(node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG,
+def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
                        edge: MultiConnectorEdge[Memlet]) -> tuple[SymbolicType, SymbolicType, SymbolicType] | None:
     """``(offset_at_tile_base, offset_at_param_ends, allocated_elements)``, or ``None``.
 
@@ -293,8 +318,8 @@ def declined(arr: Data, edge: MultiConnectorEdge[Memlet], elem_bytes: int, allow
     return elem_bytes, 0
 
 
-def array_align_shift(node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG,
-                      edge: MultiConnectorEdge[Memlet], vlen: int, allow_shift: bool) -> tuple[int, int]:
+def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
+                      vlen: int, allow_shift: bool) -> tuple[int, int]:
     """``(alignment bytes of the aligned base, element shift of the access from it)``.
 
     The tile side of a load/store is always DACE_ALIGN(64); the array side is a base pointer plus
@@ -343,7 +368,7 @@ def array_align_shift(node: TileGather | TileScatter, parent_state: SDFGState, p
     return chunk * elem_bytes, int(shift)
 
 
-def align_template_arg(node: TileGather | TileScatter,
+def align_template_arg(node: Node,
                        parent_state: SDFGState,
                        parent_sdfg: SDFG,
                        edge: MultiConnectorEdge[Memlet],
@@ -369,16 +394,3 @@ def align_template_arg(node: TileGather | TileScatter,
     if shift:
         return f", {align}, {shift}"
     return f", {align}" if align > arr.dtype.bytes else ""
-
-
-def k1_array_stride(node: TileGather | TileScatter, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
-                    dims_prop: list[int]) -> str:
-    """Return the linear element stride of the K=1 tile dim into the array on
-    ``edge`` (``dim_strides`` coefficient * the array's own stride along the
-    mapped dim), as a C++ expression.
-    """
-    arr = parent_sdfg.arrays[edge.data.data]
-    ndim = len(arr.strides)
-    dims = list(dims_prop) if dims_prop else [ndim - 1]
-    coeff = (list(node.dim_strides)[0] if node.dim_strides else 1)
-    return f"({coeff}) * ({symstr(arr.strides[dims[0]])})"

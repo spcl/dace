@@ -8,9 +8,9 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 
-from .kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from .lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
-from .validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from dace.libraries.tileops.lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
+from dace.libraries.tileops.validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
 
 
 @dataclass(frozen=True, slots=True)

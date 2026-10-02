@@ -31,16 +31,16 @@ that the expected per-tile-dim shape survives.
 """
 
 import numpy as np
-import pytest
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops import TileGather
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import sdfg_masked_loads, sdfg_masked_stores
 
 NK = dace.symbol("NK")
 NJ = dace.symbol("NJ")
@@ -219,7 +219,7 @@ def test_scalar_broadcast_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert loads[0].src_kind == "Scalar", f"a size-1 source must broadcast via src_kind=Scalar, got {loads[0]!r}"
-    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
+    assert sdfg_masked_stores(sdfg)
 
 
 def test_col_broadcast_descent_to_tile_only():
@@ -232,7 +232,7 @@ def test_col_broadcast_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
+    assert sdfg_masked_stores(sdfg)
 
 
 def test_row_broadcast_descent_to_tile_only():
@@ -245,7 +245,7 @@ def test_row_broadcast_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
+    assert sdfg_masked_stores(sdfg)
 
 
 def test_full_2d_baseline_descent_to_tile_only():
@@ -255,10 +255,9 @@ def test_full_2d_baseline_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = tile_loads(sdfg)
-    assert len(loads) == 1
-    assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
+    assert not tile_loads(sdfg), "a contiguous window is a masked load, not a gather"
+    assert len(sdfg_masked_loads(sdfg)) == 1
+    assert sdfg_masked_stores(sdfg)
 
 
 def test_col_gather_descent_to_tile_only():
@@ -343,15 +342,14 @@ def test_fully_unstructured_separable_descent_to_tile_only():
 
 
 def test_fully_unstructured_2d_index_descent_to_tile_only():
-    """``a[idx[jk, jc]]``: a single (8, 8) index TileGather feeds the gather, not two 1-D tiles."""
+    """``a[idx[jk, jc]]``: a single (8, 8) masked index load feeds the gather, not two 1-D tiles."""
     sdfg = _fully_unstructured_2d_index.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = tile_loads(sdfg)
-    gathers = [n for n in loads if n.gather_dims]
-    idx_loads = [n for n in loads if not n.gather_dims]
+    gathers = tile_loads(sdfg)
+    idx_loads = sdfg_masked_loads(sdfg)
     assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
     assert len(idx_loads) == 1 and list(
@@ -408,5 +406,16 @@ def test_all_kdim_broadcast_shapes_match_numpy():
     np.testing.assert_allclose(run(_fully_unstructured_2d_index, a=a_col, idx=idx_2d), a_col[idx_2d])
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
+if __name__ == '__main__':
+    test_scalar_broadcast_descent_to_tile_only()
+    test_col_broadcast_descent_to_tile_only()
+    test_row_broadcast_descent_to_tile_only()
+    test_full_2d_baseline_descent_to_tile_only()
+    test_col_gather_descent_to_tile_only()
+    test_col_structured_descent_to_tile_only()
+    test_row_gather_descent_to_tile_only()
+    test_row_structured_descent_to_tile_only()
+    test_fully_structured_2d_descent_to_tile_only()
+    test_fully_unstructured_separable_descent_to_tile_only()
+    test_fully_unstructured_2d_index_descent_to_tile_only()
+    test_all_kdim_broadcast_shapes_match_numpy()

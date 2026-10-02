@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""K=1 ``TileGather`` gather + strided-load intrinsic lowering.
+"""K=1 ``TileGather`` gather + ``MaskedCopyLibraryNode`` strided-load intrinsic lowering.
 
 A unit-stride load lowers to a dense SIMD load (``_mm512_loadu_pd``), a constant
 non-unit stride to the gather intrinsic over a strided index vector
@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileGather
+from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.tileops import MaskedCopyLibraryNode, TileGather
 
 W = 8  # fp64 AVX-512 lane count
 
@@ -87,20 +88,18 @@ def _strided_sdfg(name, impl, stride, masked):
     sdfg = dace.SDFG(name)
     sdfg.add_array("src", [W * stride + 8], dace.float64)
     sdfg.add_array("dst", [W], dace.float64)
+    sdfg.add_array("tile", [W], dace.float64, storage=dace.dtypes.StorageType.Register, transient=True)
     state = sdfg.add_state()
-    node = TileGather(name="ld",
-                      widths=(W, ),
-                      dim_strides=(stride, ),
-                      replicate_factor_per_dim=(1, ),
-                      src_dims=(0, ),
-                      gather_dims=(),
-                      has_mask=masked)
+    node = MaskedCopyLibraryNode("ld", widths=(W, ), has_mask=masked)
     node.implementation = impl
     state.add_node(node)
-    state.add_edge(state.add_access("src"), None, node, "_src", dace.Memlet(f"src[0:{W * stride + 8}]"))
+    tile = state.add_access("tile")
+    state.add_edge(state.add_access("src"), None, node, INPUT_CONNECTOR_NAME,
+                   dace.Memlet(f"src[0:{W * stride}:{stride}]"))
     if masked:
         _wire_mask(sdfg, state, node)
-    state.add_edge(node, "_dst", state.add_access("dst"), None, dace.Memlet(f"dst[0:{W}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, tile, None, dace.Memlet(f"tile[0:{W}]"))
+    state.add_edge(tile, None, state.add_access("dst"), None, dace.Memlet(f"dst[0:{W}]"))
     return sdfg
 
 
@@ -168,3 +167,11 @@ def test_k1_strided_load_intrinsic(impl, flag, header, masked, stride):
     if masked:
         expected[~msk] = 0.0
     np.testing.assert_allclose(dst, expected, rtol=0, atol=0)
+
+
+if __name__ == "__main__":
+    for case_impl, case_flag, case_header in CASES:
+        for case_masked in (False, True):
+            test_k1_gather_intrinsic(case_impl, case_flag, case_header, case_masked)
+            for case_stride in (1, 2, 3):
+                test_k1_strided_load_intrinsic(case_impl, case_flag, case_header, case_masked, case_stride)

@@ -19,12 +19,10 @@ from collections.abc import Callable, Iterator
 from unittest import mock
 
 import dace
-from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce,
-                                    TileScatter, TileUnop)
+from dace.libraries.tileops import (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather,
+                                    TileMaskGen, TileMMA, TileReduce, TileScatter, TileUnop)
 import dace.libraries.tileops.dispatch as dispatch
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (STRIDE_GUARD_PREFIX,
-                                                                                   TILE_GUARD_STATE_LABEL,
-                                                                                   TILE_MAIN_MARKER)
+from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
 
 DIGEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_lowering_digests.json")
 
@@ -356,9 +354,22 @@ def with_tile_map(builder: Builder, in_map: bool):
     return entry, exit_
 
 
-def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
-    """Structured, strided, transposed, replicated, broadcast and gathering tile loads or stores."""
-    node_type = TileGather if is_load else TileScatter
+def strided_window(shape: tuple, widths: tuple, strides: tuple | None) -> str:
+    """The window of an array of ``shape`` that a tile of ``widths`` copies, at ``strides`` along the tile dims."""
+    steps = strides or (1, ) * len(widths)
+    leading = [None] * (len(shape) - len(widths))
+    return ", ".join("0" if step is None else f"0:{width * step}:{step}" if step != 1 else f"0:{width}"
+                     for step, width in zip((*leading, *steps), (*leading, *widths)))
+
+
+def load_store_cases(is_load: bool, node_type: type) -> Iterator[tuple[str, Builder]]:
+    """Structured, strided, transposed, replicated, broadcast and gathering tile loads or stores.
+
+    ``MaskedCopyLibraryNode`` takes the structured and strided ones, with the stride as the step of its window, and
+    the nodes of the other two types the rest.
+    """
+    copies = node_type is MaskedCopyLibraryNode
+    source_conn, destination_conn = node_type.INPUT_CONNECTOR_NAME, node_type.OUTPUT_CONNECTOR_NAME
     dims_name = "src_dims" if is_load else "dst_dims"
     N = dace.symbol("N", dtype=dace.int64)
     shapes = {
@@ -383,19 +394,28 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
         tile_access = builder.state.add_access(tile)
         if is_load:
             if entry is None:
-                builder.state.add_edge(access, None, node, "_src", dace.Memlet(f"A[{subset}]"))
+                builder.state.add_edge(access, None, node, source_conn, dace.Memlet(f"A[{subset}]"))
             else:
-                builder.state.add_memlet_path(access, entry, node, dst_conn="_src", memlet=dace.Memlet(f"A[{subset}]"))
-            builder.state.add_edge(node, "_dst", tile_access, None, dace.Memlet(f"{tile}[{full_subset(widths)}]"))
+                builder.state.add_memlet_path(access,
+                                              entry,
+                                              node,
+                                              dst_conn=source_conn,
+                                              memlet=dace.Memlet(f"A[{subset}]"))
+            builder.state.add_edge(node, destination_conn, tile_access, None,
+                                   dace.Memlet(f"{tile}[{full_subset(widths)}]"))
             if entry is not None:
                 builder.state.add_edge(entry, None, node, None, dace.Memlet())
         else:
-            builder.state.add_edge(tile_access, None, node, "_src", dace.Memlet(f"{tile}[{full_subset(widths)}]"))
+            builder.state.add_edge(tile_access, None, node, source_conn, dace.Memlet(f"{tile}[{full_subset(widths)}]"))
             if exit_ is None:
-                builder.state.add_edge(node, "_dst", access, None, dace.Memlet(f"A[{subset}]"))
+                builder.state.add_edge(node, destination_conn, access, None, dace.Memlet(f"A[{subset}]"))
             else:
                 builder.state.add_edge(entry, None, tile_access, None, dace.Memlet())
-                builder.state.add_memlet_path(node, exit_, access, src_conn="_dst", memlet=dace.Memlet(f"A[{subset}]"))
+                builder.state.add_memlet_path(node,
+                                              exit_,
+                                              access,
+                                              src_conn=destination_conn,
+                                              memlet=dace.Memlet(f"A[{subset}]"))
         if mask:
             builder.mask()
         return name, builder
@@ -408,11 +428,12 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
                 for strides in (None, (2, ), (4, 2)):
                     if strides is not None and len(strides) != len(widths):
                         continue
-                    kwargs = {} if strides is None else {"dim_strides": strides}
+                    kwargs = {} if strides is None or copies else {"dim_strides": strides}
+                    window = strided_window(shapes[array][0], widths, strides) if copies else None
                     name = f"{array}|{widths}|{dtype.to_string()}|mask={mask}|dim_strides={strides}"
-                    yield build(name, widths, dtype, array, None, False, dace.StorageType.CPU_Heap, mask, **kwargs)
+                    yield build(name, widths, dtype, array, window, False, dace.StorageType.CPU_Heap, mask, **kwargs)
     # A transposed tile.
-    for dtype in (F64, F16):
+    for dtype in () if copies else (F64, F16):
         for mask in (False, True):
             name = f"transposed|{dtype.to_string()}|mask={mask}"
             yield build(name, (4, 8), dtype, "2d", None, False, dace.StorageType.CPU_Heap, mask, **{dims_name: (1, 0)})
@@ -439,7 +460,8 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
             if guard is not None:
                 guard_state = builder.sdfg.add_state(TILE_GUARD_STATE_LABEL)
                 guard_state.add_tasklet(f"{STRIDE_GUARD_PREFIX}N_{guard}", set(), set(), "")
-            node = builder.place(node_type("symbolic", (8, )))
+            node = builder.place(
+                node_type("symbolic", (8, ), has_mask=False) if copies else node_type("symbolic", (8, )))
             outer, outer_exit = builder.state.add_map("rows", {"i": "0:N"})
             inner, inner_exit = builder.state.add_map(f"cols{TILE_MAIN_MARKER}", {"j": cols})
             access = builder.state.add_access("A")
@@ -449,21 +471,24 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
                                               outer,
                                               inner,
                                               node,
-                                              dst_conn="_src",
+                                              dst_conn=source_conn,
                                               memlet=dace.Memlet(f"A[{row}]"))
-                builder.state.add_edge(node, "_dst", builder.state.add_access(tile), None, dace.Memlet(f"{tile}[0:8]"))
+                builder.state.add_edge(node, destination_conn, builder.state.add_access(tile), None,
+                                       dace.Memlet(f"{tile}[0:8]"))
             else:
                 tile_access = builder.state.add_access(tile)
                 builder.state.add_edge(outer, None, inner, None, dace.Memlet())
                 builder.state.add_edge(inner, None, tile_access, None, dace.Memlet())
-                builder.state.add_edge(tile_access, None, node, "_src", dace.Memlet(f"{tile}[0:8]"))
+                builder.state.add_edge(tile_access, None, node, source_conn, dace.Memlet(f"{tile}[0:8]"))
                 builder.state.add_memlet_path(node,
                                               inner_exit,
                                               outer_exit,
                                               access,
-                                              src_conn="_dst",
+                                              src_conn=destination_conn,
                                               memlet=dace.Memlet(f"A[{row}]"))
             yield name, builder
+    if copies:
+        return
     # Gathers and scatters addressed through index tiles.
     for dtype in (F64, I32):
         for idx_dtype in (I32, I64, dace.uint32):
@@ -550,6 +575,12 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
                 yield name, builder
 
 
+def masked_copy_cases() -> Iterator[tuple[str, Builder]]:
+    for direction, is_load in (("load", True), ("store", False)):
+        for name, builder in load_store_cases(is_load, MaskedCopyLibraryNode):
+            yield f"{direction}|{name}", builder
+
+
 CASES: dict[str, Callable[[], Iterator[tuple[str, Builder]]]] = {
     "TileBinop": binop_cases,
     "TileUnop": unop_cases,
@@ -559,8 +590,9 @@ CASES: dict[str, Callable[[], Iterator[tuple[str, Builder]]]] = {
     "TileMaskGen": mask_gen_cases,
     "TileIota": iota_cases,
     "TileMMA": mma_cases,
-    "TileGather": lambda: load_store_cases(True),
-    "TileScatter": lambda: load_store_cases(False),
+    "TileGather": lambda: load_store_cases(True, TileGather),
+    "TileScatter": lambda: load_store_cases(False, TileScatter),
+    "MaskedCopyLibraryNode": masked_copy_cases,
 }
 
 

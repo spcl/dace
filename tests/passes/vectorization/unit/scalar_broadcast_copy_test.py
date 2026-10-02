@@ -15,17 +15,18 @@ A plain copy has no such consumer: the bridge -> output rewire then dropped the 
 orphaned ``_tile_iter_mask`` behind.
 
 The source of a bare copy into a global array must therefore become a real ``(W,)`` tile via a
-broadcast ``TileGather``, paired with the ``TileScatter`` that writes the window.
+broadcast ``TileGather``, paired with the masked store that writes the window.
 """
 import numpy as np
-import pytest
 
 import dace
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.standard.nodes.copy.common import OUTPUT_CONNECTOR_NAME
+from dace.libraries.tileops import TileGather
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import masked_stores, sdfg_masked_stores
 
 N = dace.symbol('N')
 
@@ -49,7 +50,7 @@ def _vectorized(tag):
 def test_lowers_to_a_broadcast_load_and_a_tile_store():
     sdfg = _vectorized('bcast_copy_struct')
     loads = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
-    stores = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
+    stores = sdfg_masked_stores(sdfg)
     assert loads, 'the scalar source never became a tile'
     assert all(ld.src_kind == 'Scalar' for ld in loads), [ld.src_kind for ld in loads]
     assert stores, 'the tile is never stored back to the global array'
@@ -61,11 +62,9 @@ def test_the_stored_window_is_the_whole_tile():
     sdfg = _vectorized('bcast_copy_window')
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
-            for node in state.nodes():
-                if not isinstance(node, TileScatter):
-                    continue
-                out = [e for e in state.out_edges(node) if e.src_conn == '_dst']
-                assert out, f'{node.label} has no _dst edge'
+            for node in masked_stores(state):
+                out = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
+                assert out, f'{node.label} has no {OUTPUT_CONNECTOR_NAME} edge'
                 for edge in out:
                     sizes = edge.data.subset.size()
                     assert any(str(s) == '8' for s in sizes), f'{node.label} stores {edge.data.subset}, not a tile'
@@ -83,4 +82,6 @@ def test_value_preserving():
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    test_lowers_to_a_broadcast_load_and_a_tile_store()
+    test_the_stored_window_is_the_whole_tile()
+    test_value_preserving()

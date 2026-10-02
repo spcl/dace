@@ -30,17 +30,11 @@ from typing import Any
 
 import dace
 from dace import properties, subsets, symbolic
-from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA,
-                                          TileReduce, TileScatter, TileUnop)
+from dace.libraries.tileops.nodes import TILE_NODES, TileMaskGen
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, map_tile_widths
-
-#: Every tile library node the emit stage can leave behind. A map whose scope holds one of these
-#: WAS tiled, whatever any predicate would say about its body now.
-TILE_NODES = (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce, TileScatter,
-              TileUnop)
 
 
 @properties.make_properties
@@ -157,6 +151,7 @@ class RestoreUntiledMapStride(ppl.Pass):
             if not self.steps_match_widths(node, widths):
                 continue
             scope = self.scope_nodes(graph, node)
+            # A map whose scope holds a tile node WAS tiled, whatever any predicate would say about its body now.
             if any(isinstance(n, TILE_NODES) for n in scope):
                 continue
             if any(

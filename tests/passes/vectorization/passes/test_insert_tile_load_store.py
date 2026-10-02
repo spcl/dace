@@ -8,8 +8,8 @@ Validates the staging-first replacement chain end-to-end:
 
 on simple Python kernels. Each test confirms:
 
-* Lane-dep non-transient reads gain a ``TileGather`` lib node.
-* Lane-dep non-transient writes gain a ``TileScatter`` lib node.
+* Lane-dep non-transient reads gain a masked-copy load.
+* Lane-dep non-transient writes gain a masked-copy store.
 * CONSTANT (loop-invariant) edges stay direct -- no lib node, no Python
   assignment tasklet inserted.
 """
@@ -17,8 +17,9 @@ import numpy as np
 
 import dace
 from dace import data as dt
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops import MaskedCopyLibraryNode
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
+from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
@@ -45,7 +46,7 @@ def _stage_widen_insert(prog):
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for n in state.nodes():
-                if isinstance(n, (TileGather, TileScatter)):
+                if isinstance(n, MaskedCopyLibraryNode):
                     body_state = state
                     break
             if body_state:
@@ -62,22 +63,22 @@ def linear_kernel(A: dace.float64[N], B: dace.float64[N], scale: dace.float64):
         B[i] = A[i] * scale
 
 
-def test_linear_kernel_emits_tileload_and_tilestore():
-    """B[i] = A[i] * scale -- A and B widened via TileGather/TileScatter; scale stays direct."""
+def test_linear_kernel_emits_masked_load_and_store():
+    """B[i] = A[i] * scale -- A and B widened via masked copies; scale stays direct."""
     sdfg, body_state = _stage_widen_insert(linear_kernel)
-    assert body_state is not None, "expected at least one TileGather / TileScatter in some body NSDFG"
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
-    tile_stores = [n for n in body_state.nodes() if isinstance(n, TileScatter)]
-    assert len(tile_loads) == 1, f"expected 1 TileGather (A), got {len(tile_loads)}"
-    assert len(tile_stores) == 1, f"expected 1 TileScatter (B), got {len(tile_stores)}"
+    assert body_state is not None, "expected at least one masked load / masked store in some body NSDFG"
+    tile_loads = masked_loads(body_state)
+    tile_stores = masked_stores(body_state)
+    assert len(tile_loads) == 1, f"expected 1 masked load (A), got {len(tile_loads)}"
+    assert len(tile_stores) == 1, f"expected 1 masked store (B), got {len(tile_stores)}"
     # ``scale`` is CONSTANT -- stays as direct edge from scale AN to the consumer tasklet.
-    # No TileGather for scale.
+    # No masked load for scale.
     for tl in tile_loads:
         in_edges = list(body_state.in_edges(tl))
-        # TileGather's _src reads from a non-transient (A, not scale).
+        # the masked load reads from a non-transient (A, not scale).
         for e in in_edges:
-            if e.dst_conn == "_src":
-                assert e.data.data != "scale", "scale must not get a TileGather (CONSTANT)"
+            if e.dst_conn == "_cpy_in":
+                assert e.data.data != "scale", "scale must not get a masked load (CONSTANT)"
 
 
 @dace.program
@@ -87,12 +88,12 @@ def two_loads_kernel(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N])
         C[i] = A[i] + B[i]
 
 
-def test_two_lane_dep_reads_emit_two_tileloads():
-    """Both A and B reads gain a TileGather."""
+def test_two_lane_dep_reads_emit_two_masked_loads():
+    """Both A and B reads gain a masked load."""
     sdfg, body_state = _stage_widen_insert(two_loads_kernel)
     assert body_state is not None
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
-    tile_stores = [n for n in body_state.nodes() if isinstance(n, TileScatter)]
+    tile_loads = masked_loads(body_state)
+    tile_stores = masked_stores(body_state)
     assert len(tile_loads) == 2, f"expected 2 TileLoads (A,B), got {len(tile_loads)}"
     assert len(tile_stores) == 1
 
@@ -104,16 +105,16 @@ def constant_only_kernel(A: dace.float64[N], scale: dace.float64):
         A[i] = scale + scale
 
 
-def test_constant_read_no_tileload():
-    """``scale`` is CONSTANT -- no TileGather emitted for it. Only the LINEAR
-    write to A gets a TileScatter."""
+def test_constant_read_no_masked_load():
+    """``scale`` is CONSTANT -- no masked load emitted for it. Only the LINEAR
+    write to A gets a masked store."""
     sdfg, body_state = _stage_widen_insert(constant_only_kernel)
     if body_state is None:
-        # Kernel may be too trivial to produce TileScatter; allow.
+        # Kernel may be too trivial to produce masked store; allow.
         return
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
-    tile_stores = [n for n in body_state.nodes() if isinstance(n, TileScatter)]
-    assert len(tile_loads) == 0, "scale is CONSTANT, no TileGather expected"
+    tile_loads = masked_loads(body_state)
+    tile_stores = masked_stores(body_state)
+    assert len(tile_loads) == 0, "scale is CONSTANT, no masked load expected"
     assert len(tile_stores) == 1
 
 
@@ -137,7 +138,7 @@ def test_stage_writes_skips_ordering_edge_as_representative():
     Without the fix, `an_side_subset` falls back to the AN's FULL descriptor shape for
     the empty edge, which classifies as CONSTANT (loop-invariant) and makes the pass
     skip staging entirely -- the real `A[i:i+4]` write is silently left as a bare
-    Tasklet -> AccessNode edge instead of being routed through a TileScatter.
+    Tasklet -> AccessNode edge instead of being routed through a masked store.
     """
     inner_sdfg = dace.SDFG("body")
     inner_sdfg.add_array("A", [16], dace.float64)
@@ -155,8 +156,8 @@ def test_stage_writes_skips_ordering_edge_as_representative():
     staged = pas._stage_writes_in_state(state, inner_sdfg, ("i", ), None)
 
     assert staged == 1, "the real A[i:i+4] write must be staged despite the ordering in-edge"
-    tile_stores = [n for n in state.nodes() if isinstance(n, TileScatter)]
-    assert len(tile_stores) == 1, "write must be routed through a TileScatter, not left as a bare AN edge"
+    tile_stores = masked_stores(state)
+    assert len(tile_stores) == 1, "write must be routed through a masked store, not left as a bare AN edge"
     # The ordering edge itself must survive untouched (still empty).
     ordering_edges = [e for e in state.in_edges(an_a) if e.data.is_empty()]
     assert len(ordering_edges) == 1
@@ -229,15 +230,15 @@ def zsolqa_updates_into_one_access_node():
 
 
 def test_writes_to_two_elements_of_one_access_node_get_one_store_each():
-    """Each write keeps its own element: one TileScatter per written element, fed only by that element's source."""
+    """Each write keeps its own element: one masked store per written element, fed only by that element's source."""
     sdfg, state = zsolqa_updates_into_one_access_node()
 
     staged = InsertTileLoadStore(widths=(8, ))._stage_writes_in_state(state, sdfg, ("i", ), None)
 
     assert staged == 2
     written = {}
-    for store in [n for n in state.nodes() if isinstance(n, TileScatter)]:
-        bridge = next(e.src for e in state.in_edges(store) if e.dst_conn == "_src")
+    for store in masked_stores(state):
+        bridge = next(e.src for e in state.in_edges(store) if e.dst_conn == "_cpy_in")
         sources = [e.src.data for e in state.in_edges(bridge)]
         elements = [str(e.data.subset) for e in state.out_edges(store)]
         written[tuple(elements)] = sources
@@ -259,3 +260,14 @@ def test_writes_to_two_elements_of_one_access_node_both_reach_the_array():
     expected = np.full((5, 5, 8), 7.0)
     expected[0, 4], expected[4, 0] = B, C
     np.testing.assert_array_equal(A, expected)
+
+
+if __name__ == '__main__':
+    test_linear_kernel_emits_masked_load_and_store()
+    test_two_lane_dep_reads_emit_two_masked_loads()
+    test_constant_read_no_masked_load()
+    test_stage_writes_skips_ordering_edge_as_representative()
+    test_assert_post_stage_invariants_allows_ordering_edge_between_globals()
+    test_resize_scalar_chain_preserves_ordering_edge()
+    test_writes_to_two_elements_of_one_access_node_get_one_store_each()
+    test_writes_to_two_elements_of_one_access_node_both_reach_the_array()

@@ -4,13 +4,13 @@ import dace
 from dace import cpf_lowering, library, properties
 from dace.sdfg import nodes
 
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import require_k1
-from ..lanes import nested_loops, tile_offset
-from ..operands import connected_edges, edge_ctype, output_edge
-from ..ops import BINARY_OPS, REDUCE_OPS
-from .tile_op import TileOp
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
+from dace.libraries.tileops.ops import BINARY_OPS, REDUCE_OPS
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
 
 def identity_literal(op: str, ctype: str) -> str:

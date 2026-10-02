@@ -93,7 +93,7 @@ def _tasklet_count(sdfg: dace.SDFG) -> int:
                and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 
-def test_tilestore_symbol_broadcast_minimal():
+def test_tile_scatter_symbol_broadcast_minimal():
     """Constructing a ``TileScatter(src_kind='Symbol')`` declares no
     ``_src`` connector and embeds the literal in ``src_expr``."""
     from dace.libraries.tileops import TileScatter
@@ -103,7 +103,7 @@ def test_tilestore_symbol_broadcast_minimal():
     assert node.src_expr == "0.0"
 
 
-def test_tilestore_symbol_requires_expr():
+def test_tile_scatter_symbol_requires_expr():
     """``src_kind='Symbol'`` without a ``src_expr`` raises at
     construction (loud failure)."""
     from dace.libraries.tileops import TileScatter
@@ -142,5 +142,7 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
     assert n_tile > 0, f"tile lib nodes must be present pre-expansion; got {n_tile}"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
+if __name__ == '__main__':
+    test_tile_scatter_symbol_broadcast_minimal()
+    test_tile_scatter_symbol_requires_expr()
+    test_tidy_branch_emits_zero_cpp_tasklets()

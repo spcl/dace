@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileGather`` — copy a K-dim tile out of a global array.
+"""``TileGather``: the loads of a tile that a masked copy cannot express.
 
-The pure expansion emits a CPP tasklet whose body walks the K-fold
-nested index space using the source array's strides (which DaCe
-codegen passes via ``__<arr>_strides`` from the surrounding scope).
+A load through index tiles, a replicated, transposed or broadcast one. The pure expansion is a loop over the lanes,
+which addresses the source with its strides; only the gather of a unit-stride 1-D array has an ISA lowering.
 """
 from collections.abc import Sequence
 
@@ -14,16 +13,15 @@ from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import graph, nodes
 
-from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from ..alignment import align_template_arg, k1_array_stride
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import require_k1
-from ..operands import connected_edges, edge_ctype, output_edge
-from .tile_op import TileOp
-from ..lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
-from ..operands import scalar_operand_ref
-from ..validation import validate_mask_descriptor_lock, validate_packed_layout
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
+from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
+from dace.libraries.tileops.operands import scalar_operand_ref
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 
 
 def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list[str]:
@@ -168,14 +166,17 @@ class ExpandTileGatherCUDA(ExpandTileIsa):
 
 @library.node
 class TileGather(TileOp):
-    """Load a K-dim tile out of a global array.
+    """Load a K-dim tile out of a global array in a way a masked copy cannot.
 
-    ``_src`` carries the full memlet of the source array; the in-edge's
-    subset selects the tile region. ``_dst`` is the tile transient
-    (``widths``-shaped). ``dim_strides`` records the per-tile-dim stride
-    coefficient applied to the source view, defaulting to all 1s
-    (contiguous).
+    ``_src`` carries the memlet of the source array, which selects the tile region, and ``_dst`` is the tile. The
+    lanes address the source through ``dim_strides`` (``0`` broadcasts a dim), ``replicate_factor_per_dim`` (lanes
+    sharing a source element), ``src_dims`` (a transposed tile) or ``_idx_<d>`` index tiles (``gather_dims``);
+    ``src_kind`` broadcasts a scalar or a symbol to every lane instead. A window the tile copies lane for lane is
+    :class:`~dace.libraries.tileops.nodes.masked_copy.MaskedCopyLibraryNode`.
     """
+
+    INPUT_CONNECTOR_NAME = "_src"
+    OUTPUT_CONNECTOR_NAME = "_dst"
 
     implementations = {
         "pure": ExpandTileGatherPure,
@@ -492,7 +493,7 @@ class TileGather(TileOp):
         return tasklet
 
     def replicated(self) -> bool:
-        """Whether lanes may share a source element, which the linear header loads cannot express.
+        """Whether lanes may share a source element, which the ``tile_gather`` header call cannot express.
 
         A symbolic factor counts: it cannot be shown to be 1.
         """
@@ -526,31 +527,20 @@ class TileGather(TileOp):
         return index_shape == (int(self.widths[0]), )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
-        # A broadcast source has no ``_src`` tile for the header to stream, and a replicated one has no per-lane
-        # divisor in it. A gather lowers only in its unit-stride form.
-        return (self.src_kind == TILE and not self.replicated()
-                and (not self.gather_dims or self.is_unit_stride_gather(state, sdfg)))
+        return self.src_kind == TILE and self.is_unit_stride_gather(state, sdfg)
 
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         in_edges = connected_edges(state, self)
         vlen = require_k1(self)
         destination_ctype = edge_ctype(sdfg, output_edge(state, self, "_dst"))
+        index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
         masked = "true" if self.has_mask else "false"
         mask_argument = "_mask" if self.has_mask else "nullptr"
-        inputs = ["_src", "_mask"] if self.has_mask else ["_src"]
-        if self.gather_dims:
-            index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
-            inputs.append("_idx_0")
-            code = (f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
-                    f"(_dst, _src, _idx_0, {mask_argument});")
-        else:
-            stride = k1_array_stride(self, sdfg, in_edges["_src"], self.src_dims)
-            align = align_template_arg(self, state, sdfg, in_edges["_src"], backend, vlen, allow_shift=True)
-            code = (f"dace::tileops::tile_load<{destination_ctype}, {vlen}, {masked}{align}>"
-                    f"(_dst, _src, {mask_argument}, {stride});")
+        code = (f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
+                f"(_dst, _src, _idx_0, {mask_argument});")
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
-            inputs=dict.fromkeys(inputs),
+            inputs=dict.fromkeys(["_src", *(["_mask"] if self.has_mask else []), "_idx_0"]),
             outputs={"_dst": None},
             code=code,
             language=dace.dtypes.Language.CPP,

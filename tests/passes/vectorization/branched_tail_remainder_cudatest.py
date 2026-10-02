@@ -37,7 +37,7 @@ import pytest
 
 import dace
 from dace.dtypes import DeviceType
-from dace.libraries.tileops import TileITE
+from dace.libraries.tileops import MaskedCopyLibraryNode, TileITE
 from dace.transformation.interstate import LoopToMap
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -216,7 +216,7 @@ def test_default_gpu_fuses_a_masked_tile_remainder():
         return {type(n).__name__ for st in region.all_states() for n, _ in st.all_nodes_recursive()}
 
     if_kinds, else_kinds = _kinds(if_region), _kinds(else_region)
-    tile_ops = {"TileGather", "TileBinop", "TileScatter"}
+    tile_ops = {MaskedCopyLibraryNode.__name__, "TileBinop"}
     assert tile_ops <= if_kinds, f"the if-branch must hold vectorized tile ops; got {sorted(if_kinds)}"
     assert TileMaskGen.__name__ not in if_kinds, "the full-tile arm must be MASK-FREE"
     assert tile_ops <= else_kinds, f"the else-branch must hold tile ops too; got {sorted(else_kinds)}"
@@ -282,7 +282,7 @@ def test_branched_tail_provably_nondivisible_does_not_raise():
 
 def test_branched_tail_structure_if_vector_else_scalar():
     """The fused body is ONE ``ConditionalBlock``: the ``if`` (full-tile) branch holds the vectorized
-    tile ops (TileGather/TileBinop/TileScatter) and NO scalar tasklet; the ``else`` branch holds a
+    tile ops (masked copies and TileBinop) and NO scalar tasklet; the ``else`` branch holds a
     Sequential loop with the scalar tasklet."""
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
@@ -303,14 +303,14 @@ def test_branched_tail_structure_if_vector_else_scalar():
             yield from st.all_nodes_recursive()
 
     if_kinds = {type(n).__name__ for n, _ in _all_nodes_recursive(if_region)}
-    assert "TileBinop" in if_kinds and "TileGather" in if_kinds and "TileScatter" in if_kinds, \
+    assert "TileBinop" in if_kinds and MaskedCopyLibraryNode.__name__ in if_kinds, \
         f"vectorized tile ops must survive intact in the if-branch; got {sorted(if_kinds)}"
     assert "Tasklet" not in _node_types(if_region), "the if-branch must be tile ops, not a scalar tasklet"
 
     assert "MapEntry" in _node_types(else_region), "the else-branch must wrap a scalar loop (Sequential map)"
     else_kinds = {type(n).__name__ for n, _ in _all_nodes_recursive(else_region)}
     assert "Tasklet" in else_kinds, "the else-branch must run the scalar (tasklet) body"
-    assert not (else_kinds & {"TileBinop", "TileGather", "TileScatter"}), "the else-branch must stay scalar"
+    assert not (else_kinds & {"TileBinop", MaskedCopyLibraryNode.__name__}), "the else-branch must stay scalar"
 
     # The if-condition + else-loop bound are clean expressions in N/W (no int_floor split residue).
     assert "int_floor" not in if_cond.as_string, f"if-condition carries a split residue: {if_cond.as_string}"
@@ -326,8 +326,8 @@ def test_pairs_are_matched_structurally_not_by_label():
     is what identifies the real pair.
     """
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                       TILE_MAIN_MARKER)
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
+    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 
     sdfg = dace.SDFG("label_collision")
     state = sdfg.add_state("s", is_start_block=True)
@@ -345,8 +345,8 @@ def test_pairs_are_matched_structurally_not_by_label():
 def test_a_tail_is_consumed_by_only_one_main():
     """Two genuine pairs sharing a base label each keep their own tail."""
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                       TILE_MAIN_MARKER)
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
+    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 
     sdfg = dace.SDFG("two_pairs")
     state = sdfg.add_state("s", is_start_block=True)

@@ -6,7 +6,7 @@
 operand. ``InsertTileLoadStore`` used to override that -- ``_rewire_producers_to_bridge`` attached
 the WHOLE-bridge memlet ``bridge[0:W]`` to whatever producer it found, the Scalar included.
 ``validate()`` let the resulting AN-to-AN edge through (it checks ``subset`` against the memlet's
-own ``data``, and ``other_subset`` is ``None``), and the ``TileScatter`` then wrote W lanes out of a
+own ``data``, and ``other_subset`` is ``None``), and the masked store then wrote W lanes out of a
 buffer whose only defined element is lane 0 -- a silent wrong answer, surfacing only once
 ``InsertExplicitCopies`` derived the matching source subset and refused it out-of-bounds.
 """
@@ -23,12 +23,13 @@ import pytest
 
 import dace
 from dace import data as dd
-from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops import TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import AccessNode
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import sdfg_masked_stores
 
 N = dace.symbol('N')
 WIDTH = 8
@@ -91,7 +92,7 @@ def test_the_invariant_scalar_reaches_its_tile_bridge_through_a_broadcast():
 
     # The map really was tiled -- a refused kernel is restored un-tiled and would satisfy every
     # assertion below by having no tile chain at all.
-    assert count_nodes(sdfg, TileScatter) > 0
+    assert sdfg_masked_stores(sdfg)
     splats = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == 'Scalar']
     assert splats, 'the Scalar producer was wired to the tile bridge without a broadcast'
     for splat in splats:
@@ -102,7 +103,7 @@ def test_no_single_element_producer_claims_a_full_tile():
     """The Scalar no longer carries the whole-bridge memlet, and the graph validates."""
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_no_overwide')
 
-    assert count_nodes(sdfg, TileScatter) > 0
+    assert sdfg_masked_stores(sdfg)
     assert single_element_producers_with_a_multi_element_memlet(sdfg) == []
     sdfg.validate()
 
@@ -115,7 +116,7 @@ def test_every_lane_receives_the_invariant_value(length):
     is not a remainder-only guard.
     """
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write(f'splat_numeric_{length}')
-    assert count_nodes(sdfg, TileScatter) > 0
+    assert sdfg_masked_stores(sdfg)
 
     rng = np.random.default_rng(seed=20260911)
     a = rng.random(length)

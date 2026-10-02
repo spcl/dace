@@ -99,15 +99,16 @@ from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfg
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
-from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA,
-                                          TileReduce, TileScatter, TileUnop)
+from dace.libraries.tileops.nodes import (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather,
+                                          TileMaskGen, TileMMA, TileReduce, TileScatter, TileUnop)
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-TILE_NODE_TYPES = (TileBinop, TileFMA, TileGather, TileMaskGen, TileITE, TileReduce, TileScatter, TileUnop)
+TILE_NODE_TYPES = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen, TileITE, TileReduce, TileScatter,
+                   TileUnop)
 
 #: Every node the emit stage can produce, including the two the selector above does not stamp.
 #: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.

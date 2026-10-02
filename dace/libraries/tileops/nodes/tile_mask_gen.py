@@ -4,12 +4,12 @@ import dace
 from dace import library, properties
 from dace.sdfg import nodes
 
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import require_k1
-from ..lanes import nested_loops, tile_offset
-from ..validation import validate_mask_descriptor_lock
-from .tile_op import TileOp
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
 
 @library.expansion

@@ -83,24 +83,24 @@ def _build_load_with_mask(mask_shape, **mask_kwargs):
     return sdfg, state, node
 
 
-def test_tileload_accepts_locked_mask():
+def test_tile_gather_accepts_locked_mask():
     sdfg, state, node = _build_load_with_mask(mask_shape=(4, 8))
     node.validate(sdfg, state)
 
 
-def test_tileload_refuses_mask_shape_mismatch():
+def test_tile_gather_refuses_mask_shape_mismatch():
     sdfg, state, node = _build_load_with_mask(mask_shape=(4, 16))
     with pytest.raises(ValueError, match=r"shape.*must match widths"):
         node.validate(sdfg, state)
 
 
-def test_tileload_refuses_non_register_mask_storage():
+def test_tile_gather_refuses_non_register_mask_storage():
     sdfg, state, node = _build_load_with_mask(mask_shape=(4, 8), storage=dtypes.StorageType.CPU_Heap)
     with pytest.raises(ValueError, match=r"storage.*must be.*Register"):
         node.validate(sdfg, state)
 
 
-def test_tileload_refuses_non_transient_mask():
+def test_tile_gather_refuses_non_transient_mask():
     sdfg, state, node = _build_load_with_mask(mask_shape=(4, 8), transient=False)
     with pytest.raises(ValueError, match=r"must be transient"):
         node.validate(sdfg, state)
@@ -126,12 +126,12 @@ def _build_store_with_mask(mask_shape, **mask_kwargs):
     return sdfg, state, node
 
 
-def test_tilestore_accepts_locked_mask():
+def test_tile_scatter_accepts_locked_mask():
     sdfg, state, node = _build_store_with_mask(mask_shape=(4, 8))
     node.validate(sdfg, state)
 
 
-def test_tilestore_refuses_mask_wrong_dtype():
+def test_tile_scatter_refuses_mask_wrong_dtype():
     sdfg, state, node = _build_store_with_mask(mask_shape=(4, 8), dtype=dace.int64)
     with pytest.raises(ValueError, match=r"dtype.*must be bool_"):
         node.validate(sdfg, state)

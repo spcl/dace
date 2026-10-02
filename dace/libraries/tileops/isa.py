@@ -9,8 +9,8 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.subsets import Subset
 
-from .kinds import SYMBOL, TILE
-from .operands import Operand, connected_edges, edge_ctype, input_connectors, output_edge
+from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.operands import Operand, connected_edges, edge_ctype, input_connectors, output_edge
 
 
 def require_k1(node: nodes.LibraryNode) -> int:

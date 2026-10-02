@@ -5,14 +5,14 @@ from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 
-from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
-from ..expansions import ExpandTileIsa, ExpandTilePure
-from ..isa import IsaCall, broadcast_ref
-from ..kinds import SYMBOL, TILE
-from ..lanes import nested_loops, tile_offset
-from ..operands import (Operand, check_operands, connected_edges, edge_ctype, input_connectors, output_edge,
-                        scalar_operand_ref, validate_elementwise)
-from .tile_op import TileOp
+from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import IsaCall, broadcast_ref
+from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.operands import (Operand, check_operands, connected_edges, edge_ctype, input_connectors,
+                                             output_edge, scalar_operand_ref, validate_elementwise)
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
 
 @library.expansion

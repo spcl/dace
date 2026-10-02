@@ -41,9 +41,9 @@ import dace
 from dace import library, properties
 from dace.sdfg import nodes
 
-from ..expansions import ExpandTilePure
-from ..operands import edge_ctype, output_edge
-from .tile_op import TileOp
+from dace.libraries.tileops.expansions import ExpandTilePure
+from dace.libraries.tileops.operands import edge_ctype, output_edge
+from dace.libraries.tileops.nodes.tile_op import TileOp
 
 
 @library.expansion

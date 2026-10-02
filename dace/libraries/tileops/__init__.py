@@ -10,7 +10,7 @@ Layout mirrors :mod:`dace.libraries.standard`: ``nodes`` holds the library nodes
 environments of the ISA backends.
 """
 from dace.library import register_library
-from .nodes import *
-from .environments import *
+from dace.libraries.tileops.nodes import *
+from dace.libraries.tileops.environments import *
 
 register_library(__name__, "tileops")
