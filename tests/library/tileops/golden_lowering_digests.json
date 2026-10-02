@@ -1,0 +1,42 @@
+{
+ "TileBinop": {
+  "configurations": 9600,
+  "sha256": "748d5643276df524184aee5651f2c95262126eeded585e53434d301c8f81ad6b"
+ },
+ "TileFMA": {
+  "configurations": 504,
+  "sha256": "aafbcdcd6d16c58ce7bc9d89a7b7624c5c1189ef8d82739cd425a1f3f1ca9aa0"
+ },
+ "TileITE": {
+  "configurations": 264,
+  "sha256": "27da6f9437590821f735eed0ea6608979741800de3c51827375352dbee36f8a0"
+ },
+ "TileIota": {
+  "configurations": 10,
+  "sha256": "a26752ef9f387ade5ba14d9df2efe659f2adfc515b9b3ed64977a60bcd162155"
+ },
+ "TileLoad": {
+  "configurations": 360,
+  "sha256": "e7b1156d0fe26f31a78995b92515464bdc56dc69b45ad1cc0f043e0e126d86d9"
+ },
+ "TileMMA": {
+  "configurations": 10,
+  "sha256": "aa2b9c0b95b50cdb425211e18844a7c1f8009d90f1b5ba7f28ec18f6a97a7fe0"
+ },
+ "TileMaskGen": {
+  "configurations": 10,
+  "sha256": "c7208bc0ea38842e5369aebb854b41adf67461f439252d1715f996a2f50cf53a"
+ },
+ "TileReduce": {
+  "configurations": 240,
+  "sha256": "6eaa4ba5e104805d64881651fef649d533786d57b5f77ff468b59aa2f1fe7e4c"
+ },
+ "TileStore": {
+  "configurations": 354,
+  "sha256": "d87543a3f4ffeee2f5d8e68277923eefa9113754d740f900d3f52db1561cc838"
+ },
+ "TileUnop": {
+  "configurations": 4968,
+  "sha256": "3bd18efc1e7d0903e541ee9ce98b3296868f0d9af76bf9fa8b6475fe2ab2e9f2"
+ }
+}
