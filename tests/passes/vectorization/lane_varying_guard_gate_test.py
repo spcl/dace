@@ -20,7 +20,6 @@ the two ITE passes look at the arm, so the counter becomes a dataflow write that
 per-lane select. Both accumulators are predicated and the kernel vectorizes correctly, which is
 what the end-to-end test below pins -- on the emitted selects AND on the numbers.
 """
-import pytest
 
 import dace
 from dace import nodes
@@ -98,10 +97,10 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
 
     assert no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS) is None
 
-    # One reduction buffer per accumulator, and one per-lane select per accumulator. The counter
+    # One reduction buffer per accumulator (stored by a masked copy), and one per-lane select per accumulator. The counter
     # used to reach its buffer through an unmasked constant broadcast and no select at all, so it
     # is the SECOND select that this pins -- a count of one is the old miscompile.
-    assert len(_tile_nodes(sdfg, 'TileScatter', into='_red_buf')) == 2, 'expected two reduction buffers'
+    assert len(_tile_nodes(sdfg, 'MaskedCopyLibraryNode', into='_red_buf')) == 2, 'expected two reduction buffers'
     selects = _tile_nodes(sdfg, 'TileITE')
     assert len(selects) == 2, (f"expected a per-lane select for the float accumulator AND the counter, "
                                f"got {[n.label for n in selects]}")
@@ -130,4 +129,7 @@ def _tile_nodes(sdfg: dace.SDFG, kind: str, into: str = None) -> list:
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    test_invariant_flags_a_guard_over_a_widened_buffer()
+    test_invariant_flags_any_guard_over_a_widened_buffer_that_survives_lowering()
+    test_invariant_accepts_a_scalar_guard()
+    test_azimint_naive_masked_counter_is_predicated_per_lane()
