@@ -3314,8 +3314,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 def _topy(arr):
     """ Converts an array of symbolic variables (or one) to C++ strings. """
     if not isinstance(arr, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True)) for d in arr]
+        return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True), c_operators=True)
+    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True), c_operators=True) for d in arr]
 
 
 # The dynamic shared memory of a kernel, which the flat buffers of ``gpu_shared_memory`` refer to

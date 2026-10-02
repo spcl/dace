@@ -165,7 +165,8 @@ class CPPUnparser:
                  indent_offset=0,
                  type_inference=False,
                  defined_symbols=None,
-                 language=dace.dtypes.Language.CPP):
+                 language=dace.dtypes.Language.CPP,
+                 c_operators=False):
 
         self.f = file
         self.future_imports = []
@@ -179,6 +180,7 @@ class CPPUnparser:
         self.locals = locals
         self.firstfill = True
         self.language = language
+        self.c_operators = c_operators
 
         self.dispatch(tree)
         print("", file=self.f)
@@ -334,8 +336,12 @@ class CPPUnparser:
     def _AugAssign(self, t):
         self.fill()
         self.dispatch(t.target)
+        if t.op.__class__.__name__ in ("FloorDiv",
+                                       "Mod") and not (t.op.__class__.__name__ == "Mod" and self.c_operators):
+            self.write(" = ")
+            self._modulo_call("PyFloor" if t.op.__class__.__name__ == "FloorDiv" else "PyMod", t.target, t.value)
         # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops:
+        elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(" = " + func + "(")
             self.dispatch(t.target)
@@ -858,11 +864,14 @@ class CPPUnparser:
         "BitXor": "^",
         "BitAnd": "&"
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    funcops = {"MatMult": (",", "dace::gemm")}
 
     def _BinOp(self, t):
+        # Python's ``%`` and ``//`` floor. A symbolic expression has chosen between C's operators and the helpers
+        if t.op.__class__.__name__ == "FloorDiv" or (t.op.__class__.__name__ == "Mod" and not self.c_operators):
+            self._modulo_call("PyFloor" if t.op.__class__.__name__ == "FloorDiv" else "PyMod", t.left, t.right)
         # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops:
+        elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(func + "(")
 
@@ -986,9 +995,40 @@ class CPPUnparser:
         "Or": ast.Or,
     }
 
+    modulo_calls = {"PyMod": "py_mod", "CMod": "cpp_mod", "PyFloor": "py_floor"}
+
+    def _is_unsigned_or_literal(self, node: ast.AST) -> bool:
+        """ Whether ``node`` is an integer that is provably nonnegative: a literal or a variable of unsigned type. """
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, int) and not isinstance(node.value, bool) and node.value >= 0
+        if isinstance(node, ast.Name):
+            ctype = self.defined_symbols.get(node.id)
+            if ctype is None and self.locals is not None:
+                ctype = self.locals.get_name_type_associations().get(node.id)
+            return isinstance(ctype, dtypes.typeclass) and np.issubdtype(ctype.type, np.unsignedinteger)
+        return False
+
+    def _modulo_call(self, function: str, left: ast.AST, right: ast.AST):
+        """ ``function`` is ``PyMod``, ``CMod`` or ``PyFloor``: C's operators are used where they agree. """
+        if function != "CMod" and self._is_unsigned_or_literal(left) and self._is_unsigned_or_literal(right):
+            self.write("(")
+            self.dispatch(left)
+            self.write(" % " if function == "PyMod" else " / ")
+            self.dispatch(right)
+            self.write(")")
+        else:
+            self.write(self.modulo_calls[function] + "(")
+            self.dispatch(left)
+            self.write(", ")
+            self.dispatch(right)
+            self.write(")")
+
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
+            if t.func.id in self.modulo_calls and len(t.args) == 2 and not t.keywords:
+                self._modulo_call(t.func.id, *t.args)
+                return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()
                 self.dispatch(
@@ -1119,17 +1159,23 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
+def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, c_operators=False):
     strio = StringIO()
-    CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon, defined_symbols=defined_symbols)
+    CPPUnparser(node,
+                0,
+                locals or CPPLocals(),
+                strio,
+                expr_semicolon=expr_semicolon,
+                defined_symbols=defined_symbols,
+                c_operators=c_operators)
     return strio.getvalue().strip()
 
 
 # Code can either be a string or a function
-def py2cpp(code, expr_semicolon=True, defined_symbols=None):
+def py2cpp(code, expr_semicolon=True, defined_symbols=None, c_operators=False):
     if isinstance(code, str):
         try:
-            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
+            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols, c_operators=c_operators)
         except SyntaxError:
             return code
     elif isinstance(code, ast.AST):
@@ -1140,7 +1186,8 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         from dace import symbolic
         return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
                           expr_semicolon,
-                          defined_symbols=defined_symbols)
+                          defined_symbols=defined_symbols,
+                          c_operators=True)
     elif isinstance(code, int):
         return str(code)
     elif code.__class__.__name__ == 'function':
@@ -1163,5 +1210,7 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def pyexpr2cpp(expr):
-    return py2cpp(expr, expr_semicolon=False)
+def pyexpr2cpp(expr, c_operators=False):
+    """ Translates a Python expression. ``c_operators`` is set for the output of ``symstr(..., cpp_mode=True)``, where
+        a ``%`` is already C's. """
+    return py2cpp(expr, expr_semicolon=False, c_operators=c_operators)

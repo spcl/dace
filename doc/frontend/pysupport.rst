@@ -147,7 +147,7 @@ Supported
 
 Supported. Notable differences compared to the expected Python result:
 
-- Modulo operator always returns a natural number (like in C/C++)
+- The modulo and floor division operators follow Python's (floored) semantics (see :ref:`division-modulo`)
 
 6.8 Shifting operations
 ^^^^^^^^^^^^^^^^^^^^^^^
