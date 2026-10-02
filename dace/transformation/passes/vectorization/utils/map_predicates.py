@@ -444,16 +444,14 @@ def map_body_has_library_node(state: SDFGState, map_entry: dace.nodes.MapEntry) 
     until the node is expanded (after vectorization). This keeps the scatter guard's
     ``ScatterConflictCheck`` opaque to tiling.
 
-    The vectorizer's OWN tile-op library nodes (``TileLoad`` / ``TileStore`` / ``TileBinop`` /
-    ...) are EXCLUDED: they are inserted into the body DURING tiling, so treating them as
-    opaque would make a half-tiled map refuse its own remaining tile passes.
+    The vectorizer's OWN tile-op library nodes (``MaskedCopyLibraryNode``, ``TileBinop``, ...) are EXCLUDED: they are
+    inserted into the body DURING tiling, so treating them as opaque would make a half-tiled map refuse its own
+    remaining tile passes.
     """
-    from dace.libraries.tileops.nodes import (TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore,
-                                              TileUnop)
-    tile_ops = (TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop)
+    from dace.libraries.tileops.nodes import TILE_NODES
 
     def _opaque(n: dace.nodes.Node) -> bool:
-        return isinstance(n, dace.nodes.LibraryNode) and not isinstance(n, tile_ops)
+        return isinstance(n, dace.nodes.LibraryNode) and not isinstance(n, TILE_NODES)
 
     for node in map_body_nodes(state, map_entry):
         if _opaque(node):

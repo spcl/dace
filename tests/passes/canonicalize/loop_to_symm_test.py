@@ -31,7 +31,7 @@ import pytest
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.symm import Symm
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize

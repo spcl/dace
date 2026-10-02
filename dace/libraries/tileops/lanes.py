@@ -1,12 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared CPP-codegen helpers for the tile-op lib nodes' ``pure`` expansions.
+"""C++ emission shared by the ``pure`` expansions of the tile nodes.
 
-These helpers keep the bodies short and idiomatic: a K-fold nested
-``for``-loop with per-dim lane indices (``__l0, __l1, ...``) rather
-than the flattened linear-index-plus-decode shape. Each lib node's
-pure expansion plugs in its own per-lane body via :func:`nested_loops`
-and uses :func:`tile_offset` to flatten the tile transient's index
-(register tiles are always row-major-contiguous).
+A tile is a K-fold nested loop over per-dim lane indices ``__l0, __l1, ...`` rather than a flattened index with a
+decode. Register tiles are contiguous and row-major, so :func:`tile_offset` flattens the lane indices; a node supplies
+the per-lane body to :func:`nested_loops`.
 """
 import numbers
 from collections.abc import Sequence
@@ -14,6 +11,7 @@ from collections.abc import Sequence
 import sympy
 
 import dace
+from dace.symbolic import has_one_marker
 
 # Legal ``_idx_<d>`` gather/scatter index dtypes (design section 10.4). Unsigned widths are
 # accepted because CSR/COO index arrays are commonly ``uint32``; ``gather_lane_offset`` casts
@@ -38,7 +36,6 @@ def constant_trip_count(width: int | sympy.Basic) -> bool:
     """
     if isinstance(width, numbers.Integral):
         return True
-    import sympy
     return isinstance(width, sympy.Basic) and bool(width.is_Integer)
 
 
@@ -119,28 +116,20 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     return "\n".join(lines)
 
 
-def tile_offset(widths: Sequence[int]) -> str:
-    """Return the row-major flat offset expression for a register tile.
+def tile_offset(widths: Sequence[int], lanes: Sequence[str] | None = None) -> str:
+    """The row-major flat offset of a register tile, ``__l0 * (W_1*W_2) + __l1 * W_2 + __l2`` for three dims.
 
-    For ``widths = (W_0, W_1, W_2)`` returns
-    ``__l0 * (W_1*W_2) + __l1 * W_2 + __l2``. Always row-major because
-    register-storage tile transients are contiguous by construction.
-
-    :param widths: Per-tile-dim widths, innermost-last.
-    :returns: The C++ offset expression.
+    Register tiles are contiguous by construction. ``lanes`` names the lane index of each dim, ``__l<d>`` by default.
     """
-    K = len(widths)
-    if K == 0:
+    names = lanes if lanes is not None else [f"__l{d}" for d in range(len(widths))]
+    if not widths:
         return "0"
     stride = 1
-    parts = []
-    for d in reversed(range(K)):
-        if stride == 1:
-            parts.append(f"__l{d}")
-        else:
-            parts.append(f"(__l{d} * {stride})")
-        stride *= widths[d]
-    return " + ".join(reversed(parts))
+    terms = []
+    for name, width in zip(reversed(names), reversed(widths), strict=True):
+        terms.append(name if stride == 1 else f"({name} * {stride})")
+        stride *= width
+    return " + ".join(reversed(terms))
 
 
 def lane_invariant_assign(out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int],
@@ -174,7 +163,7 @@ def offset_via_strides(
     """Return the flat offset expression
     ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
-    Used by ``TileLoad`` / ``TileStore`` to address the source / dest
+    Used by ``TileGather`` / ``TileScatter`` to address the source / dest
     array's flat memory through its own per-dim strides scaled by the
     optional per-tile-dim ``dim_strides`` coefficient. When
     ``replicate_factors[d] > 1``, the per-dim lane index is divided by
@@ -186,7 +175,7 @@ def offset_via_strides(
     dim ``d`` uses it verbatim as the per-lane element offset *relative to
     the connector base* (the dim contributes ``(lane_index_exprs[d]) *
     strides[d]`` and the dim's ``coeffs`` / ``replicate_factors`` are
-    bypassed). The ``TileLoad`` pure expansion supplies it for a
+    bypassed). The ``TileGather`` pure expansion supplies it for a
     non-dividing ``int_floor(c*iter + c0, D)`` (``W % D != 0`` or symbolic
     ``D``): the contracted-box broadcast ``_src[__l/D]`` is correct only
     when every tile starts on a phase boundary (``W % D == 0``), so the
@@ -262,19 +251,12 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
     :returns: Sorted tuple of tile dim indices, ``()`` for the scalar case,
         or ``None`` when the shape cannot be reconciled with ``widths``.
     """
-    import dace
-    # ``has_one_marker`` is True only for the ONE broadcast marker -- NOT a literal ``1``. A
-    # literal ``1`` extent means a genuine width-1 tile dim (a real dependency). The two must
-    # stay distinct here -- that disambiguation (broadcast vs a coincidental width-1 dep) is the
-    # whole reason ONE is a symbol and not just ``1`` (user 2026-06-14), and it is what keeps the
-    # index-tile rank aligned with the data tile (cuTile-faithful broadcast dims).
-    from dace.symbolic import has_one_marker
 
-    def _extent_eq(a: int | sympy.Basic, b: int | sympy.Basic) -> bool:
+    def extents_equal(a: int | sympy.Basic, b: int | sympy.Basic) -> bool:
         """Symbolic-safe extent equality."""
         try:
             return bool(dace.symbolic.simplify(a - b) == 0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return a == b
 
     idx_shape = tuple(idx_shape)
@@ -292,124 +274,10 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
     for d in range(K):
         if has_one_marker(idx_shape[d]):
             continue  # broadcast dim -- not a dependency
-        if not _extent_eq(idx_shape[d], widths[d]):
+        if not extents_equal(idx_shape[d], widths[d]):
             return None  # non-marker extent disagrees with the tile width
         deps.append(d)
     return tuple(deps)
-
-
-def _strides_match_packed(shape: Sequence[int | sympy.Basic], strides: Sequence[int | sympy.Basic], order: str) -> bool:
-    """True when ``strides`` is the packed contiguous form for ``shape`` in
-    ``order`` ("C" -- innermost-last, stride 1 on the last dim; or "F" --
-    innermost-first, stride 1 on the first dim) with NO padding between dims.
-
-    Symbolic shapes / strides are compared via sympy ``simplify == 0``.
-
-    :param shape: Tuple of dim sizes (may be symbolic).
-    :param strides: Tuple of per-dim strides (may be symbolic).
-    :param order: "C" or "F".
-    :returns: ``True`` iff the layout is exactly packed in the requested order.
-    """
-    import dace
-    if len(shape) != len(strides):
-        return False
-    if order == "C":
-        order_range = range(len(shape) - 1, -1, -1)
-    elif order == "F":
-        order_range = range(len(shape))
-    else:
-        raise ValueError(f"order must be 'C' or 'F'; got {order!r}")
-    expected = 1
-    for d in order_range:
-        try:
-            # relax_ipow so the canonicalized packed-C stride ``ipow(N, 2)`` compares equal to
-            # ``N*N``; the opaque ``ipow`` never simplifies against ``expected`` (heat3d).
-            # Equalize before simplifying: a stride and a shape dim can carry two same-named symbol
-            # INSTANCES (different dtype/assumptions) whose subtraction never cancels (channel_flow).
-            diff = strides[d] - expected
-            if isinstance(diff, sympy.Basic):
-                diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(dace.symbolic.equalize_symbol(diff)))
-            if diff != 0:
-                return False
-        except Exception:  # noqa: BLE001 -- conservative refusal on un-comparable expressions.
-            return False
-        expected = expected * shape[d]
-    return True
-
-
-def validate_packed_layout(node_label: str, conn_name: str, desc: dace.data.Data) -> None:
-    """Refuse any source / dest array whose stride pattern is neither packed C
-    nor packed Fortran (design section 2.3).
-
-    Padded layouts -- where strides exceed the product of inner dims -- raise
-    :class:`NotImplementedError` until per-arch codegen support lands. 1-D
-    arrays trivially satisfy both packings and are accepted iff their single
-    stride is 1.
-
-    :param node_label: Label of the calling lib node (for error messages).
-    :param conn_name: Connector name carrying the array (typically ``_src``
-        or ``_dst``).
-    :param desc: The array descriptor (``dace.data.Data`` subclass) wired to
-        the connector.
-    :raises NotImplementedError: On non-packed-C non-packed-Fortran layout.
-    """
-    import dace
-    if not isinstance(desc, dace.data.Array):
-        return  # Scalars / Streams have no per-dim stride pattern to check.
-    shape = tuple(desc.shape)
-    strides = tuple(desc.strides)
-    if len(shape) == 0:
-        return
-    if len(shape) == 1:
-        try:
-            if dace.symbolic.simplify(strides[0] - 1) != 0:
-                raise NotImplementedError(f"{node_label}: {conn_name!r} has non-unit stride "
-                                          f"{strides[0]} on its single dim; only packed layouts are "
-                                          f"supported (section 2.3).")
-        except NotImplementedError:
-            raise
-        except Exception:  # noqa: BLE001
-            raise NotImplementedError(f"{node_label}: {conn_name!r} stride {strides[0]} could not be "
-                                      f"verified against the packed-layout invariant (section 2.3).")
-        return
-    if not (_strides_match_packed(shape, strides, "C") or _strides_match_packed(shape, strides, "F")):
-        raise NotImplementedError(f"{node_label}: {conn_name!r} has non-packed stride pattern "
-                                  f"(shape={shape}, strides={strides}). Only packed-C and packed-"
-                                  f"Fortran layouts are supported (section 2.3); padded layouts raise "
-                                  f"NotImplementedError until codegen lands.")
-
-
-def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.data.Data, widths: Sequence[int]) -> None:
-    """Refuse any mask descriptor that breaks the design section 10.2 lock.
-
-    The locked shape: ``Array(shape=widths, dtype=bool_, storage=Register,
-    transient=True)``. Anything else -- scalar masks, per-dim masks, non-bool
-    predicates, non-Register storage, non-transient -- is rejected with a
-    named error so the codegen never silently mis-emits.
-
-    :param node_label: Label of the calling lib node (for error messages).
-    :param conn_name: Connector name carrying the mask (typically ``_mask``
-        or ``_o``).
-    :param desc: The descriptor (``dace.data.Data`` subclass) of the array
-        wired to the connector.
-    :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
-    :raises ValueError: On any descriptor lock violation.
-    """
-    import dace
-    if not isinstance(desc, dace.data.Array):
-        raise ValueError(f"{node_label}: {conn_name!r} mask must be a dace.data.Array, "
-                         f"got {type(desc).__name__}")
-    if tuple(desc.shape) != tuple(widths):
-        raise ValueError(f"{node_label}: {conn_name!r} mask shape {tuple(desc.shape)} must "
-                         f"match widths {tuple(widths)} (section 10.2)")
-    if desc.dtype != dace.bool_:
-        raise ValueError(f"{node_label}: {conn_name!r} mask dtype {desc.dtype} must be bool_ "
-                         f"(section 10.2)")
-    if desc.storage != dace.dtypes.StorageType.Register:
-        raise ValueError(f"{node_label}: {conn_name!r} mask storage {desc.storage} must be "
-                         f"Register (section 10.2)")
-    if not desc.transient:
-        raise ValueError(f"{node_label}: {conn_name!r} mask must be transient (section 10.2)")
 
 
 def gather_lane_offset(deps: Sequence[int], widths: Sequence[int], conn: str) -> str:

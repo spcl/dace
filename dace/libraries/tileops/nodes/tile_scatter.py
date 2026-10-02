@@ -1,10 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileStore`` — write a K-dim tile back into a global array.
+"""``TileScatter``: the stores of a tile that a masked copy cannot express, as a loop over the lanes.
 
-Symmetric to :class:`TileLoad`; the pure expansion emits a CPP tasklet
-that walks the K-fold nested index space.
+Symmetric to :class:`~dace.libraries.tileops.nodes.tile_gather.TileGather`.
 """
-from typing import Optional, Tuple
 
 import sympy
 
@@ -12,147 +10,33 @@ import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
-                             resolve_gather_deps, tile_offset)
-from .. import _isa_codegen
-
-
-@library.expansion
-class ExpandTileStorePure(ExpandTransformation):
-    """Correctness-only CPP tasklet copying ``_src`` into the tile region of ``_dst``."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a CPP tasklet that copies ``_src`` into the tile
-        region of the destination, optionally gated by ``_mask``.
-
-        Destination offsets use the destination array's per-dim strides
-        (read from the connector descriptor at expansion time) scaled
-        by an optional :attr:`dim_strides` coefficient (defaulting to 1).
-
-        :param node: The ``TileStore`` lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A CPP tasklet replacing the lib node in place.
-        """
-        from dace.symbolic import symstr
-        widths = list(node.widths)
-        K = len(widths)
-        dst_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
-        dst_arr = parent_sdfg.arrays[dst_edge.data.data]
-        ndim = len(dst_arr.strides)
-        # Step along the array dim each tile dim maps to (``dst_dims``);
-        # default to the last K dims in order (a plain row-major tile).
-        dims = list(node.dst_dims) if node.dst_dims else list(range(ndim - K, ndim))
-        coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-        gather_set = set(node.gather_dims)
-        if not gather_set:
-            # Structured store: per-tile-dim affine path.
-            dst_strides_tile = [symstr(dst_arr.strides[d]) for d in dims]
-            dst_off = offset_via_strides(coeff, dst_strides_tile)
-        else:
-            # Dest-dim addressing (design section 9.3). Per DEST dim k in range(ndim):
-            #   k in gather_dims -> `_idx_<k>[<flat lane>] * dst.strides[k]`
-            #   k mapped to tile dim d via dst_dims -> `coeff[d] * dst.strides[k] * __l<d>`
-            #   otherwise (untouched by the tile) -> outer `_dst` memlet carries the base offset.
-            gather_idx_ref = {}
-            for k in node.gather_dims:
-                conn = f"_idx_{k}"
-                edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
-                idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
-                deps_d = resolve_gather_deps(idx_shape, widths)
-                if deps_d is None:
-                    raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
-                                     f"{idx_shape} against widths {tuple(widths)}")
-                gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
-            dst_to_tile = {dims[d]: d for d in range(K)}
-            parts = []
-            for k in range(ndim):
-                s = symstr(dst_arr.strides[k])
-                if k in gather_set:
-                    parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
-                elif k in dst_to_tile:
-                    d = dst_to_tile[k]
-                    parts.append(f"({coeff[d]} * ({s}) * __l{d})")
-                # else: dest dim k untouched; outer base pointer covers it.
-            dst_off = " + ".join(parts) if parts else "0"
-        src_off = tile_offset(widths)
-        # Resolve the per-lane source reference for each ``src_kind``:
-        #   * ``Tile`` — the existing per-lane tile read.
-        #   * ``Symbol`` — the literal / expression broadcast to every lane,
-        #     cast to the destination dtype so a typed store resolves.
-        #   * ``Scalar`` — a volume-1 source passed by value, broadcast to every
-        #     lane (or a tile-shape source widened upstream, read per lane).
-        out_dtype = dst_arr.dtype.ctype
-        if node.src_kind == "Symbol":
-            src_ref = f"({out_dtype})({pyexpr2cpp(node.src_expr)})"
-        elif node.src_kind == "Scalar":
-            # A volume-1 source is passed by value (bare ``_src``); a tile-shape
-            # source widened upstream is a pointer read per lane (``_src[off]``).
-            # ``[0]`` is a memlet concern, not a tasklet-body one.
-            from .tile_binop import scalar_operand_ref
-            src_desc = parent_sdfg.arrays[next(e for e in parent_state.in_edges(node)
-                                               if e.dst_conn == "_src").data.data]
-            ref, broadcast = scalar_operand_ref(src_desc, "_src", widths, src_off)
-            src_ref = f"({out_dtype})({ref})" if broadcast else ref
-        else:
-            src_ref = f"_src[{src_off}]"
-        if node.has_mask:
-            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = {src_ref}; }}"
-        else:
-            body = f"_dst[{dst_off}] = {src_ref};"
-        code = nested_loops(widths, body)
-        inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
-        inputs |= {f"_idx_{d}" for d in node.gather_dims}
-        return nodes.Tasklet(
-            label=f"{node.label}_pure",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"_dst": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from dace.libraries.tileops.expansions import ExpandTilePure
+from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.lanes import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
+                                          resolve_gather_deps, tile_offset)
+from dace.libraries.tileops.operands import scalar_operand_ref
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 
 
 @library.expansion
-class ExpandTileStoreCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileStore`.
-
-    Two emission shapes, matching the reference cuTile kernels:
-
-    * Unmasked: ``ct.store(__output, index=(__pid0, ...), tile=__src)``
-      — contiguous block-tile store.
-    * Masked: ``ct.scatter(__output, (idx_0, ...), __src, mask=__mask)``
-      with per-lane indices ``idx_k = ct.arange(W_k) + __pid_k * W_k``,
-      so OOB lanes at the tile tail are skipped per the iteration mask.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileStoreCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
+class ExpandTileScatterPure(ExpandTilePure):
+    pass
 
 
-def _stride_dim_may_scatter(p: int, dst_dims: Optional[Tuple[int, ...]], gather_dims: Tuple[int, ...]) -> bool:
+def stride_dim_may_scatter(p: int, dst_dims: tuple[int, ...] | None, gather_dims: tuple[int, ...]) -> bool:
     """Whether tile dim ``p`` may legitimately carry a zero ``dim_strides`` entry.
 
     A zero stride on tile dim ``p`` means lane ``__l<p>`` does not advance the dest address. That
     is legal when ``p`` SCATTERS -- its dest dim is in ``gather_dims`` and the per-lane address
-    comes from ``_idx_<d>`` (symmetric to ``TileLoad`` gather, which never rejects zero strides).
+    comes from ``_idx_<d>`` (symmetric to ``TileGather`` gather, which never rejects zero strides).
     On a non-scatter dim a zero stride collapses all ``W_p`` lanes onto one address and races
     without WCR.
 
     ``dst_dims=None`` selects the innermost-K default binding whose exact dest-dim indices need
     ``dst_ndim`` (not known at construction time), so the precise per-dim check defers to
-    :meth:`TileStore.validate`; here we report ``True`` whenever any scatter dim exists.
+    :meth:`TileScatter.validate`; here we report ``True`` whenever any scatter dim exists.
     """
     if not gather_dims:
         return False
@@ -162,43 +46,23 @@ def _stride_dim_may_scatter(p: int, dst_dims: Optional[Tuple[int, ...]], gather_
 
 
 @library.node
-class TileStore(nodes.LibraryNode):
-    """Store a K-dim tile back into a global array.
+class TileScatter(TileOp):
+    """Store a K-dim tile into a global array in a way a masked copy cannot.
 
-    ``_src`` is the tile transient (``widths``-shaped); ``_dst`` carries
-    the full memlet of the destination array with the out-edge's subset
-    selecting the tile region. ``dim_strides`` records per-tile-dim
-    strides into the destination view.
+    ``_src`` is the tile and ``_dst`` carries the memlet of the destination array, which selects the tile region. The
+    lanes address it through ``dim_strides`` (``0`` collapses a dim and needs ``wcr``), ``dst_dims`` (a transposed
+    tile) or ``_idx_<d>`` index tiles (``gather_dims``); ``src_kind`` broadcasts a scalar or a symbol to every lane
+    instead. A window the tile copies lane for lane is
+    :class:`~dace.libraries.tileops.nodes.masked_copy.MaskedCopyLibraryNode`. The only lowering is the loop over the
+    lanes.
     """
 
-    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
-    # device, so device auto-selection must not overwrite it.
-    auto_select_implementation = False
-    implementations = {
-        "pure": ExpandTileStorePure,
-        "cutile": ExpandTileStoreCutile,
-        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
-        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
-        # matching header. Built by the shared factory (selector routes K>=2 to
-        # ``pure``).
-        **_isa_codegen.make_isa_expansions("Store", _isa_codegen.make_store_tasklet, globals()),
-    }
+    implementations = {"pure": ExpandTileScatterPure}
     default_implementation = "pure"
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
-        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
-    )
+    INPUT_CONNECTOR_NAME = "_src"
+    OUTPUT_CONNECTOR_NAME = "_dst"
 
-    widths = properties.ListProperty(
-        element_type=int,
-        default=[],
-        desc="Per-dim tile widths, innermost-last.",
-    )
     dim_strides = properties.ListProperty(
         # ``pystr_to_symbolic`` accepts both int and symbolic (e.g. ``ssym``)
         # values, so ``a[i * ssym]`` AFFINE patterns can preserve the symbolic
@@ -225,7 +89,7 @@ class TileStore(nodes.LibraryNode):
     src_kind = properties.Property(
         dtype=str,
         allow_none=False,
-        default="Tile",
+        default=TILE,
         desc="Source operand kind. 'Tile' (default) reads a ``widths``-shaped "
         "tile transient via ``_src``. 'Symbol' broadcasts ``src_expr`` (a "
         "symbolic expression / numeric literal) to every lane and omits the "
@@ -252,7 +116,7 @@ class TileStore(nodes.LibraryNode):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Sorted DEST-array dim indices that SCATTER. Mirror of :attr:`TileLoad.gather_dims` "
+        desc="Sorted DEST-array dim indices that SCATTER. Mirror of :attr:`TileGather.gather_dims` "
         "(source-array dim indexing) -- ``len(widths) == K_tile`` and ``max(gather_dims) < dst_ndim`` "
         "(``dst_ndim`` read from the wired ``_dst`` edge at ``validate()`` time). Each ``d`` declares "
         "an ``_idx_<d>`` input connector whose descriptor shape is a Cartesian product of widths over "
@@ -262,16 +126,16 @@ class TileStore(nodes.LibraryNode):
 
     def __init__(self,
                  name: str,
-                 widths: Tuple[int, ...],
-                 dim_strides: Optional[Tuple[int, ...]] = None,
-                 dst_dims: Optional[Tuple[int, ...]] = None,
+                 widths: tuple[int, ...],
+                 dim_strides: tuple[int, ...] | None = None,
+                 dst_dims: tuple[int, ...] | None = None,
                  has_mask: bool = False,
-                 src_kind: str = "Tile",
-                 src_expr: Optional[str] = None,
-                 wcr: Optional[str] = None,
-                 gather_dims: Optional[Tuple[int, ...]] = None,
-                 location: Optional[str] = None):
-        """Construct a ``TileStore`` node.
+                 src_kind: str = TILE,
+                 src_expr: str | None = None,
+                 wcr: str | None = None,
+                 gather_dims: tuple[int, ...] | None = None,
+                 location: str | None = None):
+        """Construct a ``TileScatter`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
@@ -289,36 +153,36 @@ class TileStore(nodes.LibraryNode):
             ``src_kind`` is unsupported.
         """
         if not (1 <= len(widths) <= 3):
-            raise ValueError(f"TileStore: widths must have length in {{1, 2, 3}}, got {widths!r}")
+            raise ValueError(f"TileScatter: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
-            raise ValueError(f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
-        if src_kind not in ("Tile", "Symbol", "Scalar"):
-            raise ValueError(f"TileStore: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
-        if src_kind == "Symbol" and not src_expr:
-            raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
+            raise ValueError(f"TileScatter: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
+        if src_kind not in VALID_KINDS:
+            raise ValueError(f"TileScatter: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
+        if src_kind == SYMBOL and not src_expr:
+            raise ValueError("TileScatter: src_kind='Symbol' requires a non-empty src_expr")
         resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         # Validate gather_dims: sorted, unique, non-negative dest-dim indices.
         # The upper bound (max(gather_dims) < dst_ndim) is checked at validate() time since
         # ``dst_ndim`` depends on the wired ``_dst`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
-            raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique non-negative "
+            raise ValueError(f"TileScatter: gather_dims must be a sorted tuple of unique non-negative "
                              f"dest-dim indices; got {g!r}")
         # Zero-stride collapse guard, narrowed to exempt SCATTER tile dims (see
-        # :func:`_stride_dim_may_scatter`). A zero on a scatter dim addresses per-lane via
-        # ``_idx_<d>`` (legal, symmetric to ``TileLoad``); a zero on a non-scatter dim collapses
+        # :func:`stride_dim_may_scatter`). A zero on a scatter dim addresses per-lane via
+        # ``_idx_<d>`` (legal, symmetric to ``TileGather``); a zero on a non-scatter dim collapses
         # ``W_p`` lanes onto one address and races without ``wcr``. The exact per-dim mapping when
         # ``dst_dims is None`` defers to ``validate()`` (needs ``dst_ndim``).
-        if not wcr and any(s == 0 and not _stride_dim_may_scatter(p, dst_dims, g)
+        if not wcr and any(s == 0 and not stride_dim_may_scatter(p, dst_dims, g)
                            for p, s in enumerate(resolved_dim_strides)):
-            raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
+            raise ValueError(f"TileScatter: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
                              "dim (collapse-out / broadcast write); WCR is required to avoid races. Pass "
                              "``wcr='lambda a, b: a + b'`` (or another reduction lambda) when collapsing tile "
                              "dims to a shared destination, or wire the dim as a scatter (gather_dims + _idx).")
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
-        inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
+        inputs = (set() if src_kind == SYMBOL else {"_src"}) | ({"_mask"} if has_mask else set())
         inputs |= {f"_idx_{d}" for d in g}
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
@@ -341,18 +205,16 @@ class TileStore(nodes.LibraryNode):
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if self.src_kind != "Symbol" and "_src" not in in_e:
+        if self.src_kind != SYMBOL and "_src" not in in_e:
             raise ValueError(f"{self.label}: required input '_src' not connected (src_kind={self.src_kind!r})")
         if "_dst" not in out_e:
             raise ValueError(f"{self.label}: required output '_dst' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         if self.has_mask:
-            from .._pure_codegen import validate_mask_descriptor_lock
             mask_arr = sdfg.arrays[in_e["_mask"].data.data]
             validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
         # Packed-layout lock (design section 2.3): refuse non-C non-Fortran dest strides.
-        from .._pure_codegen import validate_packed_layout
         dst_arr = sdfg.arrays[out_e["_dst"].data.data]
         validate_packed_layout(self.label, "_dst", dst_arr)
         # gather_dims dest-dim upper bound + per-dim index-tile shape contract (design section 9.4).
@@ -412,7 +274,7 @@ class TileStore(nodes.LibraryNode):
             dims = list(self.dst_dims) if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape)))
             try:
                 subset_sizes = tuple(dst_subset.size())
-            except Exception:  # noqa: BLE001 -- symbolic / non-Range subsets currently allowed (refused at codegen)
+            except Exception:
                 subset_sizes = None
             if subset_sizes is not None:
                 expected = tuple(widths[i] for i in range(K))
@@ -434,3 +296,79 @@ class TileStore(nodes.LibraryNode):
                         f"(scalar transient -> single element) and single-element tile-load paths "
                         f"are designed. Use a scalar transient + TileReduce for accumulator stores; "
                         f"single-element writes are deferred.")
+
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        from dace.symbolic import symstr
+        widths = list(self.widths)
+        K = len(widths)
+        dst_edge = next(e for e in state.out_edges(self) if e.src_conn == "_dst")
+        dst_arr = sdfg.arrays[dst_edge.data.data]
+        ndim = len(dst_arr.strides)
+        # Step along the array dim each tile dim maps to (``dst_dims``);
+        # default to the last K dims in order (a plain row-major tile).
+        dims = list(self.dst_dims) if self.dst_dims else list(range(ndim - K, ndim))
+        coeff = list(self.dim_strides) if self.dim_strides else [1] * K
+        gather_set = set(self.gather_dims)
+        if not gather_set:
+            # Structured store: per-tile-dim affine path.
+            dst_strides_tile = [symstr(dst_arr.strides[d]) for d in dims]
+            dst_off = offset_via_strides(coeff, dst_strides_tile)
+        else:
+            # Dest-dim addressing (design section 9.3). Per DEST dim k in range(ndim):
+            #   k in gather_dims -> `_idx_<k>[<flat lane>] * dst.strides[k]`
+            #   k mapped to tile dim d via dst_dims -> `coeff[d] * dst.strides[k] * __l<d>`
+            #   otherwise (untouched by the tile) -> outer `_dst` memlet carries the base offset.
+            gather_idx_ref = {}
+            for k in self.gather_dims:
+                conn = f"_idx_{k}"
+                edge = next(e for e in state.in_edges(self) if e.dst_conn == conn)
+                idx_shape = tuple(sdfg.arrays[edge.data.data].shape)
+                deps_d = resolve_gather_deps(idx_shape, widths)
+                if deps_d is None:
+                    raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
+                                     f"{idx_shape} against widths {tuple(widths)}")
+                gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
+            dst_to_tile = {dims[d]: d for d in range(K)}
+            parts = []
+            for k in range(ndim):
+                s = symstr(dst_arr.strides[k])
+                if k in gather_set:
+                    parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
+                elif k in dst_to_tile:
+                    d = dst_to_tile[k]
+                    parts.append(f"({coeff[d]} * ({s}) * __l{d})")
+                # else: dest dim k untouched; outer base pointer covers it.
+            dst_off = " + ".join(parts) if parts else "0"
+        src_off = tile_offset(widths)
+        # Resolve the per-lane source reference for each ``src_kind``:
+        #   * ``Tile`` — the existing per-lane tile read.
+        #   * ``Symbol`` — the literal / expression broadcast to every lane,
+        #     cast to the destination dtype so a typed store resolves.
+        #   * ``Scalar`` — a volume-1 source passed by value, broadcast to every
+        #     lane (or a tile-shape source widened upstream, read per lane).
+        out_dtype = dst_arr.dtype.ctype
+        if self.src_kind == SYMBOL:
+            src_ref = f"({out_dtype})({pyexpr2cpp(self.src_expr)})"
+        elif self.src_kind == SCALAR:
+            # A volume-1 source is passed by value (bare ``_src``); a tile-shape
+            # source widened upstream is a pointer read per lane (``_src[off]``).
+            # ``[0]`` is a memlet concern, not a tasklet-body one.
+            src_desc = sdfg.arrays[next(e for e in state.in_edges(self) if e.dst_conn == "_src").data.data]
+            ref, broadcast = scalar_operand_ref(src_desc, "_src", widths, src_off)
+            src_ref = f"({out_dtype})({ref})" if broadcast else ref
+        else:
+            src_ref = f"_src[{src_off}]"
+        if self.has_mask:
+            body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = {src_ref}; }}"
+        else:
+            body = f"_dst[{dst_off}] = {src_ref};"
+        code = nested_loops(widths, body)
+        inputs = (set() if self.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if self.has_mask else set())
+        inputs |= {f"_idx_{d}" for d in self.gather_dims}
+        return nodes.Tasklet(
+            label=f"{self.label}_pure",
+            inputs=dict.fromkeys(inputs),
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )

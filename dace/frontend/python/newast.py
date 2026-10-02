@@ -4598,6 +4598,37 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result[0]
         return result
 
+    def parse_window_argument(self, arg: ast.AST, written: bool):
+        """One argument of a call to a replacement that takes windows.
+
+        An array, or a slice of one, becomes the pair ``(container, subset)``: the container in the SDFG being built that
+        holds the data, which is a connector of it when the array lives outside this scope, and the range of the
+        container the argument names. Any other argument is parsed as usual.
+
+        :param arg: The argument of the call.
+        :param written: Whether the replacement writes the argument.
+        """
+        subscripted = isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name)
+        if not subscripted and not isinstance(arg, ast.Name):
+            return self._parse_function_arg(arg)
+        name = rname(arg)
+        true_name = {**self.variables, **self.scope_vars}.get(name, name)
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
+        if not isinstance(defined_arrays.get(true_name), data.Array):
+            return self._parse_function_arg(arg)
+        true_node = copy.deepcopy(arg)
+        (true_node.value if subscripted else true_node).id = true_name
+        expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
+                                       self._parse_subscript_slice(arg.slice) if subscripted else None)
+        subset = expr.subset
+        if isinstance(subset, subsets.Indices):
+            subset = subsets.Range.from_indices(subset)
+        if expr.arrdims:
+            raise DaceSyntaxError(self, arg, 'A window passed to a call cannot be indexed by an array')
+        access = self._add_write_access if written else self._add_read_access
+        container, local_subset = access(name, subset, arg, keep_dims=expr.slice_dims, new_axes=expr.new_axes)
+        return container, subset if local_subset is None else local_subset
+
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
         for state in sdfg.states():
@@ -5520,14 +5551,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Function "%s" is not registered with an SDFG '
                                       'implementation' % funcname)
 
-        # NOTE: Temporary fix for MPI library-node replacements
         # Parsing the arguments with `_parse_function_arg` will generate
-        # slices even for the output arguments.
+        # slices even for the output arguments. A replacement that wires the
+        # slices itself (see `oprepo.replaces_windows`) gets the containers and
+        # the ranges accessed instead, and writes the output arguments.
+        window_outputs = oprepo.Replacements.window_outputs(funcname)
+        if window_outputs is not None:
+            args.extend(
+                self.parse_window_argument(arg, written=index in window_outputs) for index, arg in enumerate(node.args))
+        # NOTE: Temporary fix for MPI library-node replacements
         # We make a special exception for MPI calls (`dace.comm` namespace)
         # and we pass instead the array names and the ranges accessed.
         # The replacement functions are responsible for generating the correct
         # subgraph/memlets.
-        if funcname.startswith("dace.comm"):
+        elif funcname.startswith("dace.comm"):
             mpi_args = []
             for arg in node.args:
                 # We are only looking for subscripts on arrays of the current SDFG.

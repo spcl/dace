@@ -153,7 +153,7 @@ def test_subset_naming_no_defined_symbol_is_refused_before_resolution():
 
 def test_iplusoffset_kernel_emits_no_gather():
     """End-to-end: the `a[i+offset1, j+offset2]` contiguous pattern must vectorize to a
-    DENSE load — no gather. Asserts the multi-dim pipeline emits no TileLoad/TileStore
+    DENSE load — no gather. Asserts the multi-dim pipeline emits no TileGather/TileScatter
     with gather_dims and mints no per-lane index tile (`_idx_*`)."""
     import copy
     from tests.passes.vectorization.helpers.harness import _auto_tile_widths, S, S1, S2
@@ -167,7 +167,7 @@ def test_iplusoffset_kernel_emits_no_gather():
               j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
 
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-    from dace.libraries.tileops import TileLoad, TileStore
+    from dace.libraries.tileops import TileGather, TileScatter
 
     sdfg = tasklet_in_nested_sdfg.to_sdfg(simplify=True)
     widths = _auto_tile_widths(sdfg, 8)
@@ -183,7 +183,7 @@ def test_iplusoffset_kernel_emits_no_gather():
         idx_tiles += [n for n in sd.arrays if n.startswith('_idx_')]
         for st in sd.states():
             for n in st.nodes():
-                if isinstance(n, (TileLoad, TileStore)) and getattr(n, 'gather_dims', ()):
+                if isinstance(n, (TileGather, TileScatter)) and getattr(n, 'gather_dims', ()):
                     gather_nodes.append((type(n).__name__, n.gather_dims))
     assert not gather_nodes, f"contiguous a[i+offset] emitted a gather: {gather_nodes}"
     assert not idx_tiles, f"contiguous a[i+offset] minted per-lane index tiles: {idx_tiles}"

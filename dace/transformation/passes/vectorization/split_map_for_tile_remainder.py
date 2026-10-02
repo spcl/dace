@@ -37,16 +37,13 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
-from dace.sdfg.nodes import MapEntry, Tasklet
+from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
+from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
 from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
                                                                            map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
-
-# Label suffix marking the fully-in-bounds interior a tile-remainder split
-# produces. GenerateTileIterationMask sees it -> skips mask -> has_mask=False.
-TILE_MAIN_MARKER = "__tile_main"
 
 # Label suffix: boundary region is a plain step-1 scalar loop (scalar_postamble); every tile prep
 # pass skips it.
@@ -75,45 +72,10 @@ def source_map_label(label: str) -> str:
     return label
 
 
-# Label of the state holding this pass's runtime divisibility guards. That state IS the record
-# the alignment proof reads back (:func:`guarded_stride_divisors`), so a fact can never outlive
-# the abort-on-violation check that establishes it.
-TILE_GUARD_STATE_LABEL = "tile_even_range_check"
-
-# Tasklet-label prefix for a guarded stride-parity fact, spelled ``<prefix><symbol>_<modulus>``.
-# The symbol name is an identifier and the modulus an integer, so an ``rpartition('_')`` reads
-# the pair back exactly.
-STRIDE_GUARD_PREFIX = "tile_stride_div_"
-
 # Storage classes whose base address the tile codegen is willing to assume anything about
-# (``_isa_codegen.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
+# (``tileops.alignment.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
 # an unconsumed fact is a runtime abort bought for nothing.
 _DEVICE_STORAGE = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
-
-
-def guarded_stride_divisors(sdfg: dace.SDFG) -> dict[str, int]:
-    """``{symbol: modulus}`` for every stride-divisibility fact ``sdfg`` CHECKS before it runs.
-
-    Read off the guard tasklets themselves, not off a parallel bookkeeping structure: the fact and
-    the abort that enforces it are the same node, so the alignment proof can never widen an access
-    on a promise nothing tests. No guard state -> empty dict -> the proof stays on whatever it can
-    show unaided (a constant stride), which is the per-element path for a symbolic one.
-
-    :param sdfg: SDFG to read the guards of (this level only, not nested ones).
-    :returns: Symbol name -> the modulus its value is checked to be a nonzero multiple of.
-    """
-    facts: dict[str, int] = {}
-    for state in sdfg.states():
-        # ``add_state_before`` uniquifies a duplicate label, hence the prefix test.
-        if not state.label.startswith(TILE_GUARD_STATE_LABEL):
-            continue
-        for node in state.nodes():
-            if not isinstance(node, Tasklet) or not node.label.startswith(STRIDE_GUARD_PREFIX):
-                continue
-            name, _, modulus = node.label[len(STRIDE_GUARD_PREFIX):].rpartition("_")
-            if name and modulus.isdigit():
-                facts[name] = int(modulus)
-    return facts
 
 
 @properties.make_properties

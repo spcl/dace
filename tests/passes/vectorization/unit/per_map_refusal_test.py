@@ -10,12 +10,12 @@ import warnings
 import numpy as np
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import vectorize_multi_dim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import (NO_VECTORIZE_MARKER,
                                                                            innermost_enclosing_map_label)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim

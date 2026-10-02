@@ -4,12 +4,12 @@
 A Scalar (or length-1 Array) source carries ONE value where a tile needs ``W`` lanes. Copying it
 into a ``(W, ...)`` buffer defines lane 0 and leaves lanes 1..W-1 uninitialized, so such a source
 must be BROADCAST. Shared by :class:`InsertTileLoadStore` and :class:`ConvertTaskletsToTileOps`,
-which run in that order over the same bodies. The splat is a ``TileLoad`` and NOT a CPP tasklet on
+which run in that order over the same bodies. The splat is a ``TileGather`` and NOT a CPP tasklet on
 purpose: ``map_body_has_foreign_language_tasklet`` would disqualify the whole map from every later
 tile pass, while the vectorizer's own tile ops stay transparent to that gate.
 """
 from dace import data as dd, symbolic
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge
 from dace.sdfg.nodes import AccessNode, Node
@@ -39,8 +39,8 @@ def is_scalar_or_len1_source(state: SDFGState, edge: Edge) -> bool:
 
 
 def splat_scalar_to_tile(state: SDFGState, name: str, src_node: Node, src_conn: str | None, src_memlet: Memlet,
-                         dst_node: Node, dst_conn: str | None, dst_data: str, widths: tuple[int, ...]) -> TileLoad:
-    """Wire a ``TileLoad(src_kind='Scalar')`` splatting one source element into every lane.
+                         dst_node: Node, dst_conn: str | None, dst_data: str, widths: tuple[int, ...]) -> TileGather:
+    """Wire a ``TileGather(src_kind='Scalar')`` splatting one source element into every lane.
 
     :param state: State to build in.
     :param name: Label for the new node.
@@ -53,7 +53,7 @@ def splat_scalar_to_tile(state: SDFGState, name: str, src_node: Node, src_conn: 
     :param widths: Per-tile-dim widths, innermost-last.
     :returns: The inserted node.
     """
-    tile_load = TileLoad(name=name, widths=widths, src_kind="Scalar")
+    tile_load = TileGather(name=name, widths=widths, src_kind="Scalar")
     state.add_node(tile_load)
     state.add_edge(src_node, src_conn, tile_load, "_src", Memlet.from_memlet(src_memlet))
     tile_subset = ", ".join(f"0:{w}" for w in widths)

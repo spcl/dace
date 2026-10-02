@@ -24,7 +24,8 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (MASKED_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.mask_scaffold import thread_symbols_into_nsdfg
 from dace.transformation.passes.vectorization.utils.subsets import repl_subset_to_use_laneid_offset
 from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile

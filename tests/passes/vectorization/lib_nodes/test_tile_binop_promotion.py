@@ -49,7 +49,7 @@ WIDENING = [
     # dace::float16 is a bare alias for CUDA's __half, whose several simultaneously
     # implicit conversions make a bare mixed-type operator ambiguous at compile time
     # ("more than one conversion function ... applies" / "more than one operator ...
-    # matches"). half_disambiguated (_pure_codegen.py) routes it through one explicit
+    # matches"). half_disambiguated (lanes.py) routes it through one explicit
     # (float) hop first; this case exercises that path even on CPU, where the emulated
     # dace::half struct already has a single implicit conversion (the hop is then a
     # harmless no-op) -- see tile_fp16_conversion_ambiguity_cudatest.py for the GPU

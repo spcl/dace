@@ -7,11 +7,11 @@ interpolation and the CLOUDSC ``tidy`` branch exercise, reduced to the
 smallest kernel that reproduces each bug (all regressions fixed 2026-06-15):
 
 * **Direct gather -> output store** -- ``out[..] = A[.., idx[..]]`` with NO
-  intervening compute. The bridge -> output ``TileStore`` must carry the
+  intervening compute. The bridge -> output ``TileScatter`` must carry the
   per-iteration OUTER-dim index, not the full extent (else every outer
   iteration overwrites row ``[0, .., :]``).
 * **Multiple distinct gathers of one array** -- ``A[idx0] + A[idx1] + ...``.
-  Each distinct indirect index needs its OWN index tile + ``TileLoad``;
+  Each distinct indirect index needs its OWN index tile + ``TileGather``;
   staging only the first and rewiring all consumers aliases them.
 * **Multiple distinct structured reads of one array** -- ``e[.,0,.] + e[.,1,.]
   + e[.,2,.]`` (constant non-tile index varies). Same per-distinct-subset
@@ -106,7 +106,7 @@ def _gather_idx_direct(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[
 
 def test_direct_gather_to_output_store():
     """``out[jb,jk,jc] = A[jb,jk,idx[jb,jc,0]]`` -- direct gather assigned to the
-    output (no compute). Regression: the bridge->output TileStore dropped the
+    output (no compute). Regression: the bridge->output TileScatter dropped the
     per-iter jb/jk index (wrote the full extent), so every (jb,jk) overwrote
     row [0,0,:]."""
     _run_compare(_gather_idx_direct, _icon_inputs, ICON_PARAMS)
@@ -156,7 +156,7 @@ def _gather_sum3(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NP
 @pytest.mark.parametrize("kern", [_gather_sum2, _gather_sum3])
 def test_multiple_distinct_gathers_of_one_array(kern):
     """``A[idx0] + A[idx1] (+ A[idx2])`` -- each distinct gather index must
-    materialise its OWN index tile + TileLoad (regression: all aliased idx0)."""
+    materialise its OWN index tile + TileGather (regression: all aliased idx0)."""
     _run_compare(kern, _icon_inputs, ICON_PARAMS)
 
 
@@ -175,7 +175,7 @@ def _struct_sum3(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NP
 
 def test_multiple_distinct_structured_reads_of_one_array():
     """``e[.,0,.] + e[.,1,.] + e[.,2,.]`` -- distinct constant non-tile index per
-    read; each needs its own structured TileLoad (regression: aliased to m=0)."""
+    read; each needs its own structured TileGather (regression: aliased to m=0)."""
     _run_compare(_struct_sum3, _icon_inputs, ICON_PARAMS)
 
 

@@ -18,8 +18,8 @@ import pytest
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-from dace.libraries.tileops import TileLoad
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.libraries.tileops import TileGather
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
@@ -56,7 +56,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     lib nodes" -- so a tasklet is unlowered residue iff it reads/writes a tile
     (full ``widths`` or a ``ONE``-broadcast tile). Excluded as legitimate:
 
-    * Trivial ``_out = _in`` assign tasklets (``_is_assign_tasklet``) -- the
+    * Trivial ``_out = _in`` assign tasklets (``is_assign_tasklet``) -- the
       descent leaves these as one-element copies (collapsing into AN -> AN
       would drop source-side coordinates, per user directive).
     * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``std::abort``
@@ -66,12 +66,13 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
       direction 2026-06-15); they touch no tile, so are not counted.
     """
     return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n)
                and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 
 def _count_tile_gathers(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileLoad) and tuple(n.gather_dims)))
+    return sum(1 for n, node_state in sdfg.all_nodes_recursive()
+               if (isinstance(n, TileGather) and tuple(n.gather_dims)))
 
 
 def test_icon_zekinh_descent_to_tile_only():
@@ -103,7 +104,7 @@ def test_icon_zekinh_descent_to_tile_only():
     n_gather = _count_tile_gathers(sdfg)
     assert n_tasklet == 0, (f"icon_zekinh_gather must lower to tile lib nodes only at the K-dim layer; "
                             f"got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_gather >= 1, (f"The 3-edge mixed gather must yield at least one TileLoad (gather); got {n_gather}.")
+    assert n_gather >= 1, (f"The 3-edge mixed gather must yield at least one TileGather (gather); got {n_gather}.")
 
 
 if __name__ == "__main__":

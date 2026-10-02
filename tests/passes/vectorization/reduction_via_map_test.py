@@ -27,7 +27,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim

@@ -56,7 +56,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
@@ -97,7 +97,7 @@ GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
 
 
 def tile_nodes(sdfg: dace.SDFG):
-    """Tile library nodes (``TileLoad`` / ``TileBinop`` / ``TileStore`` / ...) the vectorizer left."""
+    """Tile library nodes (``TileGather`` / ``TileBinop`` / ``TileScatter`` / ...) the vectorizer left."""
     return [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith('Tile')

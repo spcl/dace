@@ -4,7 +4,7 @@ masked write ``IT``.
 
 Design 6.2 locks a single dtype per tile lib node: ``TileITE``'s ``_t`` / ``_e`` / ``_o``
 connectors must share the output dtype (see ``dace.libraries.tileops.nodes.tile_ite``), and a
-masked ``TileStore`` writes ``_val`` straight into the destination. ``ResolveMixedDtypeBinops``
+masked ``TileScatter`` writes ``_val`` straight into the destination. ``ResolveMixedDtypeBinops``
 already inserted casts before a plain binop tasklet reached ``ConvertTaskletsToTileOps``; its
 AST matcher only recognised the 2-input binop / 1-input bare-copy shapes, so a mismatched-dtype
 ``ITE(...)`` arm or ``IT(...)`` value sailed through uncast. These tests pin the fix: the pass
@@ -99,7 +99,7 @@ def test_ite_matching_dtypes_are_left_alone():
 
 def test_masked_write_mismatched_value_gets_cast():
     """``_o = IT(_c, _v)`` (``NormalizeMaskedWriteTasklets`` form): a value dtype that
-    differs from the destination must be cast before the masked ``TileStore`` lowering
+    differs from the destination must be cast before the masked ``TileScatter`` lowering
     (``ConvertTaskletsToTileOps._convert_conditional_write``) copies it in raw."""
     sdfg = dace.SDFG("masked_write_mixed_dtype")
     sdfg.add_array("A", shape=(1, ), dtype=dace.float64)

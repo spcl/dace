@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops.nodes import TileLoad
+from dace.libraries.tileops.nodes import TileGather
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import (TILE_NODES, RestoreUntiledMapStride)
@@ -63,7 +63,7 @@ def test_a_map_carrying_a_tile_op_keeps_its_tile_stride():
     """The control the previous test needs: with a tile op present the pass must do nothing."""
     sdfg, state, entry = strided_map_sdfg('tiled_strided', WIDTH)
     sdfg.add_array('A_tile', [WIDTH], dace.float64, transient=True, storage=dace.StorageType.Register)
-    tile_load = TileLoad(name='load', widths=(WIDTH, ), src_kind='Tile')
+    tile_load = TileGather(name='load', widths=(WIDTH, ), src_kind='Tile')
     state.add_node(tile_load)
     state.add_edge(entry, 'OUT_1', tile_load, '_src', dace.Memlet('A[i:i+8]'))
     entry.add_out_connector('OUT_1')

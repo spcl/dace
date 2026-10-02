@@ -967,7 +967,7 @@ class SplitTasklets(ppl.Pass):
                 # Leave a conditional-write tasklet (``if cond: out = e`` -- the frontend's
                 # ``A[mask] = value`` form, newast.py:2868) intact. It is not straight-line,
                 # so the SSA split below mangles it into a dangling map connector; instead
-                # ``ConvertTaskletsToTileOps`` lowers it to a masked ``TileStore`` (the mask
+                # ``ConvertTaskletsToTileOps`` lowers it to a masked ``TileScatter`` (the mask
                 # ``cond`` gates the store, no old-value read).
                 try:
                     _body = ast.parse(c.as_string).body

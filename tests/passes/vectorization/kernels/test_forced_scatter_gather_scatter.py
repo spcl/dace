@@ -5,7 +5,7 @@ The frontend ``dace.map`` makes each kernel a PARALLEL map up front -- the calle
 index is injective (a permutation), so the map is data-parallel and needs NO ``LoopToMap`` with
 the permissive flag to become one (the vectorizer must NOT rely on permissive ``LoopToMap`` to
 parallelise a for-loop scatter). The tile path must then lower the per-lane index access to a
-gather TileLoad / scatter TileStore and stay bit-exact with the un-vectorized reference.
+gather TileGather / scatter TileScatter and stay bit-exact with the un-vectorized reference.
 
 Covers:
 * pure scatter   ``a[idx[i]] = c[i]``
@@ -45,7 +45,7 @@ def forced_gather_scatter_2d(a: dace.float64[Y, X], b: dace.float64[Y, X], idx: 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
 def test_forced_scatter_store(branch_mode, remainder_strategy):
-    """Pure scatter through an injective (permutation) index -> scatter TileStore."""
+    """Pure scatter through an injective (permutation) index -> scatter TileScatter."""
     n = 60  # not a multiple of 8 -> exercises the remainder tile
     idx = numpy.random.permutation(n).astype(numpy.int64)
     run_vectorization_test(
@@ -69,7 +69,7 @@ def test_forced_scatter_store(branch_mode, remainder_strategy):
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 @pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
 def test_forced_gather_scatter(branch_mode, remainder_strategy):
-    """Gather-scatter ``a[idx[i]] = b[idx[i]] + c[i]`` -> gather TileLoad + scatter TileStore."""
+    """Gather-scatter ``a[idx[i]] = b[idx[i]] + c[i]`` -> gather TileGather + scatter TileScatter."""
     n = 60  # not a multiple of 8 -> exercises the remainder tile
     idx = numpy.random.permutation(n).astype(numpy.int64)
     run_vectorization_test(

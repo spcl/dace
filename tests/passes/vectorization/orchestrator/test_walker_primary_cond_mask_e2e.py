@@ -9,14 +9,14 @@ contract requires the full ``(W_0, W_1)`` shape, so the condition must be
 
 The transients-are-either-full-tile-or-scalar invariant means the broadcast happens
 at the SOURCE side -- the walker classifies the access with REPLICATE along the
-unused dim and TileLoad emits a per-lane replicated load. After the comparison /
+unused dim and TileGather emits a per-lane replicated load. After the comparison /
 ITE, every downstream lib node sees the canonical full-tile shape.
 """
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad
+from dace.libraries.tileops import TileBinop, TileGather
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 
@@ -111,15 +111,15 @@ def test_k2_cond_subset_loads_with_replicate_factor():
                                          expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
-    # Find the TileLoad that reads A.
+    # Find the TileGather that reads A.
     body_state = list(inner.states())[0]
     a_loads = [
         n for n in body_state.nodes()
-        if isinstance(n, TileLoad) and any((e.data.data == "A") for e in body_state.in_edges(n))
+        if isinstance(n, TileGather) and any((e.data.data == "A") for e in body_state.in_edges(n))
     ]
-    assert len(a_loads) == 1, f"expected one TileLoad for A, found {len(a_loads)}"
+    assert len(a_loads) == 1, f"expected one TileGather for A, found {len(a_loads)}"
     a_load = a_loads[0]
-    # Walk the bridge: TileLoad._dst -> A_tile AN -> downstream.
+    # Walk the bridge: TileGather._dst -> A_tile AN -> downstream.
     dst_edges = [e for e in body_state.out_edges(a_load) if e.src_conn == "_dst"]
     assert len(dst_edges) == 1
     bridge_an = dst_edges[0].dst

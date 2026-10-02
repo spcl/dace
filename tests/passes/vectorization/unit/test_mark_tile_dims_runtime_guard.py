@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims

@@ -17,7 +17,7 @@ first-class conditional-write function: single straight-line expression analysed
 
 ``IT(cond, e)`` = write-only ternary: write ``e`` where ``cond``, else leave destination
 unchanged. Unlike ``ITE(cond, t, e)`` it has NO else arm -> never reads the old value;
-``ConvertTaskletsToTileOps`` lowers it to a masked ``TileStore`` (``cond`` mask gates the store,
+``ConvertTaskletsToTileOps`` lowers it to a masked ``TileScatter`` (``cond`` mask gates the store,
 inactive lanes untouched). Runs in vectorize prep, before ``SplitTasklets``.
 
 ``IT`` is a first-class primitive, not a tile-only marker: :mod:`dace.codegen.cppunparse` unparses

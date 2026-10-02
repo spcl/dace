@@ -33,7 +33,7 @@ import copy
 import numpy as np
 import pytest
 
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -82,7 +82,7 @@ UNTILED_KERNELS = frozenset({
 # VectorizeCPUMultiDim constructors). The SIMD ISA is the HOST's best runnable one
 # (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
 # hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
-# would SIGILL at runtime (see ``dace.libraries.tileops._dispatch.host_supported_isas``).
+# would SIGILL at runtime (see ``dace.libraries.tileops.dispatch.host_supported_isas``).
 HOST_ISA = detect_host_isa()
 MULTIDIM_KNOBS = [
     dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
@@ -167,7 +167,7 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
     # A 2-D map whose single 1-D output is indexed linearly across both params
     # (s125) is also forced to K=1: vectorizing only the inner (unit-stride)
-    # dim yields a plain contiguous TileStore; a K=2 tile cannot express the
+    # dim yields a plain contiguous TileScatter; a K=2 tile cannot express the
     # strided box over one array dim.
     if name in FORCE_K1_KERNELS:
         vec = VectorizeCPUMultiDim(

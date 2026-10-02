@@ -151,8 +151,8 @@ def vectorize_config(request) -> str:
 
     - ``"tile_nodes"`` — the K-dim tile-op routing through
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
-      (TileBinop / TileLoad / TileStore / TileITE / TileLoad (gather) /
-      TileStore (scatter)), expanded to the per-ISA backend (scalar reference in
+      (TileBinop / TileGather / TileScatter / TileITE / TileGather (gather) /
+      TileScatter (scatter)), expanded to the per-ISA backend (scalar reference in
       the harness).
 
     The tile arm must match the unvectorized scalar reference."""

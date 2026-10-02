@@ -393,7 +393,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # flat body -> ``EmitTileOps``; already-NSDFG body -> descent
         # (``PromoteNSDFGBodyToTiles``). Both arms must match the scalar reference.
         # v2 tile-op path (VectorizeCPUMultiDim), unified for K=1 and K>=2: the
-        # tile lib nodes (TileBinop / TileLoad / TileStore / TileITE / ...)
+        # tile lib nodes (TileBinop / TileGather / TileScatter / TileITE / ...)
         # are emitted for every K and then expanded to tasklets (the ``pure``
         # expansion). K=1 is the degenerate single-tile-dim case, handled by
         # the same tile lib nodes — there is no separate 1-D path (the deleted

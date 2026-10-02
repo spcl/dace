@@ -94,7 +94,7 @@ def no_transient_scalar_stores(scope: SDFG | SDFGState) -> str | None:
     edge is ``tile -> tile``. Replaces old ``_maybe_elide_scalar_passthrough`` patch-fix.
 
     Allowed scalar load-staging: single element → transient scalar for a broadcast (e.g.
-    ``a_const`` from ``a[0]`` feeding ``TileLoad(src_kind="Scalar")``).
+    ``a_const`` from ``a[0]`` feeding ``TileGather(src_kind="Scalar")``).
     """
     for sd, state in _iter_states(scope):
         for edge in state.edges():
@@ -576,7 +576,7 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
 
 def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> str | None:
     """Every TILE_MAIN map has its tiled dim steps == its own :func:`map_tile_widths`."""
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
+    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
     from dace.transformation.passes.vectorization.utils.map_predicates import map_tile_widths
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():

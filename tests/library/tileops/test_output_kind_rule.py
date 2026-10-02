@@ -14,6 +14,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileITE, TileUnop
+from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.memlet import Memlet
 
 
@@ -221,21 +222,21 @@ def test_ite_symbol_requires_expr():
         TileITE("ite_bad_m", widths=(8, ), kind_mask="Symbol")
 
 
-def test_unop_isa_expansion_delegates_scalar_output_to_scalar_assignment():
-    """A scalar-output ``not`` on the AVX512 ISA path must NOT emit the
-    ``tile_unop<...>(_c, ...)`` pointer call: a scalar output is a by-value
-    ``bool _c;`` that cannot bind to the header's ``T* out`` (the s274 miscompile,
-    ``cannot convert 'bool' to 'bool*'``). It delegates to the pure expansion's
-    single-assignment scalar-output branch instead."""
+def test_unop_with_a_scalar_output_lowers_to_a_scalar_assignment():
+    """A scalar-output ``not`` must NOT emit the ``tile_unop<...>(_c, ...)`` pointer call: a scalar output is a
+    by-value ``bool _c;`` that cannot bind to the header's ``T* out`` (the s274 miscompile, ``cannot convert 'bool' to
+    'bool*'``). The selection is the pure single-assignment lowering."""
     sdfg = dace.SDFG("unop_isa_scalar_out")
     sdfg.add_scalar("A", dace.bool_, transient=True)
     sdfg.add_scalar("C", dace.bool_, transient=True)
     state = sdfg.add_state("s")
     node = TileUnop("un", widths=(8, ), op="not", kind_a="Scalar")
-    node.implementation = "avx512"
     state.add_node(node)
     state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
     state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
+    node.target_isa = "SCALAR"
+    node.implementation = select_tile_implementation(node, state)
+    assert node.implementation == "pure"
     sdfg.expand_library_nodes()
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     code = tasklet.code.as_string
@@ -244,21 +245,22 @@ def test_unop_isa_expansion_delegates_scalar_output_to_scalar_assignment():
     assert code.strip().startswith("_c"), f"expected `_c = ...` assignment, got:\n{code}"
 
 
-def test_binop_isa_expansion_delegates_scalar_output_to_scalar_assignment():
-    """Scalar+Scalar inputs + Scalar output on the AVX512 ISA path delegate to the
-    pure scalar-assignment branch rather than emitting ``tile_binop<...>(_c, ...)``
-    (a by-value scalar ``_c`` cannot bind to the header's ``T* out``)."""
+def test_binop_with_a_scalar_output_lowers_to_a_scalar_assignment():
+    """Scalar+Scalar inputs + Scalar output lower to the pure scalar assignment rather than
+    ``tile_binop<...>(_c, ...)`` (a by-value scalar ``_c`` cannot bind to the header's ``T* out``)."""
     sdfg = dace.SDFG("binop_isa_scalar_out")
     sdfg.add_scalar("A", dace.float64, transient=True)
     sdfg.add_scalar("B", dace.float64, transient=True)
     sdfg.add_scalar("C", dace.float64, transient=True)
     state = sdfg.add_state("s")
     node = TileBinop("bn", widths=(8, ), op="+", kind_a="Scalar", kind_b="Scalar")
-    node.implementation = "avx512"
     state.add_node(node)
     state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
     state.add_edge(state.add_access("B"), None, node, "_b", Memlet("B"))
     state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
+    node.target_isa = "SCALAR"
+    node.implementation = select_tile_implementation(node, state)
+    assert node.implementation == "pure"
     sdfg.expand_library_nodes()
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     code = tasklet.code.as_string

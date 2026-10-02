@@ -641,7 +641,7 @@ class CPPUnparser:
         # predicate is false, and the destination must keep whatever it already held. It is
         # inherently a STATEMENT, so lower it as one -- exactly the guarded assignment the Python
         # frontend emits for a masked assignment ``A[mask] = value``, and what the tile path turns
-        # into a masked ``TileStore``. Emitting it here makes ``IT`` a first-class primitive
+        # into a masked ``TileScatter``. Emitting it here makes ``IT`` a first-class primitive
         # everywhere (like ``ITE``), so a masked write no longer has to stay tile-only.
         conditional_write = self._conditional_write_parts(t)
         if conditional_write is not None:

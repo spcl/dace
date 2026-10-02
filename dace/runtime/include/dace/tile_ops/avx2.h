@@ -14,50 +14,14 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "dace/tile_ops/common.h"
+
 #if !defined(__AVX2__)
 #error Included the AVX2 tile-op header without AVX2 support
 #endif
 
 namespace dace {
 namespace tileops {
-
-// Scalar per-lane op (reference semantics; used by every scalar tail /
-// fallback path so the AVX2 results are bit-for-bit the scalar contract).
-template <typename T, char Op>
-inline T tile_apply(T a, T b) {
-  if constexpr (Op == '+')
-    return a + b;
-  else if constexpr (Op == '-')
-    return a - b;
-  else if constexpr (Op == '*')
-    return a * b;
-  else if constexpr (Op == '/')
-    return a / b;
-  else if constexpr (Op == '%')
-    return c_mod(a, b);
-  else if constexpr (Op == 'p')
-    return py_mod(a, b);
-  else if constexpr (Op == 'm')
-    return std::min(a, b);
-  else if constexpr (Op == 'M')
-    return std::max(a, b);
-  else if constexpr (Op == '<')
-    return (a < b) ? T(1) : T(0);
-  else if constexpr (Op == 'l')
-    return (a <= b) ? T(1) : T(0);
-  else if constexpr (Op == '>')
-    return (a > b) ? T(1) : T(0);
-  else if constexpr (Op == 'g')
-    return (a >= b) ? T(1) : T(0);
-  else if constexpr (Op == '=')
-    return (a == b) ? T(1) : T(0);
-  else if constexpr (Op == '!')
-    return (a != b) ? T(1) : T(0);
-  else if constexpr (Op == '&')
-    return (a && b) ? T(1) : T(0);
-  else /* Or */
-    return (a || b) ? T(1) : T(0);
-}
 
 namespace detail {
 
@@ -455,47 +419,6 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   for (int i = 0; i < vlen; ++i) scalar_tail(i);
 }
 
-// Per-lane unary op (op codes: n neg, ! not, a abs, e exp, l log, s sqrt,
-// S sin, C cos, f floor, c ceil, t tanh). The transcendentals have no portable
-// SIMD intrinsic, so this shares scalar.h's lane-loop form in every backend.
-template <typename T, char Op>
-inline T tile_unop_apply(T a) {
-  if constexpr (Op == 'n')
-    return -a;
-  else if constexpr (Op == '!')
-    return T(!a);
-  else if constexpr (Op == 'a')
-    return std::abs(a);
-  else if constexpr (Op == 'e')
-    return std::exp(a);
-  else if constexpr (Op == 'l')
-    return std::log(a);
-  else if constexpr (Op == 's')
-    return std::sqrt(a);
-  else if constexpr (Op == 'S')
-    return std::sin(a);
-  else if constexpr (Op == 'C')
-    return std::cos(a);
-  else if constexpr (Op == 'f')
-    return std::floor(a);
-  else if constexpr (Op == 'c')
-    return std::ceil(a);
-  else /* 't' */
-    return std::tanh(a);
-}
-
-// out[i] = <op> a-operand ; ZERO-FILL inactive (operand read is in-tile).
-template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
-inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; ++i) {
-    const T av = Broadcast ? a[0] : a[i];
-    if constexpr (Masked)
-      out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
-    else
-      out[i] = tile_unop_apply<T, Op>(av);
-  }
-}
-
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                      const T* __restrict__ e, const bool* __restrict__ mask) {
@@ -762,25 +685,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   tile_gather<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// tile_scatter: dst[idx[i]] = src[i], RMW skip-inactive. AVX2 has no scatter
-// instruction, so this is always a scalar loop.
-template <typename T, typename IdxT, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask, int vlen) {
-  for (int i = 0; i < vlen; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
-}
-
 // tile_mask_gen: out[l] = (base + l) < ub, via a 64-bit-lane compare (W=4).
 template <typename IdxT, int VLEN>
 inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
@@ -796,23 +700,6 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
     for (int j = 0; j < W; ++j) out[i + j] = tmp[j] != 0;
   }
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
-}
-
-// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
-// 'm' min, 'M' max). Balanced log-depth pairwise fold, matching the order the vectorized
-// Reduce node's _dace_horizontal_tree uses so both paths agree numerically.
-template <typename T, int VLEN, char Op>
-inline T tile_reduce(const T* __restrict__ src) {
-  T buf[VLEN];
-  for (int i = 0; i < VLEN; ++i) buf[i] = src[i];
-  int n = VLEN;
-  while (n > 1) {
-    int half = n / 2;
-    for (int i = 0; i < half; ++i) buf[i] = tile_apply<T, Op>(buf[2 * i], buf[2 * i + 1]);
-    if (n & 1) buf[half] = buf[n - 1];
-    n = half + (n & 1);
-  }
-  return buf[0];
 }
 
 }  // namespace tileops

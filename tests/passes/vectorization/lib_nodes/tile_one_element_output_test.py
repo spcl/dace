@@ -11,6 +11,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileUnop
+from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -22,9 +23,15 @@ def element_write_sdfg(name: str, node, implementation: str) -> dace.SDFG:
     sdfg = dace.SDFG(f'{name}_{implementation}')
     sdfg.add_array('F', [5], dace.int32)
     state = sdfg.add_state('main', is_start_block=True)
-    node.implementation = implementation
     state.add_node(node)
     state.add_edge(node, '_c', state.add_write('F'), None, dace.Memlet('F[4]'))
+    # ``scalar`` is the target ISA the vectorizer selects the implementation for; a one-element output has no header
+    # lowering, so the selection is the pure loop too.
+    if implementation == 'pure':
+        node.implementation = 'pure'
+    else:
+        node.target_isa = implementation.upper()
+        node.implementation = select_tile_implementation(node, state)
     sdfg.expand_library_nodes()
     sdfg.validate()
     return sdfg

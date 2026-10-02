@@ -246,7 +246,7 @@ void run_all_load_store(std::uint64_t salt) {
   run_store<T, VLEN, true>(salt + 77, 3);
 }
 
-// --------------------------- gather / scatter ---------------------------
+// -------------------------------- gather --------------------------------
 template <typename T, typename IdxT, int VLEN, bool MK>
 void run_gather(std::uint64_t salt, const IdxT* idx) {
   Buf<T, VLEN> z(salt);
@@ -258,23 +258,11 @@ void run_gather(std::uint64_t salt, const IdxT* idx) {
   emit(label, z.out, sizeof(z.out));
 }
 
-template <typename T, typename IdxT, int VLEN, bool MK>
-void run_scatter(std::uint64_t salt, const IdxT* idx) {
-  Buf<T, VLEN> z(salt);
-  T dst[VLEN];
-  for (int i = 0; i < VLEN; ++i) dst[i] = gen<T>(salt + 17, i);
-  T* __restrict__ dstp = dst;
-  tile_scatter<T, IdxT, VLEN, MK>(dstp, z.a, idx, z.mask);
-  char label[128];
-  std::snprintf(label, sizeof(label), "scatter:%s:i%d:v%d:%d", type_name(T()), int(sizeof(IdxT) * 8), VLEN, int(MK));
-  emit(label, dst, sizeof(dst));
-}
-
-// Gather / scatter with NEGATIVE indices: codegen biases the base pointer, so a
+// Gather with NEGATIVE indices: codegen biases the base pointer, so a
 // lane index below zero is legal. All-false / all-true masks pin the two mask
 // extremes an ISA masked form is most likely to get wrong.
 template <typename T, int VLEN>
-void run_gather_scatter_edges(std::uint64_t salt) {
+void run_gather_edges(std::uint64_t salt) {
   T buf[3 * VLEN];
   for (int i = 0; i < 3 * VLEN; ++i) buf[i] = gen<T>(salt + 21, i);
   const T* __restrict__ mid = buf + VLEN;  // negative lane indices stay in-bounds
@@ -297,12 +285,6 @@ void run_gather_scatter_edges(std::uint64_t salt) {
     tile_gather<T, std::int32_t, VLEN, true>(out, mid, idx32, mask);
     std::snprintf(label, sizeof(label), "gather_neg:%s:i32:v%d:m%d", type_name(T()), VLEN, m);
     emit(label, out, sizeof(out));
-    T dst[3 * VLEN];
-    for (int i = 0; i < 3 * VLEN; ++i) dst[i] = gen<T>(salt + 23, i);
-    T* __restrict__ dmid = dst + VLEN;
-    tile_scatter<T, std::int64_t, VLEN, true>(dmid, buf, idx, mask);
-    std::snprintf(label, sizeof(label), "scatter_neg:%s:i64:v%d:m%d", type_name(T()), VLEN, m);
-    emit(label, dst, sizeof(dst));
     // All-mask load / store extremes.
     T lout[VLEN];
     for (int i = 0; i < VLEN; ++i) lout[i] = T(-99);
@@ -324,17 +306,13 @@ void run_gather_scatter_edges(std::uint64_t salt) {
 }
 
 template <typename T, int VLEN>
-void run_all_gather_scatter(std::uint64_t salt) {
-  run_gather_scatter_edges<T, VLEN>(salt + 700);
+void run_all_gather(std::uint64_t salt) {
+  run_gather_edges<T, VLEN>(salt + 700);
   Buf<T, VLEN> z(salt);
   run_gather<T, std::int32_t, VLEN, false>(salt, z.idx32);
   run_gather<T, std::int32_t, VLEN, true>(salt + 11, z.idx32);
   run_gather<T, std::int64_t, VLEN, false>(salt + 22, z.idx64);
   run_gather<T, std::int64_t, VLEN, true>(salt + 33, z.idx64);
-  run_scatter<T, std::int32_t, VLEN, false>(salt + 44, z.idx32);
-  run_scatter<T, std::int32_t, VLEN, true>(salt + 55, z.idx32);
-  run_scatter<T, std::int64_t, VLEN, false>(salt + 66, z.idx64);
-  run_scatter<T, std::int64_t, VLEN, true>(salt + 77, z.idx64);
 }
 
 // -------------------------------- reduce --------------------------------
@@ -475,7 +453,7 @@ void run_all_ops(std::uint64_t salt) {
   run_all_fma<T, VLEN>(salt + 20000);
   run_all_ite<T, VLEN>(salt + 30000);
   run_all_load_store<T, VLEN>(salt + 40000);
-  run_all_gather_scatter<T, VLEN>(salt + 50000);
+  run_all_gather<T, VLEN>(salt + 50000);
   run_all_reduce<T, VLEN>(salt + 60000);
   run_all_specials<T, VLEN>();
 }

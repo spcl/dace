@@ -23,7 +23,8 @@ from dace.libraries.tileops import TileMaskGen
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import GenerateTileIterationMask
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (MASKED_TAIL_MARKER, TILE_MAIN_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_body_nodes
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 
