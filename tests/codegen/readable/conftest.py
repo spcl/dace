@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared fixtures + skip gates for the experimental "readable" CPU code generator.
 
-Skips the whole suite until the generator is wired up and its output differs from legacy.
+CPU kernels are compared against the legacy generator to within 1 ULP per element and run in a forked child, so that
+a crashing kernel cannot take down pytest. GPU kernels run in-process (CUDA does not survive a fork) and are compared
+with a tolerance, as their reduction and atomic order is not reproducible.
 """
 import functools
 import os
@@ -36,6 +38,9 @@ LEGACY = "legacy"
 EXPERIMENTAL = "experimental_readable"
 #: Config path selecting the CPU generator implementation.
 IMPLEMENTATION_KEY = ("compiler", "cpu", "implementation")
+
+#: Config path of the CPU compiler flags.
+CPU_ARGS_KEY = ("compiler", "cpu", "args")
 
 
 def use_implementation(implementation):
@@ -78,6 +83,10 @@ def experimental_available():
     with use_implementation(EXPERIMENTAL):
         experimental_code = generated_code(sdfg)
     return experimental_code != legacy_code
+def without_fma_contraction():
+    """Builds without fused multiply-add contraction. The two generators nest the same computation differently, so
+    the compiler contracts different multiply-adds and an accumulating kernel drifts by far more than 1 ULP."""
+    return set_temporary(*CPU_ARGS_KEY, value=f"{Config.get(*CPU_ARGS_KEY)} -ffp-contract=off")
 
 
 @functools.lru_cache(maxsize=1, typed=True)
@@ -185,8 +194,18 @@ def max_abs_diff(legacy, experimental):
         return float("nan")
 
 
+def assert_max_one_ulp(legacy, experimental):
+    """Raises ``AssertionError`` unless every element is within 1 ULP, NaN and inf positions included; a complex
+    array is compared by its real and imaginary parts."""
+    if legacy.dtype.kind == "c":
+        legacy = np.stack([legacy.real, legacy.imag])
+        experimental = np.stack([experimental.real, experimental.imag])
+    np.testing.assert_array_max_ulp(legacy, experimental, maxulp=1)
+
+
 def assert_outputs_equivalent(legacy, experimental, target, label=""):
-    """Assert the readable generator reproduced the legacy outputs (dtype-aware tolerance; exact for ints)."""
+    """Asserts the readable outputs equal the legacy ones: integers exactly and floats within 1 ULP on CPU, within
+    a dtype tolerance on GPU."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
     assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
@@ -194,10 +213,16 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
     for name, lv in legacy.items():
         ev = experimental[name]
         assert lv.shape == ev.shape, f"{label}/{name}: shape {lv.shape} vs {ev.shape}"
-        rtol, atol = tolerance_for(lv.dtype)
-        assert np.allclose(lv, ev, rtol=rtol, atol=atol,
-                           equal_nan=True), (f"{label}/{name}: experimental {target} codegen diverges from legacy, "
-                                             f"max|diff|={max_abs_diff(lv, ev):.3e}")
+        if target == "cpu":
+            if lv.dtype.kind in "fc":
+                assert_max_one_ulp(lv, ev)
+            else:
+                assert np.array_equal(lv, ev), f"{label}/{name}: experimental CPU codegen differs from legacy"
+        else:
+            rtol, atol = tolerance_for(lv.dtype)
+            assert np.allclose(lv, ev, rtol=rtol, atol=atol,
+                               equal_nan=True), (f"{label}/{name}: experimental GPU codegen diverges from legacy, "
+                                                 f"max|diff|={max_abs_diff(lv, ev):.3e}")
 
 
 # #
