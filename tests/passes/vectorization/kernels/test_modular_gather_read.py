@@ -111,14 +111,14 @@ def test_square_gather_read_1d(branch_mode, remainder_strategy):
 
 
 def cmod_gather_read_sdfg() -> dace.SDFG:
-    """``out[i] = a[i % S]`` built directly, so the index keeps C's ``%`` instead of the frontend's ``PyMod``."""
+    """``out[i] = a[CMod(i, S)]``: the index is C's modulo, not the frontend's floored one."""
     sdfg = dace.SDFG("cmod_gather_read_1d")
     sdfg.add_array("out", [X], dace.float64)
     sdfg.add_array("a", [S], dace.float64)
     state = sdfg.add_state("body")
     state.add_mapped_tasklet("copy",
                              map_ranges={"i": "0:X"},
-                             inputs={"inp": dace.Memlet("a[i % S]")},
+                             inputs={"inp": dace.Memlet("a[CMod(i, S)]")},
                              code="o = inp",
                              outputs={"o": dace.Memlet("out[i]")},
                              external_edges=True)

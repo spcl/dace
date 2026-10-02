@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``RewriteModuloToPyMod`` spells every floored modulo as ``py_mod`` and leaves C's ``%`` alone."""
+"""``RewriteModuloToPyMod`` spells every floored modulo (``%``) as ``py_mod``, and ``CMod`` in a tasklet as ``c_mod``."""
 import numpy as np
 import pytest
 
@@ -45,13 +45,22 @@ def test_a_floored_modulo_in_a_tasklet_body_becomes_py_mod():
     np.testing.assert_array_equal(C, np.mod(A, B))
 
 
-def test_c_modulo_in_a_tasklet_body_is_left_alone():
-    sdfg, t = elementwise_sdfg("cmod_body", "c = a % b")
-    before = t.code.as_string
+def test_a_percent_in_a_tasklet_body_becomes_py_mod():
+    sdfg, t = elementwise_sdfg("percent_body", "c = a % b")
 
     _apply(sdfg)
 
-    assert t.code.as_string == before and "py_mod" not in before
+    assert t.code.as_string.strip() == "c = py_mod(a, b)"
+    A, B, C = run_elementwise(sdfg)
+    np.testing.assert_array_equal(C, np.mod(A, B))
+
+
+def test_c_modulo_in_a_tasklet_body_becomes_c_mod():
+    sdfg, t = elementwise_sdfg("cmod_body", "c = CMod(a, b)")
+
+    _apply(sdfg)
+
+    assert t.code.as_string.strip() == "c = c_mod(a, b)"
     A, B, C = run_elementwise(sdfg)
     np.testing.assert_array_equal(C, np.fmod(A, B))
 
@@ -118,7 +127,7 @@ def test_rewrite_memlet_subset():
 
 
 def test_c_modulo_in_a_memlet_subset_is_left_alone():
-    sdfg, state = memlet_sdfg("cmod_memlet", "A[i % 7]")
+    sdfg, state = memlet_sdfg("cmod_memlet", "A[CMod(i, 7)]")
     before = str(gather_subset(state))
 
     _apply(sdfg)

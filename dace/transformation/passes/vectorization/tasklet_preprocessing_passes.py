@@ -301,16 +301,14 @@ def _rewrite_modulo(src: str) -> str:
 
 
 _PY_MOD = sympy.Function("py_mod")
-_C_MOD = sympy.Function("c_mod")
 
 
 def _subs_py_mod_symbolic(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    # Rewrite every floored modulo ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``, and ``CMod`` to ``c_mod``.
-    if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod, symbolic.CMod):
+    # Rewrite every floored sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``; ``CMod`` stays, which the access
+    # classifier gathers.
+    if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod):
         return expr
-    return expr.replace(lambda e: isinstance(e, sympy.Mod),
-                        lambda e: _PY_MOD(*e.args)).replace(lambda e: isinstance(e, symbolic.CMod),
-                                                            lambda e: _C_MOD(*e.args))
+    return expr.replace(sympy.Mod, _PY_MOD)
 
 
 def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
@@ -321,7 +319,7 @@ def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
         exprs = list(subset.indices)
     else:
         return False
-    return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod, symbolic.CMod) for x in exprs)
+    return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod) for x in exprs)
 
 
 def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
