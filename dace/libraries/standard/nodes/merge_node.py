@@ -10,18 +10,30 @@ from dace.transformation.transformation import ExpandTransformation
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """One map doing the per-element select."""
+    """One map doing the per-element select, with both sources converted to the type of the result."""
     environments = []
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        from dace.frontend.python.replacements.utils import cast_str  # Avoid import loop
+
         t, f, mask, out = node.validate(parent_sdfg, parent_state)
         cls = MergeLibraryNode
+        result_type = parent_sdfg.arrays[out.data.data].dtype
+
+        def source(connector: str, edge) -> str:
+            value = f'{connector}_v'
+            if parent_sdfg.arrays[edge.data.data].dtype == result_type:
+                return value
+            return f'{cast_str(result_type)}({value})'
+
         inputs = {cls.TRUE_CONNECTOR_NAME: t, cls.FALSE_CONNECTOR_NAME: f, cls.MASK_CONNECTOR_NAME: mask}
+        code = (f'{cls.OUTPUT_CONNECTOR_NAME}_v = {source(cls.TRUE_CONNECTOR_NAME, t)} '
+                f'if {cls.MASK_CONNECTOR_NAME}_v else {source(cls.FALSE_CONNECTOR_NAME, f)}')
         return broadcast_map_expansion(node.label, parent_sdfg, {
             c: (e.data, None)
             for c, e in inputs.items()
-        }, (cls.OUTPUT_CONNECTOR_NAME, out.data), '_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v')
+        }, (cls.OUTPUT_CONNECTOR_NAME, out.data), code)
 
 
 @library.node

@@ -4,8 +4,6 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
-from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
 
@@ -66,13 +64,3 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
         except ValueError as ex:
             raise ValueError(f"Broadcast: {ex}") from ex
         return in_edges[0], out_edges[0], axis
-
-
-@oprepo.replaces('dace.libraries.standard.broadcast')
-@oprepo.replaces('dace.libraries.standard.Broadcast')
-def broadcast_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src, dst, *, dim=1):
-    node = Broadcast("broadcast", dim=dim)
-    state.add_node(node)
-    state.add_edge(state.add_read(src), None, node, '_src', mm.Memlet(src))
-    state.add_edge(node, '_dst', state.add_write(dst), None, mm.Memlet(dst))
-    return []
