@@ -83,6 +83,8 @@ def experimental_available():
     with use_implementation(EXPERIMENTAL):
         experimental_code = generated_code(sdfg)
     return experimental_code != legacy_code
+
+
 def without_fma_contraction():
     """Builds without fused multiply-add contraction. The two generators nest the same computation differently, so
     the compiler contracts different multiply-adds and an accumulating kernel drifts by far more than 1 ULP."""
