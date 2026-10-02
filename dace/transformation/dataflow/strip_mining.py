@@ -172,8 +172,12 @@ class StripMining(transformation.SingleStateTransformation):
         return self.map_entry.map.label + ': ' + str(self.map_entry.map.params)
 
     def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.Map:
-        # Strip-mine selected dimension.
-        _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
+        # Strip-mine selected dimension. The new bounds are parsed from strings, so name the symbols at the dtype
+        # the scope declares them.
+        scope = dict(graph.symbols_defined_at(self.map_entry))
+        scope.update(self.map_entry.new_symbols(sdfg, graph, scope))
+        with symbolic.serialization_symbol_dtypes(scope, inherit=True):
+            _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
         return new_map
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
@@ -187,6 +191,9 @@ class StripMining(transformation.SingleStateTransformation):
         while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
+        # The tile iterates the same domain as the dimension it tiles, so it is declared at that dimension's dtype.
+        declared = entry.new_symbols(sdfg, state, state.symbols_defined_at(entry))
+        symbolic.declare_symbol_dtype(candidate, declared[target_dim])
         return candidate
 
     def _create_strided_range(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):

@@ -1,8 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.dataflow.strip_mining import StripMining
+from dace.transformation.passes.equalize_symbol_dtypes import equalize
 
 import numpy as np
+
+N = dace.symbol('N', dtype=dace.int64)
 
 
 def test_strip_mining():
@@ -103,7 +106,27 @@ def test_strided_tile_assigns_every_visited_element():
     assert np.array_equal(A_np, expected), f"strided tiling wrote {np.flatnonzero(A_np)}"
 
 
+def test_the_tile_and_its_bounds_keep_the_dtypes_the_scope_declares():
+    """The tile bounds are parsed from strings, so a loop iterator in the strip-mined range must keep its dtype."""
+
+    @dace.program
+    def triangle(A: dace.float64[N, N], B: dace.float64[N]):
+        for k in range(N):
+            for i in dace.map[k + 1:N]:
+                B[i] += A[k, i]
+
+    sdfg = triangle.to_sdfg(simplify=False)
+    sdfg.name = 'strip_mining_scope_dtypes'
+    equalize(sdfg)
+
+    sdfg.apply_transformations(StripMining, options={'tile_size': 8})
+
+    assert equalize(sdfg) is None, 'strip mining spelled a symbol at a dtype its scope does not declare'
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_strip_mining()
     test_strided_tile_extent_is_scaled_by_the_map_step()
     test_strided_tile_assigns_every_visited_element()
+    test_the_tile_and_its_bounds_keep_the_dtypes_the_scope_declares()
