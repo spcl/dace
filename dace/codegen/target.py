@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 import warnings
 
 from dace import memlet as mm, data as dt, dtypes
@@ -23,6 +23,10 @@ class TargetCodeGenerator(object):
         * Array allocation/deallocation/initialization/copying
         * Scope (map, consume) code generation
     """
+
+    #: The frame-code generator associated with this target, or None if there is none (e.g., ``IllegalCopy``).
+    #: Targets set it in their constructor; use ``get_framecode_generator`` to access it.
+    _frame: Optional['DaCeCodeGenerator'] = None
 
     def get_generated_codeobjects(self) -> List[CodeObject]:
         """
@@ -61,11 +65,11 @@ class TargetCodeGenerator(object):
         """
         pass
 
-    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
+    def get_framecode_generator(self) -> Optional['DaCeCodeGenerator']:
         """
         Returns the frame-code generator associated with this target.
 
-        :return: The frame-code generator.
+        :return: The frame-code generator, or None if this target is not associated with one.
         """
         return self._frame
 
