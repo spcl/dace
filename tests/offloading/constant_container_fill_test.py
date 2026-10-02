@@ -5,6 +5,7 @@ A device array the host reads inside a loop would otherwise move to the host and
 though neither side ever writes it and every copy after the first carries the bytes already there.
 """
 import collections
+import sys
 
 import numpy as np
 import pytest
@@ -99,3 +100,9 @@ def test_the_offloaded_recurrence_computes_what_numpy_computes():
     sdfg(seq=d_seq, table=d_table, N=40)
     np.testing.assert_array_equal(cupy.asnumpy(d_table), want)
     np.testing.assert_array_equal(cupy.asnumpy(d_seq), seq)
+
+
+if __name__ == '__main__':
+    test_a_container_nothing_writes_is_filled_once_at_the_entry()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_the_offloaded_recurrence_computes_what_numpy_computes()

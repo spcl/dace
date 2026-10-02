@@ -5,7 +5,7 @@ A conditional without ``else`` has a path that skips the arm, so the arm must re
 needs belong inside it, where only the path that runs the arm pays for them.
 """
 import dace
-from dace.sdfg.state import ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from shared_graphs import host_write_then_kernel_arm
@@ -50,3 +50,8 @@ def test_the_copies_of_a_one_armed_conditional_stay_inside_its_arm():
 
     assert not [copy for copy in copies(sdfg) if 'A' in copy and 'A_gpu' in copy], 'a copy outside the conditional'
     assert ('A', 'A_gpu') in copies(arm) and ('A_gpu', 'A') in copies(arm), copies(arm)
+
+
+if __name__ == '__main__':
+    test_the_path_that_skips_the_arm_copies_what_the_kernel_after_it_reads()
+    test_the_copies_of_a_one_armed_conditional_stay_inside_its_arm()

@@ -3,6 +3,8 @@
 
 A loop is not a state, and a copy in front of an interstate edge is placed after the block the edge leaves.
 """
+import sys
+
 import numpy as np
 import pytest
 
@@ -50,3 +52,9 @@ def test_the_host_read_after_the_loop_sees_the_device_result():
     sdfg(A=A, out=out, N=8)
     np.testing.assert_array_equal(A, np.arange(8) + 3.0)
     np.testing.assert_array_equal(out, [3.0])
+
+
+if __name__ == '__main__':
+    test_a_loop_before_a_host_reading_edge_is_followed_by_its_copy_back()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_the_host_read_after_the_loop_sees_the_device_result()

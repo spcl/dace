@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Where ``OffloadToAccelerator`` places data and copies: one graph per defect, plus its numeric companion."""
+import sys
+
 import numpy as np
 import pytest
 
@@ -783,7 +785,10 @@ def host_accumulator_beside_a_kernel_in_a_loop(length: int) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize('length', [1, 4])
+LENGTHS = [1, 4]
+
+
+@pytest.mark.parametrize('length', LENGTHS)
 def test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length):
     """A length-1 host accumulator is staged as a scalar that stays on the host, not wrapped into a kernel."""
     sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
@@ -797,7 +802,7 @@ def test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('length', [1, 4])
+@pytest.mark.parametrize('length', LENGTHS)
 def test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length):
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
     sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
@@ -846,3 +851,39 @@ def test_a_shared_memory_transient_keeps_its_storage():
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()
     assert sdfg.arrays['tile'].storage == dtypes.StorageType.GPU_Shared
+
+
+if __name__ == '__main__':
+    test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
+    test_fusing_the_wrappers_does_not_validate_before_the_copies_exist()
+    test_a_join_hands_on_the_locations_its_later_arm_carries()
+    test_a_wrapped_region_puts_every_root_under_its_entry()
+    test_a_copy_hands_its_destination_the_side_of_its_source()
+    test_a_host_copy_out_of_a_kernel_output_is_not_a_kernel_write()
+    test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident()
+    test_a_read_only_array_both_sides_read_is_copied_exactly_once()
+    test_a_host_only_array_is_staged_once_each_way_and_not_wrapped()
+    test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy()
+    test_the_placement_does_not_recurse_once_per_block()
+    test_an_ordering_edge_does_not_make_a_scalar_device_written()
+    test_the_pass_reports_what_it_placed_on_the_device()
+    test_a_graph_with_nothing_to_offload_reports_no_change()
+    test_a_single_element_two_maps_read_stays_outside_both()
+    test_a_transient_one_kernel_uses_is_a_register()
+    test_a_small_map_in_a_host_loop_stays_on_the_host()
+    test_without_pinning_a_small_map_in_a_host_loop_is_a_kernel()
+    test_a_map_over_the_whole_shared_array_stays_a_kernel()
+    test_a_map_whose_size_cannot_be_ranked_stays_a_kernel()
+    test_a_length_one_local_of_a_one_iteration_map_in_a_kernel_is_a_register()
+    for length in LENGTHS:
+        test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length)
+    test_a_shared_memory_transient_keeps_its_storage()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_the_fused_wrappers_compute_what_the_host_tasklets_computed()
+        test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes()
+        test_a_copy_before_a_host_recurrence_computes_what_numpy_computes()
+        test_a_cpu_heap_array_survives_the_round_trip()
+        test_a_small_map_kept_on_the_host_computes_what_numpy_computes()
+        test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes()
+        for length in LENGTHS:
+            test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length)

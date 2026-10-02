@@ -2,6 +2,7 @@
 """Tests for __dace_init_cuda: the inherited-error drain, and one-GPU-per-process."""
 import ctypes
 import importlib
+import sys
 from ctypes.util import find_library
 
 import numpy as np
@@ -234,6 +235,14 @@ def test_the_program_runs_on_device_zero_whatever_the_caller_was_on():
 
 
 if __name__ == '__main__':
-    for name, fn in sorted(dict(globals()).items()):
-        if name.startswith('test_') and not hasattr(fn, 'pytestmark'):
-            fn()
+    test_gpu_drain_emitted_in_init_and_per_call()
+    test_gpu_drain_absent_without_gpu_code()
+    test_gpu_init_template_substitution_does_not_break_comments()
+    test_gpu_mempool_setup_is_checked_and_follows_context_creation()
+    test_init_selects_device_zero_once()
+    test_the_device_ordinal_is_not_configurable()
+    for module_name, cls_name, accessor in _ENVIRONMENTS:
+        test_handle_setup_takes_no_device(module_name, cls_name, accessor)
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_foreign_error_is_not_charged_to_the_next_program()
+        test_the_program_runs_on_device_zero_whatever_the_caller_was_on()

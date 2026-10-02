@@ -55,3 +55,8 @@ def test_a_copy_feeding_a_dynamic_map_input_stays_where_it_is():
     assert 'n' in entry.in_connectors, sorted(entry.in_connectors)
     (edge, ) = [e for e in sdfg.start_state.in_edges(entry) if e.dst_conn == 'n']
     assert edge.src.data == 's', edge.src
+
+
+if __name__ == '__main__':
+    test_a_copy_read_through_a_pass_through_connector_moves_into_the_map()
+    test_a_copy_feeding_a_dynamic_map_input_stays_where_it_is()

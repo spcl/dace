@@ -3,6 +3,8 @@
 
 Structural tests asserting the schedule each map gets, so no GPU is needed.
 """
+import sys
+
 import numpy as np
 import pytest
 
@@ -257,17 +259,16 @@ def test_a_sequential_scan_in_a_loop_region_is_not_offloaded():
     assert not maps, f'a sequential scan must not gain a map, got {maps}'
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
-
-
-@pytest.mark.parametrize('traffic, size, moves_less', [
+PINNED_TRAFFIC = [
     (4, dace.symbol('ROWS'), True),
     (dace.symbol('ROWS'), dace.symbol('ROWS'), False),
     (dace.symbol('COLS'), dace.symbol('ROWS'), False),
     (dace.symbol('ROWS'), 2 * dace.symbol('ROWS') + 3, True),
     (14 * dace.symbol('nstate'), dace.symbol('nstate')**2, False),
-])
+]
+
+
+@pytest.mark.parametrize('traffic, size, moves_less', PINNED_TRAFFIC)
 def test_a_map_is_pinned_only_on_provably_smaller_traffic(traffic, size, moves_less):
     assert provably_moves_less(traffic, size) is moves_less
 
@@ -319,3 +320,24 @@ def test_a_named_host_map_computes_what_numpy_computes():
     want = sum(args['e_bln'][:, None, k, :] *
                args['z_kin_hor_e'][blk[:, :, k][:, None, :], levels, idx[:, :, k][:, None, :]] for k in range(3))
     np.testing.assert_allclose(args['z_ekinh'], want)
+
+
+if __name__ == '__main__':
+    test_without_host_maps_the_outer_map_is_the_kernel()
+    test_a_named_host_map_keeps_the_host_and_its_body_becomes_the_kernel()
+    test_a_map_entry_object_pins_the_same_map_as_its_label()
+    test_auto_finds_the_launching_map_that_the_default_offloads()
+    test_auto_declines_a_map_that_does_its_own_work()
+    test_the_spellings_that_name_no_host_maps_agree()
+    test_host_maps_rejects_anything_that_is_not_a_label_or_a_map()
+    test_apply_gpu_transformations_forwards_host_maps()
+    test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map()
+    test_a_frontend_callback_is_never_offloaded()
+    test_a_map_around_a_callback_stays_on_the_host()
+    test_a_sequential_scan_in_a_loop_region_is_not_offloaded()
+    for traffic, size, moves_less in PINNED_TRAFFIC:
+        test_a_map_is_pinned_only_on_provably_smaller_traffic(traffic, size, moves_less)
+    test_a_loop_whose_map_shares_nothing_with_host_code_keeps_it_a_kernel()
+    test_a_named_host_map_hands_its_kernels_device_memory()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_a_named_host_map_computes_what_numpy_computes()

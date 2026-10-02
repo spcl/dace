@@ -38,9 +38,9 @@ def load_module(path: pathlib.Path) -> ModuleType | None:
     return module
 
 
-def npbench_programs() -> list:
+def npbench_programs() -> dict[str, dace.frontend.python.parser.DaceProgram]:
     """Every ``@dace.program`` under ``tests/npbench``, also the ones whose own GPU test is disabled upstream."""
-    found = []
+    found = {}
     for path in sorted(NPBENCH_ROOT.rglob('*_test.py')):
         module = load_module(path)
         if module is None:
@@ -50,7 +50,7 @@ def npbench_programs() -> list:
                 continue
             obj = module.__dict__[attr]
             if isinstance(obj, dace.frontend.python.parser.DaceProgram):
-                found.append(pytest.param(obj, id=f'{path.stem}-{attr}'))
+                found[f'{path.stem}-{attr}'] = obj
     return found
 
 
@@ -62,7 +62,7 @@ def test_the_corpus_is_not_empty() -> None:
     assert len(PROGRAMS) > 20, f'expected the npbench corpus, found {len(PROGRAMS)} programs'
 
 
-@pytest.mark.parametrize('program', PROGRAMS)
+@pytest.mark.parametrize('program', PROGRAMS.values(), ids=list(PROGRAMS))
 def test_the_offloaded_kernel_validates_and_emits(program: dace.frontend.python.parser.DaceProgram) -> None:
     """The GPU pipeline leaves a graph that validates and generates code."""
     sdfg = auto_optimize(program.to_sdfg(), dace.dtypes.DeviceType.GPU)
@@ -71,4 +71,6 @@ def test_the_offloaded_kernel_validates_and_emits(program: dace.frontend.python.
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    test_the_corpus_is_not_empty()
+    for program in PROGRAMS.values():
+        test_the_offloaded_kernel_validates_and_emits(program)

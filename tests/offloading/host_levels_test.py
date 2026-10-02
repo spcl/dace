@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Host levels below the top: a map kept on the host launches the kernels in it, and a nested SDFG at a host
 level places its own data."""
+import sys
+
 import numpy as np
 import pytest
 
@@ -143,3 +145,14 @@ def test_a_device_element_staged_for_a_host_body_computes_what_numpy_computes():
     out = cupy.zeros(8)
     sdfg(A=A, out=out)
     np.testing.assert_allclose(out.get(), np.full(8, 1.0))
+
+
+if __name__ == '__main__':
+    test_a_map_around_a_host_issued_library_call_launches_it_from_the_host()
+    test_a_map_around_an_in_kernel_reduce_is_the_kernel()
+    test_a_nested_sdfg_at_the_top_level_is_a_host_level_of_its_own()
+    test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_a_host_launched_device_reduce_computes_what_numpy_computes()
+        test_a_nested_host_level_computes_what_numpy_computes()
+        test_a_device_element_staged_for_a_host_body_computes_what_numpy_computes()

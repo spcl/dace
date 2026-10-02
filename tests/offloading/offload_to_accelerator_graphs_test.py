@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import sys
+
 import pytest
 import networkx as nx
 import numpy as np
@@ -911,8 +913,12 @@ def empty_states_offloading_adds(sdfg: dace.SDFG) -> list:
     ]
 
 
-@pytest.mark.parametrize("big_arm_padding", [0, 2], ids=["even_arms", "uneven_arms"])
-@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+BIG_ARM_PADDINGS = [0, 2]
+ARMS_MEET = [False, True]
+
+
+@pytest.mark.parametrize("big_arm_padding", BIG_ARM_PADDINGS, ids=["even_arms", "uneven_arms"])
+@pytest.mark.parametrize("arms_meet", ARMS_MEET, ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
 def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: bool, big_arm_padding: int) -> None:
     """Both arms write ``A`` on the device, so every way out of the program copies ``A`` back after the branch."""
     sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding)
@@ -927,7 +933,7 @@ def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: 
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+@pytest.mark.parametrize("arms_meet", ARMS_MEET, ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
 def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) -> None:
     """3.0 doubles to 6.0 and takes ``big`` (+1 -> 7.0); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = two_arm_branch_sdfg(arms_meet)
@@ -944,11 +950,13 @@ def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) 
     np.testing.assert_array_equal(took_small, np.full(8, 0.0))
 
 
-@pytest.mark.parametrize("build", [
+BUILDERS = [
     lambda: two_arm_branch_sdfg(arms_meet=False),
     lambda: early_return_sdfg(return_after_arm=True),
-],
-                         ids=["device_branch", "early_return"])
+]
+
+
+@pytest.mark.parametrize("build", BUILDERS, ids=["device_branch", "early_return"])
 def test_offloading_leaves_no_empty_states_of_its_own(build) -> None:
     """The states the pass adds to place copies are spliced out again when no copy lands after them."""
     sdfg = build()
@@ -1023,7 +1031,12 @@ def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+RETURN_AFTER_ARM = [True, False]
+
+
+@pytest.mark.parametrize("return_after_arm",
+                         RETURN_AFTER_ARM,
+                         ids=["return_after_a_device_arm", "return_on_the_branch"])
 def test_an_early_return_copies_the_written_array_back_first(return_after_arm: bool) -> None:
     """The return leaves the program, so the last write of ``A`` on the way to it is the copy back to the host."""
     sdfg = early_return_sdfg(return_after_arm)
@@ -1045,7 +1058,9 @@ def test_an_early_return_copies_the_written_array_back_first(return_after_arm: b
 @pytest.mark.xfail(strict=True,
                    raises=AttributeError,
                    reason="the CUDA codegen reads a ReturnBlock after a GPU state as an SDFGState")
-@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+@pytest.mark.parametrize("return_after_arm",
+                         RETURN_AFTER_ARM,
+                         ids=["return_after_a_device_arm", "return_on_the_branch"])
 def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
     """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = early_return_sdfg(return_after_arm)
@@ -1086,5 +1101,41 @@ def test_offloading_refuses_control_flow_that_raising_leaves_unstructured() -> N
         ppl.Pipeline([OtA()]).apply_pass(sut, {})
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+if __name__ == '__main__':
+    test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
+    test_an_array_the_device_overwrites_is_not_staged_down()
+    test_a_device_copy_stays_below_a_host_state_that_writes_the_array()
+    test_a_never_written_input_is_not_copied_back_to_the_host()
+    test_a_container_nothing_touches_is_left_where_it_started()
+    test_a_map_over_a_read_only_container_survives_being_nested()
+    test_a_view_of_a_staged_container_is_staged_with_it()
+    for arms_meet in ARMS_MEET:
+        for big_arm_padding in BIG_ARM_PADDINGS:
+            test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet, big_arm_padding)
+    for build in BUILDERS:
+        test_offloading_leaves_no_empty_states_of_its_own(build)
+    test_a_host_only_branch_gets_no_blocks_from_offloading()
+    for return_after_arm in RETURN_AFTER_ARM:
+        test_an_early_return_copies_the_written_array_back_first(return_after_arm)
+    test_offloading_refuses_control_flow_that_raising_leaves_unstructured()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_cpu_scalars_no_copies()
+        test_copy_scalar_to_gpu_and_back()
+        test_loopregion_offload()
+        test_conditional_offload_if()
+        test_conditional_offload_else()
+        test_nested_sdfg()
+        test_kernel_sdfg()
+        test_edge_assignment_sdfg()
+        test_tasklet_map_wrapper()
+        test_tasklet_map_wrapper_larger()
+        test_scalar_init()
+        test_len1_array_init()
+        test_reduce_to_array()
+        test_reduce_to_scalar()
+        test_single_element_copy()
+        for arms_meet in ARMS_MEET:
+            test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet)
+        for return_after_arm in RETURN_AFTER_ARM:
+            with pytest.raises(AttributeError):
+                test_an_early_return_hands_back_the_device_result(return_after_arm)

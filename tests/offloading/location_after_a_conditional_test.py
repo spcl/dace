@@ -3,6 +3,8 @@
 
 The blocks after a conditional know the locations every arm leaves, not only the first.
 """
+import sys
+
 import numpy as np
 import pytest
 
@@ -81,3 +83,9 @@ def test_the_host_read_after_the_conditional_sees_the_device_result():
     out = np.zeros(1)
     sdfg(A=A, X=X, out=out, N=2 * SMALL)
     np.testing.assert_array_equal(out, [2 * A[0]])
+
+
+if __name__ == '__main__':
+    test_the_blocks_after_a_conditional_know_where_its_later_arm_left_the_data()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_the_host_read_after_the_conditional_sees_the_device_result()

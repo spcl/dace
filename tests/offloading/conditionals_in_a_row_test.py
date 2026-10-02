@@ -4,6 +4,7 @@
 The placement visits each arm once, not once per route: 48 conditionals in a row have 2^48 routes.
 """
 import collections
+import sys
 
 import numpy as np
 import pytest
@@ -75,8 +76,11 @@ def test_conditionals_in_a_row_are_offloaded_and_keep_the_data_on_the_device():
     assert not copies_inside_loops(sdfg)
 
 
+CONDITIONS = [0, 5, IN_A_ROW + 2]
+
+
 @pytest.mark.gpu
-@pytest.mark.parametrize('c', [0, 5, IN_A_ROW + 2])
+@pytest.mark.parametrize('c', CONDITIONS)
 def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
     sdfg = offloaded()
     for node, parent in sdfg.all_nodes_recursive():
@@ -87,3 +91,10 @@ def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
     reference(want, c)
     sdfg(A=A, c=c, N=16)
     np.testing.assert_array_equal(A, want)
+
+
+if __name__ == '__main__':
+    test_conditionals_in_a_row_are_offloaded_and_keep_the_data_on_the_device()
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        for c in CONDITIONS:
+            test_the_offloaded_conditionals_compute_what_numpy_computes(c)

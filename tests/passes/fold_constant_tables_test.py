@@ -55,9 +55,18 @@ def test_a_table_filled_once_with_literals_becomes_a_constant():
     np.testing.assert_array_equal(out, np.array(TABLE) * 2.0)
 
 
-@pytest.mark.parametrize('options', [{'skip': 1}, {'looped': True}, {'rewrite': True}])
+UNFOLDED_OPTIONS = [{'skip': 1}, {'looped': True}, {'rewrite': True}]
+
+
+@pytest.mark.parametrize('options', UNFOLDED_OPTIONS)
 def test_a_table_not_filled_once_with_literals_is_left_alone(options):
     """A partial fill, a fill that runs more than once, and a table written again are not compile-time constants."""
     sdfg = table_then_use(**options)
     assert FoldConstantTables().apply_pass(sdfg, {}) is None
     assert 'table' not in sdfg.constants
+
+
+if __name__ == '__main__':
+    test_a_table_filled_once_with_literals_becomes_a_constant()
+    for options in UNFOLDED_OPTIONS:
+        test_a_table_not_filled_once_with_literals_is_left_alone(options)
