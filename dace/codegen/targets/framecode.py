@@ -1103,7 +1103,8 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: Set[SDFGS
     """
     out_edges = state.parent_graph.out_edges(state)
     if (state not in access_states and len(out_edges) == 1
-            and out_edges[0].data.assignments.keys() & {str(sym) for sym in desc.free_symbols}):
+            and out_edges[0].data.assignments.keys() & {str(sym)
+                                                        for sym in desc.free_symbols}):
         return out_edges[0].dst
     return state
 
