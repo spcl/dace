@@ -61,27 +61,6 @@ UNOP_CPP = {
     "sign_numpy_2": ("sign_numpy_2(", ")"),
 }
 
-# op -> the cuTile-Python expression (operand placeholder ``{a}``).
-CUTE_UNOP_EXPR = {
-    "neg": "-{a}",
-    "not": "~{a}",
-    "abs": "ct.abs({a})",
-    "exp": "ct.exp({a})",
-    "log": "ct.log({a})",
-    "sqrt": "ct.sqrt({a})",
-    "sin": "ct.sin({a})",
-    "cos": "ct.cos({a})",
-    "tan": "ct.tan({a})",
-    "asin": "ct.asin({a})",
-    "acos": "ct.acos({a})",
-    "atan": "ct.atan({a})",
-    "sinh": "ct.sinh({a})",
-    "cosh": "ct.cosh({a})",
-    "floor": "ct.floor({a})",
-    "ceil": "ct.ceil({a})",
-    "tanh": "ct.tanh({a})",
-}
-
 # Explicit dtype-cast ops: the ``TileUnop.op`` label IS the target dtype name
 # (``float64`` / ``int32`` / ...), so a kept ``dace.float64(x)`` cast lowers to a
 # ``TileUnop`` whose op self-describes the conversion. Each maps to the
@@ -199,20 +178,6 @@ class ExpandTileUnopPure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileUnopCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileUnop`."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileUnop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileUnopCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileUnop(nodes.LibraryNode):
     """Element-wise unary op on a K-dim register tile.
@@ -220,8 +185,7 @@ class TileUnop(nodes.LibraryNode):
     Connectors: ``_a`` (operand, omitted when ``kind_a == 'Symbol'``),
     ``_mask`` (optional), ``_c`` (output tile).
 
-    :cvar implementations: ``pure`` (portable lane loop), ``cutile`` (cuTile),
-        and the four K=1 ISA backends.
+    :cvar implementations: ``pure`` (portable lane loop), and the four K=1 ISA backends.
     :cvar default_implementation: ``"pure"``.
     """
 
@@ -230,7 +194,6 @@ class TileUnop(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileUnopPure,
-        "cutile": ExpandTileUnopCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -244,7 +207,7 @@ class TileUnop(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
     op = properties.Property(

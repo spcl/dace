@@ -120,20 +120,6 @@ def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
     return exprs
 
 
-#: Map the :attr:`TileLoad.pad_mode` property values to the cuTile
-#: ``ct.PaddingMode`` enum members. cuTile's padding enum offers ``+inf``
-#: (good for a downstream ``min`` reduction) but has **no** ``-inf`` / ``1``
-#: member (so ``max`` / ``prod`` partial-tile identities cannot be installed
-#: by load padding alone — they are routed to the reduction's pre-select).
-PAD_MODE_CUTE = {
-    "ZERO": "ct.PaddingMode.ZERO",
-    "NAN": "ct.PaddingMode.NAN",
-    "POS_INF": "ct.PaddingMode.POSITIVE_INFINITY",
-    "NEG_ZERO": "ct.PaddingMode.NEGATIVE_ZERO",
-    "UNDETERMINED": "ct.PaddingMode.UNDETERMINED",
-}
-
-
 @library.expansion
 class ExpandTileLoadPure(ExpandTransformation):
     """Correctness-only CPP tasklet copying the tile region into ``_dst``."""
@@ -272,31 +258,6 @@ class ExpandTileLoadPure(ExpandTransformation):
         return tasklet
 
 
-@library.expansion
-class ExpandTileLoadCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileLoad`.
-
-    Emits ``ct.load(__src, index=(__pid0, ...), shape=(W_0, ...),
-    padding_mode=...)`` — the contiguous block-tile read used by the
-    reference cuTile kernels. ``ct.load`` has no ``mask=`` parameter
-    (L-load-nomask), so mask gating is applied at the store side
-    (:class:`TileStore` cutile via ``ct.scatter``) and ``has_mask`` does
-    **not** add a ``__mask`` input here (the load body never reads it).
-    The padding mode is selectable via :attr:`TileLoad.pad_mode` so the
-    OOB tail of the last tile reads as the right identity for the
-    downstream consumer (e.g. ``+inf`` ahead of a ``min`` reduction).
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileLoad", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileLoadCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileLoad(nodes.LibraryNode):
     """Load a K-dim tile out of a global array.
@@ -313,7 +274,6 @@ class TileLoad(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileLoadPure,
-        "cutile": ExpandTileLoadCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -327,7 +287,7 @@ class TileLoad(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
 
@@ -358,17 +318,6 @@ class TileLoad(nodes.LibraryNode):
         allow_none=False,
         default=False,
         desc="When True, the ``_mask`` input connector is required.",
-    )
-    pad_mode = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="ZERO",
-        desc="cuTile OOB padding mode for the partial last tile, one of "
-        "``ZERO | NAN | POS_INF | NEG_ZERO | UNDETERMINED`` mapping to the "
-        "``ct.PaddingMode`` enum. Only the ``cutile`` expansion reads it. The "
-        "orchestrator fusing a load into a reduction sets the right identity "
-        "(``+`` → ZERO, ``min`` → POS_INF); ``max`` / ``prod`` have no padding "
-        "identity in cuTile and rely on the reduction's pre-select instead.",
     )
     src_kind = properties.Property(
         dtype=str,
@@ -421,7 +370,6 @@ class TileLoad(nodes.LibraryNode):
                  dim_strides: Optional[Tuple[int, ...]] = None,
                  src_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
-                 pad_mode: str = "ZERO",
                  src_kind: str = "Tile",
                  src_expr: Optional[str] = None,
                  replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
@@ -436,9 +384,6 @@ class TileLoad(nodes.LibraryNode):
         :param src_dims: Per-tile-dim source-array dim mapping (empty ⇒
             last K dims in order).
         :param has_mask: When True, declare the ``_mask`` input.
-        :param pad_mode: cuTile OOB padding mode (``ZERO | NAN | POS_INF
-            | NEG_ZERO | UNDETERMINED``); only the ``cutile`` expansion uses
-            it.
         :param src_kind: ``"Tile"`` (default; per-lane indexed read of a
             tile-shape ``_src``), ``"Scalar"`` (broadcast a length-1 array
             / ``dace.data.Scalar`` value read via ``_src``), or ``"Symbol"``
@@ -495,7 +440,6 @@ class TileLoad(nodes.LibraryNode):
         self.dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         self.src_dims = list(src_dims) if src_dims else []
         self.has_mask = has_mask
-        self.pad_mode = pad_mode
         self.src_kind = src_kind
         self.src_expr = src_expr
         self.gather_dims = list(g)

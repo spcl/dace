@@ -118,29 +118,6 @@ class ExpandTileStorePure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileStoreCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileStore`.
-
-    Two emission shapes, matching the reference cuTile kernels:
-
-    * Unmasked: ``ct.store(__output, index=(__pid0, ...), tile=__src)``
-      — contiguous block-tile store.
-    * Masked: ``ct.scatter(__output, (idx_0, ...), __src, mask=__mask)``
-      with per-lane indices ``idx_k = ct.arange(W_k) + __pid_k * W_k``,
-      so OOB lanes at the tile tail are skipped per the iteration mask.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileStore", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileStoreCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 def _stride_dim_may_scatter(p: int, dst_dims: Optional[Tuple[int, ...]], gather_dims: Tuple[int, ...]) -> bool:
     """Whether tile dim ``p`` may legitimately carry a zero ``dim_strides`` entry.
 
@@ -176,7 +153,6 @@ class TileStore(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileStorePure,
-        "cutile": ExpandTileStoreCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -190,7 +166,7 @@ class TileStore(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
 

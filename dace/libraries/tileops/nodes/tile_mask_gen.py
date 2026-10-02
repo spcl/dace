@@ -56,26 +56,6 @@ class ExpandTileMaskGenPure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileMaskGenCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileMaskGen`.
-
-    Emits the per-dim ``ct.arange + __pid * W < ub`` shape used by the
-    reference cuTile kernels (see ``manual_cutile_masked.py``). For
-    K=1 the body is a single 1D mask; for K>=2 each per-dim mask is
-    broadcast to the full tile shape and combined with ``&``.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileMaskGenCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileMaskGen(nodes.LibraryNode):
     """Produce the K-dim iteration mask ``bool[widths]``.
@@ -92,7 +72,6 @@ class TileMaskGen(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileMaskGenPure,
-        "cutile": ExpandTileMaskGenCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -106,7 +85,7 @@ class TileMaskGen(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
 

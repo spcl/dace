@@ -1,42 +1,42 @@
 {
  "TileBinop": {
   "configurations": 9600,
-  "sha256": "748d5643276df524184aee5651f2c95262126eeded585e53434d301c8f81ad6b"
+  "sha256": "8e806eda33c4affe2510aa2907542a1d00014e0b833d1f17c88fcad47591d224"
  },
  "TileFMA": {
   "configurations": 504,
-  "sha256": "aafbcdcd6d16c58ce7bc9d89a7b7624c5c1189ef8d82739cd425a1f3f1ca9aa0"
+  "sha256": "44e53d3496627d6bd53ce2e3b4da2f4b4902e017bdbdf408822a4f6e8c9afc60"
  },
  "TileITE": {
   "configurations": 264,
-  "sha256": "27da6f9437590821f735eed0ea6608979741800de3c51827375352dbee36f8a0"
+  "sha256": "9d048477e9a0d990b867b570e2ea36991994db06266dc17f7372e7d3518d3984"
  },
  "TileIota": {
   "configurations": 10,
-  "sha256": "a26752ef9f387ade5ba14d9df2efe659f2adfc515b9b3ed64977a60bcd162155"
+  "sha256": "6527c110bb64a7c9bbc09492377b61940b70e616ae1a47d5d5b88a0471ce8f03"
  },
  "TileLoad": {
   "configurations": 360,
-  "sha256": "e7b1156d0fe26f31a78995b92515464bdc56dc69b45ad1cc0f043e0e126d86d9"
+  "sha256": "27bf1977694b32ab5a3da9823e00ed090e7a1934bd6b8ec2cb3283cd6405b03a"
  },
  "TileMMA": {
   "configurations": 10,
-  "sha256": "aa2b9c0b95b50cdb425211e18844a7c1f8009d90f1b5ba7f28ec18f6a97a7fe0"
+  "sha256": "0f1114c6652cc1fecb5f80881705fed3e79d41614264d6132cc463adeb65c307"
  },
  "TileMaskGen": {
   "configurations": 10,
-  "sha256": "c7208bc0ea38842e5369aebb854b41adf67461f439252d1715f996a2f50cf53a"
+  "sha256": "aa45a2272efbaec0169e89867a4404617632cc9b0ba7e6fefbe2e6780dd3d273"
  },
  "TileReduce": {
   "configurations": 240,
-  "sha256": "6eaa4ba5e104805d64881651fef649d533786d57b5f77ff468b59aa2f1fe7e4c"
+  "sha256": "d2871de778ab02c8d2e055e1abbdc8af257a1f1d98f90928a296d776dfc70f58"
  },
  "TileStore": {
   "configurations": 354,
-  "sha256": "d87543a3f4ffeee2f5d8e68277923eefa9113754d740f900d3f52db1561cc838"
+  "sha256": "2bda64ad32ac400651281d5892d407f9b72c765fa6b624f1c115fd2e02716159"
  },
  "TileUnop": {
   "configurations": 4968,
-  "sha256": "3bd18efc1e7d0903e541ee9ce98b3296868f0d9af76bf9fa8b6475fe2ab2e9f2"
+  "sha256": "55ffb929caf358c331bb3d8368eeda972d4716afa39fe7317dbe7a4b4c3d70c9"
  }
 }

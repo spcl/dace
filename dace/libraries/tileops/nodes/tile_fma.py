@@ -194,20 +194,6 @@ class ExpandTileFMAPure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileFMACutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileFMA` (stubbed out)."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileFMA", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileFMACutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileFMA(nodes.LibraryNode):
     """Fused multiply-add ``_o = _a * _b + _c`` on K-dim register tiles.
@@ -223,8 +209,7 @@ class TileFMA(nodes.LibraryNode):
     native FMA), so the pure and every ISA lowering agree bit-for-bit.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the flattened
-        CPP-loop correctness fallback. ``"cutile"`` is the (stubbed)
-        :mod:`cuda.tile`-Python equivalent.
+        CPP-loop correctness fallback.
     :cvar default_implementation: ``"pure"``.
     """
 
@@ -233,7 +218,6 @@ class TileFMA(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileFMAPure,
-        "cutile": ExpandTileFMACutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve / cuda): a call
         # into dace/tile_ops/<backend>.h -- the backend's env pulls in the matching
         # header. Built by the shared factory (selector routes K>=2 to ``pure``).
@@ -246,7 +230,7 @@ class TileFMA(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
     widths = properties.ListProperty(

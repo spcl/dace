@@ -29,7 +29,7 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
 DIGEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_lowering_digests.json")
 
 #: The implementation-selection ISAs; ``AUTO`` resolves to the host ISA, pinned below.
-ISAS = ("SCALAR", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "CUDA", "CUDA_WARP", "CUTILE", "AUTO")
+ISAS = ("SCALAR", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "CUDA", "CUDA_WARP", "AUTO")
 #: What the host-feature probes answer while lowering, so the snapshot does not depend on the machine.
 HOST_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR"})
 

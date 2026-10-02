@@ -2,9 +2,8 @@
 """Tile-op implementation-selection policy.
 
 The tile lib nodes follow the standard DaCe expansion model: explicit per-node
-``implementations`` (``'pure'`` scalar reference, ``'cutile'`` cuTile, and — as
-they land — ``'avx512'`` / ``'avx2'`` / ``'sve'`` / ``'neon'`` CPU intrinsic
-expansions). Selection is NOT an ``'Auto'`` re-dispatch (the
+``implementations`` (``'pure'`` scalar reference and the per-ISA intrinsic
+expansions ``'avx512'`` / ``'avx2'`` / ``'sve'`` / ``'neon'`` / ``'cuda'``). Selection is NOT an ``'Auto'`` re-dispatch (the
 ``CopyLibraryNode`` idiom for *expansion-time* context) — for tile nodes the
 choice depends only on ``target_isa`` + ``K``, both known when the
 ``VectorizeCPUMultiDim`` orchestrator runs. So the orchestrator stamps
@@ -13,7 +12,7 @@ node)`` before ``expand_library_nodes()``.
 
 Locked scope (2026-05-26): **K >= 2 -> ``'pure'``** (the two remainder knobs
 ride on the scalar K-fold lowering); **K == 1 -> the per-ISA intrinsic** (or
-``'pure'`` / ``'cutile'``). Until a node actually defines the real per-ISA
+``'pure'``). Until a node actually defines the real per-ISA
 expansion class, the selector falls back to ``'pure'`` (the ISA name is not yet
 in the node's ``implementations``), so wiring the orchestrator is safe before
 the intrinsic headers exist.
@@ -33,7 +32,6 @@ ISA_TO_IMPL = {
     "ARM_NEON": "neon",
     "CUDA": "cuda",
     "CUDA_WARP": "cuda_warp",
-    "CUTILE": "cutile",
     # The K=1 scalar backend (dace/tile_ops/scalar.h call). Nodes without it yet
     # fall back to ``pure`` via the membership check in select_tile_implementation.
     "SCALAR": "scalar",
@@ -41,7 +39,7 @@ ISA_TO_IMPL = {
 
 # The host-executed CPU SIMD ISAs. A tile op forced to one of these must run on a host that
 # supports it (arch-native enforcement, see :func:`host_supported_isas`). SCALAR is always
-# runnable; CUDA / CUTILE are GPU device ISAs gated by the schedule, not host-CPU-executed.
+# runnable; CUDA is a GPU device ISA gated by the schedule, not host-CPU-executed.
 CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
 
 # TileBinop / TileUnop ops that have NO per-ISA single-char lowering and must use the
@@ -96,8 +94,8 @@ def host_supported_isas() -> frozenset[str]:
     host cannot run (e.g. AVX-512 on an AVX2-only or ARM box) -- which still COMPILES under the
     backend's explicit ``-mavx512f`` but faults (SIGILL) at runtime. :func:`select_tile_implementation`
     refuses such an ISA early instead. Superset-closed: an AVX-512 host also runs AVX2 and SCALAR.
-    ``SCALAR`` is always runnable; ``CUDA`` / ``CUTILE`` are GPU device ISAs (gated by the schedule),
-    so they are absent here and the CPU-ISA guard skips them.
+    ``SCALAR`` is always runnable; ``CUDA`` is a GPU device ISA (gated by the schedule),
+    so it is absent here and the CPU-ISA guard skips them.
 
     Same host-feature source as :func:`detect_host_isa` (``/proc/cpuinfo``); where flags are
     unreadable (e.g. macOS has no ``/proc/cpuinfo``) it conservatively yields ``{SCALAR}``, matching
@@ -159,7 +157,7 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     # compiles (the backend adds its own ``-m`` flag) but SIGILLs at runtime -- the exact failure
     # seen when a test pins AVX-512 on an AVX2-only or ARM host. Refuse it early with a clear error
     # instead. ``AUTO`` already resolves to a host-supported ISA, so this only fires on an explicit
-    # over-request; CUDA / CUTILE are GPU device ISAs and are not in ``CPU_SIMD_ISAS``.
+    # over-request; CUDA is a GPU device ISA and is not in ``CPU_SIMD_ISAS``.
     if target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
         raise ValueError(f"tile-op target_isa={target_isa!r} is not executable on this host "
                          f"(supported: {sorted(host_supported_isas())}). Vectorization enforces "
@@ -167,8 +165,8 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     # Complex operands have no packed-SIMD lowering on the CPU ISAs (add/sub are a trivial
     # interleaved real add, but mul needs shuffle/FCMLA sequences and abs/div have no SIMD
     # form), so route a complex tile op to the scalar ``pure`` loop over ``std::complex`` --
-    # correct on every target, and the compiler may still auto-vectorize it. CUDA/CuTile
-    # carries complex natively (``cuComplex``, scalar-per-lane warps) so it keeps its path.
+    # correct on every target, and the compiler may still auto-vectorize it. CUDA
+    # carries complex natively (``cuComplex``) so it keeps its path.
     if target_isa != "CUDA" and _tile_has_complex_operand(node, parent_state):
         return "pure"
     impl = ISA_TO_IMPL.get(target_isa, "pure")

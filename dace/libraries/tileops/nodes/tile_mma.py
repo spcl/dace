@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tile MMA (matrix-multiply-accumulate) library node.
 
-Per user direction 2026-06-10: K-dim register-tile MMA mirroring cuTile's
-``ct.mma(a, b, c)`` primitive with GEMM-style ``alpha`` / ``beta`` scalar
-prefactors (matching :class:`~dace.libraries.blas.nodes.gemm.Gemm` convention).
+K-dim register-tile MMA with GEMM-style ``alpha`` / ``beta`` scalar prefactors (matching
+:class:`~dace.libraries.blas.nodes.gemm.Gemm` convention).
 
 Tile shapes:
 
@@ -21,11 +20,8 @@ Compile-time properties:
 
 * ``alpha`` -- scalar prefactor for ``A @ B`` (default 1).
 * ``beta`` -- scalar prefactor for ``C`` (default 1 -- accumulate; set
-  to 0 to overwrite, matching the ``ct.mma`` no-op-when-accumulator-empty
-  convention).
-* ``widths`` -- ``[M, K_inner, N]`` in source order. cuTile requires powers
-  of 2 on every dim; the pure expansion accepts arbitrary positive ints
-  (validated at expansion time).
+  to 0 to overwrite).
+* ``widths`` -- ``[M, K_inner, N]`` in source order; any positive ints (validated at expansion time).
 
 The pure expansion emits a 3-fold nested CPP loop:
 
@@ -40,10 +36,6 @@ for (size_t i = 0; i < M; ++i) {
     }
 }
 ```
-
-The cuTile expansion will lower to ``cuda.tile.mma`` once the cuTile
-backend lands (stub raises ``NotImplementedError`` mirroring the existing
-``ExpandTileBinopCutile`` placeholder).
 """
 from typing import Optional, Tuple
 
@@ -112,26 +104,11 @@ class ExpandTileMMAPure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileMMACutile(ExpandTransformation):
-    """cuTile expansion: lowers to ``cuda.tile.mma(a, b, c)`` (stubbed)."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileMMA", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileMMACutile: cuTile expansion pending -- lowering will emit ``ct.mma(_a, _b, _c)`` "
-            "wrapped in the alpha/beta arithmetic (alpha=1, beta=1 collapses to the bare ``ct.mma`` call). "
-            "Pin a ``pure`` expansion via ``sdfg.expand_library_nodes(implementation='pure')`` for now.")
-
-
 @library.node
 class TileMMA(nodes.LibraryNode):
     """K-dim register-tile MMA: ``c = alpha * (a @ b) + beta * c`` in-place.
 
-    Mirrors cuTile's ``ct.mma`` primitive with GEMM-style ``alpha`` / ``beta``
-    compile-time scalar prefactors. The ``_c`` tile is both input (read for
+    GEMM-style ``alpha`` / ``beta`` compile-time scalar prefactors. The ``_c`` tile is both input (read for
     accumulation) and output (written in place).
     """
 
@@ -140,7 +117,6 @@ class TileMMA(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileMMAPure,
-        "cutile": ExpandTileMMACutile,
     }
     default_implementation = "pure"
 
@@ -149,13 +125,12 @@ class TileMMA(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="Target ISA hint stamped by the orchestrator; consumed only by ISA-specific "
-        "expansions (today only ``pure`` and ``cutile`` exist, so this is informational).",
+        "expansions (today only ``pure`` exists, so this is informational).",
     )
     widths = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Tile dimensions ``[M, K_inner, N]`` in source order. cuTile requires every dim to be "
-        "a power of 2.",
+        desc="Tile dimensions ``[M, K_inner, N]`` in source order.",
     )
     alpha = properties.Property(
         allow_none=False,

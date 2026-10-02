@@ -58,32 +58,7 @@ def _combine_expr(op: str, acc: str, val: str, ctype: str) -> str:
     raise ValueError(f"unknown op {op!r}")
 
 
-OP_CUTE = {"+": "ct.sum", "*": "ct.prod", "min": "ct.min", "max": "ct.max"}
 VALID_OPS = ("+", "*", "min", "max")
-
-#: cuTile literal for each reduction op's identity, pre-selected into masked
-#: lanes before the (mask-less, L-reduce-nomask) reduction. ``min`` / ``max``
-#: need ``±inf`` which only ``ct.where`` can safely inject (the arithmetic
-#: blend hits the ``inf * 0 = NaN`` hazard — see the L-reduce-nomask note).
-OP_IDENTITY_CUTE = {
-    "+": "0",
-    "*": "1",
-    "min": "float('inf')",
-    "max": "float('-inf')",
-}
-
-# Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
-# never installed on CI, so this resolves to ``None`` there (meaning "assume
-# present" — emit the richest ``ct.where`` form as the documented default).
-# A unit test can override it to exercise the no-``where`` fallback / raise
-# paths. L-where-unconfirmed: no ``cuda.tile.where`` page exists in the
-# online cuTile-Python API docs (only a Tile-IR ``select(cond, x, y)`` op),
-# so its presence in the installed package stays unverified.
-try:  # pragma: no cover - cuTile is not installed on CI
-    import cuda.tile as ct  # type: ignore  # noqa: F401
-    CT_HAS_WHERE = hasattr(ct, "where")
-except Exception:  # pragma: no cover - the CI path (no cuTile install)
-    CT_HAS_WHERE = None
 
 
 @library.expansion
@@ -178,34 +153,6 @@ class ExpandTileReducePure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileReduceCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileReduce`.
-
-    Unmasked (``has_mask=False``): ``__output = ct.sum(__src, axis=...)``
-    (or ``ct.prod`` / ``ct.min`` / ``ct.max``).
-
-    Masked (``has_mask=True``): cuTile reductions take no ``mask=`` /
-    valid-region argument (L-reduce-nomask), so the inactive lanes must
-    be pre-set to the op's identity (``+`` → 0, ``*`` → 1, ``min`` →
-    ``+inf``, ``max`` → ``-inf``) before reducing. Primary form uses
-    ``ct.where(__mask, __src, IDENT)``; the ``__mask`` input is genuinely
-    consumed (fixing the prior dead-connector bug). When ``ct.where`` is
-    known absent, ``+`` / ``*`` fall back to an arithmetic blend, while
-    masked ``min`` / ``max`` raise ``NotImplementedError`` (the
-    ``inf * 0 = NaN`` hazard makes the blend unsafe).
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileReduceCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileReduce(nodes.LibraryNode):
     """Reduce a K-dim register tile along ``axis`` (or fully to a scalar).
@@ -225,7 +172,6 @@ class TileReduce(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileReducePure,
-        "cutile": ExpandTileReduceCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve / cuda): a call into
         # dace/tile_ops/<backend>.h::tile_reduce -- each header is self-contained (AVX-512
         # one-shot ``_mm512_reduce_*``, a portable balanced tree on the other CPU ISAs, a
@@ -240,7 +186,7 @@ class TileReduce(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
 

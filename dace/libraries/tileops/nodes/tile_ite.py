@@ -35,19 +35,6 @@ from .. import _isa_codegen
 from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, promotion_ok, edge_moves_a_tile,
                          scalar_operand_ref)
 
-# Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
-# never installed on CI, so this resolves to ``None`` there (meaning "assume
-# present" — emit the richest ``ct.where`` form as the documented default).
-# A unit test can override it to exercise the arithmetic-blend fallback / the
-# non-finite-float raise. L-where-unconfirmed: no ``cuda.tile.where`` page
-# exists in the online cuTile-Python API docs (only a Tile-IR ``select(cond,
-# x, y)`` op), so its presence in the installed package stays unverified.
-try:  # pragma: no cover - cuTile is not installed on CI
-    import cuda.tile as ct  # type: ignore  # noqa: F401
-    CT_HAS_WHERE = hasattr(ct, "where")
-except Exception:  # pragma: no cover - the CI path (no cuTile install)
-    CT_HAS_WHERE = None
-
 
 @library.expansion
 class ExpandTileITEPure(ExpandTransformation):
@@ -128,35 +115,6 @@ class ExpandTileITEPure(ExpandTransformation):
         )
 
 
-@library.expansion
-class ExpandTileITECutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileITE`.
-
-    Primary (CI default): ``__output = ct.where(__mask, __then,
-    __else)`` — the cuTile select primitive. The surrounding iteration
-    mask is applied at the downstream ``ct.scatter`` store, not at the
-    select (matching the reference cuTile kernels).
-
-    Fallback (``ct.where`` known absent): an arithmetic blend
-    ``__m = __mask.astype(__then.dtype); __output = __m * __then +
-    (1.0 - __m) * __else``. This is exact for the ``0.0`` / ``1.0`` (or
-    ``bool``) condition encoding, but ``0.0 * inf = NaN`` would leak a
-    non-finite *unselected* lane into the result. So the fallback is
-    emitted only for an **integer** output dtype; a float output with
-    possibly-non-finite branches raises ``NotImplementedError`` because
-    cuTile offers no other confirmed safe select.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileITE", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileITECutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileITE(nodes.LibraryNode):
     """Per-lane select ``_o = _mask ? _t : _e`` on K-dim register tiles.
@@ -171,8 +129,7 @@ class TileITE(nodes.LibraryNode):
     inactive iter-mask lanes.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        flattened CPP-loop correctness fallback. ``"cutile"`` emits the
-        :mod:`cuda.tile`-Python ``ct.where`` equivalent (opt-in).
+        flattened CPP-loop correctness fallback.
     :cvar default_implementation: ``"pure"``.
     """
 
@@ -181,7 +138,6 @@ class TileITE(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileITEPure,
-        "cutile": ExpandTileITECutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -195,7 +151,7 @@ class TileITE(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
 

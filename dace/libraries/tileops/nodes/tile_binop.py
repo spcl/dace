@@ -360,52 +360,6 @@ class ExpandTileBinopPure(ExpandTransformation):
         )
 
 
-CUTE_OP_EXPR = {
-    "+": "{lhs} + {rhs}",
-    "-": "{lhs} - {rhs}",
-    "*": "{lhs} * {rhs}",
-    "/": "{lhs} / {rhs}",
-    # cuTile's ``%`` floors like Python's, so it is ``py_mod``. A tasklet ``%`` truncates: the dividend's sign on
-    # ``|lhs| % |rhs|``, where floored and truncating agree.
-    "%": "ct.where({lhs} < 0, -(ct.abs({lhs}) % ct.abs({rhs})), ct.abs({lhs}) % ct.abs({rhs}))",
-    "py_mod": "{lhs} % {rhs}",
-    "<": "{lhs} < {rhs}",
-    "<=": "{lhs} <= {rhs}",
-    ">": "{lhs} > {rhs}",
-    ">=": "{lhs} >= {rhs}",
-    "==": "{lhs} == {rhs}",
-    "!=": "{lhs} != {rhs}",
-    "&&": "{lhs} & {rhs}",
-    "||": "{lhs} | {rhs}",
-    "&": "{lhs} & {rhs}",
-    "|": "{lhs} | {rhs}",
-    "^": "{lhs} ^ {rhs}",
-    "min": "ct.minimum({lhs}, {rhs})",
-    "max": "ct.maximum({lhs}, {rhs})",
-}
-
-
-@library.expansion
-class ExpandTileBinopCutile(ExpandTransformation):
-    """``cuda.tile``-Python expansion of :class:`TileBinop`.
-
-    Emits the bare element-wise expression (e.g. ``a_tile + b_tile``)
-    — matches the reference cuTile kernels, where the mask is applied
-    at the ``ct.scatter`` store, not at the binop. Symbol-kind operands
-    are embedded inline. ``min`` / ``max`` route to ``ct.minimum`` /
-    ``ct.maximum``.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node: "TileBinop", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        raise NotImplementedError(
-            "ExpandTileBinopCutile: cuTile expansion stubbed out during G3 step 3 migration; the unified `TileLoad` / `TileStore` (with `gather_dims`) cuTile path will be reinstated after the per-source-dim gather contract lands per design "
-            "section 6.4. Pin a `pure` expansion via `sdfg.expand_library_nodes(implementation='pure')` to lower this node for now."
-        )
-
-
 @library.node
 class TileBinop(nodes.LibraryNode):
     """Element-wise binary op on K-dim register tiles.
@@ -418,9 +372,7 @@ class TileBinop(nodes.LibraryNode):
     per lane.
 
     :cvar implementations: Per-target expansions; ``"pure"`` is the
-        flattened CPP-loop correctness fallback. ``"cutile"`` emits the
-        :mod:`cuda.tile`-Python equivalent (opt-in; the orchestrator
-        stays on ``"pure"`` for CPU).
+        flattened CPP-loop correctness fallback.
     :cvar default_implementation: ``"pure"``.
     """
 
@@ -429,7 +381,6 @@ class TileBinop(nodes.LibraryNode):
     auto_select_implementation = False
     implementations = {
         "pure": ExpandTileBinopPure,
-        "cutile": ExpandTileBinopCutile,
         # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
         # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
         # matching header. Built by the shared factory (selector routes K>=2 to
@@ -443,7 +394,7 @@ class TileBinop(nodes.LibraryNode):
         allow_none=False,
         default="SCALAR",
         desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
+        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
         "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
     )
     op = properties.Property(
