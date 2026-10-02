@@ -1159,10 +1159,8 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
 
 
-def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
-    """Nothing orders two writes to one region that reach a node on separate edges. Plain copy-edge
-    codegen emits the copy when its SOURCE access node is visited, so it lands before the tasklet
-    that supersedes it; lifting it to a node would re-sort it after and flip which write survives."""
+def competing_direct_copy_sdfg() -> dace.SDFG:
+    """``B <- A`` as a copy edge, while a tasklet fed by ``A`` also writes ``B[0]``."""
     sdfg = dace.SDFG("competing_writer")
     sdfg.add_array("A", [4], dace.float64)
     sdfg.add_array("B", [4], dace.float64)
@@ -1174,11 +1172,162 @@ def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
     state.add_edge(a, None, tasklet, "i", Memlet("A[0]"))
     state.add_edge(tasklet, "o", b, None, Memlet("B[0]"))
     sdfg.validate()
+    return sdfg
+
+
+def competing_stage_in_sdfg() -> dace.SDFG:
+    """``local <- A[tile]`` staged in through a map entry, while a tasklet of the scope overwrites ``local[0]``."""
+    sdfg = _build_stage_in_sdfg("competing_stage_in")
+    state = sdfg.start_state
+    local = next(n for n in state.data_nodes() if n.data == "local")
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.label == "tile")
+    patch = state.add_tasklet("patch", {}, {"o"}, "o = -1.0")
+    state.add_nedge(entry, patch, Memlet())
+    state.add_edge(patch, "o", local, None, Memlet("local[0]"))
+    sdfg.validate()
+    return sdfg
+
+
+def competing_stage_out_sdfg() -> dace.SDFG:
+    """``B[tile] <- local`` staged out through a map exit, while a tasklet reading ``local`` overwrites ``B[bi]``."""
+    sdfg = _build_stage_out_sdfg("competing_stage_out")
+    state = sdfg.start_state
+    local = next(n for n in state.data_nodes() if n.data == "local")
+    exit_node = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == "tile")
+    scale = state.add_tasklet("scale", {"i"}, {"o"}, "o = i * 10.0")
+    state.add_edge(local, None, scale, "i", Memlet("local[0]"))
+    state.add_memlet_path(scale, exit_node, state.add_write("B"), src_conn="o", memlet=Memlet("B[bi]"))
+    sdfg.validate()
+    return sdfg
+
+
+def concat_where_sdfg(copies: int) -> dace.SDFG:
+    """``S[Max(K, 0):N]`` copied into ``copies`` arrays, each also written over ``0:Min(K, N)`` by a map.
+
+    Reduced from GT4Py ``concat_where`` over a dynamic domain: the two write regions are disjoint but bounded by
+    ``Min``/``Max`` expressions that ``subsets.intersects`` cannot decide.
+    """
+    sdfg = dace.SDFG(f"concat_where_{copies}")
+    names = "DE"[:copies]
+    for name in "AS" + names:
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
+    state = sdfg.add_state("main")
+    source = state.add_read("S")
+    for name in names:
+        dst = state.add_write(name)
+        entry, exit_node = state.add_map(f"k_{name}", dict(i="0:Min(K, N)"))
+        tasklet = state.add_tasklet(f"double_{name}", {"a"}, {"o"}, "o = a * 2.0")
+        state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=Memlet("A[i]"))
+        state.add_memlet_path(tasklet, exit_node, dst, src_conn="o", memlet=Memlet(f"{name}[i]"))
+        state.add_nedge(source, dst, Memlet("S[Max(K, 0):N] -> [Max(K, 0):N]"))
+    sdfg.validate()
+    return sdfg
+
+
+def copy_edges_remaining(sdfg: dace.SDFG) -> list:
+    """Edges that still move data as a plain memlet: between two access nodes, or staging through a scope."""
+    remaining = []
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.is_empty() or edge.data.wcr is not None:
+                continue
+            access_to_access = isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
+            stage_in = isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.AccessNode)
+            stage_out = isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.MapExit)
+            if access_to_access or stage_in or stage_out:
+                remaining.append(f"{edge.src} -> {edge.dst}")
+    return remaining
+
+
+def lifted_copy_orders_before(sdfg: dace.SDFG, tasklet_label: str) -> bool:
+    """Whether a lifted copy has an ordering edge to the tasklet (or the scope entry that holds it)."""
+    state = sdfg.start_state
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == tasklet_label)
+    scopes = {tasklet, state.entry_node(tasklet)}
+    return any(
+        isinstance(e.src, CopyLibraryNode) and e.dst in scopes and e.data.is_empty() for n in scopes if n is not None
+        for e in state.in_edges(n))
+
+
+def test_a_copy_competing_with_another_write_is_lifted_and_ordered_before_it():
+    """Copy-edge codegen emitted the copy when its SOURCE access node was visited, so it landed before the tasklet
+    that supersedes it; the lifted copy keeps that order with an edge, or it could be re-sorted after the tasklet."""
+    sdfg = competing_direct_copy_sdfg()
+
+    assert InsertExplicitCopies().apply_pass(sdfg, {}) == 1
+
+    assert len([n for n in sdfg.start_state.nodes() if isinstance(n, CopyLibraryNode)]) == 1
+    assert lifted_copy_orders_before(sdfg, "supersede")
+    a, b = np.arange(1.0, 5.0), np.zeros(4)
+    sdfg(A=a, B=b)
+    np.testing.assert_array_equal(b, [2.0, 2.0, 3.0, 4.0])
+
+
+def test_a_stage_in_copy_competing_with_a_write_is_lifted_and_ordered_before_it():
+    """The staged-in tile lands before the scope's own write to the same element, as the implicit copy did."""
+    sdfg = competing_stage_in_sdfg()
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
-    assert not lifted, "a copy competing with another write to B was lifted"
+    assert lifted_copy_orders_before(sdfg, "patch")
+    a, b = np.arange(_N_STAGE, dtype=np.float64), np.zeros(_N_STAGE)
+    sdfg(A=a, B=b)
+    expected = a + 1.0
+    expected[::_TILE] = 0.0
+    np.testing.assert_array_equal(b, expected)
+
+
+def test_a_stage_out_copy_competing_with_a_write_is_lifted_and_ordered_before_it():
+    """The staged-out tile lands before the tasklet that reads the same ``local`` and overwrites ``B[bi]``."""
+    sdfg = competing_stage_out_sdfg()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert lifted_copy_orders_before(sdfg, "scale")
+    a, b = np.arange(_N_STAGE, dtype=np.float64), np.zeros(_N_STAGE)
+    sdfg(A=a, B=b)
+    expected = a + 1.0
+    expected[::_TILE] = (a[::_TILE] + 1.0) * 10.0
+    np.testing.assert_array_equal(b, expected)
+
+
+@pytest.mark.parametrize("copies", [1, 2])
+@pytest.mark.parametrize("k", [0, 3, 8, 11])
+def test_concat_where_copies_are_lifted_and_compute_the_concatenation(copies, k):
+    """The write regions ``[0, Min(K, N))`` and ``[Max(K, 0), N)`` are disjoint: every element takes its own source."""
+    n = 8
+    sdfg = concat_where_sdfg(copies)
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    a, s = np.arange(1.0, n + 1), np.arange(100.0, 100.0 + n)
+    outputs = {name: np.full(n, -1.0) for name in "DE"[:copies]}
+    sdfg(A=a, S=s, N=n, K=k, **outputs)
+    expected = np.concatenate([a[:min(k, n)] * 2.0, s[max(k, 0):]])
+    for name, out in outputs.items():
+        np.testing.assert_array_equal(out, expected, err_msg=name)
+
+
+@pytest.mark.parametrize(
+    "build", [
+        competing_direct_copy_sdfg,
+        competing_stage_in_sdfg,
+        competing_stage_out_sdfg,
+        lambda: concat_where_sdfg(1),
+        lambda: concat_where_sdfg(2),
+        lambda: _build_stage_in_sdfg("plain_stage_in"),
+        lambda: _build_stage_out_sdfg("plain_stage_out"),
+    ],
+    ids=["direct", "stage_in", "stage_out", "concat_where", "concat_where_two", "plain_in", "plain_out"])
+def test_no_copy_stays_implicit(build):
+    """After the pass every data-moving copy of the standard storages is a ``CopyLibraryNode``, competing or not."""
+    sdfg = build()
+    assert copy_edges_remaining(sdfg), "the fixture has no copy to lift"
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert copy_edges_remaining(sdfg) == []
 
 
 def test_zero_element_copy_is_not_lifted():
@@ -1217,5 +1366,80 @@ def test_lifted_copy_inherits_the_state_instrumentation():
     assert expanded[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+if __name__ == '__main__':
+    test_insert_cpu_to_cpu_1d()
+    test_insert_cpu_to_cpu_2d_slice()
+    for sdfg_name, memlet in [("insert_other_dst", Memlet(data="B", subset="0:8", other_subset="2:10")),
+                              ("insert_other_src", Memlet(data="A", subset="2:10", other_subset="0:8"))]:
+        test_insert_other_subset_data_convention(sdfg_name, memlet)
+    test_insert_cpu_to_cpu_full_array()
+    test_insert_multiple_copies_same_state()
+    test_insert_empty_memlet_skipped()
+    test_insert_no_copies_returns_none()
+    test_insert_nested_sdfg()
+    test_single_element_copies_expand_to_tasklets_no_nested_sdfg()
+    test_insert_validates_after_pass()
+    test_insert_view_src_round_trip_lifts_movement_edge()
+    test_insert_view_src_round_trip_numerical()
+    test_insert_view_dst_round_trip_numerical()
+    for memlet in ["[0:4, 3] -> p[0:4, 4]", "p[0:4, 3] -> [0:4, 4]"]:
+        test_insert_self_copy_direction(memlet)
+    for src_shape, dst_shape in [([8, 12, 5, 3], [96, 5, 3]), ([8, 10, 12], [80, 12]), ([8, 12, 5, 3], [8, 60, 3]),
+                                 ([2, 3, 4, 5], [6, 20]), ([8, 12, 5, 3], [1440])]:
+        test_insert_consecutive_collapse_reshape(src_shape, dst_shape)
+    for src_shape, dst_shape in [([80, 12], [8, 10, 12]), ([96, 5, 3], [8, 12, 5, 3]), ([1440], [8, 12, 5, 3]),
+                                 ([6, 20], [2, 3, 4, 5])]:
+        test_insert_consecutive_split_reshape(src_shape, dst_shape)
+    for src_shape, dst_shape in [([8, 1, 12], [8, 12]), ([8, 12, 1, 5], [96, 5]), ([1, 96, 5, 3], [8, 12, 5, 3])]:
+        test_insert_reshape_with_squeezed_ones(src_shape, dst_shape)
+    test_insert_view_rewrite_is_idempotent_under_repeated_apply()
+    test_iec_skips_array_to_view_edge()
+    test_iec_round_trip_view_lifts_one_copy()
+    test_iec_view_multiple_consumers_each_lifted()
+    test_iec_skips_reshape_view_edge()
+    for name, src_shape, dst_shape, subset, other_subset, expected in [
+        ("const_first", [5, 4, 3], [4, 3], "2, 0:4, 0:3", "0:4, 0:3", lambda s: s[2]),
+        ("const_middle", [4, 5, 3], [4, 3], "0:4, 2, 0:3", "0:4, 0:3", lambda s: s[:, 2, :]),
+        ("rank_change", [2, 3, 4], [8, 3], "0:2, 0:3, 0:4", "0:8, 0:3", lambda s: s.reshape(8, 3)),
+        ("flatten", [4, 3], [12], "0:4, 0:3", "0:12", lambda s: s.reshape(12))
+    ]:
+        test_iec_array_to_array_rank_mismatch(name, src_shape, dst_shape, subset, other_subset, expected)
+    test_iec_reshape_does_not_lift_view()
+    test_iec_reinterpret_does_not_lift_view()
+    test_lift_stage_in_copy()
+    test_lift_stage_out_copy()
+    test_lift_stage_in_copy_through_view()
+    test_lift_stage_out_copy_through_view()
+    test_lift_stage_in_copy_chained_map_entries()
+    test_lift_stage_out_copy_chained_map_exits()
+    test_lift_stage_in_copy_with_nested_sdfg_consumer()
+    test_polybench_fdtd2d()
+    test_polybench_correlation()
+    test_polybench_covariance()
+    test_iec_skips_dtype_converting_copy()
+    test_iec_skips_reference_set_edge()
+    test_iec_skips_reference_set_edge_through_map()
+    test_iec_staging_keeps_memlet_named_inner_subset()
+    test_iec_symbolic_reshape_targets_the_whole_destination()
+    test_iec_skips_wcr_staging_edge()
+    test_iec_keeps_the_ordering_edge_on_the_node_that_writes()
+    test_a_copy_competing_with_another_write_is_lifted_and_ordered_before_it()
+    test_a_stage_in_copy_competing_with_a_write_is_lifted_and_ordered_before_it()
+    test_a_stage_out_copy_competing_with_a_write_is_lifted_and_ordered_before_it()
+    for k in [0, 3, 8, 11]:
+        for copies in [1, 2]:
+            test_concat_where_copies_are_lifted_and_compute_the_concatenation(copies, k)
+    for build in [
+            competing_direct_copy_sdfg, competing_stage_in_sdfg, competing_stage_out_sdfg, lambda: concat_where_sdfg(1),
+            lambda: concat_where_sdfg(2), lambda: _build_stage_in_sdfg("plain_stage_in"),
+            lambda: _build_stage_out_sdfg("plain_stage_out")
+    ]:
+        test_no_copy_stays_implicit(build)
+    test_zero_element_copy_is_not_lifted()
+    test_lifted_copy_inherits_the_state_instrumentation()
+    for sdfg_name, src_name, src_storage, dst_name, dst_storage, size in [
+        ("insert_cpu_gpu", "H", dace.StorageType.CPU_Heap, "G", dace.StorageType.GPU_Global, 64),
+        ("insert_gpu_cpu", "G", dace.StorageType.GPU_Global, "H", dace.StorageType.CPU_Heap, 64),
+        ("insert_gpu_gpu", "A", dace.StorageType.GPU_Global, "B", dace.StorageType.GPU_Global, 128)
+    ]:
+        test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_name, dst_storage, size)
