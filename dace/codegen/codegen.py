@@ -19,6 +19,7 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -446,7 +447,6 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
 
     # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in
     # simplify) so SymPy's power laws can still fold Pow expressions beforehand.
-    from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
     RelaxIntegerPowers().apply_pass(sdfg, {})
     # Storage is final, so the stack placement of register arrays can be decided
     from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
