@@ -3160,8 +3160,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
-        # The write ends the version any promoted symbol was read from.
-        self.forget_promoted_scalar(target_name)
+        # The write ends the value the scalar was known to hold.
+        self.symbolic_scalar_values.pop(target_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3424,8 +3424,8 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
-        # An update is a write too: it ends the version any promoted symbol was read from.
-        self.forget_promoted_scalar(wtarget_name)
+        # An update is a write too: it ends the value the scalar was known to hold.
+        self.symbolic_scalar_values.pop(wtarget_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -6143,18 +6143,6 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
-    def forget_promoted_scalar(self, scalar: str) -> None:
-        """Drop ``scalar``'s promoted symbol, because the scalar has just been written again.
-
-        The symbol carries the value the scalar had when it was read, so it belongs to that
-        ASSIGNMENT and not to the name. Keeping it across a rebind is what let a second array sized
-        from the same name collapse onto the first one's extent. Promotions cached under an
-        EXPRESSION need no invalidation: nothing rebinds a name they hold, and each read re-assigns
-        the symbol on its own interstate edge.
-        """
-        self.indirections.pop(scalar, None)
-        self.symbolic_scalar_values.pop(scalar, None)
-
     def value_holds_here(self, value: symbolic.SymbolicType, defining_region: ControlFlowRegion) -> bool:
         """Whether ``value``, bound in ``defining_region``, provably still holds at the current region.
 
@@ -6184,42 +6172,39 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym, (value, region) in self.promoted_symbol_values.items() if self.value_holds_here(value, region)
         }
 
-    def promote_scalar_to_symbol(self,
-                                 scalar: str,
-                                 key: Optional[str] = None,
-                                 for_shape: bool = False) -> symbolic.symbol:
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
-        ONE symbol per scalar VERSION: the promotion is cached under ``key`` and dropped when the
-        scalar is written again (:meth:`forget_promoted_scalar`), so two shapes sized from the same
-        REASSIGNED name keep their own values -- while a shape and a slice bound built from the same
-        assignment share one symbol. Without that sharing ``a = np.empty(n); a[:n] = x`` sizes the
-        allocation from one symbol and the store from another, and a copy whose extents are equal by
-        construction is refused as a shape mismatch.
-
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key, the scalar's name by default. Repeated promotions of the same
-                    EXPRESSION pass its text, so ``A_col[A_row[i]:A_row[i + 1]]`` and
-                    ``A_val[A_row[i]:A_row[i + 1]]`` get one symbol per bound and their extents stay
-                    comparable; each read mints its own scalar transient, so the name cannot say so.
-        :param for_shape: The symbol is an array extent, so it must resolve inside nested scopes,
-                          which look up free symbols in ``globals``. Subscript promotions stay out
-                          of ``globals``: they shadow names there.
+        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
+        :param fresh: Mint a new suffixed symbol instead of reusing a cached one, so two shapes
+                      sized from the same reassigned scalar keep their own values.
         :return: The symbol carrying the scalar's value.
         """
-        key = scalar if key is None else key
+        key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
-        sym = self.indirections.get(key)
+        sym = None if fresh else self.indirections.get(key)
         if sym is None:
-            # A NEW name per version: re-minting the bare ``__sym_<scalar>`` after a rebind would
-            # re-bind the extent an earlier array already took.
-            reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
-            name = add_symbol(self.sdfg, find_new_name(f'__sym_{scalar}', reserved), desc.dtype)
+            base = f'__sym_{scalar}'
+            if fresh:
+                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
+                # reuses; a later index on the same scalar would otherwise re-bind the extent.
+                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
+                name = add_symbol(self.sdfg, find_new_name(base, reserved), desc.dtype)
+            else:
+                name = base
+                try:
+                    add_symbol(self.sdfg, name, desc.dtype)
+                except FileExistsError:
+                    pass  # A cached promotion may re-add an existing symbol.
             sym = dace.symbol(name, dtype=desc.dtype)
-            self.indirections[key] = sym
-        if for_shape:
-            self.globals[str(sym)] = sym
+            if not fresh:
+                self.indirections[key] = sym
+            else:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in
+                # ``globals``. Subscript promotions must stay out: they shadow names there.
+                self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
