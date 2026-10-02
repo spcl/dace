@@ -91,6 +91,15 @@ def test_auto_placement_of_a_large_constant_array_respects_max_stack_array_size(
     assert sdfg.arrays['tmp'].stack_vla is StackAllocation.Heap
 
 
+@pytest.mark.parametrize('value, resolved', [(16, StackAllocation.Stack), (4096, StackAllocation.Heap)])
+def test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(value, resolved):
+    """The constant's dtype differs from the symbol's, as for the Polybench sizes."""
+    sdfg = register_scratch_sdfg(f'resolve_constant_{value}', dace.symbol('NC', dace.int32), StackAllocation.Auto)
+    sdfg.add_constant('NC', np.int64(value))
+    ResolveStackAllocation().apply_pass(sdfg, {})
+    assert sdfg.arrays['tmp'].stack_vla is resolved
+
+
 def test_a_symbolic_stack_array_is_a_variable_length_array():
     sdfg = register_scratch_sdfg('vla_stack', N, StackAllocation.Stack)
     code = sdfg.generate_code()[0].clean_code
@@ -195,6 +204,8 @@ if __name__ == '__main__':
     for case in PLACEMENT_CASES:
         test_auto_placement_resolves_by_size_and_explicit_placement_is_kept(*case)
     test_auto_placement_of_a_large_constant_array_respects_max_stack_array_size()
+    test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(16, StackAllocation.Stack)
+    test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(4096, StackAllocation.Heap)
     test_a_symbolic_stack_array_is_a_variable_length_array()
     test_a_zero_extent_stack_array_has_a_positive_bound()
     test_a_zeroed_symbolic_stack_array_is_cleared_by_memset()
