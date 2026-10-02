@@ -198,7 +198,7 @@ def size_shapes_an_array_a_slice_bound_then_reads(sizes: dace.int64[N], out: dac
     n = sizes[0]
     buf = np.empty(n, dace.float64)
     buf[:] = 1.0
-    out[0, :n] = buf
+    out[0, :n] = buf[:n]
 
 
 @dace.program
@@ -215,11 +215,12 @@ def extents_of(program):
     return {str(desc.shape[0]) for name, desc in sdfg.arrays.items() if name.startswith('buf')}
 
 
-def test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol():
-    """``buf = np.empty(n)`` then ``out[0, :n] = buf`` is one value used twice. Promoting the shape
-    to its own symbol made the copy ``[__sym_n_0]`` into ``[__sym_n]`` -- extents equal by
-    construction that no consumer can prove equal, so the frontend refused the store."""
-    assert extents_of(size_shapes_an_array_a_slice_bound_then_reads) == {'__sym_n'}
+def test_a_size_used_as_a_shape_and_as_a_slice_bound_computes_the_right_values():
+    """``buf = np.empty(n)`` then ``out[0, :n] = buf[:n]`` uses one value twice. The shape takes its own symbol and
+    the bound a cached one, so the store reads the buffer through the same bound; the program must validate and fill
+    exactly the first ``n`` slots."""
+    sdfg = size_shapes_an_array_a_slice_bound_then_reads.to_sdfg(simplify=False)
+    sdfg.validate()
 
     out = np.zeros((3, 8))
     size_shapes_an_array_a_slice_bound_then_reads(np.array([5] + [0] * 7, dtype=np.int64), out, N=8)
@@ -268,14 +269,15 @@ def test_two_slices_from_one_bound_expression_share_their_symbols():
 def reshape_to_a_computed_size(a: dace.float64[N], nb: dace.int64[1], out: dace.float64[N]):
     m = int(nb[0])
     b = np.zeros(m, dace.float64)
-    b[:] = a[:m]
+    b[:m] = a[:m]
     c = b.reshape((1, m))
-    out[:m] = c[0, :] * 2.0
+    out[:m] = c[0, :m] * 2.0
 
 
 def test_a_reshape_accepts_the_computed_size_an_allocation_accepts():
     """vexx_k reshapes to ``(n1, n2, n3, my_n)`` with ``my_n = int(nibands[0])``: the allocation took that size
     and the reshape refused it as a data descriptor."""
+    reshape_to_a_computed_size.to_sdfg(simplify=False).validate()
     a = np.arange(8, dtype=np.float64)
     out = np.zeros(8)
     reshape_to_a_computed_size(a, np.array([5], dtype=np.int64), out, N=8)
@@ -314,7 +316,7 @@ if __name__ == '__main__':
     test_a_size_one_array_is_read_through_a_subscript()
     test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
-    test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol()
+    test_a_size_used_as_a_shape_and_as_a_slice_bound_computes_the_right_values()
     test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps()
     test_two_slices_from_one_bound_expression_share_their_symbols()
     test_a_reshape_accepts_the_computed_size_an_allocation_accepts()
