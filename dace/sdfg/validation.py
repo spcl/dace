@@ -369,30 +369,20 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
 
 
 @functools.lru_cache(maxsize=16384)
-def _is_negative_index_cached(index, offset) -> bool:
-    return ((index + offset) < 0) == True
-
-
-@functools.lru_cache(maxsize=16384)
-def _is_out_of_bounds_index_cached(index, offset, size) -> bool:
-    return ((index + offset) >= size) == True
-
-
 def _is_negative_index(index, offset) -> bool:
     """
     Returns True if an offset index is provably negative. Since the symbolic comparison is costly and the same
-    expressions reappear in many memlets, results are cached (the comparison only depends on the expressions).
+    expressions reappear in many memlets, results are cached (the comparison only depends on the expressions, which
+    are integers or hashable symbolic expressions).
 
     :param index: The (symbolic) index.
     :param offset: The (symbolic) offset of the data container dimension.
     :return: True if ``index + offset < 0`` is provably true.
     """
-    try:
-        return _is_negative_index_cached(index, offset)
-    except TypeError:  # Unhashable arguments
-        return ((index + offset) < 0) == True
+    return ((index + offset) < 0) == True
 
 
+@functools.lru_cache(maxsize=16384)
 def _is_out_of_bounds_index(index, offset, size) -> bool:
     """
     Returns True if an offset index is provably out of the upper bound of a data container dimension. Results are
@@ -403,10 +393,7 @@ def _is_out_of_bounds_index(index, offset, size) -> bool:
     :param size: The (symbolic) size of the data container dimension.
     :return: True if ``index + offset >= size`` is provably true.
     """
-    try:
-        return _is_out_of_bounds_index_cached(index, offset, size)
-    except TypeError:  # Unhashable arguments
-        return ((index + offset) >= size) == True
+    return ((index + offset) >= size) == True
 
 
 def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.MultiConnectorEdge[Memlet]']):

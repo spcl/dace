@@ -662,7 +662,7 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=None, typed=True)
 def _default_assumptions_of_type(dtype: 'dtypes.typeclass') -> Dict[str, Any]:
     """
     Returns the assumptions of a symbol of the given type created without explicit assumptions. They only depend on
@@ -675,7 +675,7 @@ def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
     return _default_assumptions_of_type(expr.dtype)
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
     # Cached: the result only depends on the assumptions of the symbol (part of its equality) and on ``dtype``.
     # The returned dictionary must not be modified.

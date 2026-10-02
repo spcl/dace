@@ -961,7 +961,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    frame = getattr(codegen, '_frame', None)
+    frame = codegen.get_framecode_generator()
     if frame is not None:
         defined_symbols = frame.symbols_defined_at(state_dfg, node)
     else:

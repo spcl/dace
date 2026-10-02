@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import collections.abc
 from collections import defaultdict, deque
@@ -59,11 +59,8 @@ class StateReachability(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[SDFGState, Set[SDFGState]] = defaultdict(OrderedSet)
             for state in sdfg.states():
-                block_reach = cf_block_reach_dict[state.parent_graph.cfg_id][state]
-                if isinstance(block_reach, ReachableBlocks):
-                    result[state] = ReachableBlocks(block_reach.index, state, states_only=True)
-                else:
-                    result[state] = OrderedSet(r for r in block_reach if isinstance(r, SDFGState))
+                block_reach: ReachableBlocks = cf_block_reach_dict[state.parent_graph.cfg_id][state]
+                result[state] = ReachableBlocks(block_reach.index, state, states_only=True)
             reachable[sdfg.cfg_id] = result
         return reachable
 

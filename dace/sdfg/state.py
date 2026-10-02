@@ -2804,6 +2804,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
+        # Position of this CFG in ``_cfg_list`` when last computed (see ``cfg_id``)
+        self._cfg_id_cache: Optional[int] = None
 
     def get_meta_codeblocks(self) -> List[CodeBlock]:
         """
@@ -3348,7 +3350,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         cfg_list = self.cfg_list
         # The index found last time is still correct if this CFG is still at that position
-        index = getattr(self, '_cfg_id_cache', None)
+        index = self._cfg_id_cache
         if index is None or index >= len(cfg_list) or cfg_list[index] is not self:
             index = cfg_list.index(self)
             self._cfg_id_cache = index

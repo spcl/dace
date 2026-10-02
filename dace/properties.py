@@ -46,8 +46,9 @@ def _coerce_symbolic_property_value(value):
 @functools.lru_cache(maxsize=16384)
 def _normalize_python_code(code: str) -> str:
     """
-    Parses and unparses Python code. Two roundtrips avoid issues in AST parsing/unparsing of negative numbers, i.e.,
-    "(-1)" becomes "(- 1)". The result only depends on the string, so it is cached.
+    Parses and unparses Python code that was already unparsed from an AST (e.g., ``CodeBlock.as_string``). The second
+    unparsing roundtrip avoids issues in AST parsing/unparsing of negative numbers, i.e., "(-1)" becomes "(- 1)".
+    The result only depends on the string, so it is cached.
     """
     return unparse(ast.parse(code))
 

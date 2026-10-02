@@ -274,7 +274,7 @@ class Subset(object):
         raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
 
 
-def _is_one(val) -> bool:
+def is_one(val) -> bool:
     """ Returns True if the given value is the integer one (as a Python or SymPy integer). """
     return val is sp.S.One or (type(val) is int and val == 1)
 
@@ -446,7 +446,7 @@ class Range(Subset):
                 iMin = iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin
                 iMax = iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax
                 step = step.approx if isinstance(step, symbolic.SymExpr) else step
-                if _is_one(step) and _is_one(ts) and _cancels_exactly(iMin) and iMin == iMax:
+                if is_one(step) and is_one(ts) and _cancels_exactly(iMin) and iMin == iMax:
                     # Single index (e.g., ``i:i+1``): ``ceiling((i + 1 - i) / 1)`` is always one
                     result.append(sp.S.One)
                 else:
