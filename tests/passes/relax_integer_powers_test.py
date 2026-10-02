@@ -10,10 +10,11 @@ from dace import data, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import ipow, pystr_to_symbolic, symstr
-from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers, _loop_range
+from dace.transformation.passes.relax_integer_powers import (RelaxIntegerPowers, SignFacts, loop_range, ordered_range,
+                                                             proven_nonnegative, relaxed_exponent)
 
 
-def _ipow_count(sdfg: dace.SDFG) -> int:
+def ipow_count(sdfg: dace.SDFG) -> int:
     """Count ``ipow`` occurrences across descriptors, map ranges and memlet subsets."""
 
     def atoms(expr):
@@ -32,12 +33,6 @@ def _ipow_count(sdfg: dace.SDFG) -> int:
                 if edge.data is not None and isinstance(edge.data.subset, dace.subsets.Range):
                     total += sum(atoms(x) for rng in edge.data.subset.ranges for x in rng)
     return total
-
-
-def _prover() -> RelaxIntegerPowers:
-    p = RelaxIntegerPowers()
-    p._pos = p._nonneg = p._int = frozenset()
-    return p
 
 
 def test_ipow_lowers_to_cpp_ipow():
@@ -74,7 +69,10 @@ def test_ipow_folds_constant_power():
 def test_interval_proves_radix_decomposition():
     K = symbolic.symbol('K', positive=True, integer=True)
     i = symbolic.symbol('i', integer=True)
-    prove = _prover()._proven_nonnegative
+
+    def prove(exp, ranges):
+        return proven_nonnegative(exp, ranges, SignFacts())
+
     assert prove(K - i - 1, {'i': (0, K - 1)}) is True  # bottoms out at 0 when i = K-1
     assert prove(i, {'i': (0, K - 1)}) is True
     assert prove(K, {}) is True  # positive size symbol
@@ -84,7 +82,7 @@ def test_interval_refuses_unbounded_iterator():
     K = symbolic.symbol('K', positive=True, integer=True)
     i = symbolic.symbol('i', integer=True)
     # Without a range for i, K - i - 1 could be negative -> must not relax.
-    assert _prover()._proven_nonnegative(K - i - 1, {}) is False
+    assert proven_nonnegative(K - i - 1, {}, SignFacts()) is False
 
 
 def test_relaxes_pow_inside_loop():
@@ -106,7 +104,7 @@ def test_relaxes_pow_inside_loop():
     body.add_edge(tasklet, 'o', body.add_write('x'), None, dace.Memlet('x[R**(K - i - 1) - 1]'))
 
     assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
-    assert _ipow_count(sdfg) > 0  # R**(K-i-1) proven >= 0 from i in [0, K-1]
+    assert ipow_count(sdfg) > 0  # R**(K-i-1) proven >= 0 from i in [0, K-1]
 
 
 def test_relaxes_pow_inside_map_and_nested_sdfg():
@@ -123,7 +121,7 @@ def test_relaxes_pow_inside_map_and_nested_sdfg():
     sdfg = prog.to_sdfg(simplify=False)
     assert any(isinstance(n, nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
     assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
-    assert _ipow_count(sdfg) > 0
+    assert ipow_count(sdfg) > 0
 
 
 def test_relaxes_under_dynamic_map_symbol():
@@ -146,7 +144,7 @@ def test_relaxes_under_dynamic_map_symbol():
 
     # Must not crash on the dynamic-range symbol, and must relax the R**N size/index.
     assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
-    assert _ipow_count(sdfg) > 0
+    assert ipow_count(sdfg) > 0
 
 
 def test_refuses_unprovable_and_negative_exponents():
@@ -159,12 +157,11 @@ def test_refuses_unprovable_and_negative_exponents():
     sdfg.add_array('u', [R**M], dace.float64)
     sdfg.add_state().add_access('u')
     RelaxIntegerPowers().apply_pass(sdfg, {})
-    assert _ipow_count(sdfg) == 0
+    assert ipow_count(sdfg) == 0
     assert sdfg.arrays['u'].shape[0].has(sympy.Pow)  # R**M unchanged
 
-    classify = _prover()._relaxed_exponent
-    assert classify(-K, {}) is None
-    assert classify(sympy.Rational(1, 2), {}) is None
+    assert relaxed_exponent(-K, {}, SignFacts()) is None
+    assert relaxed_exponent(sympy.Rational(1, 2), {}, SignFacts()) is None
 
 
 def test_end_to_end_complex_power_shape_compiles():
@@ -183,7 +180,7 @@ def test_end_to_end_complex_power_shape_compiles():
                              external_edges=True)
 
     assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
-    assert _ipow_count(sdfg) > 0
+    assert ipow_count(sdfg) > 0
 
     Rv, Kv = 2, 4
     x = (np.arange(1, Rv**Kv + 1) + 1j * np.arange(1, Rv**Kv + 1)).astype(np.complex128)
@@ -214,16 +211,16 @@ def test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass():
     sdfg.add_array('u', [R**M], dace.float64)
     sdfg.add_state().add_access('u')
     RelaxIntegerPowers().apply_pass(sdfg, {})
-    assert _ipow_count(sdfg) == 0
+    assert ipow_count(sdfg) == 0
 
 
 def test_loop_range_direction_from_stride_sign():
-    """``_loop_range`` orders (low, high) by the stride sign, and refuses when the sign is
+    """``loop_range`` orders (low, high) by the stride sign, and refuses when the sign is
     unknown -- a wrong direction guess would relax a negative exponent."""
     sstep = dace.symbol('sstep', integer=True)  # unknown sign
 
     def rng(cond, init, update):
-        return _loop_range(LoopRegion('L', condition_expr=cond, loop_var='i', initialize_expr=init, update_expr=update))
+        return loop_range(LoopRegion('L', condition_expr=cond, loop_var='i', initialize_expr=init, update_expr=update))
 
     assert str(rng('i < K', 'i = 0', 'i = i + 1')) == '(0, K - 1)'  # ascending
     assert str(rng('i > 0', 'i = K', 'i = i - 1')) == '(1, K)'  # descending
@@ -231,11 +228,9 @@ def test_loop_range_direction_from_stride_sign():
 
 
 def test_ordered_range_accepts_raw_int_step():
-    """A range step can be a raw Python ``int`` (not a sympy object); ``_ordered_range`` must
-    handle it rather than crash on ``int.is_positive``."""
-    from dace.transformation.passes.relax_integer_powers import _ordered_range
-    assert _ordered_range(0, 10, 1) == (0, 10)
-    assert _ordered_range(10, 0, -1) == (0, 10)
+    """A range step can be a raw Python ``int``, which has no ``is_positive``."""
+    assert ordered_range(0, 10, 1) == (0, 10)
+    assert ordered_range(10, 0, -1) == (0, 10)
 
 
 def test_refuses_pow_under_unknown_sign_stride():
@@ -256,7 +251,7 @@ def test_refuses_pow_under_unknown_sign_stride():
         t = body.add_tasklet('set', {}, {'o'}, 'o = 1.0')
         body.add_edge(t, 'o', body.add_write('x'), None, dace.Memlet('x[R**(K - p)]'))
         RelaxIntegerPowers().apply_pass(sdfg, {})
-        return _ipow_count(sdfg)
+        return ipow_count(sdfg)
 
     assert count('ascending', 'p = p + 1') > 0  # p in [0, K-1] -> K-p in [1, K] -> relax
     assert count('unknown', 'p = p + sstep') == 0  # unknown-sign stride -> stays pow
@@ -277,7 +272,7 @@ def test_descending_loop_still_relaxes():
     body.add_edge(t, 'o', body.add_write('x'), None, dace.Memlet('x[R**(K - i)]'))  # i in [1, K] -> K-i in [0, K-1]
 
     RelaxIntegerPowers().apply_pass(sdfg, {})
-    assert _ipow_count(sdfg) > 0
+    assert ipow_count(sdfg) > 0
 
 
 def test_loop_condition_off_by_one_not_relaxed():
