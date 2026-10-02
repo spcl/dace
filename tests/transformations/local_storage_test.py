@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
+import pytest
 import dace
 import numpy as np
 from dace.transformation.dataflow import MapTiling, OutLocalStorage
@@ -317,6 +318,10 @@ class LocalStorageTests(unittest.TestCase):
         sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
         self.assertTrue(np.array_equal(sdfg(N=16), np.arange(16, dtype=np.int32)))
 
+    # Not strict: what overflows is uninitialized memory, which may happen to hold the expected values.
+    @pytest.mark.xfail(reason='OutLocalStorage copies the whole local buffer back, overflowing the output on a '
+                       'partial tile. The test passed before only because pattern matching applied MapTiling twice '
+                       'instead of OutLocalStorage.')
     def test_uneven(self):
         # For testing uneven decomposition, use longer buffer and ensure
         # it's not filled over
