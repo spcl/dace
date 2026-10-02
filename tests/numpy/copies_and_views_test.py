@@ -427,13 +427,26 @@ def rebind_other_stride(A: dace.int64[10]):
     v += 2
 
 
-@pytest.mark.parametrize('program, viewed', [
+SAME_ELEMENTS = [
     pytest.param(rebind_chained_slices, slice(2, 4), id='chained_slices'),
     pytest.param(rebind_slice_of_a_named_view, slice(2, 4), id='slice_of_a_named_view'),
     pytest.param(rebind_symbolic_slice, slice(1, 9), id='symbolic_slice'),
     pytest.param(rebind_negative_and_symbolic_bound, slice(1, 9), id='negative_and_symbolic_bound'),
     pytest.param(rebind_strided_slice, slice(1, 9, 2), id='strided_slice'),
-])
+]
+
+OTHER_ELEMENTS = [
+    pytest.param(rebind_same_size_elsewhere, id='same_size_elsewhere'),
+    pytest.param(rebind_same_slice_of_another_array, id='same_slice_of_another_array'),
+    pytest.param(rebind_chained_to_another_inner_slice, id='chained_to_another_inner_slice'),
+    pytest.param(rebind_chained_to_another_outer_slice, id='chained_to_another_outer_slice'),
+    pytest.param(rebind_symbolic_slice_of_another_extent, id='symbolic_slice_of_another_extent'),
+    pytest.param(rebind_slice_of_another_symbolic_array, id='slice_of_another_symbolic_array'),
+    pytest.param(rebind_other_stride, id='other_stride'),
+]
+
+
+@pytest.mark.parametrize('program, viewed', SAME_ELEMENTS)
 def test_rebind_view_to_a_slice_that_sees_the_same_elements(program, viewed):
     sdfg = program.to_sdfg(simplify=False)
     assert [n for n in sdfg.arrays if n == 'v' or n.startswith('v_')] == ['v']
@@ -444,15 +457,7 @@ def test_rebind_view_to_a_slice_that_sees_the_same_elements(program, viewed):
     assert np.array_equal(val, ref)
 
 
-@pytest.mark.parametrize('program', [
-    pytest.param(rebind_same_size_elsewhere, id='same_size_elsewhere'),
-    pytest.param(rebind_same_slice_of_another_array, id='same_slice_of_another_array'),
-    pytest.param(rebind_chained_to_another_inner_slice, id='chained_to_another_inner_slice'),
-    pytest.param(rebind_chained_to_another_outer_slice, id='chained_to_another_outer_slice'),
-    pytest.param(rebind_symbolic_slice_of_another_extent, id='symbolic_slice_of_another_extent'),
-    pytest.param(rebind_slice_of_another_symbolic_array, id='slice_of_another_symbolic_array'),
-    pytest.param(rebind_other_stride, id='other_stride'),
-])
+@pytest.mark.parametrize('program', OTHER_ELEMENTS)
 def test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(program):
     """Views of the same size, or of the same slice of another array, are still different views."""
     with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='Cannot reassign View'):
@@ -472,6 +477,10 @@ if __name__ == '__main__':
     test_rebind_view_to_the_same_slice()
     test_rebind_view_to_the_whole_array()
     test_rebind_view_to_a_different_slice_is_still_refused()
+    for param in SAME_ELEMENTS:
+        test_rebind_view_to_a_slice_that_sees_the_same_elements(*param.values)
+    for param in OTHER_ELEMENTS:
+        test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(*param.values)
 
     test_strided_copy()
     test_strided_copy_symbolic_0()
