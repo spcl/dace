@@ -4,7 +4,7 @@
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace import properties, subsets, symbolic
+from dace import dtypes, properties, subsets, symbolic
 from dace.properties import make_properties
 from dace.symbolic import symlist
 from dace.transformation import transformation
@@ -43,14 +43,15 @@ class MapInterchange(transformation.SingleStateTransformation):
         outer, inner = self.outer_map_entry.map, self.inner_map_entry.map
         if len(outer.params) != 1 or len(inner.params) != 1:
             return None
-        p = symbolic.pystr_to_symbolic(outer.params[0])
         plo, phi, pstep = outer.range[0]
         qlo, qhi, qstep = inner.range[0]
+        # The parameters are names, but the bounds spell them at the dtype the maps declare.
+        p = symbolic.resolve_symbol(outer.params[0], symbolic.symbols_in([qlo]))
         if symbolic.simplify(pstep - 1) != 0 or symbolic.simplify(qstep - 1) != 0:
             return None
         # The outer range must not lean on the inner parameter, and the inner END must not lean on
         # the outer one: this rewrite inverts a lower bound, nothing else.
-        q = symbolic.pystr_to_symbolic(inner.params[0])
+        q = symbolic.resolve_symbol(inner.params[0], symbolic.symbols_in([plo, phi]))
         if any(q in getattr(e, 'free_symbols', set()) for e in (plo, phi)):
             return None
         if p in getattr(qhi, 'free_symbols', set()):
@@ -130,6 +131,10 @@ class MapInterchange(transformation.SingleStateTransformation):
         # Read the trapezoid BEFORE the swap: it is a property of the nest as matched, and the swap
         # is what invalidates it.
         trapezoid = self.trapezoid() if self.transform_bounds else None
+        # The inner parameter's dtype follows from a range that names the outer one, which the swap takes out of scope.
+        if trapezoid is not None:
+            declared = self.inner_map_entry.new_symbols(sdfg, graph, graph.symbols_defined_at(self.inner_map_entry))
+            inner_param_dtype = declared[self.inner_map_entry.map.params[0]]
         # Extract the parameters and ranges of the inner/outer maps.
         outer_map_entry = self.outer_map_entry
         inner_map_entry = self.inner_map_entry
@@ -185,9 +190,9 @@ class MapInterchange(transformation.SingleStateTransformation):
             e.data.subset = propagate_memlet(graph, edge_to_propagate.data, outer_map_exit, True).subset
 
         if trapezoid is not None:
-            self.rewrite_trapezoid_bounds(sdfg, trapezoid)
+            self.rewrite_trapezoid_bounds(sdfg, trapezoid, inner_param_dtype)
 
-    def rewrite_trapezoid_bounds(self, sdfg: SDFG, trapezoid) -> None:
+    def rewrite_trapezoid_bounds(self, sdfg: SDFG, trapezoid, inner_param_dtype: dtypes.typeclass) -> None:
         """Re-derive both ranges after swapping a nest whose inner start leaned on the outer param.
 
         ``for p in [plo, phi]: for q in [base + slope*p, qhi]`` covers
@@ -208,7 +213,7 @@ class MapInterchange(transformation.SingleStateTransformation):
         param, plo, phi, slope, base = trapezoid
         # After the swap the node that WAS inner sits outermost, still carrying its own map.
         new_outer, new_inner = self.inner_map_entry.map, self.outer_map_entry.map
-        q = symbolic.pystr_to_symbolic(new_outer.params[0])
+        q = symbolic.symbol(new_outer.params[0], inner_param_dtype)
         _, qhi, _ = new_outer.range[0]
         new_outer.range = subsets.Range([(symbolic.simplify(base + slope * plo), qhi, 1)])
         reach = symbolic.int_floor(q - base, slope)
