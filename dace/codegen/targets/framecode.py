@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -1092,21 +1092,38 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
 def allocation_block(state: SDFGState, desc: data.Data, access_states: Set[SDFGState]) -> ControlFlowBlock:
     """
-    The block whose entry allocates ``desc``, given the state it is allocated at: that state, unless it only dominates
-    the accesses and its only outgoing edge assigns a symbol ``desc`` is sized by. Allocating at the start of the state
-    would read the symbol before it is assigned, so the block the edge leads to allocates it, which for a control flow
-    region is allocated on entry.
+    The block whose entry allocates ``desc``, given the state that dominates its accesses. Allocating there would read
+    a symbol ``desc`` is sized by before it is assigned when the assignment comes later on the only path to the
+    accesses: on the edge leaving a block, or on an edge inside a control flow region the path passes through. The
+    allocation then moves past each such block, to the first block after the last assignment; a control flow region
+    allocates on entry.
 
     :param state: The state that dominates the accesses of ``desc``.
     :param desc: The descriptor to allocate.
     :param access_states: The states that access ``desc`` or read it on an adjacent edge.
     """
-    out_edges = state.parent_graph.out_edges(state)
-    if (state not in access_states and len(out_edges) == 1
-            and out_edges[0].data.assignments.keys() & {str(sym)
-                                                        for sym in desc.free_symbols}):
-        return out_edges[0].dst
-    return state
+    sizes = {str(sym) for sym in desc.free_symbols}
+
+    def accesses(block: ControlFlowBlock) -> bool:
+        if isinstance(block, SDFGState):
+            return block in access_states
+        return any(inner in access_states for inner in block.all_states())
+
+    def assigns_inside(block: ControlFlowBlock) -> bool:
+        return (isinstance(block, AbstractControlFlowRegion)
+                and any(edge.data.assignments.keys() & sizes for edge in block.all_interstate_edges()))
+
+    block = state
+    while not accesses(block):
+        out_edges = block.parent_graph.out_edges(block)
+        if len(out_edges) != 1:
+            break
+        successor = out_edges[0].dst
+        if not (out_edges[0].data.assignments.keys() & sizes or assigns_inside(block) or
+                (assigns_inside(successor) and not accesses(successor))):
+            break
+        block = successor
+    return block
 
 
 def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
