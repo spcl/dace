@@ -10,6 +10,7 @@ import dace.serialize
 import dace.library
 from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
 from dace.sdfg import graph
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
@@ -883,6 +884,21 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         #return reduce_node.expand(state)
 
 
+def storage_behind_views(state: SDFGState, node: dace.nodes.Node, declared: dtypes.StorageType) -> dtypes.StorageType:
+    """
+    Returns the storage of the container ``node`` ultimately views, or ``declared`` if it is not a view.
+
+    A view owns no storage, so its descriptor only declares whatever it was built with, which need not match the
+    container it aliases.
+    """
+    if not isinstance(node, dace.nodes.AccessNode):
+        return declared
+    viewed = sdutil.get_last_view_node(state, node)
+    if viewed is None:
+        return declared
+    return state.sdfg.arrays[viewed.data].storage
+
+
 @dace.library.expansion
 class ExpandReduceGPUAuto(pm.ExpandTransformation):
     """
@@ -912,7 +928,10 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
         in_type = raw_input_data.dtype
 
-        if raw_input_data.storage != dtypes.StorageType.GPU_Global:
+        in_storage = storage_behind_views(state, inedge.src, raw_input_data.storage)
+        out_storage = storage_behind_views(state, outedge.dst, raw_output_data.storage)
+
+        if in_storage != dtypes.StorageType.GPU_Global:
             # data doesnt reside on GPU --> return pure expansion
             warnings.warn(
                 'Cannot use GPUAuto expansion: Input data does not reside on GPU. Falling back to Pure expansion')
@@ -946,18 +965,14 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        input_data = dcpy(raw_input_data)
-        input_data.transient = False
-        input_data.shape = schedule.in_shape
-        input_data.strides = schedule.in_strides
-        nsdfg.add_datadesc('_in', input_data)
-
-        output_data = dcpy(raw_output_data)
+        # Built rather than cloned: a clone would carry an ArrayView's class into the nested SDFG, and keep its
+        # offset at the rank of the original shape.
+        nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=in_storage)
         nsdfg.add_array('_out',
                         schedule.out_shape,
-                        output_data.dtype,
+                        raw_output_data.dtype,
                         strides=schedule.out_strides,
-                        storage=output_data.storage)
+                        storage=out_storage)
 
         nstate = nsdfg.add_state()
 
@@ -1099,7 +1114,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 }, {'o': dace.vector(in_type, schedule.vec_len)}, 'o = b')
 
             # add warpReduce tasklet
-            ctype = output_data.dtype
+            ctype = raw_output_data.dtype
             redtype = detect_reduction_type(node.wcr)
             if redtype == dtypes.ReductionType.Custom:
                 raise NotImplementedError
