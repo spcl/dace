@@ -532,36 +532,47 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
+        // ``a ** b`` by multiplication. A scalar seeds at ``T(1)``, so ``ipow(a, 0) == 1``. A vector type has no
+        // scalar constructor and seeds at ``a``, so it needs ``b >= 1`` (codegen emits a literal 1 for exponent 0).
+        template<typename T>
+        DACE_HDFI T ipow(const T a, const unsigned int b)
+        {
+            if constexpr (std::is_constructible<T, int>::value)
+            {
+                T result = T(1);
+                for (unsigned int i = 0; i < b; ++i)
+                    result *= a;
+                return result;
+            }
+            else
+            {
+                T result = a;
+                for (unsigned int i = 1; i < b; ++i)
+                    result *= a;
+                return result;
+            }
+        }
+
+        // ``a ** b``. An integral exponent multiplies, and takes the reciprocal for a negative ``b``; an integral
+        // base with a signed exponent gives a double, as the frontend types ``int ** signed int`` (``2 ** -1`` is
+        // ``0.5``). Any other exponent falls back to ``std::pow``.
         template<typename T, typename U>
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            return std::pow(a, b);
-        }
-
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
-        {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
-
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
-        {
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
-
-        template<typename T>
-        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
-            T result = a;
-            for (unsigned int i = 1; i < b; ++i)
-                result *= a;
-            return result;
+            if constexpr (std::is_integral<U>::value && std::is_constructible<T, int>::value)
+            {
+                using R = typename std::conditional<std::is_integral<T>::value && std::is_signed<U>::value, double,
+                                                    T>::type;
+                if constexpr (std::is_signed<U>::value)
+                {
+                    if (b < 0) return R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b));
+                }
+                return ipow(R(a), static_cast<unsigned int>(b));
+            }
+            else
+            {
+                return std::pow(a, b);
+            }
         }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
@@ -756,5 +767,7 @@ namespace dace
 
 }
 
+// Codegen emits the bare ``ipow`` in loop bounds and interstate edges, only for an exponent proven non-negative
+using dace::math::ipow;
 
 #endif  // __DACE_MATH_H
