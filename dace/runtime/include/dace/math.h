@@ -532,14 +532,6 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        // ``std::pow``, so ``int ** int`` is a double, as the frontend types it. An integer result comes only
-        // from ``ipow``, which codegen emits once ``RelaxIntegerPowers`` proves the exponent non-negative.
-        template<typename T, typename U>
-        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
-        {
-            return std::pow(a, b);
-        }
-
         // Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
         template<typename T,
                  typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
@@ -559,6 +551,28 @@ namespace dace
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
+        }
+
+        // ``a ** b``. An integral exponent multiplies, and takes the reciprocal for a negative ``b``; an integral
+        // base with a signed exponent gives a double, as the frontend types ``int ** signed int`` (``2 ** -1`` is
+        // ``0.5``). Any other exponent falls back to ``std::pow``.
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
+        {
+            if constexpr (std::is_integral<U>::value && std::is_constructible<T, int>::value)
+            {
+                using R = typename std::conditional<std::is_integral<T>::value && std::is_signed<U>::value, double,
+                                                    T>::type;
+                if constexpr (std::is_signed<U>::value)
+                {
+                    if (b < 0) return R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b));
+                }
+                return ipow(R(a), static_cast<unsigned int>(b));
+            }
+            else
+            {
+                return std::pow(a, b);
+            }
         }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
@@ -753,13 +767,7 @@ namespace dace
 
 }
 
-// Global-scope wrapper (like ``min`` / ``max`` / ``int_ceil``) so codegen can emit the
-// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``. Codegen emits
-// ``ipow`` only for an exponent proven non-negative, which is the contract here.
-template <typename T, typename U>
-static DACE_HDFI T ipow(const T& a, const U& b) {
-    static_assert(std::is_integral<U>::value, "ipow: the exponent must be an integer");
-    return dace::math::ipow(a, static_cast<unsigned int>(b));
-}
+// Codegen emits the bare ``ipow`` in loop bounds and interstate edges, only for an exponent proven non-negative
+using dace::math::ipow;
 
 #endif  // __DACE_MATH_H
