@@ -61,3 +61,8 @@ def test_the_readable_generator_matches_legacy(program, arrays):
         return sdfg
 
     assert_bit_exact(build, program.name, arrays)
+
+
+if __name__ == "__main__":
+    for case in CASES:
+        test_the_readable_generator_matches_legacy(*case.values)

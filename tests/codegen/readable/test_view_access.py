@@ -8,8 +8,8 @@ import pytest
 
 import dace
 from dace import subsets
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, generated_for,
-                                             run_variant)
+from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, available_targets,
+                                             gpu_available, generated_for, run_variant)
 
 
 def strided_view_copy_sdfg(name):
@@ -75,3 +75,12 @@ def test_view_idx_inside_kernel(require_gpu):
     assert 'V_idx(' in code, 'view index function missing from device code'
     body = view_index_body(code)
     assert '2 * __d1' in body, body
+
+
+if __name__ == "__main__":
+    test_view_idx_uses_view_strides()
+    test_view_no_pure_fallback()
+    for target in available_targets():
+        test_view_access_bit_exact(target)
+    if gpu_available():
+        test_view_idx_inside_kernel(None)

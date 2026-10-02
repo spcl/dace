@@ -158,3 +158,12 @@ def test_alignment():
     code = experimental_code(build, 'aligned_inspect')
     assert any('T = new ' in line and 'std::align_val_t(128)' in line for line in code.splitlines()), \
         'experimental codegen did not use an aligned new[] for T'
+
+
+if __name__ == "__main__":
+    test_fortran_column_major()
+    test_padded_row_strides()
+    test_nonzero_offset()
+    test_strided_stencil()
+    test_offset_strided_stencil()
+    test_alignment()

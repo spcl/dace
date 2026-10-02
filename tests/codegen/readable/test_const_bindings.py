@@ -207,7 +207,10 @@ def test_a_value_that_may_be_seen_before_or_outside_its_write_is_not_bound_const
     assert not is_bound(build("unbound"))
 
 
-@pytest.mark.parametrize("build", [bound_in_map_sdfg, loop_body_sdfg, read_after_map_sdfg, two_state_sdfg])
+RESULT_BUILDS = [bound_in_map_sdfg, loop_body_sdfg, read_after_map_sdfg, two_state_sdfg]
+
+
+@pytest.mark.parametrize("build", RESULT_BUILDS)
 def test_the_binding_does_not_change_the_result(build: Callable[[str], dace.SDFG]):
     a = np.random.default_rng(0).random(N)
 
@@ -223,3 +226,12 @@ def test_the_binding_does_not_change_the_result(build: Callable[[str], dace.SDFG
         return run_isolated(build_and_run)
 
     assert_outputs_equivalent(run(LEGACY), run(EXPERIMENTAL), "cpu", label=build.__name__)
+
+
+if __name__ == "__main__":
+    for case in BOUND:
+        test_a_write_once_value_read_in_its_own_scope_is_bound_const(*case.values)
+    for case in UNBOUND:
+        test_a_value_that_may_be_seen_before_or_outside_its_write_is_not_bound_const(*case.values)
+    for build in RESULT_BUILDS:
+        test_the_binding_does_not_change_the_result(build)

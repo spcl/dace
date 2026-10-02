@@ -83,3 +83,9 @@ def test_a_nested_view_computes_the_same_result_as_the_legacy_generator():
         return run_isolated(build_and_run)
 
     assert_outputs_equivalent(run(LEGACY), run(EXPERIMENTAL), "cpu", label="nested_view")
+
+
+if __name__ == "__main__":
+    test_a_nested_view_with_the_parent_name_gets_its_own_index_function()
+    test_a_nested_array_with_the_parent_signature_shares_its_index_function()
+    test_a_nested_view_computes_the_same_result_as_the_legacy_generator()

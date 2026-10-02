@@ -840,6 +840,7 @@ if __name__ == '__main__':
     test_device_storage_array_is_not_promoted_to_a_host_constant()
     test_array_partial_constant_write()
     test_scalar_runtime_single_write_not_promoted()
+    test_opaque_transient_written_a_literal_is_not_promoted()
     test_array_double_write_not_marked()
     test_interstate_edge_read_not_marked()
     test_same_state_separable_marked()

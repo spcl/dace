@@ -101,3 +101,10 @@ def test_the_unwritten_elements_of_a_literal_table_are_zero():
 def test_a_subscript_of_a_scalar_constant_reads_the_bare_name():
     code = experimental_code(scalar_constant_subscript_sdfg, 'sc_subscript')
     assert 'C[' not in code and '= C;' in code
+
+
+if __name__ == "__main__":
+    test_a_literal_scalar_is_constexpr_and_matches_legacy()
+    test_a_literal_table_is_constexpr_and_matches_legacy()
+    test_the_unwritten_elements_of_a_literal_table_are_zero()
+    test_a_subscript_of_a_scalar_constant_reads_the_bare_name()

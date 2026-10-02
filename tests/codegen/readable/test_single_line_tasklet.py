@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 import dace
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, generated_for,
-                                             run_variant)
+from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, available_targets,
+                                             gpu_available, generated_for, run_variant)
 
 LEGACY_SEPARATOR = '///////////////////'
 
@@ -103,3 +103,13 @@ def test_single_line_inside_kernel(require_gpu):
     body = tasklet_body_line(code)
     assert '{' not in body and '}' not in body, body
     assert LEGACY_SEPARATOR not in code
+
+
+if __name__ == "__main__":
+    test_single_line_no_block()
+    test_wcr_tasklet_keeps_block()
+    for target in available_targets():
+        test_single_line_bit_exact(target)
+        test_wcr_reduction_bit_exact(target)
+    if gpu_available():
+        test_single_line_inside_kernel(None)

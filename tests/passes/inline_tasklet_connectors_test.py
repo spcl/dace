@@ -84,9 +84,21 @@ def inout_sdfg(read: str, written: str) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize('read, written, inlined', [('1', '1', True), ('1', '2', False)])
+INOUT_CASES = [('1', '1', True), ('1', '2', False)]
+
+
+@pytest.mark.parametrize('read, written, inlined', INOUT_CASES)
 def test_an_inout_connector_is_inlined_only_when_both_sides_are_the_same_element(read, written, inlined):
     sdfg = inout_sdfg(read, written)
     InlineTaskletConnectors().apply_pass(sdfg, {})
     body = tasklets(sdfg)[0].code.as_string
     assert ('A[1]' in body) is inlined, body
+
+
+if __name__ == '__main__':
+    test_elementwise_inlined_and_valid()
+    test_stencil_keeps_the_offset_of_each_read()
+    test_a_second_application_changes_nothing()
+    test_a_write_conflict_output_keeps_its_connector()
+    for case in INOUT_CASES:
+        test_an_inout_connector_is_inlined_only_when_both_sides_are_the_same_element(*case)

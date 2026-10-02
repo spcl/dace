@@ -4,6 +4,9 @@ The readable generator drops the C scope of a state only when nothing in the sta
 jump in its region can cross such a declaration. The legacy generator always keeps it.
 """
 
+import contextlib
+from collections.abc import Iterator
+
 import numpy as np
 import pytest
 
@@ -20,8 +23,8 @@ from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_output
 N = dace.symbol("N")
 
 
-@pytest.fixture
-def decisions(monkeypatch) -> dict[str, bool]:
+@contextlib.contextmanager
+def recorded_state_scope_decisions() -> Iterator[dict[str, bool]]:
     """State label -> whether the code generator kept the state's scope, filled during code generation."""
     recorded: dict[str, bool] = {}
     original = DaCeCodeGenerator.state_needs_brace
@@ -30,8 +33,17 @@ def decisions(monkeypatch) -> dict[str, bool]:
         recorded[state.label] = original(self, state)
         return recorded[state.label]
 
-    monkeypatch.setattr(DaCeCodeGenerator, "state_needs_brace", record)
-    return recorded
+    DaCeCodeGenerator.state_needs_brace = record
+    try:
+        yield recorded
+    finally:
+        DaCeCodeGenerator.state_needs_brace = original
+
+
+@pytest.fixture
+def decisions() -> Iterator[dict[str, bool]]:
+    with recorded_state_scope_decisions() as recorded:
+        yield recorded
 
 
 def add_map_state(sdfg, label, region=None):
@@ -99,7 +111,7 @@ def generate(sdfg, implementation):
         return "\n".join(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cpp")
 
 
-@pytest.mark.parametrize("build, expected", [
+SCOPE_CASES = [
     (pure_map_sdfg, {
         "s": False
     }),
@@ -118,7 +130,10 @@ def generate(sdfg, implementation):
         "inner_first": True,
         "inner_second": True
     }),
-])
+]
+
+
+@pytest.mark.parametrize("build, expected", SCOPE_CASES)
 def test_state_scope_is_kept_only_where_a_declaration_or_a_jump_could_need_it(build, expected, decisions):
     generate(build(), EXPERIMENTAL)
     kept = {label: kept for label, kept in decisions.items() if label in expected}
@@ -130,7 +145,10 @@ def test_legacy_keeps_every_state_scope(decisions):
     assert decisions == {"s": True}
 
 
-@pytest.mark.parametrize("build", [pure_map_sdfg, conditional_edge_sdfg, code_to_code_sdfg, nested_region_sdfg])
+BALANCED_BUILDS = [pure_map_sdfg, conditional_edge_sdfg, code_to_code_sdfg, nested_region_sdfg]
+
+
+@pytest.mark.parametrize("build", BALANCED_BUILDS)
 def test_generated_scopes_are_balanced(build):
     code = generate(build(), EXPERIMENTAL)
     assert code.count("{") == code.count("}")
@@ -154,3 +172,14 @@ def test_pure_map_bit_exact():
         return run_isolated(build_and_run)
 
     assert_outputs_equivalent(run(LEGACY), run(EXPERIMENTAL), "cpu", label="pure_map")
+
+
+if __name__ == "__main__":
+    for build, expected in SCOPE_CASES:
+        with recorded_state_scope_decisions() as decisions:
+            test_state_scope_is_kept_only_where_a_declaration_or_a_jump_could_need_it(build, expected, decisions)
+    with recorded_state_scope_decisions() as decisions:
+        test_legacy_keeps_every_state_scope(decisions)
+    for build in BALANCED_BUILDS:
+        test_generated_scopes_are_balanced(build)
+    test_pure_map_bit_exact()

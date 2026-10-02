@@ -15,8 +15,8 @@ from dace.codegen.exceptions import CompilationError
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic import evaluate
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation)
+from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, gpu_available,
+                                             run_isolated, use_implementation)
 
 SYMBOL_SIZE = 13
 FAMILIES = ("polybench", "misc")
@@ -120,3 +120,19 @@ def test_gpu_compiles_and_matches_legacy(require_gpu, family, name):
         pytest.skip(f"{family}/{name} does not lower to GPU under apply_gpu_transformations: {ex}")
     experimental = build_and_run(family, name, EXPERIMENTAL, "gpu")()
     assert_outputs_equivalent(legacy, experimental, "gpu", label=f"{family}/{name}")
+
+
+def run_or_report_skip(test, *arguments):
+    """Runs one case; a case the test itself skips (legacy cannot build it) is reported and the run goes on."""
+    try:
+        test(*arguments)
+    except pytest.skip.Exception as skipped:
+        print(f"skipped {arguments[-2:]}: {skipped}")
+
+
+if __name__ == "__main__":
+    for family, name in KERNELS:
+        run_or_report_skip(test_cpu_compiles_and_matches_legacy, family, name)
+    if gpu_available():
+        for family, name in GPU_KERNELS:
+            run_or_report_skip(test_gpu_compiles_and_matches_legacy, None, family, name)

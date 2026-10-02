@@ -159,6 +159,11 @@ def require_gpu():
         pytest.skip("no CUDA-capable GPU available")
 
 
+def available_targets():
+    """The code generation targets this machine can run: the GPU only with a CUDA device."""
+    return ["cpu", "gpu"] if gpu_available() else ["cpu"]
+
+
 @pytest.fixture(params=[
     pytest.param("cpu", id="cpu"),
     pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),

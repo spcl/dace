@@ -149,3 +149,11 @@ def test_distinct_size_helpers_across_nested_sdfgs():
     assert '(M * N)' in outer_def, outer_def
     assert 'inner_T_size(N)' in allocation_line(code, 'inner_T')
     assert 'T_size(M, N)' in allocation_line(code, 'T')
+
+
+if __name__ == "__main__":
+    test_symbolic_size_helper()
+    test_ipow_size_helper()
+    test_constant_size_helper()
+    test_bare_single_symbol_not_wrapped()
+    test_distinct_size_helpers_across_nested_sdfgs()
