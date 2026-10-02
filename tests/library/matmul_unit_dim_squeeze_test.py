@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``SpecializeMatMul`` and ``Gemm`` must read the same view of an operand.
 
 The dispatcher matches on squeezed sizes, so ``np.reshape(x, (NQ, 1, NP)) @ C4`` routes to ``Gemm``
