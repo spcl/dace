@@ -8,7 +8,7 @@ import threading
 import pickle
 import re
 import types
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING, List
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Sequence, Set, Tuple, Union, TYPE_CHECKING, List
 import numpy
 
 import sympy.abc
@@ -254,6 +254,28 @@ class symbol(sympy.Symbol):
         def __neg__(self) -> sympy.Expr: ...
         def __pos__(self) -> sympy.Expr: ...
         # yapf: enable
+
+
+#: A descriptor with shape ``(W_0, ONE, W_2)`` declares that dim 1 is a broadcast (size-1) dimension of a tile, which
+#: the tile library nodes address as replicated rather than collapse out. Final lowering substitutes ``ONE -> 1``.
+ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
+
+#: The marker's name -- the only part of :data:`ONE` that survives storage in an SDFG.
+ONE_NAME = 'ONE'
+
+
+def has_one_marker(s) -> bool:
+    """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
+
+    Matches on the symbol NAME, not on sympy object identity: a same-named ``ONE`` reparsed from a subset or shape
+    string carries no assumptions, so it is a different sympy object than :data:`ONE` and compares unequal.
+
+    :param s: A shape entry: Python int or sympy ``Basic``.
+    :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
+    """
+    if not isinstance(s, sympy.Basic):
+        return False
+    return any(isinstance(fs, sympy.Symbol) and fs.name == ONE_NAME for fs in s.free_symbols)
 
 
 class UndefinedSymbol(symbol):
@@ -2747,6 +2769,20 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
             repldict[b_syms[name]] = a_syms[name]
         b = b.subs(repldict)
     return a, b
+
+
+def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
+    """True iff two shape / extent sequences agree, each dimension compared by NAME.
+
+    Shapes reach a check from different sources -- a descriptor a layout pass rebuilt against a
+    bound reparsed from a string -- so one name arrives as several sympy instances that raw ``==``
+    calls different. Comparing with ``!=`` then rejects shapes that match, with a self-refuting
+    message naming the same symbol on both sides. Ranks are compared first, so this is also the
+    length check.
+    """
+    if len(shape_a) != len(shape_b):
+        return False
+    return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
 
 
 def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:
