@@ -12,7 +12,7 @@ loop-invariant"; the assignment chain has to be resolved before the operand can 
 Pack/expand is not vectorizable by broadcast in any case: ``if (b[i] > 0) { a[++j] = b[i]; }``
 advances ``j`` under a data-dependent predicate, so a lane-parallel form needs a real prefix sum of
 the mask. Canonicalization builds that scan, and the MASK map feeding it may tile only when its
-comparison reads the array through a per-lane ``TileLoad``. That is the structural contract pinned
+comparison reads the array through a per-lane ``TileGather``. That is the structural contract pinned
 here, beside the numeric one.
 
 The over-refusal control matters as much as the refusal: an interstate assignment that reads a
@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad
+from dace.libraries.tileops import TileBinop, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.libraries.tileops.ops import BINARY_OPS
 from dace.sdfg import nodes as nd
@@ -122,7 +122,7 @@ def map_steps(sdfg):
 
 
 def comparison_operand_loads(sdfg: dace.SDFG) -> list[tuple[str, list[str]]]:
-    """For every tiled comparison, its ``_a`` operand kind and the arrays a ``TileLoad`` writes into that operand."""
+    """For every tiled comparison, its ``_a`` operand kind and the arrays a ``TileGather`` writes into that operand."""
     found = []
     for node, state in sdfg.all_nodes_recursive():
         if not (isinstance(node, TileBinop) and BINARY_OPS[node.op].comparison):
@@ -131,7 +131,7 @@ def comparison_operand_loads(sdfg: dace.SDFG) -> list[tuple[str, list[str]]]:
         producers = [e.src for e in state.in_edges(node) if e.dst_conn == "_a"]
         while producers and all(isinstance(p, nd.AccessNode) for p in producers):
             producers = [e.src for p in producers for e in state.in_edges(p)]
-        loads = [p for p in producers if isinstance(p, TileLoad)]
+        loads = [p for p in producers if isinstance(p, TileGather)]
         sources = sorted(e.data.data for load in loads for e in state.in_edges(load) if e.dst_conn == "_src")
         found.append((node.kind_a, sources))
     return found
@@ -177,7 +177,7 @@ def test_expand_matches_numpy(n):
 def test_pack_mask_compares_every_lane_of_b():
     """Structural half: the mask map tiles, and its predicate compares ``b`` loaded per lane. The
     broadcast this guards against read ``b`` at the TILE BASE only, so all 8 lanes shared lane 0's
-    verdict -- that form has no ``TileLoad`` feeding the comparison."""
+    verdict -- that form has no ``TileGather`` feeding the comparison."""
     sdfg = vectorized(pack_kernel, 'pack_struct')
 
     assert str(W) in map_steps(sdfg), 'the pack mask map did not tile'

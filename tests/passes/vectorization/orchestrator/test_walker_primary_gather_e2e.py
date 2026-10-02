@@ -61,7 +61,7 @@ def k1_scatter(A: dace.float64[N_SCATTER], idx: dace.int64[N_SCATTER], B: dace.f
 def test_k1_scatter_matches_reference():
     """K=1 ``B[idx[i]] = A[i]`` (scatter) -- bit-equal to the unvectorised reference.
 
-    Exercises the symmetric scatter path through the walker (TileStore with
+    Exercises the symmetric scatter path through the walker (TileScatter with
     ``gather_dims`` lowering through the pure expansion, because a store with
     ``gather_dims`` has no header lowering).
     """

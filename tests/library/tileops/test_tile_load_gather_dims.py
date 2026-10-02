@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unit tests for ``TileLoad`` / ``TileStore`` ``gather_dims`` + full-K-dim ``_idx_<d>``.
+"""Unit tests for ``TileGather`` / ``TileScatter`` ``gather_dims`` + full-K-dim ``_idx_<d>``.
 
 Index-tile shape convention (positional, full-K-dim; see
 :func:`dace.libraries.tileops.lanes.resolve_gather_deps`). An
@@ -19,8 +19,8 @@ import pytest
 
 import dace
 from dace.libraries.tileops.lanes import gather_lane_offset
-from dace.libraries.tileops.nodes.tile_load import TileLoad
-from dace.libraries.tileops.nodes.tile_store import TileStore
+from dace.libraries.tileops.nodes.tile_gather import TileGather
+from dace.libraries.tileops.nodes.tile_scatter import TileScatter
 from dace.memlet import Memlet
 from dace.symbolic import ONE
 
@@ -34,7 +34,7 @@ def _add_one_constant(sdfg):
 
 
 def _build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
-    """Build a minimal SDFG containing a TileLoad with the given gather_dims.
+    """Build a minimal SDFG containing a TileGather with the given gather_dims.
 
     Each ``idx_shapes[i]`` is the shape to use for the corresponding ``_idx_<d>``
     connector descriptor -- a full-K-dim ``(W_p or ONE)`` shape (or ``(1,)`` for
@@ -49,7 +49,7 @@ def _build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileLoad("tl", widths=widths, gather_dims=gather_dims)
+    node = TileGather("tl", widths=widths, gather_dims=gather_dims)
     state.add_node(node)
     src_subset = ", ".join(f"0:{s}" for s in sdfg.arrays["Src"].shape)
     state.add_edge(src, None, node, "_src", Memlet(f"Src[{src_subset}]"))
@@ -119,13 +119,13 @@ def test_refuse_index_shape_not_cartesian():
 def test_refuse_unsorted_gather_dims():
     """Constructor refuses unsorted gather_dims."""
     with pytest.raises(ValueError, match="sorted"):
-        TileLoad("bad", widths=(4, 8, 16), gather_dims=(2, 0))
+        TileGather("bad", widths=(4, 8, 16), gather_dims=(2, 0))
 
 
 def test_refuse_negative_gather_dims():
     """Constructor refuses negative gather_dims at construction time."""
     with pytest.raises(ValueError, match="non-negative"):
-        TileLoad("bad", widths=(4, 8), gather_dims=(-1, ))
+        TileGather("bad", widths=(4, 8), gather_dims=(-1, ))
 
 
 def test_validate_refuses_gather_dim_exceeding_src_ndim():
@@ -159,7 +159,7 @@ def test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2():
     dst = state.add_access("Dst")
     idx0 = state.add_access("Idx0")
     idx2 = state.add_access("Idx2")
-    node = TileLoad("tl_icon", widths=(4, 8), gather_dims=(0, 2))
+    node = TileGather("tl_icon", widths=(4, 8), gather_dims=(0, 2))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:32, 0:32, 0:64]"))
     state.add_edge(idx0, None, node, "_idx_0", Memlet("Idx0[0:4, 0:ONE]"))
@@ -190,7 +190,7 @@ def test_accepts_unsigned_index_dtype(idx_dtype):
 
 
 def test_tilestore_gather_dims_symmetric():
-    """TileStore mirrors TileLoad's gather_dims surface."""
+    """TileScatter mirrors TileGather's gather_dims surface."""
     sdfg = dace.SDFG("ts_g")
     _add_one_constant(sdfg)
     sdfg.add_array("Src", (4, 8), dace.float64, transient=True)
@@ -200,7 +200,7 @@ def test_tilestore_gather_dims_symmetric():
     src = state.add_access("Src")
     dst = state.add_access("Dst")
     idx = state.add_access("Idx0")
-    node = TileStore("ts", widths=(4, 8), gather_dims=(0, ))
+    node = TileScatter("ts", widths=(4, 8), gather_dims=(0, ))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:4, 0:8]"))
     state.add_edge(idx, None, node, "_idx_0", Memlet("Idx0[0:4, 0:ONE]"))
@@ -215,7 +215,7 @@ def test_tilestore_gather_dims_symmetric():
 
 
 def _run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
-    """Build, expand, compile, and run a TileLoad with the given gather setup;
+    """Build, expand, compile, and run a TileGather with the given gather setup;
     return the materialised destination tile as a numpy array."""
     import numpy as np
     sdfg = dace.SDFG(f"e2e_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
@@ -232,7 +232,7 @@ def _run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileLoad("tl", widths=widths, gather_dims=gather_dims, src_dims=src_dims)
+    node = TileGather("tl", widths=widths, gather_dims=gather_dims, src_dims=src_dims)
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet(f"Src[{', '.join(f'0:{s}' for s in src_shape)}]"))
     state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{w}' for w in widths)}]"))
@@ -277,7 +277,7 @@ def test_e2e_partial_gather_K2():
 
 
 def _run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None):
-    """Build, expand, compile, and run a TileStore with scatter; return the dst array."""
+    """Build, expand, compile, and run a TileScatter with scatter; return the dst array."""
     import numpy as np
     sdfg = dace.SDFG(f"e2e_store_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
     _add_one_constant(sdfg)
@@ -290,7 +290,7 @@ def _run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, d
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileStore("ts", widths=widths, gather_dims=gather_dims, dst_dims=dst_dims)
+    node = TileScatter("ts", widths=widths, gather_dims=gather_dims, dst_dims=dst_dims)
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet(f"Src[{', '.join(f'0:{w}' for w in widths)}]"))
     state.add_edge(node, "_dst", dst, None, Memlet(f"Dst[{', '.join(f'0:{s}' for s in dst_shape)}]"))

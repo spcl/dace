@@ -167,7 +167,7 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
     # A 2-D map whose single 1-D output is indexed linearly across both params
     # (s125) is also forced to K=1: vectorizing only the inner (unit-stride)
-    # dim yields a plain contiguous TileStore; a K=2 tile cannot express the
+    # dim yields a plain contiguous TileScatter; a K=2 tile cannot express the
     # strided box over one array dim.
     if name in FORCE_K1_KERNELS:
         vec = VectorizeCPUMultiDim(

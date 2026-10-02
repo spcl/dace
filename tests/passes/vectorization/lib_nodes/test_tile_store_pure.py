@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end correctness for the ``pure`` expansion of :class:`TileStore`.
+"""End-to-end correctness for the ``pure`` expansion of :class:`TileScatter`.
 
 Symmetric to ``test_tile_load_pure``; the lib node copies a tile
 transient into a destination-array region.
@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileStore
+from dace.libraries.tileops import TileScatter
 
 
 def _build_store_sdfg(dst_shape, widths, has_mask, dtype=dace.float64):
-    """Build a minimal SDFG: tile transient -> TileStore -> destination array."""
+    """Build a minimal SDFG: tile transient -> TileScatter -> destination array."""
     sdfg = dace.SDFG(f"tile_store_pure_{'x'.join(str(w) for w in widths)}_{'m' if has_mask else 'nm'}")
     sdfg.add_array("SRC", widths, dtype, transient=False)
     sdfg.add_array("DST", dst_shape, dtype, transient=False)
@@ -22,7 +22,7 @@ def _build_store_sdfg(dst_shape, widths, has_mask, dtype=dace.float64):
     state = sdfg.add_state("main")
     src_node = state.add_access("SRC")
     dst_node = state.add_access("DST")
-    node = TileStore(name="ts", widths=widths, has_mask=has_mask)
+    node = TileScatter(name="ts", widths=widths, has_mask=has_mask)
     state.add_node(node)
 
     src_subset = ",".join(f"0:{w}" for w in widths)
@@ -69,6 +69,6 @@ def test_tile_store_pure_masked_preserves_destination_on_inactive_lanes():
 def test_tile_store_rejects_invalid_K():
     """Constructor refuses K outside ``{1, 2, 3}`` and stride / width length mismatch."""
     with pytest.raises(ValueError, match="length in"):
-        TileStore(name="bad_K", widths=())
+        TileScatter(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileStore(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
+        TileScatter(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))

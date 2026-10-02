@@ -7,6 +7,10 @@
   "configurations": 504,
   "sha256": "61dc200413d114ad9d988bc872cccd74a0fe6f8423f4d826d6a652acff599c1d"
  },
+ "TileGather": {
+  "configurations": 360,
+  "sha256": "db2b8074d7b3752c5bc277a7da789419fd5f87170f714494129bc7c242b3f98c"
+ },
  "TileITE": {
   "configurations": 264,
   "sha256": "17c9e49e02b36aba205f70a6f2b4b6c9326298c5210288382d04858935073ea9"
@@ -14,10 +18,6 @@
  "TileIota": {
   "configurations": 10,
   "sha256": "74db7be4602f8d5d77a047bb1ee48209bff868de842d16219c9765271e0300f5"
- },
- "TileLoad": {
-  "configurations": 360,
-  "sha256": "db2b8074d7b3752c5bc277a7da789419fd5f87170f714494129bc7c242b3f98c"
  },
  "TileMMA": {
   "configurations": 10,
@@ -31,7 +31,7 @@
   "configurations": 240,
   "sha256": "e488b317594d021501a9ac873b1f577bb29a68561432d83bfc74d0ee3021474b"
  },
- "TileStore": {
+ "TileScatter": {
   "configurations": 354,
   "sha256": "8e59c154f86433e9d73a0595b4bbba7329caddb71ffd79bdf3613b597cc3d27b"
  },

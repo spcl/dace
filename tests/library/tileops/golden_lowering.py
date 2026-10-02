@@ -19,8 +19,8 @@ from collections.abc import Callable, Iterator
 from unittest import mock
 
 import dace
-from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA, TileReduce,
-                                    TileStore, TileUnop)
+from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce,
+                                    TileScatter, TileUnop)
 import dace.libraries.tileops.dispatch as dispatch
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (STRIDE_GUARD_PREFIX,
                                                                                    TILE_GUARD_STATE_LABEL,
@@ -358,7 +358,7 @@ def with_tile_map(builder: Builder, in_map: bool):
 
 def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
     """Structured, strided, transposed, replicated, broadcast and gathering tile loads or stores."""
-    node_type = TileLoad if is_load else TileStore
+    node_type = TileGather if is_load else TileScatter
     dims_name = "src_dims" if is_load else "dst_dims"
     N = dace.symbol("N", dtype=dace.int64)
     shapes = {
@@ -532,7 +532,7 @@ def load_store_cases(is_load: bool) -> Iterator[tuple[str, Builder]]:
                 name = f"replicate|{factor}|{width}"
                 builder = Builder("golden_load_replicate", (width, ))
                 builder.sdfg.add_symbol("N", dace.int64)
-                node = builder.place(TileLoad("replicate", (width, ), replicate_factor_per_dim=(factor, )))
+                node = builder.place(TileGather("replicate", (width, ), replicate_factor_per_dim=(factor, )))
                 builder.sdfg.add_array("A", (1024, ), F64)
                 entry = builder.state.add_map(f"golden{TILE_MAIN_MARKER}", {"i": f"0:N:{width}"})[0]
                 tile = tile_name(builder.sdfg, F64, (width, ), "tile")
@@ -559,8 +559,8 @@ CASES: dict[str, Callable[[], Iterator[tuple[str, Builder]]]] = {
     "TileMaskGen": mask_gen_cases,
     "TileIota": iota_cases,
     "TileMMA": mma_cases,
-    "TileLoad": lambda: load_store_cases(True),
-    "TileStore": lambda: load_store_cases(False),
+    "TileGather": lambda: load_store_cases(True),
+    "TileScatter": lambda: load_store_cases(False),
 }
 
 

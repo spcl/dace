@@ -6,7 +6,7 @@ lowers (``newast.py``) to a bare-if tasklet ``if __in_cond: __out = value``.
 first-class write-only conditional-write function ``__out = IT(__in_cond, value)``
 -- write ``value`` where the condition holds, else leave the destination unchanged,
 with NO old-value read (unlike ``ITE(c, t, e)``). ``ConvertTaskletsToTileOps`` then
-lowers ``IT`` to a masked ``TileStore`` (the ``cond`` gates the store; inactive lanes
+lowers ``IT`` to a masked ``TileScatter`` (the ``cond`` gates the store; inactive lanes
 are left untouched). This test pins both the structural rewrite and the end-to-end
 numerics against NumPy.
 """

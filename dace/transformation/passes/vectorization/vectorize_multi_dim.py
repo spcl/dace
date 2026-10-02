@@ -87,7 +87,7 @@ from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SplitMapForTileRemainder,
                                                                                    source_map_label)
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
-# transients and emits the TileLoad / TileStore / TileMaskGen boundary; ConvertTaskletsToTileOps
+# transients and emits the TileGather / TileScatter / TileMaskGen boundary; ConvertTaskletsToTileOps
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
 from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
@@ -99,19 +99,19 @@ from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfg
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
-from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
-                                          TileReduce, TileStore, TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA,
+                                          TileReduce, TileScatter, TileUnop)
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-_TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+TILE_NODE_TYPES = (TileBinop, TileFMA, TileGather, TileMaskGen, TileITE, TileReduce, TileScatter, TileUnop)
 
 #: Every node the emit stage can produce, including the two the selector above does not stamp.
 #: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
-EMITTABLE_TILE_NODE_TYPES = _TILE_NODE_TYPES + (TileIota, TileMMA)
+EMITTABLE_TILE_NODE_TYPES = TILE_NODE_TYPES + (TileIota, TileMMA)
 
 
 def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
@@ -149,8 +149,8 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
 
 def _expandable_during_vectorization(node: dace.nodes.Node) -> bool:
     # Library nodes the vectorizer's ``expand_library_nodes`` may lower: ONLY its own tile-op nodes
-    # (:data:`_TILE_NODE_TYPES`), nothing else.
-    return isinstance(node, _TILE_NODE_TYPES)
+    # (:data:`TILE_NODE_TYPES`), nothing else.
+    return isinstance(node, TILE_NODE_TYPES)
 
 
 def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.MapExit, array: str,
@@ -932,8 +932,8 @@ class VectorizeMultiDim(ppl.Pipeline):
             MarkTileDims(widths=widths_t, require_gpu_resident=is_gpu_device, assume_even=assume_even),
             StrideMapByTileWidths(widths=widths_t),
         ]
-        # Walker-primary tiling: stage every non-transient AccessNode in tile bodies through TileLoad /
-        # TileStore per the per-dim lattice (CONSTANT -> Scalar, affine kinds -> tile, GATHER -> index tile).
+        # Walker-primary tiling: stage every non-transient AccessNode in tile bodies through TileGather /
+        # TileScatter per the per-dim lattice (CONSTANT -> Scalar, affine kinds -> tile, GATHER -> index tile).
         passes += [
             # WidenAccesses widens boundary subsets and lane-dependent transients and materializes per-lane
             # index tiles for gathers and scatters; InsertTileLoadStore wires them into ``_idx_<k>``.
@@ -1151,7 +1151,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         from dace.transformation.auto.auto_optimize import set_fast_implementations
 
         has_nontile_libnode = any(
-            isinstance(node, dace.nodes.LibraryNode) and not isinstance(node, _TILE_NODE_TYPES)
+            isinstance(node, dace.nodes.LibraryNode) and not isinstance(node, TILE_NODE_TYPES)
             for node, _ in sdfg.all_nodes_recursive())
         if not has_nontile_libnode:
             return
@@ -1189,7 +1189,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         host_isa = self._target_isa in CPU_SIMD_ISAS | {'SCALAR'}
         for node, parent in sdfg.all_nodes_recursive():
-            if isinstance(node, _TILE_NODE_TYPES):
+            if isinstance(node, TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
                 # A host ISA's header backend is host functions, which device code cannot call; the
                 # pure expansion is the loop the kernel runs per thread (CloudSC fp64 x 2 on the GPU).
@@ -1203,7 +1203,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
                 for node in state.nodes():
-                    if not isinstance(node, _TILE_NODE_TYPES):
+                    if not isinstance(node, TILE_NODE_TYPES):
                         continue
                     for edge in state.in_edges(node) + state.out_edges(node):
                         if edge.data is None or edge.data.data is None:

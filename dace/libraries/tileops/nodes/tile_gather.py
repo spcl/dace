@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileLoad`` — copy a K-dim tile out of a global array.
+"""``TileGather`` — copy a K-dim tile out of a global array.
 
 The pure expansion emits a CPP tasklet whose body walks the K-fold
 nested index space using the source array's strides (which DaCe
@@ -56,7 +56,7 @@ def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list
     return params
 
 
-def phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
+def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
                            src_edge: graph.MultiConnectorEdge[dace.Memlet], dims: list[int],
                            replicate: Sequence[int | sympy.Basic]) -> list[str]:
     """Per-tile-dim per-lane source offset for non-dividing REPLICATE dims.
@@ -79,7 +79,7 @@ def phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
     linear addressing). Integer ``/`` is floor for the non-negative index
     operands (the canonicalization non-negativity assumption).
 
-    :param node: The ``TileLoad`` being expanded.
+    :param node: The ``TileGather`` being expanded.
     :param parent_state: State owning the node (for the map scope walk).
     :param src_edge: The ``_src`` in-edge (carries the source memlet).
     :param dims: Per-tile-dim source-array dim basis (``node.src_dims`` resolved).
@@ -126,48 +126,48 @@ def phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
 
 
 @library.expansion
-class ExpandTileLoadPure(ExpandTilePure):
+class ExpandTileGatherPure(ExpandTilePure):
     pass
 
 
 @library.expansion
-class ExpandTileLoadScalar(ExpandTileIsa):
+class ExpandTileGatherScalar(ExpandTileIsa):
     environments = [TileOpsScalar]
     backend = "scalar"
 
 
 @library.expansion
-class ExpandTileLoadAVX512(ExpandTileIsa):
+class ExpandTileGatherAVX512(ExpandTileIsa):
     environments = [TileOpsAVX512]
     backend = "avx512"
 
 
 @library.expansion
-class ExpandTileLoadAVX2(ExpandTileIsa):
+class ExpandTileGatherAVX2(ExpandTileIsa):
     environments = [TileOpsAVX2]
     backend = "avx2"
 
 
 @library.expansion
-class ExpandTileLoadNeon(ExpandTileIsa):
+class ExpandTileGatherNeon(ExpandTileIsa):
     environments = [TileOpsNeon]
     backend = "neon"
 
 
 @library.expansion
-class ExpandTileLoadSVE(ExpandTileIsa):
+class ExpandTileGatherSVE(ExpandTileIsa):
     environments = [TileOpsSVE]
     backend = "sve"
 
 
 @library.expansion
-class ExpandTileLoadCUDA(ExpandTileIsa):
+class ExpandTileGatherCUDA(ExpandTileIsa):
     environments = [TileOpsCUDA]
     backend = "cuda"
 
 
 @library.node
-class TileLoad(TileOp):
+class TileGather(TileOp):
     """Load a K-dim tile out of a global array.
 
     ``_src`` carries the full memlet of the source array; the in-edge's
@@ -178,13 +178,13 @@ class TileLoad(TileOp):
     """
 
     implementations = {
-        "pure": ExpandTileLoadPure,
-        "scalar": ExpandTileLoadScalar,
-        "avx512": ExpandTileLoadAVX512,
-        "avx2": ExpandTileLoadAVX2,
-        "neon": ExpandTileLoadNeon,
-        "sve": ExpandTileLoadSVE,
-        "cuda": ExpandTileLoadCUDA,
+        "pure": ExpandTileGatherPure,
+        "scalar": ExpandTileGatherScalar,
+        "avx512": ExpandTileGatherAVX512,
+        "avx2": ExpandTileGatherAVX2,
+        "neon": ExpandTileGatherNeon,
+        "sve": ExpandTileGatherSVE,
+        "cuda": ExpandTileGatherCUDA,
     }
     default_implementation = "pure"
 
@@ -267,7 +267,7 @@ class TileLoad(TileOp):
                  replicate_factor_per_dim: tuple[int, ...] | None = None,
                  gather_dims: tuple[int, ...] | None = None,
                  location: str | None = None):
-        """Construct a ``TileLoad`` node.
+        """Construct a ``TileGather`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
@@ -291,16 +291,16 @@ class TileLoad(TileOp):
             given without ``src_expr``.
         """
         if not (1 <= len(widths) <= 3):
-            raise ValueError(f"TileLoad: widths must have length in {{1, 2, 3}}, got {widths!r}")
+            raise ValueError(f"TileGather: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
-            raise ValueError(f"TileLoad: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
+            raise ValueError(f"TileGather: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
         if src_kind not in VALID_KINDS:
-            raise ValueError(f"TileLoad: src_kind must be one of 'Tile' | 'Symbol' | 'Scalar', got {src_kind!r}")
+            raise ValueError(f"TileGather: src_kind must be one of 'Tile' | 'Symbol' | 'Scalar', got {src_kind!r}")
         if src_kind == SYMBOL and not src_expr:
-            raise ValueError("TileLoad: src_kind='Symbol' requires a non-empty src_expr")
+            raise ValueError("TileGather: src_kind='Symbol' requires a non-empty src_expr")
         if replicate_factor_per_dim is not None:
             if len(replicate_factor_per_dim) != len(widths):
-                raise ValueError(f"TileLoad: replicate_factor_per_dim length "
+                raise ValueError(f"TileGather: replicate_factor_per_dim length "
                                  f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
                 # The factor only needs to be a positive integer. Divisibility
@@ -315,13 +315,13 @@ class TileLoad(TileOp):
                 except (TypeError, ValueError):
                     continue  # symbolic -- the phase-aware expansion handles it
                 if k_int < 1:
-                    raise ValueError(f"TileLoad: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
+                    raise ValueError(f"TileGather: replicate_factor_per_dim[{d}] = {k_int} must be >= 1")
         # Validate gather_dims: sorted, unique, non-negative source-dim indices.
         # The upper bound (max(gather_dims) < src_ndim) is checked at validate() time since
         # ``src_ndim`` depends on the wired ``_src`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
-            raise ValueError(f"TileLoad: gather_dims must be a sorted tuple of unique non-negative "
+            raise ValueError(f"TileGather: gather_dims must be a sorted tuple of unique non-negative "
                              f"source-dim indices; got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.

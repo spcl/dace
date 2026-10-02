@@ -6,7 +6,7 @@ lower every read into a tile lib node, including broadcasts where the
 source rank is lower than the tile rank. The patterns covered here:
 
 1. **Scalar (0-D) -> (W_jk, W_jc) tile** — every lane reads the same
-   element, ``dim_strides=(0, 0)`` on the ``TileLoad``.
+   element, ``dim_strides=(0, 0)`` on the ``TileGather``.
 2. **1-D column ``a[jk]`` -> 2-D tile** — each row of the tile gets a
    distinct ``a[jk + l0]`` value, broadcast across ``jc``,
    ``dim_strides=(1, 0)``.
@@ -16,7 +16,7 @@ source rank is lower than the tile rank. The patterns covered here:
 4. **2-D contiguous ``a[jk, jc]`` -> tile** — the baseline,
    ``dim_strides=(1, 1)``.
 5. **1-D column gather ``a[idx[jk]]``** — per-row data-dependent
-   gather, broadcast across ``jc`` — lowers to a ``TileLoad`` (gather) whose
+   gather, broadcast across ``jc`` — lowers to a ``TileGather`` (gather) whose
    index tile encodes the broadcast.
 6. **1-D column structured ``a[jk // 2]``** — per-row structured
    gather (lane replication), broadcast across ``jc``.
@@ -35,7 +35,7 @@ import pytest
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -69,9 +69,9 @@ def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, cls))
 
 
-def _tile_loads(sdfg: dace.SDFG) -> list[TileLoad]:
-    """Every ``TileLoad`` node anywhere in ``sdfg``, recursing into nested SDFGs."""
-    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
+def tile_loads(sdfg: dace.SDFG) -> list[TileGather]:
+    """Every ``TileGather`` node anywhere in ``sdfg``, recursing into nested SDFGs."""
+    return [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
 
 
 def _vectorize_k2(sdfg: dace.SDFG) -> None:
@@ -98,7 +98,7 @@ def _scalar_broadcast(a: dace.float64[1], c: dace.float64[NK, NJ]):
     """Scalar -> (W_jk, W_jc) tile broadcast.
 
     Every lane reads the same ``a[0]`` element; the descent must
-    materialize this as one ``TileLoad`` with ``dim_strides=(0, 0)``.
+    materialize this as one ``TileGather`` with ``dim_strides=(0, 0)``.
     """
     for jk in range(NK):
         for jc in range(NJ):
@@ -210,16 +210,16 @@ def _fully_unstructured_2d_index(a: dace.float64[NK], idx: dace.int32[NK, NJ], c
 
 
 def test_scalar_broadcast_descent_to_tile_only():
-    """Scalar (size-1) broadcast lowers via a Scalar-kind TileLoad, not per-element compute."""
+    """Scalar (size-1) broadcast lowers via a Scalar-kind TileGather, not per-element compute."""
     sdfg = _scalar_broadcast.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim scalar-broadcast must lower to tile-only"
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert loads[0].src_kind == "Scalar", f"a size-1 source must broadcast via src_kind=Scalar, got {loads[0]!r}"
-    assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
 
 
 def test_col_broadcast_descent_to_tile_only():
@@ -229,10 +229,10 @@ def test_col_broadcast_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim col-broadcast must lower to tile-only"
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
 
 
 def test_row_broadcast_descent_to_tile_only():
@@ -242,10 +242,10 @@ def test_row_broadcast_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim row-broadcast must lower to tile-only"
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
 
 
 def test_full_2d_baseline_descent_to_tile_only():
@@ -255,10 +255,10 @@ def test_full_2d_baseline_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
-    assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
+    assert _count_lib_nodes_by_type(sdfg, TileScatter) >= 1
 
 
 def test_col_gather_descent_to_tile_only():
@@ -268,8 +268,8 @@ def test_col_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
-    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    gathers = [n for n in tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
 
 
@@ -280,7 +280,7 @@ def test_col_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
     assert list(loads[0].replicate_factor_per_dim) == [
@@ -295,8 +295,8 @@ def test_row_gather_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
-    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    gathers = [n for n in tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
 
 
@@ -307,7 +307,7 @@ def test_row_structured_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
     assert list(loads[0].replicate_factor_per_dim) == [
@@ -322,7 +322,7 @@ def test_fully_structured_2d_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
     assert list(loads[0].replicate_factor_per_dim) == [
@@ -337,22 +337,22 @@ def test_fully_unstructured_separable_descent_to_tile_only():
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
-    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    gathers = [n for n in tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0, 1], f"expected gather_dims=(0, 1), got {gathers[0].gather_dims}"
 
 
 def test_fully_unstructured_2d_index_descent_to_tile_only():
-    """``a[idx[jk, jc]]``: a single (8, 8) index TileLoad feeds the gather, not two 1-D tiles."""
+    """``a[idx[jk, jc]]``: a single (8, 8) index TileGather feeds the gather, not two 1-D tiles."""
     sdfg = _fully_unstructured_2d_index.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    loads = _tile_loads(sdfg)
+    loads = tile_loads(sdfg)
     gathers = [n for n in loads if n.gather_dims]
     idx_loads = [n for n in loads if not n.gather_dims]
-    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
     assert len(idx_loads) == 1 and list(
         idx_loads[0].widths) == [8, 8], f"a single 2-D index tile must feed the gather, got {idx_loads}"

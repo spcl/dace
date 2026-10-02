@@ -3,7 +3,7 @@
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.insert_tile_load_store import (
     InsertTileLoadStore,
@@ -83,7 +83,7 @@ def test_pass_refuses_widths_outside_k_range():
 
 
 def test_tile_helper_mints_tile_transient_and_tileload_node():
-    """The helper adds a (widths,)-shaped Array transient + a TileLoad node + wires both edges."""
+    """The helper adds a (widths,)-shaped Array transient + a TileGather node + wires both edges."""
     widths = (4, 8)
     sdfg = dace.SDFG("stage_tile_fixture")
     sdfg.add_array("A", (16, 32), dace.float64, transient=False)
@@ -96,8 +96,8 @@ def test_tile_helper_mints_tile_transient_and_tileload_node():
     assert tuple(desc.shape) == widths
     assert desc.transient
     assert desc.dtype == dace.float64
-    # TileLoad inserted.
-    assert isinstance(load, TileLoad)
+    # TileGather inserted.
+    assert isinstance(load, TileGather)
     assert tuple(load.widths) == widths
     # Both edges wired: an -> load._src, load._dst -> bridge_an.
     src_edges = [e for e in state.edges() if e.src is an and e.dst is load and e.dst_conn == "_src"]
@@ -106,7 +106,7 @@ def test_tile_helper_mints_tile_transient_and_tileload_node():
 
 
 def test_tile_helper_forwards_dim_strides_and_replicate():
-    """Per-dim properties forward to the TileLoad node verbatim."""
+    """Per-dim properties forward to the TileGather node verbatim."""
     widths = (4, 8)
     sdfg = dace.SDFG("forward_props")
     sdfg.add_array("A", (16, 32), dace.float64, transient=False)
@@ -156,7 +156,7 @@ def _add_idx(sdfg, name, shape):
 
 
 def test_gather_helper_emits_tileload_with_gather_dims_and_wires_idx_connectors():
-    """gather_dims=(0,) -> TileLoad with `_idx_0` wired from a (W_0,) index tile."""
+    """gather_dims=(0,) -> TileGather with `_idx_0` wired from a (W_0,) index tile."""
     widths = (4, 8)
     sdfg = dace.SDFG("gather_partial")
     sdfg.add_array("A", (16, 32), dace.float64, transient=False)
@@ -303,7 +303,7 @@ def _build_linear_tile_fixture():
 
 
 def test_walker_stages_linear_access_via_tile_branch():
-    """LINEAR access ``B[ii]`` stages through a tile-shape Array transient + TileLoad."""
+    """LINEAR access ``B[ii]`` stages through a tile-shape Array transient + TileGather."""
     sdfg, inner = _build_linear_tile_fixture()
     before_arrays = sum(1 for d in inner.arrays.values()
                         if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
@@ -311,13 +311,13 @@ def test_walker_stages_linear_access_via_tile_branch():
     assert result == 1
     after_arrays = sum(1 for d in inner.arrays.values()
                        if isinstance(d, dace.data.Array) and d.transient and tuple(d.shape) == (8, ))
-    # Phase A6: +2 (TileLoad bridge + resized passthrough downstream).
+    # Phase A6: +2 (TileGather bridge + resized passthrough downstream).
     assert after_arrays == before_arrays + 2, \
-        "expected two (8,)-shape tile transients (TileLoad bridge + A6-resized passthrough)"
-    # The new TileLoad is wired between B and the bridge.
+        "expected two (8,)-shape tile transients (TileGather bridge + A6-resized passthrough)"
+    # The new TileGather is wired between B and the bridge.
     body_state = next(s for s in inner.states())
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
-    assert len(tile_loads) == 1, "expected exactly one TileLoad inserted by the walker"
+    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
+    assert len(tile_loads) == 1, "expected exactly one TileGather inserted by the walker"
 
 
 def _build_gather_tile_fixture():
@@ -354,7 +354,7 @@ def _build_gather_tile_fixture():
 
 def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     """``A[idx[ii]]`` -- the walker materialises a (W_i,)-shape int64 index tile, mints a
-    tile bridge transient, and inserts a TileLoad with ``gather_dims=(0,)`` wiring _idx_0."""
+    tile bridge transient, and inserts a TileGather with ``gather_dims=(0,)`` wiring _idx_0."""
     sdfg, inner = _build_gather_tile_fixture()
     before_int_arrays = sum(1 for d in inner.arrays.values()
                             if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)
@@ -372,18 +372,18 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
     # every transient that was originally Scalar / (1,) and downstream of a
     # tile-input tasklet is now tile-shape (W,). For the gather fixture this
     # adds one extra float64 tile (the resized post-Bypass scalar bridge),
-    # so the post-stage count is +2 (TileLoad bridge + resized passthrough)
+    # so the post-stage count is +2 (TileGather bridge + resized passthrough)
     # not +1.
     assert after_float_tiles == before_float_tiles + 2, \
-        "expected two float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
+        "expected two float64 tile-shape transients (TileGather bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
+    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
     # Two TileLoads now: the index-tile load (builds the ``(W,)`` _idx tile -- no
     # CPP materialiser anymore) + the data gather load. The data gather is the
     # one carrying gather_dims.
-    assert len(tile_loads) == 2, f"expected index-load + data-gather TileLoad, got {len(tile_loads)}"
+    assert len(tile_loads) == 2, f"expected index-load + data-gather TileGather, got {len(tile_loads)}"
     load = next(n for n in tile_loads if n.gather_dims)
-    assert tuple(load.gather_dims) == (0, ), "expected gather_dims=(0,) on the data-gather TileLoad"
+    assert tuple(load.gather_dims) == (0, ), "expected gather_dims=(0,) on the data-gather TileGather"
     assert "_idx_0" in load.in_connectors, "expected _idx_0 connector wired"
 
 
@@ -422,7 +422,7 @@ def _build_k2_gather_tile_fixture():
 
 def test_walker_stages_K2_multi_tile_dim_gather():
     """``A[idx[ii, jj]]`` (K=2 multi-tile-dim gather) -- the walker materialises a (8, 16)-shape
-    int64 index tile + a (8, 16) tile bridge transient, and inserts a TileLoad with
+    int64 index tile + a (8, 16) tile bridge transient, and inserts a TileGather with
     ``gather_dims=(0,)`` wiring _idx_0."""
     sdfg, inner = _build_k2_gather_tile_fixture()
     before_int_arrays = sum(
@@ -438,13 +438,13 @@ def test_walker_stages_K2_multi_tile_dim_gather():
     after_float_tiles = sum(1 for d in inner.arrays.values() if isinstance(d, dace.data.Array) and d.transient
                             and d.dtype == dace.float64 and _shape_eq_ignoring_one(d.shape, (8, 16)))
     assert after_int_arrays == before_int_arrays + 1, "expected one (8, 16)-shape int64 index tile"
-    # Phase A6: +2 (TileLoad bridge + resized passthrough).
+    # Phase A6: +2 (TileGather bridge + resized passthrough).
     assert after_float_tiles == before_float_tiles + 2, \
-        "expected two (8, 16) float64 tile-shape transients (TileLoad bridge + A6-resized passthrough)"
+        "expected two (8, 16) float64 tile-shape transients (TileGather bridge + A6-resized passthrough)"
     body_state = next(s for s in inner.states())
-    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileLoad)]
+    tile_loads = [n for n in body_state.nodes() if isinstance(n, TileGather)]
     # Index-tile load (builds the (8, 16) _idx tile) + data gather load.
-    assert len(tile_loads) == 2, f"expected index-load + data-gather TileLoad, got {len(tile_loads)}"
+    assert len(tile_loads) == 2, f"expected index-load + data-gather TileGather, got {len(tile_loads)}"
     load = next(n for n in tile_loads if n.gather_dims)
     assert tuple(load.gather_dims) == (0, )
     assert "_idx_0" in load.in_connectors
@@ -481,7 +481,7 @@ def test_walker_rewires_consumers_to_bridge_for_constant_branch():
         "expected consumer to read from Scalar bridge transient"
 
 
-# write-side staging (TileStore)
+# write-side staging (TileScatter)
 
 
 def _build_linear_write_fixture():
@@ -489,7 +489,7 @@ def _build_linear_write_fixture():
 
     Models the post-walker shape for an output store: the body writes a
     tile-shape value into the non-transient AN; the walker should mint a
-    bridge transient + TileStore between the writer and the AN.
+    bridge transient + TileScatter between the writer and the AN.
     """
     sdfg = dace.SDFG("walker_write_fixture")
     sdfg.add_array("B", (32, ), dace.float64, transient=False)
@@ -512,14 +512,14 @@ def _build_linear_write_fixture():
 
 
 def test_walker_stages_linear_write_via_tilestore():
-    """LINEAR write ``B[ii] = ...`` stages through a tile bridge + TileStore."""
-    from dace.libraries.tileops import TileStore
+    """LINEAR write ``B[ii] = ...`` stages through a tile bridge + TileScatter."""
+    from dace.libraries.tileops import TileScatter
     sdfg, inner = _build_linear_write_fixture()
     result = InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     assert result is not None and result >= 1
     body_state = next(s for s in inner.states())
-    stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
-    assert len(stores) == 1, f"expected one TileStore, got {len(stores)}"
+    stores = [n for n in body_state.nodes() if isinstance(n, TileScatter)]
+    assert len(stores) == 1, f"expected one TileScatter, got {len(stores)}"
 
 
 def test_walker_rewires_producers_to_bridge_for_tile_write():
@@ -538,12 +538,12 @@ def test_walker_rewires_producers_to_bridge_for_tile_write():
 
 
 def test_walker_tilestore_feeds_into_original_an():
-    """The TileStore's ``_dst`` edge writes into the original non-transient AN."""
-    from dace.libraries.tileops import TileStore
+    """The TileScatter's ``_dst`` edge writes into the original non-transient AN."""
+    from dace.libraries.tileops import TileScatter
     sdfg, inner = _build_linear_write_fixture()
     InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
-    store = next(n for n in body_state.nodes() if isinstance(n, TileStore))
+    store = next(n for n in body_state.nodes() if isinstance(n, TileScatter))
     dst_edges = [e for e in body_state.out_edges(store) if e.src_conn == "_dst"]
     assert len(dst_edges) == 1
     target = dst_edges[0].dst
@@ -576,13 +576,13 @@ def _build_constant_write_fixture():
 def test_walker_leaves_constant_only_write_as_direct_copy():
     """Per user direction 2026-06-09: CONSTANT-only writes stay as the original direct
     producer -> AN copy (symmetric to CONSTANT-only reads on the load side). The walker
-    does NOT insert a TileStore for this pattern."""
-    from dace.libraries.tileops import TileStore
+    does NOT insert a TileScatter for this pattern."""
+    from dace.libraries.tileops import TileScatter
     sdfg, inner = _build_constant_write_fixture()
     InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
-    stores = [n for n in body_state.nodes() if isinstance(n, TileStore)]
-    assert len(stores) == 0, "expected NO TileStore for CONSTANT-only write -- direct copy is the contract"
+    stores = [n for n in body_state.nodes() if isinstance(n, TileScatter)]
+    assert len(stores) == 0, "expected NO TileScatter for CONSTANT-only write -- direct copy is the contract"
     tasklets = [n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet)]
     assert len(tasklets) == 1
     out_edges = list(body_state.out_edges(tasklets[0]))
@@ -595,7 +595,7 @@ def test_walker_leaves_constant_only_write_as_direct_copy():
 
 
 def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_connectors():
-    """Direct exercise of stage_tile_store(gather_dims=(0,)) -> TileStore with `_idx_0`
+    """Direct exercise of stage_tile_store(gather_dims=(0,)) -> TileScatter with `_idx_0`
     wired from a (W_0,) index tile.
 
     The walker's GATHER classification path is shared with the read side and already
@@ -618,7 +618,7 @@ def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_
                                    gather_dims=(0, ),
                                    idx_sources={0: idx_an})
     assert tuple(store.gather_dims) == (0, )
-    # The TileStore should have a _idx_0 in-edge connected from Idx0.
+    # The TileScatter should have a _idx_0 in-edge connected from Idx0.
     in_edges = list(state.in_edges(store))
     idx_edges = [e for e in in_edges if e.dst_conn == "_idx_0"]
     assert len(idx_edges) == 1

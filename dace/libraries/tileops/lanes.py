@@ -163,7 +163,7 @@ def offset_via_strides(
     """Return the flat offset expression
     ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
-    Used by ``TileLoad`` / ``TileStore`` to address the source / dest
+    Used by ``TileGather`` / ``TileScatter`` to address the source / dest
     array's flat memory through its own per-dim strides scaled by the
     optional per-tile-dim ``dim_strides`` coefficient. When
     ``replicate_factors[d] > 1``, the per-dim lane index is divided by
@@ -175,7 +175,7 @@ def offset_via_strides(
     dim ``d`` uses it verbatim as the per-lane element offset *relative to
     the connector base* (the dim contributes ``(lane_index_exprs[d]) *
     strides[d]`` and the dim's ``coeffs`` / ``replicate_factors`` are
-    bypassed). The ``TileLoad`` pure expansion supplies it for a
+    bypassed). The ``TileGather`` pure expansion supplies it for a
     non-dividing ``int_floor(c*iter + c0, D)`` (``W % D != 0`` or symbolic
     ``D``): the contracted-box broadcast ``_src[__l/D]`` is correct only
     when every tile starts on a phase boundary (``W % D == 0``), so the

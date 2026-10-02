@@ -56,12 +56,12 @@ class TileAccessKind(Enum):
 
     :cvar CONTIGUOUS: Every tile dim's index is ``base_d + tile_var_d``
         and the source array has unit stride on that dim — emit
-        :class:`TileLoad` / :class:`TileStore` with ``dim_strides``
+        :class:`TileGather` / :class:`TileScatter` with ``dim_strides``
         all 1.
     :cvar STRIDED: At least one tile dim's index is
         ``base_d + s_d * tile_var_d`` with ``s_d > 1`` (or a non-unit
-        array stride on that dim) — emit :class:`TileLoad` /
-        :class:`TileStore` with the actual ``dim_strides``.
+        array stride on that dim) — emit :class:`TileGather` /
+        :class:`TileScatter` with the actual ``dim_strides``.
     :cvar BROADCAST_SYMBOL: The subset has no dependency on any tile
         iter-var — the operand is broadcast inline as
         :class:`TileBinop` ``kind=Symbol``.
@@ -78,7 +78,7 @@ class TileAccessKind(Enum):
     :cvar GATHER: A source-array dim's index is data-dependent / not a
         perfect box: read from a SEPARATE index array (``b[idx[i]]``), a
         diagonal (``a[i, i]`` — one tile var in two dims), or a dim mixing
-        tile vars (``a[i + j]``). Emit ``TileLoad`` / ``TileStore``.
+        tile vars (``a[i + j]``). Emit ``TileGather`` / ``TileScatter``.
     :cvar UNRECOGNIZED: Anything the classifier cannot put into the
         above buckets (a tile var bound to no subset dim, etc.).
     """
@@ -300,7 +300,7 @@ def classify_tile_access(
     tilevar_dims = {p: [d for d, di in enumerate(dims) if p in di.dep] for p in range(K)}
     if any(len(ds) > 1 for ds in tilevar_dims.values()):
         # A tile var spanning ≥2 array dims is a diagonal (``a[i, i]``).
-        # K=1 lowers it via a TileLoad (gather_dims) over an affine per-dim index map
+        # K=1 lowers it via a TileGather (gather_dims) over an affine per-dim index map
         # (one shared lane offset folded into every spanned dim). For K>1 a
         # diagonal inside a multi-dim register tile is unsupported — the
         # gather map would have to fold one shared tile var across multiple

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad
+from dace.libraries.tileops import TileBinop, TileGather
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (is_same_domain_constant,
                                                                                    numeric_constant_domain)
@@ -104,7 +104,7 @@ def test_cast_constant_broadcasts_no_fill(prog):
 def test_cast_and_separate_forms_emit_equivalent_shape():
     """``dace.float16(0.125) * b`` and ``k = 0.125; b * dace.float16(k)`` lower to the
     SAME tile-op shape: exactly one ``TileBinop`` whose constant operand is a Scalar/Symbol
-    broadcast, never a widened ``TileLoad(src_kind='Symbol')`` constant tile."""
+    broadcast, never a widened ``TileGather(src_kind='Symbol')`` constant tile."""
     for prog in (_cast_inline16, _cast_separate16):
         sdfg = _vectorize(prog, expand=False)
         binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
@@ -112,9 +112,9 @@ def test_cast_and_separate_forms_emit_equivalent_shape():
         b = binops[0]
         assert "Scalar" in (b.kind_a, b.kind_b) or "Symbol" in (b.kind_a, b.kind_b), \
             f"{prog.name}: the constant operand must be a Scalar/Symbol broadcast, got kinds {(b.kind_a, b.kind_b)}"
-        # No constant materialised as a per-lane tile via a Symbol-source TileLoad.
+        # No constant materialised as a per-lane tile via a Symbol-source TileGather.
         const_fills = [
-            n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad) and n.src_kind == "Symbol"
+            n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == "Symbol"
             and numeric_constant_domain(str(n.src_expr)) is not None
         ]
         assert not const_fills, f"{prog.name}: constant must not be widened into a Symbol-source fill tile"

@@ -26,7 +26,7 @@ unified.
 
 The same guard applies to a ternary blend ``_o = ITE(_c, _t, _e)`` / ``_o = _t if _c else
 _e`` (lowers to ``TileITE``) and the masked write ``_o = IT(_c, _val)`` (lowers to a masked
-``TileStore``): each connector arm is cast to the OUTPUT dtype when it differs, mirroring the
+``TileScatter``): each connector arm is cast to the OUTPUT dtype when it differs, mirroring the
 frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.BinOp`` /
 ``ast.Compare``, so they need their own detector rather than reusing the binop one.
 """
@@ -335,7 +335,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         return changed
 
     def resolve_masked_write(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
-        """A masked write ``_o = IT(_cond, _val)`` lowers to a masked ``TileStore`` that copies
+        """A masked write ``_o = IT(_cond, _val)`` lowers to a masked ``TileScatter`` that copies
         ``_val`` straight into the destination (``ConvertTaskletsToTileOps._convert_conditional_write``
         strips the wrapper and re-dispatches the bare ``_o = _val`` through the plain-assign
         path, an AN -> AN edge with no cast). Cast ``_val`` to the destination dtype here when

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""K=1 ``TileLoad`` gather + strided-load intrinsic lowering.
+"""K=1 ``TileGather`` gather + strided-load intrinsic lowering.
 
 A unit-stride load lowers to a dense SIMD load (``_mm512_loadu_pd``), a constant
 non-unit stride to the gather intrinsic over a strided index vector
@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 
 W = 8  # fp64 AVX-512 lane count
 
@@ -65,13 +65,13 @@ def _gather_sdfg(name, impl, masked):
     sdfg.add_array("idx", [W], dace.int64)
     sdfg.add_array("dst", [W], dace.float64)
     state = sdfg.add_state()
-    node = TileLoad(name="ld",
-                    widths=(W, ),
-                    dim_strides=(1, ),
-                    replicate_factor_per_dim=(1, ),
-                    src_dims=(0, ),
-                    gather_dims=(0, ),
-                    has_mask=masked)
+    node = TileGather(name="ld",
+                      widths=(W, ),
+                      dim_strides=(1, ),
+                      replicate_factor_per_dim=(1, ),
+                      src_dims=(0, ),
+                      gather_dims=(0, ),
+                      has_mask=masked)
     node.implementation = impl
     state.add_node(node)
     state.add_edge(state.add_access("src"), None, node, "_src", dace.Memlet("src[0:256]"))
@@ -88,13 +88,13 @@ def _strided_sdfg(name, impl, stride, masked):
     sdfg.add_array("src", [W * stride + 8], dace.float64)
     sdfg.add_array("dst", [W], dace.float64)
     state = sdfg.add_state()
-    node = TileLoad(name="ld",
-                    widths=(W, ),
-                    dim_strides=(stride, ),
-                    replicate_factor_per_dim=(1, ),
-                    src_dims=(0, ),
-                    gather_dims=(),
-                    has_mask=masked)
+    node = TileGather(name="ld",
+                      widths=(W, ),
+                      dim_strides=(stride, ),
+                      replicate_factor_per_dim=(1, ),
+                      src_dims=(0, ),
+                      gather_dims=(),
+                      has_mask=masked)
     node.implementation = impl
     state.add_node(node)
     state.add_edge(state.add_access("src"), None, node, "_src", dace.Memlet(f"src[0:{W * stride + 8}]"))

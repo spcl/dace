@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The tile library nodes."""
 from .tile_mask_gen import TileMaskGen
-from .tile_load import TileLoad
-from .tile_store import TileStore
+from .tile_gather import TileGather
+from .tile_scatter import TileScatter
 from .tile_binop import TileBinop
 from .tile_fma import TileFMA
 from .tile_unop import TileUnop

@@ -2,7 +2,7 @@
 """End-to-end numerical tests where the kernel size is NOT divisible by the tile widths.
 
 All previous e2e tests used sizes that divide the widths cleanly (mask all-True). This
-file exercises the masked-tail path: TileLoad / TileStore / Tile{Binop, Unop, ITE,
+file exercises the masked-tail path: TileGather / TileScatter / Tile{Binop, Unop, ITE,
 Reduce} must honour the iter_mask to skip out-of-range lanes.
 
 Per the walker pipeline's ``GenerateTileIterationMask`` placement (inside the body

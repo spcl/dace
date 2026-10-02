@@ -62,7 +62,7 @@ class TileITE(TileOp):
 
     The condition and both arms have a kind (see :mod:`dace.libraries.tileops.kinds`), so a loop-invariant condition
     is a ``Symbol`` or a ``Scalar`` and the node has no ``_mask`` connector then. The condition may have any dtype; the
-    arms and the output share one. Masking the write is the job of the :class:`TileStore` that consumes ``_o``.
+    arms and the output share one. Masking the write is the job of the :class:`TileScatter` that consumes ``_o``.
     """
 
     implementations = {

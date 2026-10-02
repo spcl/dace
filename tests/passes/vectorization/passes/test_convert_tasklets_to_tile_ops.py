@@ -612,12 +612,12 @@ def test_converter_skips_mask_when_no_mask_in_scope():
 def test_converter_keeps_mask_producer_an_alive_for_reductions():
     """Option C: pure-arithmetic ops drop the iter-mask, but ``TileMaskGen`` still
     produces the mask transient for the side-effect-boundary consumers
-    (:class:`TileReduce`, :class:`TileStore`)."""
+    (:class:`TileReduce`, :class:`TileScatter`)."""
     from dace.libraries.tileops import TileMaskGen
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
-    # TileMaskGen still emitted (consumed downstream by TileStore at the global write).
+    # TileMaskGen still emitted (consumed downstream by TileScatter at the global write).
     assert any(isinstance(n, TileMaskGen) for n in body_state.nodes())
 
 

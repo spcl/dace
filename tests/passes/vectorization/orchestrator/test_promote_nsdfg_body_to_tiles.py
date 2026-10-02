@@ -7,12 +7,12 @@ legacy ``PromoteNSDFGBodyToTiles`` descent that used to tile such a body in
 place was DELETED in the walker-primary migration; :class:`VectorizeCPUMultiDim`
 now owns this end to end (``NestInnermostMapBodyIntoNSDFG`` mints the body NSDFG,
 then ``WidenAccesses`` / ``InsertTileLoadStore`` / ``ConvertTaskletsToTileOps``
-turn connector reads into :class:`TileLoad`, the split scalar chain into
+turn connector reads into :class:`TileGather`, the split scalar chain into
 :class:`TileBinop` / :class:`TileUnop`, and connector writes into
-:class:`TileStore`). These tests pin that the walker:
+:class:`TileScatter`). These tests pin that the walker:
 
 * tiles a const-store output (``a[i] = 3.0``) correctly, masked tail included;
-* emits TileLoad / TileBinop / TileStore for the vbor scalar chain;
+* emits TileGather / TileBinop / TileScatter for the vbor scalar chain;
 * emits TileUnop for unary-minus tasklets in a reused-scalar chain;
 * vectorizes the carried-dependency ``s231`` nest correctly -- the inner ``j``
   loop carries a dependency so LoopToMap leaves it sequential and only the
@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad, TileStore, TileUnop
+from dace.libraries.tileops import TileBinop, TileGather, TileScatter, TileUnop
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -110,7 +110,7 @@ def _vectorize(prog, name, expand=True):
 @pytest.mark.parametrize("n", [16, 17])
 def test_const_store_to_output_matches_reference(n):
     """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
-    through the walker (const-fill tile + masked TileStore) and matches the
+    through the walker (const-fill tile + masked TileScatter) and matches the
     reference (n=17 forces the masked tail -- the mask must keep the const out of
     the OOB lanes of the output array)."""
     ref = _build(_const_store, f"const_ref{n}")
@@ -140,15 +140,15 @@ def test_vbor_nsdfg_body_matches_reference(n):
 
 
 def test_vbor_emits_tile_ops():
-    """The walker leaves TileLoad / TileBinop / TileStore lib nodes inside the
+    """The walker leaves TileGather / TileBinop / TileScatter lib nodes inside the
     body NSDFG (before ``expand_library_nodes``)."""
     sdfg = _vectorize(_vbor, "vbor_struct", expand=False)
-    loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
+    loads = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
-    stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore)]
-    assert loads, "expected TileLoad nodes for the connector reads"
+    stores = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
+    assert loads, "expected TileGather nodes for the connector reads"
     assert binops, "expected TileBinop nodes for the scalar chain"
-    assert stores, "expected a TileStore for x[i]"
+    assert stores, "expected a TileScatter for x[i]"
 
 
 @pytest.mark.parametrize("n", [16, 17])

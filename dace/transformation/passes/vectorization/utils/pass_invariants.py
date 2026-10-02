@@ -94,7 +94,7 @@ def no_transient_scalar_stores(scope: SDFG | SDFGState) -> str | None:
     edge is ``tile -> tile``. Replaces old ``_maybe_elide_scalar_passthrough`` patch-fix.
 
     Allowed scalar load-staging: single element → transient scalar for a broadcast (e.g.
-    ``a_const`` from ``a[0]`` feeding ``TileLoad(src_kind="Scalar")``).
+    ``a_const`` from ``a[0]`` feeding ``TileGather(src_kind="Scalar")``).
     """
     for sd, state in _iter_states(scope):
         for edge in state.edges():

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileStore`` broadcast source kinds.
+"""``TileScatter`` broadcast source kinds.
 
-The base ``TileStore`` reads a tile-shaped transient (``src_kind="Tile"``,
+The base ``TileScatter`` reads a tile-shaped transient (``src_kind="Tile"``,
 default) and streams it to the destination. Two new source kinds let the
 same lib node express constant / scalar broadcasts without a CPP fill
 tasklet:
@@ -20,7 +20,7 @@ The 2-D ``cloudsc_tidy_branch`` kernel exercises this end-to-end: the
 guarded body sets six arrays to ``0.0`` inside the ``if`` arm. After
 ``VectorizeCPUMultiDim`` runs (``expand_tile_nodes=False`` so the lib
 nodes survive), the SDFG must hold zero ``Tasklet`` nodes — every
-constant store is now a ``TileStore`` lib node.
+constant store is now a ``TileScatter`` lib node.
 """
 
 import pytest
@@ -58,7 +58,7 @@ def _tidy_branch(
 ):
     # cloudsc_bottom_lower.F90 "Tidy up very small cloud cover or total
     # cloud water" — six guarded zero-memsets inside the same ``if``
-    # arm, which is the canonical TileStore broadcast pattern.
+    # arm, which is the canonical TileScatter broadcast pattern.
     for jk in range(KLEV):
         for jl in range(KLON):
             if zqx_l[jk, jl] + zqx_i[jk, jl] < RLMIN or za[jk, jl] < RAMIN:
@@ -84,7 +84,7 @@ def _tasklet_count(sdfg: dace.SDFG) -> int:
 
     The K-dim tile-only contract is "tile-shaped values flow only through tile
     lib nodes" -- so every constant store / broadcast in the tile body must be a
-    tile lib node (here a ``TileLoad(src_kind='Symbol')``), never a CPP fill.
+    tile lib node (here a ``TileGather(src_kind='Symbol')``), never a CPP fill.
     Excluded as legitimate: trivial assigns, ``tile_runtime_*`` trip guards, and
     the scalar ``__tile_k1_tail`` remainder (scalar-load -> scalar python
     tasklets, user direction 2026-06-15) -- none of those touch a tile."""
@@ -94,11 +94,11 @@ def _tasklet_count(sdfg: dace.SDFG) -> int:
 
 
 def test_tilestore_symbol_broadcast_minimal():
-    """Constructing a ``TileStore(src_kind='Symbol')`` declares no
+    """Constructing a ``TileScatter(src_kind='Symbol')`` declares no
     ``_src`` connector and embeds the literal in ``src_expr``."""
-    from dace.libraries.tileops import TileStore
-    node = TileStore("ts_sym", widths=(8, 8), src_kind="Symbol", src_expr="0.0")
-    assert "_src" not in node.in_connectors, "Symbol-source TileStore must not declare ``_src``"
+    from dace.libraries.tileops import TileScatter
+    node = TileScatter("ts_sym", widths=(8, 8), src_kind="Symbol", src_expr="0.0")
+    assert "_src" not in node.in_connectors, "Symbol-source TileScatter must not declare ``_src``"
     assert "_dst" in node.out_connectors
     assert node.src_expr == "0.0"
 
@@ -106,16 +106,16 @@ def test_tilestore_symbol_broadcast_minimal():
 def test_tilestore_symbol_requires_expr():
     """``src_kind='Symbol'`` without a ``src_expr`` raises at
     construction (loud failure)."""
-    from dace.libraries.tileops import TileStore
+    from dace.libraries.tileops import TileScatter
     with pytest.raises(ValueError, match="src_expr"):
-        TileStore("ts_sym_bad", widths=(8, ), src_kind="Symbol")
+        TileScatter("ts_sym_bad", widths=(8, ), src_kind="Symbol")
 
 
 def test_tidy_branch_emits_zero_cpp_tasklets():
     """End-to-end: after ``VectorizeCPUMultiDim`` runs on the
     ``cloudsc_tidy_branch`` kernel (with ``expand_tile_nodes=False`` so
     the lib nodes survive), the SDFG must hold zero ``Tasklet`` nodes —
-    every constant store is now a ``TileStore`` lib node, no CPP fills."""
+    every constant store is now a ``TileScatter`` lib node, no CPP fills."""
     sdfg = _tidy_branch.to_sdfg()
     sdfg.name = "tidy_branch_tile_only"
     sdfg.validate()

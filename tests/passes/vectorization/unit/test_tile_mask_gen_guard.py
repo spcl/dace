@@ -3,8 +3,8 @@
 
 A branch that is neither ITE-able (two arms, same write subset) nor IT-able (one arm whose accesses
 are in range regardless) has to execute UNDER A MASK: the guard becomes a per-lane predicate, and
-the lanes it excludes neither store (masked ``TileStore``) nor dereference their source (a masked
-``TileLoad`` guards the read). That is what makes ``if i < N-1: s += a[i+1]*a[i+1]`` safe to run
+the lanes it excludes neither store (masked ``TileScatter``) nor dereference their source (a masked
+``TileGather`` guards the read). That is what makes ``if i < N-1: s += a[i+1]*a[i+1]`` safe to run
 unconditionally -- lane ``i = N-1`` never touches ``a[N]``.
 
 The mask generator previously encoded only the iteration bound. ``guard_predicate`` AND-s the guard

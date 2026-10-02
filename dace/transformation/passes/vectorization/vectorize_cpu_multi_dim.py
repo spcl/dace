@@ -11,7 +11,7 @@ from dace.transformation.passes.vectorization.vectorize_multi_dim import (
     normalize_loop_nests,
     _validate_knobs,
     VALID_ISAS,
-    _TILE_NODE_TYPES,
+    TILE_NODE_TYPES,
 )
 
 __all__ = [
@@ -21,5 +21,5 @@ __all__ = [
     "normalize_loop_nests",
     "_validate_knobs",
     "VALID_ISAS",
-    "_TILE_NODE_TYPES",
+    "TILE_NODE_TYPES",
 ]

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import dace
 from dace.ordered import OrderedSet
-from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA, TileReduce,
-                                    TileStore, TileUnop)
+from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce,
+                                    TileScatter, TileUnop)
 
 # Spelled out, not imported from the pass: the assertion audits production code, not restates it.
-TILE_NODE_TYPES = (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA, TileReduce, TileStore,
+TILE_NODE_TYPES = (TileBinop, TileFMA, TileIota, TileITE, TileGather, TileMaskGen, TileMMA, TileReduce, TileScatter,
                    TileUnop)
 
 REFUSAL_HINT = ("VectorizeMultiDim.apply_pass catches VectorizeUnsupported, calls warnings.warn and "
@@ -21,7 +21,7 @@ def tile_library_nodes(sdfg: dace.SDFG) -> list[dace.nodes.LibraryNode]:
     """Tile lib nodes anywhere in ``sdfg``, nested SDFGs included.
 
     :param sdfg: SDFG to scan.
-    :returns: Every ``TileLoad`` / ``TileBinop`` / ``TileStore`` / ... node reachable from ``sdfg``.
+    :returns: Every ``TileGather`` / ``TileBinop`` / ``TileScatter`` / ... node reachable from ``sdfg``.
     """
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
 

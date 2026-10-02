@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Kernels that need ``TileLoad`` (gather) / ``TileStore`` (scatter) / ``TileReduce``.
+"""Kernels that need ``TileGather`` (gather) / ``TileScatter`` (scatter) / ``TileReduce``.
 
 The **1D** and **2D data gathers** (``a[i] = b[idx[i]] + ...``) land through the walker --
 ``WidenAccesses`` materialises the per-lane index tile, ``InsertTileLoadStore`` collapses the
-``b[__sym]`` reads into a :class:`TileLoad` carrying ``gather_dims`` -- so those tests assert
+``b[__sym]`` reads into a :class:`TileGather` carrying ``gather_dims`` -- so those tests assert
 end-to-end numerical equivalence against the unvectorized reference, plus the lowered shape for
 the 1D case (equal numbers alone cannot tell a real gather from a scalar fallback).
 
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileReduce
+from dace.libraries.tileops import TileGather, TileReduce
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
@@ -89,7 +89,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
 
     The compute lives in a body NSDFG; ``PromoteNSDFGBodyToTiles`` fans
     the per-lane index ``idx[i]`` into a ``(W,)`` index tile and collapses
-    the ``b[idx[i]]`` reads into a :class:`TileLoad` (gather). The ``n=17, 23``
+    the ``b[idx[i]]`` reads into a :class:`TileGather` (gather). The ``n=17, 23``
     cases exercise the masked tail (trip not a multiple of ``W=8``)."""
     rng = np.random.default_rng(seed=n)
     b = rng.random(n)
@@ -110,20 +110,20 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
 
 
 def test_1d_indirect_stencil_emits_tilegather():
-    """The 1D data gather lowers to a :class:`TileLoad` (gather) lib node naming the gathered dim,
-    fed by a second :class:`TileLoad` that materialises the per-lane index tile. Checked on the
+    """The 1D data gather lowers to a :class:`TileGather` (gather) lib node naming the gathered dim,
+    fed by a second :class:`TileGather` that materialises the per-lane index tile. Checked on the
     orchestrator's output, before ``expand_library_nodes`` collapses both to their ``pure`` form --
     the numerical test above cannot see the difference between a real gather and a scalar fallback
     that happens to compute the same values."""
     sdfg = _build_1d_indirect_stencil()
     canonicalize(sdfg, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
-    loads = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, TileLoad)]
+    loads = [node for node, node_state in sdfg.all_nodes_recursive() if isinstance(node, TileGather)]
     gathers = [node for node in loads if tuple(node.gather_dims)]
-    assert gathers, f"expected a TileLoad (gather) for the 1D data gather, got {[n.label for n in loads]}"
+    assert gathers, f"expected a TileGather (gather) for the 1D data gather, got {[n.label for n in loads]}"
     assert all(tuple(node.gather_dims) == (0, ) for node in gathers), \
         f"the only gathered dim is the single data dim: {[tuple(n.gather_dims) for n in gathers]}"
-    assert len(loads) > len(gathers), "the gather reads its lane indices through a TileLoad of its own"
+    assert len(loads) > len(gathers), "the gather reads its lane indices through a TileGather of its own"
 
 
 @pytest.mark.parametrize("m,n", [(16, 16), (8, 24), (12, 17)])

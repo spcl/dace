@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end correctness for the ``pure`` expansion of :class:`TileLoad`.
+"""End-to-end correctness for the ``pure`` expansion of :class:`TileGather`.
 
 The lib node receives the full memlet of the source array and uses the
 in-edge subset to locate the K-dim tile region. K=1 and K=2 are covered
@@ -10,11 +10,11 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 
 
 def _build_load_sdfg(src_shape, widths, has_mask, dtype=dace.float64):
-    """Build a minimal SDFG: source array -> TileLoad -> tile transient."""
+    """Build a minimal SDFG: source array -> TileGather -> tile transient."""
     sdfg = dace.SDFG(f"tile_load_pure_{'x'.join(str(w) for w in widths)}_{'m' if has_mask else 'nm'}")
     sdfg.add_array("SRC", src_shape, dtype, transient=False)
     sdfg.add_array("DST", widths, dtype, transient=False)
@@ -24,7 +24,7 @@ def _build_load_sdfg(src_shape, widths, has_mask, dtype=dace.float64):
     state = sdfg.add_state("main")
     src_node = state.add_access("SRC")
     dst_node = state.add_access("DST")
-    node = TileLoad(name="tl", widths=widths, has_mask=has_mask)
+    node = TileGather(name="tl", widths=widths, has_mask=has_mask)
     state.add_node(node)
 
     src_subset = ",".join(f"0:{w}" for w in widths)
@@ -68,16 +68,16 @@ def test_tile_load_pure_masked_writes_zero_on_inactive_lanes():
 def test_tile_load_rejects_invalid_K():
     """Constructor refuses K outside ``{1, 2, 3}`` and stride / width length mismatch."""
     with pytest.raises(ValueError, match="length in"):
-        TileLoad(name="bad_K", widths=())
+        TileGather(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileLoad(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
+        TileGather(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
 
 
 # Replicate-factor spectrum
 
 
 def _build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):
-    """Build a minimal SDFG exercising a TileLoad with a non-trivial
+    """Build a minimal SDFG exercising a TileGather with a non-trivial
     ``replicate_factor_per_dim``: source array is W/k elements per
     replicate dim; destination is W lanes per dim."""
     sdfg = dace.SDFG(f"tile_load_replicate_{'x'.join(str(w) for w in widths)}_"
@@ -87,7 +87,7 @@ def _build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):
     state = sdfg.add_state("main")
     src_node = state.add_access("SRC")
     dst_node = state.add_access("DST")
-    node = TileLoad(name="tl_rep", widths=widths, has_mask=False, replicate_factor_per_dim=replicate_factor_per_dim)
+    node = TileGather(name="tl_rep", widths=widths, has_mask=False, replicate_factor_per_dim=replicate_factor_per_dim)
     state.add_node(node)
     src_subset = ",".join(f"0:{s}" for s in src_shape)
     dst_subset = ",".join(f"0:{w}" for w in widths)
@@ -116,7 +116,7 @@ def test_tile_load_pure_replicate_k1(k):
 
 def test_tile_load_pure_replicate_factor_1_is_contiguous():
     """``replicate_factor=1`` is exactly the contiguous endpoint of the
-    spectrum -- the codegen reduces to a plain TileLoad."""
+    spectrum -- the codegen reduces to a plain TileGather."""
     sdfg = _build_replicate_load_sdfg(src_shape=(8, ), widths=(8, ), replicate_factor_per_dim=(1, ))
     rng = np.random.default_rng(seed=22)
     SRC = rng.random(8)
@@ -135,9 +135,9 @@ def test_tile_load_rejects_invalid_replicate_factor():
     non-dividing load instead raises ``NotImplementedError`` at *expansion*, not
     construction -- so the constructor must accept it."""
     with pytest.raises(ValueError, match="replicate_factor_per_dim"):
-        TileLoad(name="bad_factor_dim", widths=(8, ), replicate_factor_per_dim=(1, 2))
+        TileGather(name="bad_factor_dim", widths=(8, ), replicate_factor_per_dim=(1, 2))
     with pytest.raises(ValueError, match="must be >= 1"):
-        TileLoad(name="bad_factor_zero", widths=(8, ), replicate_factor_per_dim=(0, ))
+        TileGather(name="bad_factor_zero", widths=(8, ), replicate_factor_per_dim=(0, ))
     # 3 does not divide 8, yet the constructor accepts it (divisibility is an
     # expansion-time concern, not a construction-time one).
-    TileLoad(name="nondiv_ok", widths=(8, ), replicate_factor_per_dim=(3, ))
+    TileGather(name="nondiv_ok", widths=(8, ), replicate_factor_per_dim=(3, ))

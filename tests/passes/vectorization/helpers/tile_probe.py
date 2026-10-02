@@ -16,7 +16,7 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
     literal ``1``), with >=1 real (non-broadcast) width dim.
 
     CLASSIFY ONLY, never reshapes a memlet. ``(W, ONE)`` / ``(ONE, W)`` broadcast
-    shapes live only on ``TileLoad`` / ``TileStore`` index connectors; collapsing
+    shapes live only on ``TileGather`` / ``TileScatter`` index connectors; collapsing
     to ``(W,)`` in a memlet trips DaCe's subset-dimensionality validator (such
     shapes only passed to tile load/store). Treats the ``ONE`` marker as the int
     ``1`` it stands for without touching the memlet.

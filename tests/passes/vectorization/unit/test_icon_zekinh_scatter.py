@@ -8,14 +8,14 @@ source is fully bound at ``src[jb, jk, jc]``.
 
 The K-dim descent (``PromoteNSDFGBodyToTiles`` + ``EmitTileOps``) at
 K=2 (``widths=(8, 8)``) must lower the body to zero raw Tasklet nodes
-and emit at least one :class:`TileStore` (scatter).
+and emit at least one :class:`TileScatter` (scatter).
 """
 
 import pytest
 import dace
 
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.libraries.tileops import TileStore
+from dace.libraries.tileops import TileScatter
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
@@ -61,7 +61,8 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
 
 
 def _count_tile_scatters(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileStore) and tuple(n.gather_dims)))
+    return sum(1 for n, node_state in sdfg.all_nodes_recursive()
+               if (isinstance(n, TileScatter) and tuple(n.gather_dims)))
 
 
 def test_icon_zekinh_scatter_descent_to_tile_only():
@@ -89,7 +90,7 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
     assert n_tasklet == 0, (f"icon_zekinh_scatter must lower to tile lib nodes only at the K-dim layer; "
                             f"got {n_tasklet} raw Tasklet nodes after the descent.")
     assert n_scatter >= 1, (
-        f"The mixed-scatter destination must yield at least one TileStore (scatter); got {n_scatter}.")
+        f"The mixed-scatter destination must yield at least one TileScatter (scatter); got {n_scatter}.")
 
     # The scatter guard is HOISTED out of the loop's own single-block wrapper: leaving it there
     # makes that wrapper multi-state, a multi-state nested sdfg inside a map cannot be inlined, and

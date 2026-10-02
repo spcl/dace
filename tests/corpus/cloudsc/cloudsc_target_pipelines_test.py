@@ -97,7 +97,7 @@ GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
 
 
 def tile_nodes(sdfg: dace.SDFG):
-    """Tile library nodes (``TileLoad`` / ``TileBinop`` / ``TileStore`` / ...) the vectorizer left."""
+    """Tile library nodes (``TileGather`` / ``TileBinop`` / ``TileScatter`` / ...) the vectorizer left."""
     return [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith('Tile')

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileStore`` — write a K-dim tile back into a global array.
+"""``TileScatter`` — write a K-dim tile back into a global array.
 
-Symmetric to :class:`TileLoad`; the pure expansion emits a CPP tasklet
+Symmetric to :class:`TileGather`; the pure expansion emits a CPP tasklet
 that walks the K-fold nested index space.
 """
 
@@ -25,42 +25,42 @@ from ..validation import validate_mask_descriptor_lock, validate_packed_layout
 
 
 @library.expansion
-class ExpandTileStorePure(ExpandTilePure):
+class ExpandTileScatterPure(ExpandTilePure):
     pass
 
 
 @library.expansion
-class ExpandTileStoreScalar(ExpandTileIsa):
+class ExpandTileScatterScalar(ExpandTileIsa):
     environments = [TileOpsScalar]
     backend = "scalar"
 
 
 @library.expansion
-class ExpandTileStoreAVX512(ExpandTileIsa):
+class ExpandTileScatterAVX512(ExpandTileIsa):
     environments = [TileOpsAVX512]
     backend = "avx512"
 
 
 @library.expansion
-class ExpandTileStoreAVX2(ExpandTileIsa):
+class ExpandTileScatterAVX2(ExpandTileIsa):
     environments = [TileOpsAVX2]
     backend = "avx2"
 
 
 @library.expansion
-class ExpandTileStoreNeon(ExpandTileIsa):
+class ExpandTileScatterNeon(ExpandTileIsa):
     environments = [TileOpsNeon]
     backend = "neon"
 
 
 @library.expansion
-class ExpandTileStoreSVE(ExpandTileIsa):
+class ExpandTileScatterSVE(ExpandTileIsa):
     environments = [TileOpsSVE]
     backend = "sve"
 
 
 @library.expansion
-class ExpandTileStoreCUDA(ExpandTileIsa):
+class ExpandTileScatterCUDA(ExpandTileIsa):
     environments = [TileOpsCUDA]
     backend = "cuda"
 
@@ -70,13 +70,13 @@ def stride_dim_may_scatter(p: int, dst_dims: tuple[int, ...] | None, gather_dims
 
     A zero stride on tile dim ``p`` means lane ``__l<p>`` does not advance the dest address. That
     is legal when ``p`` SCATTERS -- its dest dim is in ``gather_dims`` and the per-lane address
-    comes from ``_idx_<d>`` (symmetric to ``TileLoad`` gather, which never rejects zero strides).
+    comes from ``_idx_<d>`` (symmetric to ``TileGather`` gather, which never rejects zero strides).
     On a non-scatter dim a zero stride collapses all ``W_p`` lanes onto one address and races
     without WCR.
 
     ``dst_dims=None`` selects the innermost-K default binding whose exact dest-dim indices need
     ``dst_ndim`` (not known at construction time), so the precise per-dim check defers to
-    :meth:`TileStore.validate`; here we report ``True`` whenever any scatter dim exists.
+    :meth:`TileScatter.validate`; here we report ``True`` whenever any scatter dim exists.
     """
     if not gather_dims:
         return False
@@ -86,7 +86,7 @@ def stride_dim_may_scatter(p: int, dst_dims: tuple[int, ...] | None, gather_dims
 
 
 @library.node
-class TileStore(TileOp):
+class TileScatter(TileOp):
     """Store a K-dim tile back into a global array.
 
     ``_src`` is the tile transient (``widths``-shaped); ``_dst`` carries
@@ -96,13 +96,13 @@ class TileStore(TileOp):
     """
 
     implementations = {
-        "pure": ExpandTileStorePure,
-        "scalar": ExpandTileStoreScalar,
-        "avx512": ExpandTileStoreAVX512,
-        "avx2": ExpandTileStoreAVX2,
-        "neon": ExpandTileStoreNeon,
-        "sve": ExpandTileStoreSVE,
-        "cuda": ExpandTileStoreCUDA,
+        "pure": ExpandTileScatterPure,
+        "scalar": ExpandTileScatterScalar,
+        "avx512": ExpandTileScatterAVX512,
+        "avx2": ExpandTileScatterAVX2,
+        "neon": ExpandTileScatterNeon,
+        "sve": ExpandTileScatterSVE,
+        "cuda": ExpandTileScatterCUDA,
     }
     default_implementation = "pure"
 
@@ -159,7 +159,7 @@ class TileStore(TileOp):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Sorted DEST-array dim indices that SCATTER. Mirror of :attr:`TileLoad.gather_dims` "
+        desc="Sorted DEST-array dim indices that SCATTER. Mirror of :attr:`TileGather.gather_dims` "
         "(source-array dim indexing) -- ``len(widths) == K_tile`` and ``max(gather_dims) < dst_ndim`` "
         "(``dst_ndim`` read from the wired ``_dst`` edge at ``validate()`` time). Each ``d`` declares "
         "an ``_idx_<d>`` input connector whose descriptor shape is a Cartesian product of widths over "
@@ -178,7 +178,7 @@ class TileStore(TileOp):
                  wcr: str | None = None,
                  gather_dims: tuple[int, ...] | None = None,
                  location: str | None = None):
-        """Construct a ``TileStore`` node.
+        """Construct a ``TileScatter`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
@@ -196,29 +196,29 @@ class TileStore(TileOp):
             ``src_kind`` is unsupported.
         """
         if not (1 <= len(widths) <= 3):
-            raise ValueError(f"TileStore: widths must have length in {{1, 2, 3}}, got {widths!r}")
+            raise ValueError(f"TileScatter: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
-            raise ValueError(f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
+            raise ValueError(f"TileScatter: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
         if src_kind not in VALID_KINDS:
-            raise ValueError(f"TileStore: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
+            raise ValueError(f"TileScatter: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
         if src_kind == SYMBOL and not src_expr:
-            raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
+            raise ValueError("TileScatter: src_kind='Symbol' requires a non-empty src_expr")
         resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         # Validate gather_dims: sorted, unique, non-negative dest-dim indices.
         # The upper bound (max(gather_dims) < dst_ndim) is checked at validate() time since
         # ``dst_ndim`` depends on the wired ``_dst`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
-            raise ValueError(f"TileStore: gather_dims must be a sorted tuple of unique non-negative "
+            raise ValueError(f"TileScatter: gather_dims must be a sorted tuple of unique non-negative "
                              f"dest-dim indices; got {g!r}")
         # Zero-stride collapse guard, narrowed to exempt SCATTER tile dims (see
         # :func:`stride_dim_may_scatter`). A zero on a scatter dim addresses per-lane via
-        # ``_idx_<d>`` (legal, symmetric to ``TileLoad``); a zero on a non-scatter dim collapses
+        # ``_idx_<d>`` (legal, symmetric to ``TileGather``); a zero on a non-scatter dim collapses
         # ``W_p`` lanes onto one address and races without ``wcr``. The exact per-dim mapping when
         # ``dst_dims is None`` defers to ``validate()`` (needs ``dst_ndim``).
         if not wcr and any(s == 0 and not stride_dim_may_scatter(p, dst_dims, g)
                            for p, s in enumerate(resolved_dim_strides)):
-            raise ValueError(f"TileStore: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
+            raise ValueError(f"TileScatter: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
                              "dim (collapse-out / broadcast write); WCR is required to avoid races. Pass "
                              "``wcr='lambda a, b: a + b'`` (or another reduction lambda) when collapsing tile "
                              "dims to a shared destination, or wire the dim as a scatter (gather_dims + _idx).")

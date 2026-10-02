@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the design section 2.3 packed-layout lock.
 
-``TileLoad._src`` and ``TileStore._dst`` must each carry an array whose
+``TileGather._src`` and ``TileScatter._dst`` must each carry an array whose
 stride pattern is either packed C (row-major, no padding) or packed
 Fortran (column-major, no padding). Any other layout raises
 ``NotImplementedError`` at ``validate()`` time -- padded layouts will
@@ -10,7 +10,7 @@ land when per-arch codegen supports them.
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.libraries.tileops.validation import strides_match_packed, validate_packed_layout
 from dace.memlet import Memlet
 
@@ -96,7 +96,7 @@ def test_validate_accepts_scalar_descriptor_as_noop():
     validate_packed_layout("tl", "_src", sdfg.arrays["S"])
 
 
-# end-to-end through TileLoad / TileStore
+# end-to-end through TileGather / TileScatter
 
 
 def test_tileload_refuses_padded_source_at_validate():
@@ -107,7 +107,7 @@ def test_tileload_refuses_padded_source_at_validate():
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileLoad("tl", widths=(4, 8))
+    node = TileGather("tl", widths=(4, 8))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:8, 0:16]"))
     state.add_edge(node, "_dst", dst, None, Memlet("Dst[0:4, 0:8]"))
@@ -123,7 +123,7 @@ def test_tilestore_refuses_padded_dest_at_validate():
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileStore("ts", widths=(4, 8))
+    node = TileScatter("ts", widths=(4, 8))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:4, 0:8]"))
     state.add_edge(node, "_dst", dst, None, Memlet("Dst[0:8, 0:16]"))

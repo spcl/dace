@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``MaskedCopyLibraryNode`` loads and stores a tile as ``TileLoad`` and ``TileStore`` do, and refuses what it cannot copy."""
+"""``MaskedCopyLibraryNode`` loads and stores a tile as ``TileGather`` and ``TileScatter`` do, and refuses what it cannot copy."""
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import MaskedCopyLibraryNode, TileLoad
+from dace.libraries.tileops import MaskedCopyLibraryNode, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa, ISA_TO_IMPL
 
 MASKS = {
@@ -137,7 +137,7 @@ def tile_node_load(name, array_shape, window, shape, step, dtype):
     sdfg.add_array("TILE", shape, dtype, transient=True, storage=dace.StorageType.Register)
     sdfg.add_array("MASKT", shape, dace.bool_, transient=True, storage=dace.StorageType.Register)
     state = sdfg.add_state()
-    node = TileLoad(name, widths=shape, has_mask=True, dim_strides=[step] * len(shape))
+    node = TileGather(name, widths=shape, has_mask=True, dim_strides=[step] * len(shape))
     state.add_node(node)
     tile, mask = state.add_access("TILE"), state.add_access("MASKT")
     state.add_edge(state.add_read("M"), None, mask, None, dace.Memlet(f"M[{tile_subset(shape)}]"))
@@ -192,7 +192,7 @@ def test_the_alignment_of_a_half_precision_tile_is_the_one_of_the_tile_load_it_r
     sdfg.add_array("MASKT", (8, ), dace.bool_, storage=Storage.Register, transient=True)
     state = sdfg.add_state()
     copy = MaskedCopyLibraryNode("copy", widths=(8, ), has_mask=masked)
-    load = TileLoad("load", widths=(8, ), has_mask=masked)
+    load = TileGather("load", widths=(8, ), has_mask=masked)
     for node, source, destination, mask in ((copy, "_cpy_in", "_cpy_out", "_cpy_mask"), (load, "_src", "_dst",
                                                                                          "_mask")):
         state.add_node(node)

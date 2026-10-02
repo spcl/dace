@@ -5,7 +5,7 @@
 GENUINE cross-iteration reductions / contractions (gesummv ``tmp[i] += A[i,j]*x[j]``; ``j``
 reduced), never when the map's WCR outputs are INJECTIVE per-element read-modify-writes
 (s212 ``a[i] *= c[i]``; ``b[i] += a_snap[i+1]*d[i]``). Fissioning the injective case is both
-unnecessary (the tiler widens each write as an ordinary ``TileStore``) and unsound: it detaches
+unnecessary (the tiler widens each write as an ordinary ``TileScatter``) and unsound: it detaches
 the in-place ``a`` write from the anti-dependence snapshot ``a_split_snap = a`` that ordered it,
 so codegen overwrites ``a`` before the snapshot reads it and miscompiles ``b``.
 

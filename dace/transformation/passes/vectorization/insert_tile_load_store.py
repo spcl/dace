@@ -7,8 +7,8 @@ per-tile-subset access through a fresh transient shaped per the per-dim lattice 
 * CONSTANT every tile dim -> ``Scalar`` (or len-1 Array) transient. Direct AN -> AN
   scalar copy (no tasklet); lib node consumes it as ``Scalar`` operand w/ hardware splat.
 * >=1 dim in {LINEAR, AFFINE, REPLICATE, MODULAR} -> ``(K_0, ..., K_{K-1})`` Array
-  transient. AN -> TileLoad -> transient (read) / transient -> TileStore -> AN (write).
-* Any dim GATHER -> same tile-shape transient; TileLoad / TileStore carries
+  transient. AN -> TileGather -> transient (read) / transient -> TileScatter -> AN (write).
+* Any dim GATHER -> same tile-shape transient; TileGather / TileScatter carries
   ``gather_dims=...`` + variable-shape ``_idx_<d>`` connectors fed by PreparePerLaneIndices.
 
 Inside-body counterpart of STAGE_GLOBAL_THROUGH_SCALARS_SPEC.md: outer global accesses
@@ -18,7 +18,7 @@ AccessNode survives mid-body dataflow.
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, dtypes, properties, subsets
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.graph import MultiConnectorEdge
@@ -49,8 +49,8 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
         # An empty memlet is an ordering edge, not a copy; identity checks miss it.
         if mem is None or mem.is_empty():
             continue
-        src_is_libnode = isinstance(edge.src, (TileLoad, TileStore))
-        dst_is_libnode = isinstance(edge.dst, (TileLoad, TileStore))
+        src_is_libnode = isinstance(edge.src, (TileGather, TileScatter))
+        dst_is_libnode = isinstance(edge.dst, (TileGather, TileScatter))
         if (src_is_libnode or dst_is_libnode) and mem.other_subset is not None:
             node_label = edge.dst.label if dst_is_libnode else edge.src.label
             conn = edge.dst_conn if dst_is_libnode else edge.src_conn
@@ -88,11 +88,11 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
                                      f"dst={dst_data!r}[{dst_subset}] "
                                      f"(memlet data={mem.data!r}, subset={mem.subset!r}) "
                                      f"in state {state.label!r}. Non-Scalar AN -> AN edges must be "
-                                     f"routed through a tile lib node (TileLoad / TileStore).")
+                                     f"routed through a tile lib node (TileGather / TileScatter).")
 
 
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
-    # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileStore._dst -> AN, etc.).
+    # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileScatter._dst -> AN, etc.).
     return Memlet(data=other_memlet.data, subset=other_memlet.subset)
 
 
@@ -180,10 +180,10 @@ def stage_tile_load(state: SDFGState,
                     idx_sources: Optional[Dict[int, AccessNode]] = None,
                     mask_an: Optional[AccessNode] = None,
                     dst_shape: Optional[Tuple[Any, ...]] = None,
-                    src_kind: str = "Tile") -> Tuple[str, "TileLoad"]:
+                    src_kind: str = "Tile") -> Tuple[str, "TileGather"]:
     """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
 
-    Mint transient ``Array(shape=widths, ...)`` of ``an``'s dtype, add a :class:`TileLoad`
+    Mint transient ``Array(shape=widths, ...)`` of ``an``'s dtype, add a :class:`TileGather`
     between ``an`` and it, wire source / dest memlets. Covers structured case (design 3.1
     LINEAR / AFFINE / REPLICATE / MODULAR; ``gather_dims`` empty) + GATHER case (``gather_dims``
     non-empty; ``idx_sources`` gives per-dim ``_idx_<d>`` AccessNodes, usually from
@@ -192,22 +192,22 @@ def stage_tile_load(state: SDFGState,
     :param state: State holding ``an``.
     :param an: Non-transient AccessNode being staged.
     :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
-    :param src_subset: Memlet on the ``an -> TileLoad._src`` edge (per-tile region).
+    :param src_subset: Memlet on the ``an -> TileGather._src`` edge (per-tile region).
     :param name_hint: Transient name hint; uniquified.
-    :param dim_strides: Per-dim stride coefficients forwarded to :class:`TileLoad`. Default all 1s (LINEAR).
+    :param dim_strides: Per-dim stride coefficients forwarded to :class:`TileGather`. Default all 1s (LINEAR).
     :param replicate_factor_per_dim: Per-dim REPLICATE factors; default all 1s.
-    :param src_dims: Source-array dim permutation. Default = ``TileLoad`` default (innermost ``K`` dims in order).
+    :param src_dims: Source-array dim permutation. Default = ``TileGather`` default (innermost ``K`` dims in order).
     :param gather_dims: Sorted tuple of gathering tile dims (empty for the structured case).
     :param idx_sources: ``{d: AccessNode}`` for each ``d in gather_dims``. Required when ``gather_dims`` non-empty.
     :param dst_shape: Optional bridge descriptor shape, distinct from ``widths``. Used by the
         gather-index builder (:meth:`InsertTileLoadStore._stage_array_read_tile`) to mint a
-        full-K ``(W_d if dep else ONE)`` index tile while ``TileLoad`` loops only over the dep
+        full-K ``(W_d if dep else ONE)`` index tile while ``TileGather`` loops only over the dep
         dims. ``ONE`` markers carry per-tile-dim dependency positionally (design 9.2, user
         2026-06-14). Default ``widths``.
-    :param src_kind: ``TileLoad`` source-operand kind. ``"Tile"`` (default) is the per-lane
+    :param src_kind: ``TileGather`` source-operand kind. ``"Tile"`` (default) is the per-lane
         indexed read; ``"Scalar"`` broadcasts a volume-1 source across every lane (``tile <-
         a[0]``). ``"Symbol"`` has no ``_src`` connector and is not staged from an AccessNode.
-    :returns: ``(bridge_name, load_node)`` -- staged transient name + :class:`TileLoad` instance.
+    :returns: ``(bridge_name, load_node)`` -- staged transient name + :class:`TileGather` instance.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
@@ -232,16 +232,16 @@ def stage_tile_load(state: SDFGState,
     # Wire ``has_mask`` + ``_mask`` when a mask AN is in scope (design 6.5). The
     # mask AN is the body's ``_tile_iter_mask`` access, ``bool[widths]``.
     has_mask_wired = mask_an is not None
-    load = TileLoad(name=f"load_{bridge_name}",
-                    widths=widths,
-                    dim_strides=dim_strides,
-                    replicate_factor_per_dim=replicate_factor_per_dim,
-                    src_dims=src_dims,
-                    gather_dims=gather_dims,
-                    has_mask=has_mask_wired,
-                    src_kind=src_kind)
+    load = TileGather(name=f"load_{bridge_name}",
+                      widths=widths,
+                      dim_strides=dim_strides,
+                      replicate_factor_per_dim=replicate_factor_per_dim,
+                      src_dims=src_dims,
+                      gather_dims=gather_dims,
+                      has_mask=has_mask_wired,
+                      src_kind=src_kind)
     state.add_node(load)
-    # ``AN -> TileLoad._src`` is a lib-node-boundary edge (design 3.8.2): drop
+    # ``AN -> TileGather._src`` is a lib-node-boundary edge (design 3.8.2): drop
     # ``other_subset`` (the connector descriptor defines the dest shape).
     state.add_edge(an, None, load, "_src", _libnode_boundary_memlet(src_subset))
     for d in gather_dims:
@@ -275,23 +275,23 @@ def stage_tile_store(state: SDFGState,
                      dst_dims: Optional[Tuple[int, ...]] = None,
                      gather_dims: Tuple[int, ...] = (),
                      idx_sources: Optional[Dict[int, AccessNode]] = None,
-                     mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileStore"]:
+                     mask_an: Optional[AccessNode] = None) -> Tuple[str, "TileScatter"]:
     """Stage a tile-shaped WRITE to ``an`` through a fresh ``(widths,)`` Array transient.
 
     Destination-side symmetric of :func:`stage_tile_access`: mint transient
-    ``Array(shape=widths, ...)``, add a :class:`TileStore` between it and ``an``, wire
+    ``Array(shape=widths, ...)``, add a :class:`TileScatter` between it and ``an``, wire
     source / dest memlets.
 
     :param state: State holding ``an``.
     :param an: Non-transient AccessNode being staged (destination).
     :param widths: Tile widths ``(W_0, ..., W_{K-1})``.
-    :param dst_subset: Memlet on the ``TileStore._dst -> an`` edge (per-tile window on dest array).
+    :param dst_subset: Memlet on the ``TileScatter._dst -> an`` edge (per-tile window on dest array).
     :param name_hint: Bridge transient name hint; uniquified.
-    :param dim_strides: Per-dim stride coefficients forwarded to :class:`TileStore`.
+    :param dim_strides: Per-dim stride coefficients forwarded to :class:`TileScatter`.
     :param dst_dims: Destination-array dim permutation; default innermost ``K`` dims.
     :param gather_dims: Sorted tuple of scattering tile dims (empty for structured full-tile-window case).
     :param idx_sources: ``{d: AccessNode}`` for each ``d in gather_dims``. Required when ``gather_dims`` non-empty.
-    :returns: ``(bridge_name, store_node)`` -- staged transient name + :class:`TileStore` instance.
+    :returns: ``(bridge_name, store_node)`` -- staged transient name + :class:`TileScatter` instance.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
@@ -309,12 +309,12 @@ def stage_tile_store(state: SDFGState,
                                     find_new_name=True)
     bridge_an = state.add_access(bridge_name)
     has_mask_wired = mask_an is not None
-    store = TileStore(name=f"store_{bridge_name}",
-                      widths=widths,
-                      dim_strides=dim_strides,
-                      dst_dims=dst_dims,
-                      gather_dims=gather_dims,
-                      has_mask=has_mask_wired)
+    store = TileScatter(name=f"store_{bridge_name}",
+                        widths=widths,
+                        dim_strides=dim_strides,
+                        dst_dims=dst_dims,
+                        gather_dims=gather_dims,
+                        has_mask=has_mask_wired)
     state.add_node(store)
     src_subset_str = ", ".join(f"0:{w}" for w in widths)
     state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_name}[{src_subset_str}]"))
@@ -326,7 +326,7 @@ def stage_tile_store(state: SDFGState,
     if has_mask_wired:
         mask_subset_str = ", ".join(f"0:{w}" for w in widths)
         state.add_edge(mask_an, None, store, "_mask", Memlet(f"{mask_an.data}[{mask_subset_str}]"))
-    # ``TileStore._dst -> AN`` is a lib-node-boundary edge (symmetric to
+    # ``TileScatter._dst -> AN`` is a lib-node-boundary edge (symmetric to
     # the read side at stage_tile_access).
     state.add_edge(store, "_dst", an, None, _libnode_boundary_memlet(dst_subset))
     return bridge_name, store
@@ -421,7 +421,7 @@ class InsertTileLoadStore(ppl.Pass):
             kinds = set(record.per_dim_kind)
             if PerDimKind.GATHER in kinds:
                 # GATHER read: one AN may be read through several distinct indirect indices (ICON
-                # ``z_kin_hor_e[.., edge_idx[..,0..2]]``); stage one index tile + TileLoad per distinct subset.
+                # ``z_kin_hor_e[.., edge_idx[..,0..2]]``); stage one index tile + TileGather per distinct subset.
                 gather_groups: Dict[str, list] = {}
                 for e in pre_stage_out_edges:
                     try:
@@ -442,7 +442,7 @@ class InsertTileLoadStore(ppl.Pass):
                     idx_sources: Dict[int, AccessNode] = {}
                     for k in gather_source_dims:
                         begin_str = str(g_subset.ranges[k][0])
-                        # Per-lane index as TILE LIB NODES (TileLoad of the data-dep
+                        # Per-lane index as TILE LIB NODES (TileGather of the data-dep
                         # array read into a (W_d if dep else ONE) tile + TileBinop for
                         # arithmetic). No CPP fallback.
                         idx_an = self._stage_index_via_tileops(inner_state,
@@ -519,7 +519,7 @@ class InsertTileLoadStore(ppl.Pass):
                     if const_sub is not None and any(bool(symbolic.simplify(sz - 1) != 0) for sz in const_sub.size()):
                         continue
                     # ``a[i:i+W] = a0[0]`` is a bare copy with no consuming lib node to splat the value, so broadcast
-                    # into a real ``(W,)`` tile and let the rewire stage the TileStore.
+                    # into a real ``(W,)`` tile and let the rewire stage the TileScatter.
                     if const_sub is not None and all(
                             self._is_global_tile_copy_consumer(inner_state, e, iter_vars) for e in s_edges):
                         bridge_name, _ = stage_tile_load(inner_state,
@@ -579,14 +579,15 @@ class InsertTileLoadStore(ppl.Pass):
             pre_stage_in_edges = [e for e in pre_stage_in_edges if not e.data.is_empty()]
             if not pre_stage_in_edges:
                 continue
-            if any(isinstance(e.src, (TileLoad, TileStore)) for e in pre_stage_in_edges):
+            if any(isinstance(e.src, (TileGather, TileScatter)) for e in pre_stage_in_edges):
                 continue  # Already staged by phase 1's bridge->output insertion.
             # Stage a pure sink, or an in-place RMW intermediate written and re-read in one state (cloudsc
             # ``zqx_v = zqx_v + zqx_l``) whose reads are already bridged; otherwise leave the AN alone.
-            if pre_stage_out_edges and not all(isinstance(e.dst, (TileLoad, TileStore)) for e in pre_stage_out_edges):
+            if pre_stage_out_edges and not all(
+                    isinstance(e.dst, (TileGather, TileScatter)) for e in pre_stage_out_edges):
                 continue
             # Several writes can land on ONE AN at distinct elements (``zsolqa[1, 4, i]`` and
-            # ``zsolqa[4, 1, i]``). One TileStore per AN would store every producer at the first
+            # ``zsolqa[4, 1, i]``). One TileScatter per AN would store every producer at the first
             # edge's subset, so group by AN-side subset -- the same contract as the read phase.
             write_groups: Dict[str, list] = {}
             try:
@@ -606,10 +607,10 @@ class InsertTileLoadStore(ppl.Pass):
                           iter_vars: Tuple[str, ...],
                           mask_name: Optional[str],
                           sym_defs: Optional[Dict[str, Any]] = None) -> int:
-        """Stage the writes into ``an`` that share one AN-side subset through one TileStore.
+        """Stage the writes into ``an`` that share one AN-side subset through one TileScatter.
 
         :param sym_defs: The state's symbol-definition map when the caller already built it.
-        :return: 1 if a TileStore was staged, 0 if the group stays a direct write.
+        :return: 1 if a TileScatter was staged, 0 if the group stays a direct write.
         """
         desc = inner_sdfg.arrays[an.data]
         wsubset = an_side_subset(w_edges[0], an, inner_sdfg, inner_state)
@@ -625,7 +626,7 @@ class InsertTileLoadStore(ppl.Pass):
         if wkinds == {PerDimKind.CONSTANT}:
             return 0  # Loop-invariant write stays as direct producer -> AN copy (design 3.6).
         if PerDimKind.GATHER in wkinds:
-            # SCATTER: build per-lane idx tile(s) as TILE LIB NODES + TileStore with gather_dims.
+            # SCATTER: build per-lane idx tile(s) as TILE LIB NODES + TileScatter with gather_dims.
             scatter_source_dims = tuple(k for k, kind in enumerate(wrecord.per_dim_kind) if kind == PerDimKind.GATHER)
             idx_sources_w: Dict[int, AccessNode] = {}
             for k in scatter_source_dims:
@@ -807,7 +808,7 @@ class InsertTileLoadStore(ppl.Pass):
 
     def _stage_array_read_tile(self, inner_state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...], sub,
                                name_hint: str, mask_an) -> Optional[AccessNode]:
-        # Stage a pure array-read ``Subscript`` as a structured :class:`TileLoad` -> per-lane index-tile AccessNode,
+        # Stage a pure array-read ``Subscript`` as a structured :class:`TileGather` -> per-lane index-tile AccessNode,
         # generalised to K tile dims.
         from dace.symbolic import ONE
         widths = lane_widths(self.widths, iter_vars)
@@ -979,7 +980,7 @@ class InsertTileLoadStore(ppl.Pass):
 
     def _is_global_tile_copy_consumer(self, inner_state: SDFGState, edge, iter_vars: Tuple[str, ...]) -> bool:
         # True when ``edge`` copies straight into a global array over a tile-varying window -- the shape
-        # :meth:`_maybe_stage_tilestore_to_output` can turn into a ``TileStore``.
+        # :meth:`_maybe_stage_tilestore_to_output` can turn into a ``TileScatter``.
         if not iter_vars or not isinstance(edge.dst, AccessNode):
             return False
         inner_sdfg = inner_state.sdfg
@@ -1031,7 +1032,7 @@ class InsertTileLoadStore(ppl.Pass):
 
     def _find_existing_bridge_an(self, inner_state: SDFGState, bridge_name: str, side: str) -> Optional[AccessNode]:
         # Find the existing bridge AccessNode the staging helper just created -- ``side='read'`` = one w/ IN edges
-        # (TileLoad's _dst target); ``side='write'`` = one w/ OUT edges (TileStore's _src source).
+        # (TileGather's _dst target); ``side='write'`` = one w/ OUT edges (TileScatter's _src source).
         for node in inner_state.nodes():
             if not isinstance(node, AccessNode) or node.data != bridge_name:
                 continue
@@ -1055,7 +1056,7 @@ class InsertTileLoadStore(ppl.Pass):
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             if bridge_is_tile and is_scalar_or_len1_source(inner_state, old_edge):
                 # A single-element producer cannot fill W lanes (WidenAccesses keeps it Scalar on purpose); splat
-                # it through ``TileLoad(Scalar)`` instead of reading past its one element.
+                # it through ``TileGather(Scalar)`` instead of reading past its one element.
                 src_memlet = Memlet(data=old_edge.src.data,
                                     subset=an_side_subset(old_edge, old_edge.src, inner_state.sdfg, inner_state))
                 splat_scalar_to_tile(inner_state, f"{bridge_name}_bcast", old_edge.src, old_edge.src_conn, src_memlet,
@@ -1079,7 +1080,7 @@ class InsertTileLoadStore(ppl.Pass):
                                          consumer_an: AccessNode,
                                          iter_vars: Tuple[str, ...],
                                          orig_edge=None) -> bool:
-        # Phase A1: insert :class:`TileStore` between a tile-shape bridge and a non-transient output AN.
+        # Phase A1: insert :class:`TileScatter` between a tile-shape bridge and a non-transient output AN.
         sdfg = inner_state.sdfg
         bridge_desc = sdfg.arrays.get(bridge_an.data)
         consumer_desc = sdfg.arrays.get(consumer_an.data)
@@ -1118,9 +1119,9 @@ class InsertTileLoadStore(ppl.Pass):
         # of bounds. The mask producer may live in another state.
         mask_name = self._find_inner_mask_name(sdfg)
         mask_an = self._find_mask_producer_an(inner_state, mask_name) if mask_name else None
-        store = TileStore(name=f"store_{bridge_an.data}_to_{consumer_an.data}",
-                          widths=widths,
-                          has_mask=mask_an is not None)
+        store = TileScatter(name=f"store_{bridge_an.data}_to_{consumer_an.data}",
+                            widths=widths,
+                            has_mask=mask_an is not None)
         inner_state.add_node(store)
         src_subset_str = ", ".join(f"0:{w}" for w in widths)
         inner_state.add_edge(bridge_an, None, store, "_src", Memlet(f"{bridge_an.data}[{src_subset_str}]"))
@@ -1134,7 +1135,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                  inner_state: SDFGState,
                                                  widths: tuple[int, ...] | None = None) -> int:
         # Phase A6: for ``dst[idx[i]] = src[i] + 1.0`` (``i`` the vector param) the WHOLE chain should be tile-shape --
-        # no scalar transients between the tile source (TileLoad output) and tile sink (TileStore input).
+        # no scalar transients between the tile source (TileGather output) and tile sink (TileScatter input).
         from dace.sdfg.nodes import Tasklet
         sdfg = inner_state.sdfg
         widths = tuple(self.widths) if widths is None else widths
@@ -1206,7 +1207,7 @@ class InsertTileLoadStore(ppl.Pass):
                                     original_out_edges,
                                     iter_vars: Tuple[str, ...] = ()) -> None:
         # Redirect each consumer edge that read from ``original_an`` to the SAME bridge AccessNode the staging helper
-        # produced (TileLoad._dst target).
+        # produced (TileGather._dst target).
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
         shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="read")
         for old_edge in original_out_edges:
@@ -1217,7 +1218,7 @@ class InsertTileLoadStore(ppl.Pass):
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
             # Every transient is already widened, so the only scalar write left is to a non-transient output
-            # (``no_transient_scalar_stores``). Non-Scalar consumers go through a TileStore, not CopyND.
+            # (``no_transient_scalar_stores``). Non-Scalar consumers go through a TileScatter, not CopyND.
             if (iter_vars and isinstance(old_edge.dst, AccessNode) and self._maybe_stage_tilestore_to_output(
                     inner_state, bridge_an, old_edge.dst, iter_vars, old_edge)):
                 inner_state.remove_edge(old_edge)

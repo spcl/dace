@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unit tests for the design section 6.7 full-tile-write lock on ``TileStore``.
+"""Unit tests for the design section 6.7 full-tile-write lock on ``TileScatter``.
 
-Per user direction 2026-06-09: a structured (non-scatter) ``TileStore`` must
+Per user direction 2026-06-09: a structured (non-scatter) ``TileScatter`` must
 write a full ``widths``-shape tile -- the dest memlet's per-dim subset extents
 must equal ``widths`` under the ``dst_dims`` permutation. Anything else
 (scalar write to global, single-element write, partial-tile write) raises
@@ -15,7 +15,7 @@ the full dest range and per-lane addressing comes from ``_idx_<k>``.
 import pytest
 
 import dace
-from dace.libraries.tileops import TileStore
+from dace.libraries.tileops import TileScatter
 from dace.memlet import Memlet
 from dace.symbolic import ONE
 
@@ -29,7 +29,7 @@ def _build_store(src_shape, dst_shape, dst_subset, widths, gather_dims=None, idx
     state = sdfg.add_state("s")
     src_an = state.add_access("Src")
     dst_an = state.add_access("Dst")
-    node = TileStore("ts", widths=widths, gather_dims=gather_dims or ())
+    node = TileScatter("ts", widths=widths, gather_dims=gather_dims or ())
     state.add_node(node)
     state.add_edge(src_an, None, node, "_src", Memlet(f"Src[{', '.join(f'0:{w}' for w in widths)}]"))
     state.add_edge(node, "_dst", dst_an, None, Memlet(f"Dst[{dst_subset}]"))

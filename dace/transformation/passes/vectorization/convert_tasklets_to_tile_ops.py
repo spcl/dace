@@ -15,7 +15,7 @@ import numpy as np
 
 import dace
 from dace import properties
-from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore,
+from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileGather, TileMaskGen, TileReduce, TileScatter,
                                     TileUnop)
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import CodeBlock, Tasklet
@@ -593,7 +593,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str,
                                                                                                          ...]) -> bool:
-        # Replace ``_o = <const_expr>`` (loop-invariant literal / symbol store) with a ``TileLoad(src_kind='Symbol')``
+        # Replace ``_o = <const_expr>`` (loop-invariant literal / symbol store) with a ``TileGather(src_kind='Symbol')``
         # broadcast writing the value to every lane -- no CPP fill, no intermediate transient, no AN->AN copy (user
         # 2026-06-15: const/symbol->tile broadcast is a tile op).
         out_conn, expr = detected
@@ -648,10 +648,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                           widths=tuple(self.body_widths),
                           expr=self._per_lane_expr(str(expr), iter_vars))
         else:
-            tl = TileLoad(name=f"{tasklet.label}_const_bcast",
-                          widths=tuple(self.body_widths),
-                          src_kind="Symbol",
-                          src_expr=str(expr))
+            tl = TileGather(name=f"{tasklet.label}_const_bcast",
+                            widths=tuple(self.body_widths),
+                            src_kind="Symbol",
+                            src_expr=str(expr))
         inner_state.add_node(tl)
         subset = ", ".join(f"0:{w}" for w in self.body_widths)
         inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{out_edge.dst.data}[{subset}]"))
@@ -975,7 +975,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         a_edge = in_edges[a_conn]
         out_edge = out_edges[0]
         # Scalar src -> tile dst is a BROADCAST (e.g. ``c[jk, jc] = a[0]``): lower to
-        # ``TileLoad(src_kind="Scalar")`` (per-lane splat), not a rank-mismatched AN->AN
+        # ``TileGather(src_kind="Scalar")`` (per-lane splat), not a rank-mismatched AN->AN
         # copy.
         if self._maybe_emit_scalar_broadcast(inner_state, tasklet, a_edge, out_edge):
             return True
@@ -994,7 +994,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _maybe_emit_scalar_broadcast(self, inner_state: SDFGState, tasklet: Tasklet, a_edge, out_edge) -> bool:
         # Lower a trivial assign with a scalar SOURCE and ``widths``-shaped tile DEST to a
-        # ``TileLoad(src_kind="Scalar")`` broadcast (single value splat across lanes).
+        # ``TileGather(src_kind="Scalar")`` broadcast (single value splat across lanes).
         sdfg = inner_state.sdfg
         src_desc = sdfg.arrays.get(a_edge.data.data) if a_edge.data is not None else None
         dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
@@ -1030,7 +1030,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _convert_indirection(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
-        # Lower a per-lane gather ``_out = _arr[_idx]`` to a ``TileLoad(gather_dims=(0,))``.
+        # Lower a per-lane gather ``_out = _arr[_idx]`` to a ``TileGather(gather_dims=(0,))``.
         out_conn, arr_conn, idx_conn = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1051,11 +1051,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not (isinstance(out_desc, dace.data.Array) and tuple(out_desc.shape) == widths):
             return False  # result not widened to a full-lane tile
         mask_an = self._find_mask_an(inner_state)
-        load = TileLoad(name=f"{tasklet.label}_gather",
-                        widths=widths,
-                        src_kind="Tile",
-                        gather_dims=(0, ),
-                        has_mask=mask_an is not None)
+        load = TileGather(name=f"{tasklet.label}_gather",
+                          widths=widths,
+                          src_kind="Tile",
+                          gather_dims=(0, ),
+                          has_mask=mask_an is not None)
         inner_state.add_node(load)
         # ``_src`` <- the whole base array: the gather dim spans full extent, the per-lane
         # ``_idx_0`` supplies the position (lib-node-boundary memlet -- data + subset only).
@@ -1081,14 +1081,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if tasklet.language != dace.dtypes.Language.Python:
             return False
         # Masked conditional write ``_o = IT(cond, val)`` -- detect FIRST (``IT(`` prefix
-        # unambiguous vs every op shape and vs ``ITE(``). Lowers to a masked ``TileStore``,
+        # unambiguous vs every op shape and vs ``ITE(``). Lowers to a masked ``TileScatter``,
         # then re-dispatches the stripped ``_o = val`` through the normal path.
         cond_write = self._detect_conditional_write(tasklet)
         if cond_write is not None:
             return self._convert_conditional_write(inner_state, tasklet, cond_write, iter_vars)
         # Per-lane gather ``_out = _arr[_idx]`` (the frontend ``x[idx[i]]`` indirection) --
         # detect FIRST among the 2-in shapes: the ``_arr[_idx]`` subscript is unambiguous vs
-        # every arithmetic op form, and it lowers to a TileLoad gather, not a binop.
+        # every arithmetic op form, and it lowers to a TileGather gather, not a binop.
         indirection = self._detect_indirection(tasklet)
         if indirection is not None:
             return self._convert_indirection(inner_state, tasklet, indirection)
@@ -1232,7 +1232,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         kind_t, expr_t, wire_t = _plan_arm(t_arg, t_is_sym)
         kind_e, expr_e, wire_e = _plan_arm(e_arg, e_is_sym)
         # TileITE select-arm predicate wired via the unified ``_mask`` connector (user
-        # 2026-06-12). Downstream global TileStore gates the iter-mask; no separate one.
+        # 2026-06-12). Downstream global TileScatter gates the iter-mask; no separate one.
         ite = TileITE(name=f"{tasklet.label}_ite",
                       widths=tuple(self.body_widths),
                       kind_t=kind_t,
@@ -1305,7 +1305,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                    iter_vars: Tuple[str, ...]) -> bool:
-        # Lower ``_o = IT(cond, val)`` to a masked ``TileStore`` + a plain value copy.
+        # Lower ``_o = IT(cond, val)`` to a masked ``TileScatter`` + a plain value copy.
         out_conn, cond_conn, val_arg, _val_is_sym = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1315,7 +1315,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         store = self._find_downstream_store(inner_state, out_edge)
         if store is None:
             raise NotImplementedError(f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
-                                      f"{out_edge.dst!r} does not feed a single downstream ``TileStore._src``. The "
+                                      f"{out_edge.dst!r} does not feed a single downstream ``TileScatter._src``. The "
                                       f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
                                       f"(no store / fan-out to several stores) is not yet handled.")
         cond_edge = in_edges[cond_conn]
@@ -1330,15 +1330,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return self._convert_one(inner_state, tasklet, iter_vars)
 
     def _find_downstream_store(self, inner_state: SDFGState, out_edge):
-        # Return the single downstream ``TileStore`` fed (via its ``_src``) by this tasklet's output tile, or ``None``
+        # Return the single downstream ``TileScatter`` fed (via its ``_src``) by this tasklet's output tile, or ``None``
         # when there is not exactly one.
         from dace.sdfg.nodes import AccessNode
         dst = out_edge.dst
-        if isinstance(dst, TileStore) and out_edge.dst_conn == "_src":
+        if isinstance(dst, TileScatter) and out_edge.dst_conn == "_src":
             return dst
         if not isinstance(dst, AccessNode):
             return None
-        stores = [e.dst for e in inner_state.out_edges(dst) if isinstance(e.dst, TileStore) and e.dst_conn == "_src"]
+        stores = [e.dst for e in inner_state.out_edges(dst) if isinstance(e.dst, TileScatter) and e.dst_conn == "_src"]
         return stores[0] if len(stores) == 1 else None
 
     def _resolve_cond_tile(self, inner_state: SDFGState, cond_edge):

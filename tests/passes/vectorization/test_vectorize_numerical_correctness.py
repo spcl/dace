@@ -27,7 +27,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _TILE_NODE_TYPES, VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES, VectorizeCPUMultiDim
 
 M = 64  # exact multiple of every tested width (2 / 4)
 
@@ -41,7 +41,7 @@ def _vectorize(prog, isa="SCALAR", width=4, assume_even=False):
 
 
 def _tile_op_count(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_NODE_TYPES))
+    return sum(1 for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES))
 
 
 def _assert_really_vectorized(sdfg: dace.SDFG, pristine: dace.SDFG) -> None:

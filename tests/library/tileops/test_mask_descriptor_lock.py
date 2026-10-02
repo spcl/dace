@@ -2,7 +2,7 @@
 """Unit tests for the design section 10.2 mask descriptor lock.
 
 Each lib node that carries a mask connector (``TileMaskGen._o``,
-``TileLoad._mask``, ``TileStore._mask``) must enforce the lock at
+``TileGather._mask``, ``TileScatter._mask``) must enforce the lock at
 ``validate()`` time: ``Array(shape=widths, dtype=bool_, storage=Register,
 transient=True)``. Any other descriptor is rejected with a named error.
 """
@@ -10,7 +10,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.tileops import TileLoad, TileMaskGen, TileStore
+from dace.libraries.tileops import TileGather, TileMaskGen, TileScatter
 from dace.memlet import Memlet
 
 
@@ -62,11 +62,11 @@ def test_tilemaskgen_refuses_non_transient_mask():
         node.validate(sdfg, state)
 
 
-# TileLoad._mask
+# TileGather._mask
 
 
 def _build_load_with_mask(mask_shape, **mask_kwargs):
-    """Build a TileLoad with has_mask=True + a wired _mask transient."""
+    """Build a TileGather with has_mask=True + a wired _mask transient."""
     sdfg = dace.SDFG("tl_mask_fixture")
     sdfg.add_array("Src", (16, 32), dace.float64, transient=False)
     sdfg.add_array("Dst", (4, 8), dace.float64, transient=True)
@@ -75,7 +75,7 @@ def _build_load_with_mask(mask_shape, **mask_kwargs):
     src_an = state.add_access("Src")
     dst_an = state.add_access("Dst")
     m_an = state.add_access("M")
-    node = TileLoad(name="tl", widths=(4, 8), has_mask=True)
+    node = TileGather(name="tl", widths=(4, 8), has_mask=True)
     state.add_node(node)
     state.add_edge(src_an, None, node, "_src", Memlet("Src[0:16, 0:32]"))
     state.add_edge(m_an, None, node, "_mask", Memlet(f"M[{','.join(f'0:{w}' for w in mask_shape)}]"))
@@ -106,7 +106,7 @@ def test_tileload_refuses_non_transient_mask():
         node.validate(sdfg, state)
 
 
-# TileStore._mask
+# TileScatter._mask
 
 
 def _build_store_with_mask(mask_shape, **mask_kwargs):
@@ -118,7 +118,7 @@ def _build_store_with_mask(mask_shape, **mask_kwargs):
     src_an = state.add_access("Src")
     dst_an = state.add_access("Dst")
     m_an = state.add_access("M")
-    node = TileStore(name="ts", widths=(4, 8), has_mask=True)
+    node = TileScatter(name="ts", widths=(4, 8), has_mask=True)
     state.add_node(node)
     state.add_edge(src_an, None, node, "_src", Memlet("Src[0:4, 0:8]"))
     state.add_edge(m_an, None, node, "_mask", Memlet(f"M[{','.join(f'0:{w}' for w in mask_shape)}]"))

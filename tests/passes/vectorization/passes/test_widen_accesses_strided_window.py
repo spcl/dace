@@ -19,7 +19,7 @@ import pytest
 
 import dace
 from dace import subsets
-from dace.libraries.tileops.nodes.tile_store import TileStore
+from dace.libraries.tileops.nodes.tile_scatter import TileScatter
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -115,7 +115,7 @@ def test_strided_store_window_matches_the_intrinsic_stride():
     sdfg, refusals = canonicalized_and_vectorized(strided_store)
     assert not refusals, refusals
     stores = [(n, e) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-              if isinstance(n, TileStore) for e in st.out_edges(n) if e.src_conn == '_dst']
+              if isinstance(n, TileScatter) for e in st.out_edges(n) if e.src_conn == '_dst']
     assert stores, 'kernel was not tiled -- nothing to check'
     for node, edge in stores:
         assert_window_strides_by(node, edge, 'n3')
@@ -142,7 +142,7 @@ def test_promoted_product_index_reaches_the_tile_store_as_a_stride():
     sdfg, refusals = canonicalized_and_vectorized(symbolic_index_rmw)
     assert not refusals, refusals
     stores = [(n, e) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-              if isinstance(n, TileStore) for e in st.out_edges(n) if e.src_conn == '_dst']
+              if isinstance(n, TileScatter) for e in st.out_edges(n) if e.src_conn == '_dst']
     assert stores, 'kernel was not tiled -- nothing to check'
     for node, edge in stores:
         assert_window_strides_by(node, edge, 'inc')

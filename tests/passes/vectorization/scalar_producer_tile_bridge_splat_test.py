@@ -6,7 +6,7 @@
 operand. ``InsertTileLoadStore`` used to override that -- ``_rewire_producers_to_bridge`` attached
 the WHOLE-bridge memlet ``bridge[0:W]`` to whatever producer it found, the Scalar included.
 ``validate()`` let the resulting AN-to-AN edge through (it checks ``subset`` against the memlet's
-own ``data``, and ``other_subset`` is ``None``), and the ``TileStore`` then wrote W lanes out of a
+own ``data``, and ``other_subset`` is ``None``), and the ``TileScatter`` then wrote W lanes out of a
 buffer whose only defined element is lane 0 -- a silent wrong answer, surfacing only once
 ``InsertExplicitCopies`` derived the matching source subset and refused it out-of-bounds.
 """
@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace import data as dd
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import AccessNode
 from dace.transformation.interstate import LoopToMap
@@ -86,13 +86,13 @@ def count_nodes(sdfg: dace.SDFG, node_type) -> int:
 
 
 def test_the_invariant_scalar_reaches_its_tile_bridge_through_a_broadcast():
-    """Structure: a ``TileLoad(src_kind='Scalar')`` splat stands between Scalar and bridge."""
+    """Structure: a ``TileGather(src_kind='Scalar')`` splat stands between Scalar and bridge."""
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_structure')
 
     # The map really was tiled -- a refused kernel is restored un-tiled and would satisfy every
     # assertion below by having no tile chain at all.
-    assert count_nodes(sdfg, TileStore) > 0
-    splats = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad) and n.src_kind == 'Scalar']
+    assert count_nodes(sdfg, TileScatter) > 0
+    splats = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == 'Scalar']
     assert splats, 'the Scalar producer was wired to the tile bridge without a broadcast'
     for splat in splats:
         assert tuple(splat.widths) == (WIDTH, )
@@ -102,7 +102,7 @@ def test_no_single_element_producer_claims_a_full_tile():
     """The Scalar no longer carries the whole-bridge memlet, and the graph validates."""
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_no_overwide')
 
-    assert count_nodes(sdfg, TileStore) > 0
+    assert count_nodes(sdfg, TileScatter) > 0
     assert single_element_producers_with_a_multi_element_memlet(sdfg) == []
     sdfg.validate()
 
@@ -115,7 +115,7 @@ def test_every_lane_receives_the_invariant_value(length):
     is not a remainder-only guard.
     """
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write(f'splat_numeric_{length}')
-    assert count_nodes(sdfg, TileStore) > 0
+    assert count_nodes(sdfg, TileScatter) > 0
 
     rng = np.random.default_rng(seed=20260911)
     a = rng.random(length)

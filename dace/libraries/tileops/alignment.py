@@ -21,8 +21,8 @@ from dace.sdfg.state import SDFGState
 from dace.symbolic import SymbolicType, symstr
 
 if TYPE_CHECKING:
-    from .nodes.tile_load import TileLoad
-    from .nodes.tile_store import TileStore
+    from .nodes.tile_gather import TileGather
+    from .nodes.tile_scatter import TileScatter
 
 # Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
 # figure is the gpuMalloc/gpuMallocAsync contract (256 B). Anything else is unknown and gets no
@@ -48,7 +48,7 @@ def base_align_bytes(arr: Data) -> int:
 
 
 def enclosing_param_ranges(
-    node: TileLoad | TileStore, parent_state: SDFGState, parent_sdfg: SDFG
+    node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG
 ) -> tuple[dict[str, tuple[SymbolicType, SymbolicType, SymbolicType]], list[tuple[SymbolicType, int]]]:
     """``({param: (start, end, step)}, [(extent, width)])`` for the map scopes enclosing ``node``.
 
@@ -189,7 +189,7 @@ def base_offset_is_visible(sdfg: SDFG, name: str) -> bool:
     return True
 
 
-def linear_base_offset(node: TileLoad | TileStore, parent_state: SDFGState, parent_sdfg: SDFG,
+def linear_base_offset(node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG,
                        edge: MultiConnectorEdge[Memlet]) -> tuple[SymbolicType, SymbolicType, SymbolicType] | None:
     """``(offset_at_tile_base, offset_at_param_ends, allocated_elements)``, or ``None``.
 
@@ -293,7 +293,7 @@ def declined(arr: Data, edge: MultiConnectorEdge[Memlet], elem_bytes: int, allow
     return elem_bytes, 0
 
 
-def array_align_shift(node: TileLoad | TileStore, parent_state: SDFGState, parent_sdfg: SDFG,
+def array_align_shift(node: TileGather | TileScatter, parent_state: SDFGState, parent_sdfg: SDFG,
                       edge: MultiConnectorEdge[Memlet], vlen: int, allow_shift: bool) -> tuple[int, int]:
     """``(alignment bytes of the aligned base, element shift of the access from it)``.
 
@@ -343,7 +343,7 @@ def array_align_shift(node: TileLoad | TileStore, parent_state: SDFGState, paren
     return chunk * elem_bytes, int(shift)
 
 
-def align_template_arg(node: TileLoad | TileStore,
+def align_template_arg(node: TileGather | TileScatter,
                        parent_state: SDFGState,
                        parent_sdfg: SDFG,
                        edge: MultiConnectorEdge[Memlet],
@@ -371,7 +371,7 @@ def align_template_arg(node: TileLoad | TileStore,
     return f", {align}" if align > arr.dtype.bytes else ""
 
 
-def k1_array_stride(node: TileLoad | TileStore, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
+def k1_array_stride(node: TileGather | TileScatter, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
                     dims_prop: list[int]) -> str:
     """Return the linear element stride of the K=1 tile dim into the array on
     ``edge`` (``dim_strides`` coefficient * the array's own stride along the

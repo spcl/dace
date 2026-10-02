@@ -34,8 +34,8 @@ class GenerateTileIterationMask(ppl.Pass):
     For each inner map: adds ``_tile_iter_mask : bool[widths]`` (a
     Register transient) and prepends a :class:`TileMaskGen` lib node
     inside the map scope that writes the mask. The mask is consumed by
-    every downstream :class:`TileLoad` / :class:`TileBinop` /
-    :class:`TileStore` placed inside the same scope.
+    every downstream :class:`TileGather` / :class:`TileBinop` /
+    :class:`TileScatter` placed inside the same scope.
 
     Idempotent -- re-running on an already-masked map is a no-op.
     """

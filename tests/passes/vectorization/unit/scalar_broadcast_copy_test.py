@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A bare scalar-to-tile copy must lower to a ``TileLoad(src_kind='Scalar')`` broadcast.
+"""A bare scalar-to-tile copy must lower to a ``TileGather(src_kind='Scalar')`` broadcast.
 
 TSVC s293 is the shape::
 
@@ -15,13 +15,13 @@ A plain copy has no such consumer: the bridge -> output rewire then dropped the 
 orphaned ``_tile_iter_mask`` behind.
 
 The source of a bare copy into a global array must therefore become a real ``(W,)`` tile via a
-broadcast ``TileLoad``, paired with the ``TileStore`` that writes the window.
+broadcast ``TileGather``, paired with the ``TileScatter`` that writes the window.
 """
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
@@ -48,8 +48,8 @@ def _vectorized(tag):
 
 def test_lowers_to_a_broadcast_load_and_a_tile_store():
     sdfg = _vectorized('bcast_copy_struct')
-    loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
-    stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore)]
+    loads = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
+    stores = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileScatter)]
     assert loads, 'the scalar source never became a tile'
     assert all(ld.src_kind == 'Scalar' for ld in loads), [ld.src_kind for ld in loads]
     assert stores, 'the tile is never stored back to the global array'
@@ -62,7 +62,7 @@ def test_the_stored_window_is_the_whole_tile():
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
-                if not isinstance(node, TileStore):
+                if not isinstance(node, TileScatter):
                     continue
                 out = [e for e in state.out_edges(node) if e.src_conn == '_dst']
                 assert out, f'{node.label} has no _dst edge'
