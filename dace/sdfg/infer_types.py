@@ -125,7 +125,8 @@ def infer_connector_types(sdfg: SDFG):
 def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     """
     Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
-    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression.
+    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression. The symbol keeps its kind
+    (signed, unsigned or floating point).
 
     :param state: The state that contains ``node``.
     :param node: The nested SDFG node.
@@ -138,7 +139,9 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
         if outer_symbols is None:
             outer_symbols = state.symbols_defined_at(node)
         mapped = infer_expr_type(value, outer_symbols)
-        if mapped is not None and mapped.bytes > declared.bytes and dtypes.result_type_of(declared, mapped) == mapped:
+        # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
+        if (mapped is not None and mapped.bytes > declared.bytes and type(declared) is type(mapped) is dtypes.typeclass
+                and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind):
             node.sdfg.symbols[name] = mapped
 
 
