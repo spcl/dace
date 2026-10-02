@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Dict, Final, List, NoReturn, Optional, Set
 
 import dace
-from dace import dtypes, properties
+from dace import data, dtypes, properties
 from dace.dtypes import typeclass
 from dace.memlet import Memlet
 from dace.sdfg import graph as dgraph
@@ -192,6 +192,11 @@ class AccessInstances(ppl.Pass):
             instances: Dict[str, List] = collections.defaultdict(list)
             code_uses: Dict[str, List] = collections.defaultdict(list)
             array_names = sdfg.arrays.keys()
+            # A use with no access node of its own is recorded by a stand-in access node that is in no state's graph.
+            #  That is harmless for an array, whose allocation only reads the descriptor, but not for a view, whose
+            #  pointer is taken from its viewed edge: views are never stood in for, their declaration follows the data
+            #  they view.
+            standin_names = {name for name in array_names if not isinstance(sdfg.arrays[name], data.View)}
 
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
@@ -204,12 +209,14 @@ class AccessInstances(ppl.Pass):
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
-                    for used in (node.free_symbols & array_names):
+                    for used in (node.free_symbols & standin_names):
                         instances[used].append((state, nodes.AccessNode(used)))
                         code_uses[used].append((state, node))
 
                 for e in state.parent_graph.all_edges(state):
                     for edge_array in e.data.used_arrays(sdfg.arrays):
+                        if edge_array not in standin_names:
+                            continue
                         instances[edge_array].append((state, nodes.AccessNode(edge_array)))
 
             access_instances[sdfg.cfg_id] = instances
