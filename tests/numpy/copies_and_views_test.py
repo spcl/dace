@@ -383,6 +383,145 @@ def test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtyp
     assert np.allclose(out, reference(psi[:4, 1:3]))
 
 
+N = dace.symbol('N')
+M = dace.symbol('M')
+
+
+@dace.program
+def rebind_chained_slices(A: dace.int64[10]):
+    v = A[1:-1][1:3]
+    v += 1
+    v = A[1:-1][1:3]
+    v += 2
+
+
+@dace.program
+def rebind_slice_of_a_named_view(A: dace.int64[10]):
+    w = A[1:-1]
+    v = w[1:3]
+    v += 1
+    v = w[1:3]
+    v += 2
+
+
+@dace.program
+def rebind_symbolic_slice(A: dace.int64[N]):
+    v = A[1:N - 1]
+    v += 1
+    v = A[1:N - 1]
+    v += 2
+
+
+@dace.program
+def rebind_negative_and_symbolic_bound(A: dace.int64[N]):
+    v = A[1:-1]
+    v += 1
+    v = A[1:N - 1]
+    v += 2
+
+
+@dace.program
+def rebind_strided_slice(A: dace.int64[10]):
+    v = A[1:9:2]
+    v += 1
+    v = A[1:9:2]
+    v += 2
+
+
+@dace.program
+def rebind_same_size_elsewhere(A: dace.int64[10]):
+    v = A[0:4]
+    v += 1
+    v = A[4:8]
+    v += 2
+
+
+@dace.program
+def rebind_same_slice_of_another_array(A: dace.int64[10], B: dace.int64[10]):
+    v = A[1:-1]
+    v += 1
+    v = B[1:-1]
+    v += 2
+
+
+@dace.program
+def rebind_chained_to_another_inner_slice(A: dace.int64[10]):
+    w = A[1:-1]
+    v = w[1:3]
+    v += 1
+    v = w[2:4]
+    v += 2
+
+
+@dace.program
+def rebind_chained_to_another_outer_slice(A: dace.int64[10]):
+    v = A[0:8][1:3]
+    v += 1
+    v = A[1:9][1:3]
+    v += 2
+
+
+@dace.program
+def rebind_symbolic_slice_of_another_extent(A: dace.int64[N]):
+    v = A[0:N - 1]
+    v += 1
+    v = A[0:N - 2]
+    v += 2
+
+
+@dace.program
+def rebind_slice_of_another_symbolic_array(A: dace.int64[N], B: dace.int64[M]):
+    v = A[0:4]
+    v += 1
+    v = B[0:4]
+    v += 2
+
+
+@dace.program
+def rebind_other_stride(A: dace.int64[10]):
+    v = A[1:9:2]
+    v += 1
+    v = A[1:9:3]
+    v += 2
+
+
+SAME_ELEMENTS = [
+    pytest.param(rebind_chained_slices, slice(2, 4), id='chained_slices'),
+    pytest.param(rebind_slice_of_a_named_view, slice(2, 4), id='slice_of_a_named_view'),
+    pytest.param(rebind_symbolic_slice, slice(1, 9), id='symbolic_slice'),
+    pytest.param(rebind_negative_and_symbolic_bound, slice(1, 9), id='negative_and_symbolic_bound'),
+    pytest.param(rebind_strided_slice, slice(1, 9, 2), id='strided_slice'),
+]
+
+OTHER_ELEMENTS = [
+    pytest.param(rebind_same_size_elsewhere, id='same_size_elsewhere'),
+    pytest.param(rebind_same_slice_of_another_array, id='same_slice_of_another_array'),
+    pytest.param(rebind_chained_to_another_inner_slice, id='chained_to_another_inner_slice'),
+    pytest.param(rebind_chained_to_another_outer_slice, id='chained_to_another_outer_slice'),
+    pytest.param(rebind_symbolic_slice_of_another_extent, id='symbolic_slice_of_another_extent'),
+    pytest.param(rebind_slice_of_another_symbolic_array, id='slice_of_another_symbolic_array'),
+    pytest.param(rebind_other_stride, id='other_stride'),
+]
+
+
+@pytest.mark.parametrize('program, viewed', SAME_ELEMENTS)
+def test_rebind_view_to_a_slice_that_sees_the_same_elements(program, viewed):
+    sdfg = program.to_sdfg(simplify=False)
+    assert [n for n in sdfg.arrays if n == 'v' or n.startswith('v_')] == ['v']
+    val = np.arange(10)
+    program(A=val, **({'N': 10} if 'N' in sdfg.free_symbols else {}))
+    ref = np.arange(10)
+    ref[viewed] += 3
+    assert np.array_equal(val, ref)
+
+
+@pytest.mark.parametrize('program', OTHER_ELEMENTS)
+def test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(program):
+    """Views of the same size, or of the same slice of another array, are still different views."""
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='Cannot reassign View'):
+        program.to_sdfg(simplify=False)
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()
@@ -396,6 +535,15 @@ if __name__ == '__main__':
     test_rebind_view_to_the_same_slice()
     test_rebind_view_to_the_whole_array()
     test_rebind_view_to_a_different_slice_is_still_refused()
+    for param in SAME_ELEMENTS:
+        test_rebind_view_to_a_slice_that_sees_the_same_elements(*param.values)
+    for param in OTHER_ELEMENTS:
+        test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(*param.values)
+    test_real_of_a_view_used_twice_computes_what_numpy_computes()
+    for program, reference, dtype in [(imag_of_a_view, np.imag, np.float64), (abs_of_a_view, np.abs, np.float64),
+                                      (flip_of_a_view, np.flip, np.complex128),
+                                      (triu_of_a_view, np.triu, np.complex128)]:
+        test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtype)
 
     test_strided_copy()
     test_strided_copy_symbolic_0()
