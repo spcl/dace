@@ -153,6 +153,14 @@ class AllocationLifetime(Enum):
     External = auto()  #: Allocated and managed outside the generated code
 
 
+class StackAllocation(Enum):
+    """ Whether a register array lives on the stack or on the heap. """
+
+    Auto = auto()  #: Decided by ``ResolveStackAllocation``: small constant sizes on the stack
+    Stack = auto()  #: On the stack; a symbolic size becomes a variable-length array
+    Heap = auto()  #: On the heap
+
+
 @undefined_safe_enum
 class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """

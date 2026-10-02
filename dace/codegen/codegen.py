@@ -221,6 +221,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Storage is final, so the stack placement of register arrays can be decided
+    from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
+    ResolveStackAllocation().apply_pass(sdfg, {})
+
     frame = framecode.DaCeCodeGenerator(sdfg)
 
     # Test for undefined symbols in SDFG arguments

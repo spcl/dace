@@ -19,22 +19,27 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
+from dace.transformation.passes.resolve_stack_allocation import resolve_stack_allocation
 from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-def stack_variable_length_array(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
-    """ Whether a symbolically-sized register array is declared as a stack variable-length array,
-        which GCC, Clang and NVHPC all accept. A VLA is defined at its declaration and dies with
-        its block, so a lifetime that outlives the block keeps the heap, and so does a split
-        declare/allocate: ``declare_array`` has already emitted the pointer at SDFG scope, and a
-        VLA here would shadow it. Allocation and deallocation both ask here so they cannot disagree.
+def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
+    """ Whether a register array is declared on the stack rather than allocated on the heap. A symbolic
+        size makes it a variable-length array, which dies with its block, so a lifetime that outlives
+        the block keeps the heap, and so does a split declare/allocate: ``declare_array`` has already
+        emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and deallocation both
+        ask here so they cannot disagree.
     """
-    return (nodedesc.storage == dtypes.StorageType.Register and not declared
-            and symbolic.issymbolic(arrsize, sdfg.constants) and lifetime
-            in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
+    if (nodedesc.storage != dtypes.StorageType.Register
+            or resolve_stack_allocation(nodedesc, sdfg.constants) is not dtypes.StackAllocation.Stack):
+        return False
+    if not symbolic.issymbolic(arrsize, sdfg.constants):
+        return True
+    return not declared and lifetime in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State,
+                                         dtypes.AllocationLifetime.SDFG)
 
 
 def restrict_qualifier(desc: data.Data, ctype: str) -> str:
@@ -377,8 +382,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
@@ -457,11 +460,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        arrsize_bytes = None
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
 
-        variable_length_array = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime, declared)
+        on_stack = register_array_on_stack(sdfg, nodedesc, arrsize, top_lifetime, declared)
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -539,21 +539,16 @@ class CPUCodeGen(TargetCodeGenerator):
             define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants) and not variable_length_array) or
-                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
+              or (nodedesc.storage == dtypes.StorageType.Register and not on_stack)):
 
             if nodedesc.storage == dtypes.StorageType.Register:
-
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on the heap instead of '
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
-                elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
-                    warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
-                                  "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
-                                      Config.get("compiler", "max_stack_array_size")))
+                else:
+                    warnings.warn(f'Register array {name} with {cpp.sym2cpp(arrsize)} elements was allocated on the '
+                                  f'heap instead of the stack (stack_vla={nodedesc.stack_vla.name})')
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
@@ -578,11 +573,14 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
-            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment.
+            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment. Its bound
+            # must be positive, while a symbolic extent may evaluate to zero.
+            variable_length_array = symbolic.issymbolic(arrsize, sdfg.constants)
+            bound = cpp.sym2cpp(symbolic.sympy.Max(1, arrsize) if variable_length_array else arrsize)
             alignment = '' if variable_length_array else '  DACE_ALIGN(64)'
             if node.setzero and not variable_length_array:
                 declaration_stream.write(
-                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
+                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, bound, alignment),
                     cfg,
                     state_id,
                     node,
@@ -590,15 +588,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), alignment),
+                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, bound, alignment),
                 cfg,
                 state_id,
                 node,
             )
             if node.setzero:
-                allocation_stream.write(
-                    "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
-                    state_id, node)
+                allocation_stream.write("memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, bound), cfg,
+                                        state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -647,9 +644,6 @@ class CPUCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
-        arrsize_bytes = None
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
@@ -664,10 +658,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)
-                    and not stack_variable_length_array(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared)) or
-                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
+              or (nodedesc.storage == dtypes.StorageType.Register
+                  and not register_array_on_stack(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator
                 # delete[]. The direct operator call skips destructors and relies on the new-expression
