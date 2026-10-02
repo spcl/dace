@@ -292,7 +292,15 @@ def instrument_data(ditype: 'DataInstrumentationType',
                     if verbose:
                         print('Loading instrumented data report from', folder)
 
-                set_report(csdfg._libhandle, ctypes.c_char_p(os.path.abspath(folder).encode('utf-8')))
+                # The state pointer is interface-specific. ctypes initializes BEFORE invoking the
+                # call hooks, so its handle is ready; the nanobind interface initializes inside
+                # the compiled call, so the hook initializes eagerly (idempotent - its `args` is
+                # a 1-tuple holding the processed keyword arguments) and uses the returned state.
+                if hasattr(csdfg, '_libhandle'):
+                    state = csdfg._libhandle
+                else:
+                    state = csdfg.initialize(**args[0]) if args else csdfg.initialize()
+                set_report(state, ctypes.c_char_p(os.path.abspath(folder).encode('utf-8')))
                 yield
 
         with on_compiled_sdfg_call(context_manager=DataRestoreHook()):

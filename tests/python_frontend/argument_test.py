@@ -46,7 +46,9 @@ def test_missing_arguments_2_regression():
     def tester(x: dace.float64[20]):
         x[:] = 0
 
-    with pytest.raises(KeyError):
+    # ctypes raises KeyError('Missing program argument ...'); the nanobind
+    # dispatcher reports the missing parameter as a TypeError.
+    with pytest.raises((KeyError, TypeError)):
         tester()
 
 

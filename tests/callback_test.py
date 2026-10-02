@@ -61,8 +61,10 @@ def callback_with_arrays(out_arr: dace.float64[M, N, O], in_arr: dace.float64[M,
 
 
 def test_callback():
-    A = dace.ndarray((2, ), dtype=dace.int32)
-    B = dace.ndarray((2, ), dtype=dace.int32)
+    # uint32, matching the program signature: the nanobind interface rejects a
+    # mismatched array dtype (ctypes only warned).
+    A = dace.ndarray((2, ), dtype=dace.uint32)
+    B = dace.ndarray((2, ), dtype=dace.uint32)
     A[:] = 5
     B[:] = 0
 

@@ -110,6 +110,31 @@ def test_interstate_edge():
         sdfg.validate()
 
 
+def test_only_arrays_can_be_returned():
+    # Only arrays can be returned from a top-level function; a non-array return
+    # descriptor (here a Structure) is rejected by validation.
+    sdfg = dace.SDFG('ok')
+    st = dace.data.Structure(dict(a=dace.float64[1]), name='S')
+    sdfg.add_datadesc('__return', st)
+    sdfg.add_state()
+
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
+        sdfg.validate()
+
+
+def test_return_naming_single_and_tuple_conflict():
+    # A single return value is named `__return`; a tuple (including a one-element
+    # tuple) uses `__return_<i>`. Both present at once is ambiguous (single vs
+    # tuple) and must be rejected.
+    sdfg = dace.SDFG('ok')
+    sdfg.add_array('__return', [1], dace.float64)
+    sdfg.add_array('__return_0', [1], dace.float64)
+    sdfg.add_state()
+
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
+        sdfg.validate()
+
+
 if __name__ == '__main__':
     test_sdfg_name1()
     test_sdfg_name2()
@@ -120,3 +145,5 @@ if __name__ == '__main__':
     test_tasklet()
     test_connector()
     test_interstate_edge()
+    test_only_arrays_can_be_returned()
+    test_return_naming_single_and_tuple_conflict()

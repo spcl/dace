@@ -24,8 +24,11 @@ def compile_commands_with_empty_cpu_args(tmp_path) -> list:
 
     sdfg = addone.to_sdfg()
     sdfg.build_folder = str(tmp_path / 'build_folder')
-    with set_temporary('compiler', 'cpu', 'args', value=''):
-        csdfg = sdfg.compile()
+    # ``compile_commands.json`` only survives in the development folder mode -- the production mode
+    # CI runs under deletes ``build/``.
+    with set_temporary('compiler', 'build_folder_mode', value='development'):
+        with set_temporary('compiler', 'cpu', 'args', value=''):
+            csdfg = sdfg.compile()
 
     a = np.zeros(8, np.float64)
     csdfg(a=a)
