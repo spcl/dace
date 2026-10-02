@@ -336,9 +336,9 @@ def test_replicate_float_divisor_refused():
     assert _detect_replicate_factor(expr, "i") is None
 
 
-@pytest.mark.parametrize("index", ["i % 5", "(2*i + 1) % 5", "FtnMod(i, 5)"])
+@pytest.mark.parametrize("index", ["CMod(i, 5)", "CMod(2*i + 1, 5)", "FtnMod(i, 5)"])
 def test_c_modulo_with_an_unknown_sign_dividend_falls_back_to_gather(index):
-    """C's ``%`` of a dividend that may be negative stays ``CMod``: not the modular pattern, gathered per lane."""
+    """C's modulo of a dividend that may be negative stays ``CMod``: not the modular pattern, gathered per lane."""
     expr = symbolic.pystr_to_symbolic(index)
     assert isinstance(expr, symbolic.CMod)
     assert _detect_modular_factor(expr, "i") is None

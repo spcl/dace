@@ -116,8 +116,8 @@ def test_integer_only_operations_on_symbols_are_accepted_as_extents():
 
 
 def test_an_extent_divided_by_an_integer_allocates_by_integer_division():
-    """``N / 4`` built through the SDFG API is a Rational coefficient, not a float, and codegen sizes it with C
-    integer division exactly as main does."""
+    """``N / 4`` built through the SDFG API is a Rational coefficient, not a float, and codegen sizes it with
+    floored integer division."""
     sdfg = dace.SDFG('rational_extent')
     sdfg.add_array('x', [N / 4], dace.float64)
     sdfg.add_transient('t', [N / 4], dace.float64)
@@ -130,8 +130,8 @@ def test_an_extent_divided_by_an_integer_allocates_by_integer_division():
     code = sdfg.generate_code()[0].clean_code
 
     assert sdfg.arrays['t'].shape == (N / 4, )
-    assert '{ return (N / 4); }' in code, code  # the allocation's size helper
-    assert 'i < (N / 4);' in code, code
+    assert '{ return py_floor(N, 4); }' in code, code  # the allocation's size helper
+    assert 'i < py_floor(N, 4);' in code, code
 
 
 def test_a_float_symbol_divided_by_an_integer_is_still_refused():

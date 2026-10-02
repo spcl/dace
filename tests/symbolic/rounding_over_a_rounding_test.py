@@ -87,7 +87,7 @@ def test_no_libm_rounding_call_reaches_cpp_for_an_integer_division(expr):
     """
     emitted = symstr(sympy_intdiv_fix(expr), cpp_mode=True)
     assert 'ceil(' not in emitted.replace('int_ceil(', ''), emitted
-    assert 'floor(' not in emitted.replace('int_floor(', ''), emitted
+    assert 'floor(' not in emitted.replace('int_floor(', '').replace('py_floor(', ''), emitted
 
 
 @pytest.mark.parametrize('expr', [sympy.floor(sympy.sin(N)), sympy.ceiling(sympy.sin(N))], ids=['floor', 'ceiling'])

@@ -42,6 +42,9 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     # Symbolic functions (as they appear in subsets and range bounds), typed like their C++ runtime counterparts
     'int_floor': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'int_ceil': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'PyMod': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'CMod': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'PyFloor': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
 }
 
 _cmpops = {

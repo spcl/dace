@@ -35,12 +35,12 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 #: cond input. ``pow``/``ipow`` are the function-form power spellings; ``**`` stays for any
 #: exponent ``PowerOperatorExpansion``/``RelaxIntegerPowers`` did not rewrite.
 _SUPPORTED_BINOPS = {
-    "+", "-", "*", "/", "%", "py_mod", "**", "pow", "ipow", "min", "max", "atan2", "hypot", "fmod", "<", "<=", ">",
-    ">=", "==", "!=", "&&", "||", "&", "|", "^"
+    "+", "-", "*", "/", "%", "py_mod", "c_mod", "**", "pow", "ipow", "min", "max", "atan2", "hypot", "fmod", "<", "<=",
+    ">", ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
 
 #: Binops in function-call form ``op(a, b)``, not infix. ``**`` keeps its own infix case below.
-_FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod", "pow", "ipow")
+_FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "c_mod", "atan2", "hypot", "fmod", "pow", "ipow")
 
 #: Call spellings a function-form binop can carry. The sympy symbolic printer emits the
 #: runtime's variadic ``Min``/``Max`` (capitalized); missing this alias left CloudSC's

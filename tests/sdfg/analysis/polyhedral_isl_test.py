@@ -54,9 +54,14 @@ def test_to_isl_mod_maps_to_mod_and_parses():
 
 
 def test_to_isl_refuses_c_modulo_of_a_possibly_negative_dividend():
-    """C's ``N % 8`` truncates, so it must not become ISL's floored ``mod``."""
+    """C's ``CMod(N, 8)`` truncates, so it must not become ISL's floored ``mod``."""
     with pytest.raises(ValueError):
-        poly.render_affine(p('N % 8'), poly.build_name_map([], ['N']))
+        poly.render_affine(p('CMod(N, 8)'), poly.build_name_map([], ['N']))
+
+
+def test_to_isl_renders_the_floored_modulo_as_isls_mod():
+    """Python's ``N % 8`` floors, as ISL's ``mod`` does."""
+    assert poly.render_affine(p('N % 8'), poly.build_name_map([], ['N'])).endswith('mod 8)')
 
 
 def test_to_isl_nonlinear_raises():

@@ -36,13 +36,14 @@ def test_ternary_roundtrip():
 
 
 def test_floordiv_roundtrip():
-    # ``//`` round-trips to ``//`` in Python and lowers to ``/`` in C++; an explicit
-    # int_floor(a, b) keeps its function spelling in Python.
+    # ``//`` round-trips to ``//`` in Python and lowers to the floored ``py_floor`` in C++, or to ``/`` where that
+    # agrees; an explicit int_floor(a, b) keeps its function spelling in Python.
     assert _roundtrip('a // b') == '(((a) // (b)))'
-    assert _roundtrip('a // b', cpp_mode=True) == '(((a) / (b)))'
+    assert _roundtrip('a // b', cpp_mode=True) == '(py_floor(a, b))'
+    assert _roundtrip('4 // b', cpp_mode=True) == '(py_floor(4, b))'
     assert _idempotent('a // b')
     assert _roundtrip('int_floor(a, b)') == '(int_floor(a, b))'
-    assert _roundtrip('int_floor(a, b)', cpp_mode=True) == '(((a) / (b)))'
+    assert _roundtrip('int_floor(a, b)', cpp_mode=True) == '(py_floor(a, b))'
 
 
 def test_cpp_lowering():

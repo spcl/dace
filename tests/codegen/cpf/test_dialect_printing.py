@@ -224,7 +224,7 @@ def test_integer_index_arithmetic_keeps_integer_division():
     n = symbolic.symbol('n_k')
     for expression in (n // 8, sympy.floor(n / 8), symbolic.int_floor(n, 8)):
         emitted = printed(expression, Dialect.STANDALONE)
-        assert '/ (8)' in emitted or '/(8)' in emitted, emitted
+        assert '/ (8)' in emitted or '/(8)' in emitted or 'py_floor(n_k, 8)' in emitted, emitted
         assert 'float' not in emitted and 'double' not in emitted, emitted
 
 

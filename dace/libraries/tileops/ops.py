@@ -56,8 +56,9 @@ BINARY_OPS = {
     "-": infix_op("-", "-"),
     "*": infix_op("*", "*"),
     "/": infix_op("/", "/"),
-    "%": call_op("c_mod", "%"),  # C's modulo, which ``c_mod`` also takes on floats
+    "%": call_op("py_mod", "p"),  # Python's ``%`` floors
     "py_mod": call_op("py_mod", "p"),
+    "c_mod": call_op("c_mod", "%"),  # C's modulo, which ``c_mod`` also takes on floats
     "<": infix_op("<", "<", comparison=True),
     "<=": infix_op("<=", "l", comparison=True),
     ">": infix_op(">", ">", comparison=True),
