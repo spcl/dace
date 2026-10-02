@@ -89,10 +89,14 @@ def test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_d
 
 def test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeypatch):
     """Should a device copy still reach the codegen as a plain edge, it has no correct host lowering."""
-    monkeypatch.setattr(insert_explicit_copies.InsertExplicitCopies, '_replace_direct_copies', lambda self, state: 0)
+    monkeypatch.setattr(insert_explicit_copies.InsertExplicitCopies, '_replace_direct_copies',
+                        lambda self, state, order: [])
     with pytest.raises(CodegenError, match='involves GPU memory'):
         _generate_code(_kernel_and_copy_into_one_array_sdfg())
 
 
 if __name__ == '__main__':
     test_a_device_copy_with_an_undecidable_competing_write_is_not_emitted_on_the_host()
+    test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_device()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeypatch)
