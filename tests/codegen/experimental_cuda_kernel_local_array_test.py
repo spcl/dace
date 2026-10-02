@@ -33,12 +33,7 @@ def _kernel_local_array_sdfg() -> dace.SDFG:
     state.add_memlet_path(gpu_a, entry, fill_entry, square, dst_conn='a', memlet=dace.Memlet('gpu_A[i, j]'))
     state.add_memlet_path(square, fill_exit, tmp, src_conn='b', memlet=dace.Memlet('tmp[j]'))
     state.add_memlet_path(tmp, drain_entry, increment, dst_conn='a', memlet=dace.Memlet('tmp[j]'))
-    state.add_memlet_path(increment,
-                          drain_exit,
-                          exit_node,
-                          gpu_b,
-                          src_conn='b',
-                          memlet=dace.Memlet('gpu_B[i, j]'))
+    state.add_memlet_path(increment, drain_exit, exit_node, gpu_b, src_conn='b', memlet=dace.Memlet('gpu_B[i, j]'))
     sdfg.validate()
     return sdfg
 
