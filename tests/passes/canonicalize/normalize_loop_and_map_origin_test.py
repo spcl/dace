@@ -384,7 +384,7 @@ def calls_in_conditions(A: dace.float64[6]):
 
 
 def test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditions():
-    sdfg = calls_in_conditions.to_sdfg()
+    sdfg = calls_in_conditions.to_sdfg(simplify=True)
     A = np.zeros(6)
 
     NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
@@ -407,4 +407,24 @@ def test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_map_rebased_keeping_stride()
+    test_map_value_preserving()
+    test_loop_rebased_keeping_stride()
+    test_loop_value_preserving()
+    test_already_zero_based_is_untouched_and_returns_none()
+    test_idempotent()
+    test_triangular_nest_inner_bound_rewritten_and_value_preserving()
+    test_triangular_nest_idempotent()
+    test_two_sided_copy_memlet_is_rebased_not_crashed()
+    test_while_shaped_loop_is_refused_not_crashed()
+    test_nested_sdfg_map_is_rebased_after_its_enclosing_map()
+    test_inner_map_range_reading_the_rebased_param_follows_the_shift()
+    test_map_range_reading_a_rebased_loop_counter_follows_the_shift()
+    test_nested_sdfg_map_range_reading_the_rebased_param_follows_the_shift()
+    for language, code, rewritten, expected in (
+        (dace.Language.Python, "t = i * 2\nb = t + i", "t = ((i + 1) * 2)\nb = (t + (i + 1))", [0, 3, 6, 9]),
+        (dace.Language.CPP, "b = i;", "b = ((i + (1)));", [0, 1, 2, 3]),
+    ):
+        test_rebased_map_shifts_the_parameter_in_every_statement_of_a_tasklet(language, code, rewritten, expected)
+    test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditions()
+    test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged()
