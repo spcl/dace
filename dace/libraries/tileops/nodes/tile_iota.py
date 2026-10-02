@@ -22,8 +22,7 @@ import dace
 from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-
-from .._pure_codegen import nested_loops, tile_offset
+from ..lanes import nested_loops, tile_offset
 
 
 @library.expansion

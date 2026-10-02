@@ -11,35 +11,35 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileLoad, TileStore
-from dace.libraries.tileops._pure_codegen import (_strides_match_packed, validate_packed_layout)
+from dace.libraries.tileops.validation import strides_match_packed, validate_packed_layout
 from dace.memlet import Memlet
 
-# _strides_match_packed
+# strides_match_packed
 
 
 def test_packed_c_layout_match_returns_true_for_canonical_strides():
     """``(M, N)`` with strides ``(N, 1)`` is packed C."""
-    assert _strides_match_packed(shape=(8, 16), strides=(16, 1), order="C")
+    assert strides_match_packed(shape=(8, 16), strides=(16, 1), order="C")
 
 
 def test_packed_c_layout_match_returns_false_for_padded_inner_dim():
     """``(M, N)`` with strides ``(N+4, 1)`` is NOT packed C."""
-    assert not _strides_match_packed(shape=(8, 16), strides=(20, 1), order="C")
+    assert not strides_match_packed(shape=(8, 16), strides=(20, 1), order="C")
 
 
 def test_packed_fortran_layout_match_returns_true_for_canonical_strides():
     """``(M, N)`` with strides ``(1, M)`` is packed Fortran."""
-    assert _strides_match_packed(shape=(8, 16), strides=(1, 8), order="F")
+    assert strides_match_packed(shape=(8, 16), strides=(1, 8), order="F")
 
 
 def test_packed_fortran_layout_match_returns_false_for_padded():
     """``(M, N)`` with strides ``(1, M+4)`` is NOT packed Fortran."""
-    assert not _strides_match_packed(shape=(8, 16), strides=(1, 12), order="F")
+    assert not strides_match_packed(shape=(8, 16), strides=(1, 12), order="F")
 
 
 def test_packed_match_returns_false_for_length_mismatch():
     """Stride / shape length mismatch is refused."""
-    assert not _strides_match_packed(shape=(8, ), strides=(1, 1), order="C")
+    assert not strides_match_packed(shape=(8, ), strides=(1, 1), order="C")
 
 
 # validate_packed_layout

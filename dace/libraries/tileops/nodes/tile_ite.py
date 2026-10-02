@@ -31,9 +31,10 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (is_tile_shape, promotion_ok, edge_moves_a_tile, scalar_operand_ref)
+from ..lanes import nested_loops, tile_offset
+from ..operands import scalar_operand_ref
+from ..validation import edge_moves_a_tile, is_tile_shape, promotion_ok
 
 
 @library.expansion

@@ -22,9 +22,10 @@ from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from ..ops import CAST_OPS, UNARY_OPS
-from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import promotion_ok
+from ..lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
+from ..operands import scalar_operand_ref
+from ..validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
 
 
 @library.expansion
@@ -68,7 +69,6 @@ class ExpandTileUnopPure(ExpandTransformation):
             # source (Scalar / length-1 Array) is passed by value and read as
             # the bare ``_a``. A per-lane tile read keeps the tile dtype uncast;
             # a broadcast is cast.
-            from .tile_binop import scalar_operand_ref
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
             ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
             operand_ctype = out_dtype if broadcast else desc.dtype.ctype
@@ -106,7 +106,6 @@ class ExpandTileUnopPure(ExpandTransformation):
             rhs_expr = UNARY_OPS[node.op].cpp(operand)
         # Output kind dispatch (design 6.2): non-Tile input + a ``_c`` memlet moving one element ->
         # single assignment (no lane loop). Otherwise the K-fold tile loop.
-        from .tile_binop import edge_moves_one_element
         out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
         out_is_scalar = (node.kind_a != TILE and edge_moves_one_element(out_edge))
         if out_is_scalar:
@@ -271,7 +270,6 @@ class TileUnop(nodes.LibraryNode):
                     f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
         # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
-        from .tile_binop import is_tile_shape, edge_moves_a_tile
         if self.kind_a == TILE and not (is_tile_shape(c_arr, tuple(self.widths))
                                         or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(

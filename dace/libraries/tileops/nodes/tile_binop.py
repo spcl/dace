@@ -10,154 +10,20 @@ Symbol pair belongs outside the tile path.
 The pure expansion returns a CPP tasklet whose body is a single
 ``for``-loop over the flattened tile (correctness-only).
 """
-from collections.abc import Sequence
 from typing import Optional, Tuple
-
-import numpy as np
 
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.sdfg import graph, nodes
+from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from ..ops import BINARY_OPS
-from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
-
-
-def is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
-    """True iff ``desc`` is an :class:`dace.data.Array` whose shape equals ``widths``."""
-    if not isinstance(desc, dace.data.Array):
-        return False
-    shape = tuple(desc.shape)
-    if len(shape) != len(widths):
-        return False
-    return all(bool(dace.symbolic.simplify(s - w) == 0) for s, w in zip(shape, widths))
-
-
-def edge_moves_a_tile(edge: graph.MultiConnectorEdge[dace.Memlet], widths: Sequence[int]) -> bool:
-    """True iff ``edge``'s MEMLET moves a tile-shaped box, whatever its descriptor's shape.
-
-    :class:`WidenAccesses` widens the memlet of a lane-indexed array in place rather than swapping
-    the descriptor -- CloudSC's ``zsolqa[jm, jn, jl]`` keeps its ``(nclv, nclv, klon)`` shape -- so a
-    tile write lands in a WINDOW of a larger array: ``buf[0, i:i+W]`` on a ``(3, N)`` array is a tile
-    even though ``(3, N) != (W,)``. Judging that by the descriptor alone reports a rule violation on
-    a perfectly good tile.
-
-    The leading dims must each be a single element and the trailing dims must be the tile itself,
-    which is exactly what makes the expansions' ``_c[off]`` walk the widened window and nothing else.
-
-    :param edge: the ``_c`` / ``_o`` output edge.
-    :param widths: the node's per-dim tile widths.
-    """
-    if edge.data is None or edge.data.subset is None:
-        return False
-    size = tuple(edge.data.subset.size())
-    if len(size) < len(widths):
-        return False
-    split = len(size) - len(widths)
-    if any(not bool(dace.symbolic.simplify(s - 1) == 0) for s in size[:split]):
-        return False
-    return dace.symbolic.shapes_equal(size[split:], tuple(widths))
-
-
-def edge_moves_one_element(edge: graph.MultiConnectorEdge[dace.Memlet]) -> bool:
-    """True iff ``edge``'s MEMLET moves exactly one element, whatever its descriptor's shape.
-
-    Codegen binds a one-element connector BY VALUE (``T _c;``), so a lane-invariant op writing it
-    assigns ``_c`` once and never walks ``_c[off]``. The descriptor cannot tell: CloudSC's
-    ``imelt[4] = -99`` writes one element of an ``int[5]``.
-
-    :param edge: the ``_c`` / ``_o`` output edge.
-    """
-    return edge.data is not None and edge.data.subset is not None and edge.data.subset.num_elements() == 1
-
-
-def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], off: str) -> Tuple[str, bool]:
-    """Per-lane C++ reference for a ``Scalar``-kind tile-op operand.
-
-    A ``Scalar``-kind operand (one classified as a broadcast because its source
-    is read through a single-element ``"0"`` memlet) may be bound to one of two
-    connector ABIs:
-
-    * a **tile-shape** :class:`dace.data.Array` (``shape == widths``) -> a
-      transient an upstream tile op widened to a register tile, then read here
-      through a single-element memlet. The connector is a pointer (``T* conn``)
-      carrying PER-LANE data, so it must be read ``conn[off]`` exactly like a
-      Tile operand. Reading it as a broadcast would emit ``(T)conn`` -- an
-      invalid pointer-to-value cast.
-    * anything else (a true :class:`dace.data.Scalar`, a length-1 Array, or any
-      single-element access) -> DaCe passes a volume-1 connector by value
-      (``T conn = ...``), so the tasklet references the bare ``conn`` and
-      broadcasts it. ``[0]`` is a *memlet* concern, never a tasklet-body one --
-      a by-value ``conn`` is not a pointer.
-
-    :param desc: The data descriptor bound to ``conn``.
-    :param conn: The tasklet input connector name (e.g. ``"_a"``).
-    :param widths: Per-dim tile widths (innermost-last).
-    :param off: The flattened per-lane offset expression (from ``tile_offset``).
-    :returns: ``(ref, broadcast)`` -- the C++ reference and whether it is a
-        loop-invariant broadcast. The caller casts a broadcast to the operand
-        dtype; a per-lane tile read (``broadcast == False``) keeps the tile
-        dtype uncast, exactly like a Tile operand.
-    """
-    if isinstance(desc, dace.data.Array) and is_tile_shape(desc, tuple(widths)):
-        return f"{conn}[{off}]", False
-    return conn, True
-
-
-def is_floating_dtype(dtype: dace.dtypes.typeclass) -> bool:
-    """Whether ``dtype`` is a floating type, the ml_dtypes-backed narrow ones included.
-
-    ``np.issubdtype(ml_dtypes.bfloat16, np.floating)`` is False -- ml_dtypes registers its scalars
-    outside numpy's float hierarchy -- so a bare numpy test reads ``bfloat16`` and the two fp8 types
-    as neither integer nor float, and :func:`promotion_ok` then refuses EVERY promotion off them,
-    a comparison's ``-> bool`` included.
-
-    :param dtype: The dtype to classify.
-    :returns: ``True`` iff ``dtype`` holds floating-point values.
-    """
-    return dtype in dace.dtypes.FLOAT_TYPES or np.issubdtype(dtype.type, np.floating)
-
-
-def promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
-    """Whether a Tile operand of dtype ``src`` may be promoted to the output
-    dtype ``dst`` before the op (a widening conversion).
-
-    Allowed (widening): same dtype; integer -> wider-or-equal integer; integer
-    -> float / double; float -> double; integer -> bool (truthiness cast,
-    ``int != 0`` — well-defined in C++ for any integer operand, used by the
-    merge-cond compound combine where a comparison result stored as int64
-    flows into a bool-output combine tasklet). Disallowed (narrowing -> the
-    caller must crash): float / double -> integer; double -> float; integer
-    narrowing (e.g. int64 -> int32).
-
-    :param src: The Tile operand's element dtype.
-    :param dst: The output (``_c``) element dtype.
-    :returns: ``True`` iff promoting ``src`` to ``dst`` is non-narrowing.
-    """
-    if src == dst:
-        return True
-    s_int = np.issubdtype(src.type, np.integer)
-    d_int = np.issubdtype(dst.type, np.integer)
-    s_flt = is_floating_dtype(src)
-    d_flt = is_floating_dtype(dst)
-    s_bool = (src.type is np.bool_)
-    d_bool = (dst.type is np.bool_)
-    if s_int and d_flt:  # int -> float / double
-        return True
-    if s_int and d_int and dst.bytes >= src.bytes:  # integer widening
-        return True
-    # Strictly wider, not wider-or-equal: two DISTINCT floats of the same width -- float16
-    # against bfloat16, or the two fp8 encodings -- trade mantissa for exponent, so neither
-    # direction round-trips. The equal case that is safe is the same dtype, returned above.
-    if s_flt and d_flt and dst.bytes > src.bytes:  # float -> double
-        return True
-    if (s_int or s_bool or s_flt) and d_bool:  # numeric -> bool (truthiness)
-        return True
-    return False
+from ..lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
+from ..operands import scalar_operand_ref
+from ..validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
 
 
 @library.expansion

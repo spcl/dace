@@ -16,9 +16,9 @@ from dace import cpf_lowering, library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import nested_loops
 from .._isa_codegen import make_isa_expansions, make_reduce_tasklet
 from ..ops import REDUCE_OPS
+from ..lanes import nested_loops
 
 
 def _identity_literal(op: str, ctype: str) -> str:

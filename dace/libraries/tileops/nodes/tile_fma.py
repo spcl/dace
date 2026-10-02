@@ -29,9 +29,10 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (is_tile_shape, edge_moves_one_element, edge_moves_a_tile, scalar_operand_ref, promotion_ok)
+from ..lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
+from ..operands import scalar_operand_ref
+from ..validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
 
 #: C++ spellings of every registered dtype narrower than ``float``; these operands take the
 #: ``double``-widened FMA spelling, everything else calls ``std::fma`` on its own type. Read off the

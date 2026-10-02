@@ -2,7 +2,7 @@
 """Unit tests for ``TileLoad`` / ``TileStore`` ``gather_dims`` + full-K-dim ``_idx_<d>``.
 
 Index-tile shape convention (positional, full-K-dim; see
-:func:`dace.libraries.tileops._pure_codegen.resolve_gather_deps`). An
+:func:`dace.libraries.tileops.lanes.resolve_gather_deps`). An
 ``_idx_<d>`` connector is ALWAYS rank ``K`` (the lib node's tile rank); tile dim
 ``p`` is a dependency iff ``idx_shape[p]`` equals ``widths[p]``, and a
 non-dependency dim carries the ``dace.symbolic.ONE`` broadcast marker:
@@ -18,7 +18,7 @@ non-dependency dim carries the ``dace.symbolic.ONE`` broadcast marker:
 import pytest
 
 import dace
-from dace.libraries.tileops._pure_codegen import gather_lane_offset
+from dace.libraries.tileops.lanes import gather_lane_offset
 from dace.libraries.tileops.nodes.tile_load import TileLoad
 from dace.libraries.tileops.nodes.tile_store import TileStore
 from dace.memlet import Memlet

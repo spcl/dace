@@ -15,7 +15,8 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .. import _isa_codegen
-from .._pure_codegen import nested_loops, tile_offset
+from ..lanes import nested_loops, tile_offset
+from ..validation import validate_mask_descriptor_lock
 
 
 @library.expansion
@@ -158,7 +159,6 @@ class TileMaskGen(nodes.LibraryNode):
         :param state: State that owns ``self``.
         :raises ValueError: If ``_o`` is not connected or fails the lock.
         """
-        from .._pure_codegen import validate_mask_descriptor_lock
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
         if "_o" not in out_e:
             raise ValueError(f"{self.label}: required output '_o' not connected")

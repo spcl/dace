@@ -31,6 +31,7 @@ from dace.symbolic import SymbolicType, symstr
 
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE
 from dace.libraries.tileops.ops import BINARY_ISA_CODES, CAST_OPS, UNARY_ISA_CODES
+from dace.libraries.tileops.validation import edge_moves_one_element
 
 if TYPE_CHECKING:
     # For typing only, kept out of the runtime import (already lazy-imported where used below).
@@ -215,7 +216,7 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
     # to the pure expansion's ``out_is_scalar`` branch (mirrors ``make_unop_tasklet``
     # and the differing-dtype deferral below). Gated on both operands non-Tile, matching
     # the pure path's own ``out_is_scalar`` predicate.
-    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, edge_moves_one_element
+    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure
     out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
     if node.kind_a != TILE and node.kind_b != TILE and edge_moves_one_element(out_edge):
         return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
@@ -297,7 +298,6 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     # to the pure expansion's ``out_is_scalar`` branch (mirrors make_binop_tasklet).
     # Gated on all operands non-Tile, matching the pure path's own predicate.
     from dace.libraries.tileops.nodes.tile_fma import ExpandTileFMAPure
-    from dace.libraries.tileops.nodes.tile_binop import edge_moves_one_element
     out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
     no_tile = node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
     if no_tile and edge_moves_one_element(out_edge):
@@ -386,7 +386,6 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     # delegate to it (the same escape hatch the cast-op case above and the
     # differing-dtype case below use). Gated on a non-Tile operand to mirror the pure
     # path's own ``out_is_scalar`` predicate (a Tile operand always yields a tile output).
-    from dace.libraries.tileops.nodes.tile_binop import edge_moves_one_element
     out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
     if node.kind_a != TILE and edge_moves_one_element(out_edge):
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
