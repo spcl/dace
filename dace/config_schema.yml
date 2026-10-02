@@ -603,7 +603,7 @@ required:
                         type: bool
                         title: Synchronize GPU stream at SDFG exit
                         description: >
-                            If enabled (default), AutoSingleStreamGPUScheduler appends a
+                            If enabled (default), AutoGPUStreamScheduler appends a
                             cudaStreamSynchronize at every GPU sink state, making each GPU SDFG
                             synchronous on return. Disable only when the host application shares one
                             GPU stream across all SDFG calls (so GPU->GPU hand-off is stream-ordered)

@@ -9,18 +9,18 @@ from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.interstate import StateFusionExtended
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import PerComponentGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
                                                                                get_gpu_stream_array_name)
 
-# These tests pin behaviour specific to :class:`NaiveGPUStreamScheduler` (per-WCC streams,
+# These tests pin behaviour specific to :class:`PerComponentGPUStreamScheduler` (per-WCC streams,
 # end-of-state fused sync tasklets). The pipeline's default is now
-# :class:`AutoSingleStreamGPUScheduler` (stream 0 + sync-state insertion), so we wire Naive
+# :class:`AutoGPUStreamScheduler` (stream 0 + sync-state insertion), so we wire per-component
 # explicitly here.
-gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=NaiveGPUStreamScheduler())
+gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=PerComponentGPUStreamScheduler())
 
 backend = common.get_gpu_backend()
 
@@ -237,7 +237,7 @@ def test_three_kernels_dependent_and_independent():
         Pipeline([MoveArrayOutOfKernel(), InsertExplicitCopies()]).apply_pass(sdfg, {})
 
         # Step 2: run the remaining stream-specialization passes.
-        strategy = NaiveGPUStreamScheduler()
+        strategy = PerComponentGPUStreamScheduler()
         Pipeline([
             strategy,
             GPUStreamWiring(strategy),
@@ -336,7 +336,7 @@ def test_single_copy_library_node():
     state.add_edge(a, None, cp, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("A[0:128]"))
     state.add_edge(cp, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
-    strategy = NaiveGPUStreamScheduler()
+    strategy = PerComponentGPUStreamScheduler()
     Pipeline([
         strategy,
         GPUStreamWiring(strategy),
@@ -368,7 +368,7 @@ def test_single_fill_library_node():
     state.add_node(ms)
     state.add_edge(ms, FillLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
-    strategy = NaiveGPUStreamScheduler()
+    strategy = PerComponentGPUStreamScheduler()
     Pipeline([
         strategy,
         GPUStreamWiring(strategy),
@@ -459,7 +459,7 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
     state.add_edge(matmul, "_c", c, None, dace.Memlet(f"C[0:{M}, 0:{N}]"))
 
     # Run the GPU stream pipeline on the un-expanded SDFG.
-    strategy = NaiveGPUStreamScheduler()
+    strategy = PerComponentGPUStreamScheduler()
     Pipeline([
         strategy,
         GPUStreamWiring(strategy),
@@ -520,7 +520,7 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     # Recursive expand first (the unified pipeline does this), then run the
     # scheduler on the post-expansion shape.
     sdfg.expand_library_nodes(recursive=True)
-    strategy = NaiveGPUStreamScheduler()
+    strategy = PerComponentGPUStreamScheduler()
     Pipeline([
         strategy,
         GPUStreamWiring(strategy),

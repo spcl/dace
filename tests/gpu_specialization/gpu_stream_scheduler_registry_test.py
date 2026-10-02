@@ -12,22 +12,22 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoGPUStreamScheduler,
                                                                                  GPUStreamSchedulingStrategy,
-                                                                                 NaiveGPUStreamScheduler)
+                                                                                 PerComponentGPUStreamScheduler)
 
 # Pipeline-level config.
 
 
 def test_pipeline_default_strategy_is_auto():
     """The pipeline's default strategy is the auto/single-stream classifier; it falls back to
-    :class:`NaiveGPUStreamScheduler` internally when its analysis says so."""
+    :class:`PerComponentGPUStreamScheduler` internally when its analysis says so."""
     pipe = GPUStreamPipeline()
-    assert isinstance(pipe._scheduling_strategy, AutoSingleStreamGPUScheduler)
+    assert isinstance(pipe._scheduling_strategy, AutoGPUStreamScheduler)
 
 
 def test_pipeline_accepts_explicit_strategy_instance():
-    strategy = AutoSingleStreamGPUScheduler(monolithic=True)
+    strategy = AutoGPUStreamScheduler(monolithic=True)
     pipe = GPUStreamPipeline(scheduling_strategy=strategy)
     assert pipe._scheduling_strategy is strategy
 
@@ -74,14 +74,14 @@ def test_apply_pass_rejects_non_root_sdfg():
     inner = dace.SDFG('inner')
     inner._parent_sdfg = outer
     with pytest.raises(ValueError, match="root SDFG"):
-        NaiveGPUStreamScheduler().apply_pass(inner, {})
+        PerComponentGPUStreamScheduler().apply_pass(inner, {})
 
 
-def test_naive_assign_streams_callable_directly():
-    """The naive scheduler must keep working when invoked directly."""
+def test_per_component_assign_streams_callable_directly():
+    """The per-component scheduler must keep working when invoked directly."""
     sdfg = dace.SDFG('empty')
     sdfg.add_state('s')
-    assignments = NaiveGPUStreamScheduler().assign_streams(sdfg)
+    assignments = PerComponentGPUStreamScheduler().assign_streams(sdfg)
     assert isinstance(assignments, dict)
 
 
@@ -93,4 +93,4 @@ if __name__ == '__main__':
     test_abstract_assign_streams_raises()
     test_abstract_apply_pass_also_raises()
     test_apply_pass_rejects_non_root_sdfg()
-    test_naive_assign_streams_callable_directly()
+    test_per_component_assign_streams_callable_directly()

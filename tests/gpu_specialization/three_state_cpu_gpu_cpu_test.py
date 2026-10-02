@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Regression test for ``AutoSingleStreamGPUScheduler`` sync placement at root level.
+"""Regression test for ``AutoGPUStreamScheduler`` sync placement at root level.
 
 Reproduces the shape of ``failed_validation.sdfg`` (an ICON-style program):
 
