@@ -2997,7 +2997,7 @@ class SDFG(ControlFlowRegion):
                                        permissive: bool = False,
                                        states: Optional[List[Any]] = None,
                                        print_report: Optional[bool] = None,
-                                       order_by_transformation: bool = True,
+                                       order_by_transformation: bool = False,
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
@@ -3047,7 +3047,7 @@ class SDFG(ControlFlowRegion):
                                               permissive: bool = False,
                                               states: Optional[List[Any]] = None,
                                               print_report: Optional[bool] = None,
-                                              order_by_transformation: bool = True,
+                                              order_by_transformation: bool = False,
                                               progress: Optional[bool] = None) -> int:
         """
         This function applies a transformation or a set of (unique) transformations
