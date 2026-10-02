@@ -609,6 +609,9 @@ DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
 // zero, which is non-zero only for ``a == +-1``. ``a == 0`` has no integral result and answers 0.
 template <typename T, typename U>
 DACE_CONSTEXPR DACE_HDFI T negative_integer_power(const T& a, const U& b) {
+  static_assert(std::is_integral<T>::value, "negative_integer_power: the base must be an integer");
+  static_assert(std::is_integral<U>::value && std::is_signed<U>::value,
+                "negative_integer_power: the exponent must be a signed integer");
   if (a == T(1)) return T(1);
   if constexpr (std::is_signed<T>::value) {
     if (a == T(-1)) return (b % 2 == 0) ? T(1) : T(-1);
@@ -880,6 +883,7 @@ DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a) {
 // exact for a floating-point or complex one. Vector bases have no reciprocal and need ``b >= 0``.
 template <typename T, typename U>
 static DACE_HDFI T ipow(const T& a, const U& b) {
+  static_assert(std::is_integral<U>::value, "ipow: the exponent must be an integer");
   if constexpr (std::is_signed<U>::value) {
     if (b < 0) {
       if constexpr (std::is_integral<T>::value)
