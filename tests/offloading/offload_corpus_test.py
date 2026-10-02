@@ -4,9 +4,8 @@
 The whole ``auto_optimize`` pipeline runs, not the pass alone, because it picks library implementations before it
 offloads. Numerical agreement with numpy stays in ``tests/npbench``, behind ``-m gpu``.
 """
-import importlib.util
+import importlib
 import pathlib
-import sys
 from types import ModuleType
 
 import pytest
@@ -14,28 +13,20 @@ import pytest
 import dace
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-#: ``tests/npbench`` is a directory of test files, not a package: its modules are loaded by path.
-NPBENCH_ROOT = pathlib.Path(__file__).resolve().parent.parent / 'npbench'
+#: ``tests/npbench`` is a directory of test files, not a package: its modules are the namespace package
+#: ``tests.npbench``, importable from the repository root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+NPBENCH_ROOT = REPO_ROOT / 'tests' / 'npbench'
 
 PROGRAM_SUFFIX = '_kernel'
 
 
 def load_module(path: pathlib.Path) -> ModuleType | None:
-    """Import one npbench test module from its path, or None if it will not import."""
-    name = 'npbench_corpus_' + path.relative_to(NPBENCH_ROOT).with_suffix('').as_posix().replace('/', '_')
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    """Import one npbench test module, or None if it will not import."""
     try:
-        spec.loader.exec_module(module)
+        return importlib.import_module('.'.join(path.relative_to(REPO_ROOT).with_suffix('').parts))
     except Exception:
-        sys.modules.pop(name, None)
         return None
-    return module
 
 
 def npbench_programs() -> dict[str, dace.frontend.python.parser.DaceProgram]:
