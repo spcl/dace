@@ -834,12 +834,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False))
 
-                    curscope = first_state_instance
+                    curscope = allocation_block(first_state_instance, desc, {state for state, _ in instances})
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, False))
                     curscope = last_state_instance
-                    self.to_allocate[curscope].append(
-                        (sdfg, last_state_instance, last_node_instance, False, False, True))
+                    # A control flow region has no state to dispatch the deallocation through
+                    dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
+                    self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
                 else:
                     curscope = first_state_instance
                     self.to_allocate[curscope].append(
@@ -851,8 +852,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
 
-    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                        SDFG],
+    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode,
+                                                                                        ControlFlowBlock, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         if len(self.to_allocate[scope]) == 0:
             return
@@ -874,8 +875,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_allocation_end(sdfg, scope, callsite_stream)
 
-    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                          SDFG],
+    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode,
+                                                                                          ControlFlowBlock, SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         if len(self.to_allocate[scope]) == 0:
             return
@@ -1087,6 +1088,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
+
+
+def allocation_block(state: SDFGState, desc: data.Data, access_states: Set[SDFGState]) -> ControlFlowBlock:
+    """
+    The block whose entry allocates ``desc``, given the state it is allocated at: that state, unless it only dominates
+    the accesses and its only outgoing edge assigns a symbol ``desc`` is sized by. Allocating at the start of the state
+    would read the symbol before it is assigned, so the block the edge leads to allocates it, which for a control flow
+    region is allocated on entry.
+
+    :param state: The state that dominates the accesses of ``desc``.
+    :param desc: The descriptor to allocate.
+    :param access_states: The states that access ``desc`` or read it on an adjacent edge.
+    """
+    out_edges = state.parent_graph.out_edges(state)
+    if (state not in access_states and len(out_edges) == 1
+            and out_edges[0].data.assignments.keys() & {str(sym) for sym in desc.free_symbols}):
+        return out_edges[0].dst
+    return state
 
 
 def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
