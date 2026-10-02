@@ -140,7 +140,6 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
 
 # Operator tables for the CPP emit helpers (``_generate_code``); module-level so
 # callers / tests can inspect them.
-PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
 BINARY_OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
 # ``+`` excluded: unary ``+`` rejected by body (``raise Exception("Unary + …")``);
 # keeping it out keeps the ``op in UNARY_OPERATORS`` check honest.

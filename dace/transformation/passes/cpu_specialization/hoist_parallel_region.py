@@ -7,7 +7,7 @@ Codegen emits a ``#pragma omp parallel for`` for the map, so the region is opene
 EVERY trip of the loop::
 
     for (j = 1; j < N; j++) {
-        #pragma omp parallel for simd
+        #pragma omp parallel for
         for (i = 0; i < N - 1; i++) { ... }
     }
 
@@ -21,7 +21,7 @@ This pass emits the same computation with ONE region::
     #pragma omp parallel
     {
         for (j = 1; j < N; j++) {
-            #pragma omp for simd
+            #pragma omp for
             for (i = 0; i < N - 1; i++) { ... }
         }
     }

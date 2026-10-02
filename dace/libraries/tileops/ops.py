@@ -114,5 +114,4 @@ CAST_OPS = {dtype_name.split("::")[-1]: dtype_name for dtype_name in dace.dtypes
 REDUCE_OPS = ("+", "*", "min", "max")
 
 #: The op codes of the ops that have one.
-BINARY_ISA_CODES = {op: spec.isa_code for op, spec in BINARY_OPS.items() if spec.isa_code is not None}
 UNARY_ISA_CODES = {op: spec.isa_code for op, spec in UNARY_OPS.items() if spec.isa_code is not None}

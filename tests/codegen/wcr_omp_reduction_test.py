@@ -284,26 +284,17 @@ def test_per_operator_suppresses_atomic_on_covered_target(op_name, wcr, expected
 @pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
                          PER_OP_CASES,
                          ids=[c[0] for c in PER_OP_CASES])
-def test_per_operator_reduction_clause_carries_simd(op_name, wcr, expected_op, dtype, init, gen_input, oracle, compare):
-    """The reduction clause is combined with ``simd``, except on ``min``/``max``.
-
-    Without ``simd`` the loop body is one serialized dependence chain -- measured 1.4x end to end
-    on a rerolled tsvc s352 dot at 8 threads, 2.4x on the bare kernel. The clause itself already
-    sanctions reassociation inside the combining op, so vector partial accumulators are legal for
-    every arithmetic/bitwise/logical operator. ``min``/``max`` are excluded for the same reason
-    ``dace/runtime/include/dace/reduction.h`` excludes them: no vectorizer folds the NaN-swallowing
-    select without reassociating comparisons, and clang warns about the transform it refused.
-    """
+def test_per_operator_reduction_clause_is_on_the_parallel_for(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
+                                                              compare):
+    """The reduction clause is on a ``parallel for`` and carries no ``simd``."""
     sdfg = _build_op_sdfg(op_name, wcr, dtype, init)
     _, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "reduction(" in l and "#pragma omp" in l and "declare" not in l]
     assert pragma_lines, f"{op_name}: no reduction pragma emitted"
-    wants_simd = expected_op not in ("min", "max")
     for line in pragma_lines:
-        assert (" simd " in line) == wants_simd, (
-            f"{op_name}: expected simd={wants_simd} on the combined construct; got: {line.strip()}")
-        # A bare ``if(...)`` on a combined ``parallel for simd`` binds to the simd part too on GCC
-        # and silently devectorizes; only the ``if(parallel: ...)`` form would be safe here.
+        assert "parallel for" in line and " simd " not in line, f"{op_name}: got: {line.strip()}"
+        # A bare ``if(...)`` on a combined construct binds to every directive of it; only the
+        # ``if(parallel: ...)`` form names the one it belongs to.
         assert not re.search(r"\bif\s*\(", line), f"{op_name}: if-clause on a combined construct: {line.strip()}"
 
 

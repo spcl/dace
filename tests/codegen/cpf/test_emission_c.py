@@ -915,16 +915,15 @@ def test_a_complex_sum_tree_reduces_through_its_own_declared_c_reduction():
     assert 'reduction(+:' in real_code and 'declare reduction' not in real_code, real_code
 
 
-def test_a_map_holding_a_conflicting_accumulation_renders_without_simd():
-    """OpenMP admits no ``critical`` inside a ``simd`` region, and vexx_k's complex scatter reached one
-    through the loop body. That map keeps ``parallel for`` without ``simd``; a conflict-free map keeps it."""
+def test_a_map_holding_a_conflicting_accumulation_renders_a_critical_section():
+    """vexx_k's complex scatter reaches a ``critical`` section through the loop body, inside a ``parallel for``."""
     _, code = render_c(c_complex_scatter, 'cpf_c_scatter_no_simd')
     pragmas = [line.strip() for line in code.splitlines() if line.strip().startswith('#pragma omp')]
     assert '#pragma omp critical (cpf_wcr)' in pragmas, pragmas
     assert any(p.startswith('#pragma omp parallel for') for p in pragmas), pragmas
     assert not any('simd' in p for p in pragmas), pragmas
-    _, clean = render_c(c_scale_add, 'cpf_c_scale_add_simd')
-    assert any(line.strip().startswith('#pragma omp parallel for simd') for line in clean.splitlines()), clean
+    clean = render_c(c_scale_add, 'cpf_c_scale_add')[1]
+    assert any(line.strip().startswith('#pragma omp parallel for') for line in clean.splitlines()), clean
 
 
 def test_a_literal_integer_power_of_an_untyped_symbol_renders_as_a_c_product():

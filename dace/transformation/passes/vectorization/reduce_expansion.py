@@ -33,7 +33,7 @@ from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 #: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
-#: primitive; value = op-token suffix used by ``cpu_vectorizable_math_*.h``. Sub /
+#: primitive; value = op-token suffix used by ``horizontal_reduce.h``. Sub /
 #: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
 REDTYPE_TO_OP = {
@@ -113,7 +113,7 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
                     strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
                     storage=input_data.storage)
     nsdfg.add_array("_out", outsubset.size(), output_data.dtype, storage=output_data.storage)
-    nsdfg.append_global_code('#include "dace/cpu_vectorizable_math.h"')
+    nsdfg.append_global_code('#include "dace/horizontal_reduce.h"')
 
     inedge.dst_conn = "_in"
     outedge.src_conn = "_out"
