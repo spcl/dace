@@ -17,6 +17,7 @@ import numpy as np
 
 import dace
 from dace import data as dt
+from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
@@ -77,7 +78,7 @@ def test_linear_kernel_emits_masked_load_and_store():
         in_edges = list(body_state.in_edges(tl))
         # the masked load reads from a non-transient (A, not scale).
         for e in in_edges:
-            if e.dst_conn == "_cpy_in":
+            if e.dst_conn == INPUT_CONNECTOR_NAME:
                 assert e.data.data != "scale", "scale must not get a masked load (CONSTANT)"
 
 
@@ -238,7 +239,7 @@ def test_writes_to_two_elements_of_one_access_node_get_one_store_each():
     assert staged == 2
     written = {}
     for store in masked_stores(state):
-        bridge = next(e.src for e in state.in_edges(store) if e.dst_conn == "_cpy_in")
+        bridge = next(e.src for e in state.in_edges(store) if e.dst_conn == INPUT_CONNECTOR_NAME)
         sources = [e.src.data for e in state.in_edges(bridge)]
         elements = [str(e.data.subset) for e in state.out_edges(store)]
         written[tuple(elements)] = sources

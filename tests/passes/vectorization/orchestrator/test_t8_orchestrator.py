@@ -86,8 +86,8 @@ def test_orchestrator_rejects_avx512_innermost_not_8_aligned():
 def test_orchestrator_rejects_unknown_target_isa():
     """An unknown target ISA is rejected at ``VectorizeConfig`` construction: the
     ``ISA`` enum coercion raises ``ValueError`` for a string that is not a member."""
-    with pytest.raises(ValueError, match="CUTILE|ISA"):
-        VectorizeConfig(widths=(8, ), target_isa="CUTILE")
+    with pytest.raises(ValueError, match="ISA"):
+        VectorizeConfig(widths=(8, ), target_isa="NOT_AN_ISA")
 
 
 def test_orchestrator_k1_axpy_runs_and_validates():

@@ -45,11 +45,11 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
-# _is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
+# is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
 
 
-def _is_assign_tasklet(t: dace.nodes.Node) -> bool:
+def is_assign_tasklet(t: dace.nodes.Node) -> bool:
     # True iff ``t`` is a tasklet with a single in / out connector and a body of the form ``<out_conn> = <in_conn>`` (no
     # arithmetic, no calls).
     if not isinstance(t, dace.nodes.Tasklet):
@@ -65,7 +65,7 @@ def _is_assign_tasklet(t: dace.nodes.Node) -> bool:
 def _assign_triple(istate: SDFGState,
                    t: dace.nodes.Tasklet) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]] | None:
     # Return ``(in_edge, out_edge)`` iff ``t`` is the trivial ``AN -> [_out=_in] -> AN`` triple.
-    if not _is_assign_tasklet(t):
+    if not is_assign_tasklet(t):
         return None
     in_es = istate.in_edges(t)
     out_es = istate.out_edges(t)

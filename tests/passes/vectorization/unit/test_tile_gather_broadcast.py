@@ -16,7 +16,7 @@ import dace
 import pytest
 
 
-def test_tile_load_symbol_minimal():
+def test_tile_gather_symbol_minimal():
     """``src_kind="Symbol"`` declares no ``_src`` input."""
     from dace.libraries.tileops import TileGather
     node = TileGather("tl_sym", widths=(8, 8), src_kind="Symbol", src_expr="0.0")
@@ -25,14 +25,14 @@ def test_tile_load_symbol_minimal():
     assert node.src_expr == "0.0"
 
 
-def test_tile_load_symbol_requires_expr():
+def test_tile_gather_symbol_requires_expr():
     """``src_kind="Symbol"`` without ``src_expr`` raises at construction."""
     from dace.libraries.tileops import TileGather
     with pytest.raises(ValueError, match="src_expr"):
         TileGather("tl_sym_bad", widths=(8, ), src_kind="Symbol")
 
 
-def test_tile_load_scalar_keeps_src_connector():
+def test_tile_gather_scalar_keeps_src_connector():
     """``src_kind="Scalar"`` still declares ``_src`` (length-1 source)."""
     from dace.libraries.tileops import TileGather
     node = TileGather("tl_scalar", widths=(8, ), src_kind="Scalar")
@@ -40,14 +40,14 @@ def test_tile_load_scalar_keeps_src_connector():
     assert "_dst" in node.out_connectors
 
 
-def test_tile_load_unknown_src_kind():
+def test_tile_gather_unknown_src_kind():
     """Unknown ``src_kind`` rejected at construction."""
     from dace.libraries.tileops import TileGather
     with pytest.raises(ValueError, match="src_kind"):
         TileGather("tl_bad", widths=(8, ), src_kind="Bogus")
 
 
-def test_tile_load_symbol_pure_expansion():
+def test_tile_gather_symbol_pure_expansion():
     """End-to-end: a ``TileGather(src_kind="Symbol")`` expands to a CPP
     tasklet that writes the literal to every lane. Only one Tasklet
     survives after ``expand_library_nodes``; no ``_src`` edge required."""
@@ -69,11 +69,15 @@ def test_tile_load_symbol_pure_expansion():
 
     sdfg.expand_library_nodes()
     sdfg.validate()
-    n_lib = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode))
-    n_tasklet = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    n_lib = sum(1 for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode))
+    n_tasklet = sum(1 for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     assert n_lib == 0
     assert n_tasklet == 1
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
+if __name__ == '__main__':
+    test_tile_gather_symbol_minimal()
+    test_tile_gather_symbol_requires_expr()
+    test_tile_gather_scalar_keeps_src_connector()
+    test_tile_gather_unknown_src_kind()
+    test_tile_gather_symbol_pure_expansion()

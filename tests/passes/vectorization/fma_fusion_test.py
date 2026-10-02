@@ -97,10 +97,10 @@ def test_fuse_pass_refuses_reused_intermediate():
 
 
 def test_tile_fma_registered():
-    """``TileFMA`` exposes the pure + cutile + all six ISA expansions."""
+    """``TileFMA`` exposes the pure + all six ISA expansions."""
     node = TileFMA("fma", widths=[8], kind_a="Tile", kind_b="Tile", kind_c="Tile")
     impls = set(node.implementations)
-    assert {"pure", "cutile", "scalar", "avx512", "avx2", "neon", "sve", "cuda"} <= impls
+    assert {"pure", "scalar", "avx512", "avx2", "neon", "sve", "cuda"} <= impls
     assert node.default_implementation == "pure"
 
 

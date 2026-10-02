@@ -36,7 +36,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 
 from dace.libraries.tileops import TileGather
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -61,7 +61,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     ``tile_runtime`` divisibility trip guards are."""
     return sum(
         1 for n, parent in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n) and not is_assumption_guard_block(parent))
+        if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n) and not is_assumption_guard_block(parent))
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:

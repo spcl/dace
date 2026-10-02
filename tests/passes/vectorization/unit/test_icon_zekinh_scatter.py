@@ -16,7 +16,7 @@ import dace
 
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.libraries.tileops import TileScatter
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
@@ -56,7 +56,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     tile and are not counted.
     """
     return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n)
                and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 

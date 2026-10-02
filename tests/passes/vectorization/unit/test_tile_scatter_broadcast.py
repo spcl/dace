@@ -27,7 +27,7 @@ import pytest
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
@@ -48,7 +48,7 @@ ZQTMST = 1.0 / PTSPHY
 
 
 @dace.program
-def _tidy_branch(
+def tidy_branch_program(
     zqx_l: dace.float64[KLEV, KLON],
     zqx_i: dace.float64[KLEV, KLON],
     zqx_v: dace.float64[KLEV, KLON],
@@ -75,11 +75,11 @@ def _tidy_branch(
                 za[jk, jl] = 0.0
 
 
-def _tile_lib_node_count(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if "tileops" in type(n).__module__)
+def tile_lib_node_count(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, parent in sdfg.all_nodes_recursive() if "tileops" in type(n).__module__)
 
 
-def _tasklet_count(sdfg: dace.SDFG) -> int:
+def tasklet_count(sdfg: dace.SDFG) -> int:
     """Number of raw ``Tasklet`` nodes that still touch TILE-shaped data.
 
     The K-dim tile-only contract is "tile-shaped values flow only through tile
@@ -89,7 +89,7 @@ def _tasklet_count(sdfg: dace.SDFG) -> int:
     the scalar ``__tile_k1_tail`` remainder (scalar-load -> scalar python
     tasklets, user direction 2026-06-15) -- none of those touch a tile."""
     return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
+               if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n)
                and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 
@@ -116,7 +116,7 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
     ``cloudsc_tidy_branch`` kernel (with ``expand_tile_nodes=False`` so
     the lib nodes survive), the SDFG must hold zero ``Tasklet`` nodes —
     every constant store is now a ``TileScatter`` lib node, no CPP fills."""
-    sdfg = _tidy_branch.to_sdfg()
+    sdfg = tidy_branch_program.to_sdfg()
     sdfg.name = "tidy_branch_tile_only"
     sdfg.validate()
     # The vectorizer's input contract: canonical form. ``lift_copy`` off: the constant stores are the
@@ -134,8 +134,8 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
         )).apply_pass(sdfg, {})
     sdfg.validate()
 
-    n_tasklets = _tasklet_count(sdfg)
-    n_tile = _tile_lib_node_count(sdfg)
+    n_tasklets = tasklet_count(sdfg)
+    n_tile = tile_lib_node_count(sdfg)
     assert n_tasklets == 0, (f"tidy_branch must emit zero CPP tasklets after the descent — every store "
                              f"should be a tile lib node; got {n_tasklets} Tasklet nodes (and {n_tile} "
                              f"tile lib nodes).")

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa, ISA_TO_IMPL
 
@@ -62,8 +63,8 @@ def build_load(name, array_shape, window, shape, dtype, implementation):
     tile, mask = state.add_access("TILE"), state.add_access("MASKT")
     state.add_edge(state.add_read("M"), None, mask, None, dace.Memlet(f"M[{tile_subset(shape)}]"))
     state.add_edge(mask, None, node, "_mask", dace.Memlet(f"MASKT[{tile_subset(shape)}]"))
-    state.add_edge(state.add_read("A"), None, node, "_cpy_in", dace.Memlet(f"A[{window}]"))
-    state.add_edge(node, "_cpy_out", tile, None, dace.Memlet(f"TILE[{tile_subset(shape)}]"))
+    state.add_edge(state.add_read("A"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"A[{window}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, tile, None, dace.Memlet(f"TILE[{tile_subset(shape)}]"))
     state.add_edge(tile, None, state.add_write("OUT"), None, dace.Memlet(f"OUT[{tile_subset(shape)}]"))
     return sdfg
 
@@ -83,8 +84,8 @@ def build_store(name, array_shape, window, shape, dtype, implementation):
     state.add_edge(state.add_read("IN"), None, tile, None, dace.Memlet(f"IN[{tile_subset(shape)}]"))
     state.add_edge(state.add_read("M"), None, mask, None, dace.Memlet(f"M[{tile_subset(shape)}]"))
     state.add_edge(mask, None, node, "_mask", dace.Memlet(f"MASKT[{tile_subset(shape)}]"))
-    state.add_edge(tile, None, node, "_cpy_in", dace.Memlet(f"TILE[{tile_subset(shape)}]"))
-    state.add_edge(node, "_cpy_out", state.add_write("B"), None, dace.Memlet(f"B[{window}]"))
+    state.add_edge(tile, None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"TILE[{tile_subset(shape)}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, dace.Memlet(f"B[{window}]"))
     return sdfg
 
 
@@ -182,8 +183,8 @@ def test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves(wi
     state = sdfg.add_state()
     copy = MaskedCopyLibraryNode("copy", widths=(8, ), has_mask=masked)
     state.add_node(copy)
-    state.add_edge(state.add_access("A"), None, copy, "_cpy_in", dace.Memlet(f"A[{window}]"))
-    state.add_edge(copy, "_cpy_out", state.add_access("TILE"), None, dace.Memlet("TILE[0:8]"))
+    state.add_edge(state.add_access("A"), None, copy, INPUT_CONNECTOR_NAME, dace.Memlet(f"A[{window}]"))
+    state.add_edge(copy, OUTPUT_CONNECTOR_NAME, state.add_access("TILE"), None, dace.Memlet("TILE[0:8]"))
     if masked:
         state.add_edge(state.add_access("MASKT"), None, copy, "_mask", dace.Memlet("MASKT[0:8]"))
     code = copy.isa_tasklet(state, sdfg, "cuda").code.as_string
@@ -204,9 +205,9 @@ def wired_copy(source_storage,
     node = MaskedCopyLibraryNode("c", widths=shape)
     state.add_node(node)
     full = tile_subset(shape)
-    state.add_edge(state.add_access("S"), None, node, "_cpy_in", dace.Memlet(f"S[{full}]"))
+    state.add_edge(state.add_access("S"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"S[{full}]"))
     state.add_edge(state.add_access("MASKT"), None, node, "_mask", dace.Memlet(f"MASKT[{full}]"))
-    state.add_edge(node, "_cpy_out", state.add_access("D"), None, dace.Memlet(f"D[{full}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_access("D"), None, dace.Memlet(f"D[{full}]"))
     return node, state, sdfg
 
 

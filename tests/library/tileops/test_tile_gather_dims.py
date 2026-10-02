@@ -25,7 +25,7 @@ from dace.memlet import Memlet
 from dace.symbolic import ONE
 
 
-def _add_one_constant(sdfg):
+def add_one_constant(sdfg):
     """Register ``ONE`` as the integer constant ``1`` so codegen can size the
     length-1 broadcast dims of full-K-dim index tiles (mirrors
     ``InsertTileLoadStore.stage_tile_load``)."""
@@ -33,7 +33,7 @@ def _add_one_constant(sdfg):
         sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
 
 
-def _build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
+def build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
     """Build a minimal SDFG containing a TileGather with the given gather_dims.
 
     Each ``idx_shapes[i]`` is the shape to use for the corresponding ``_idx_<d>``
@@ -41,7 +41,7 @@ def _build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
     a scalar index).
     """
     sdfg = dace.SDFG(f"tl_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
-    _add_one_constant(sdfg)
+    add_one_constant(sdfg)
     sdfg.add_array("Src", (64, 64, 64)[:max(2, len(widths))], dace.float64, transient=False)
     sdfg.add_array("Dst", widths, dace.float64, transient=True)
     for d, shape in zip(gather_dims, idx_shapes):
@@ -63,7 +63,7 @@ def _build_load(widths, gather_dims, idx_shapes, idx_dtype=dace.int64):
 
 def test_no_gather_validates():
     """Structured load -- no _idx_<d> connectors."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(), idx_shapes=())
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(), idx_shapes=())
     node.validate(sdfg, state)
     assert tuple(node.gather_dims) == ()
 
@@ -71,7 +71,7 @@ def test_no_gather_validates():
 def test_1d_gather_on_dim0():
     """deps = (0,) -> _idx_0 full-K-dim shape (W_0, ONE): varies over tile dim 0,
     broadcast (ONE) over tile dim 1."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)])
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)])
     node.validate(sdfg, state)
     assert tuple(node.gather_dims) == (0, )
     assert "_idx_0" in node.in_connectors
@@ -82,13 +82,13 @@ def test_2d_gather_on_dim0_with_full_shape():
 
     Covers B[idx[i, j], j] vectorising (i, j).
     """
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, 8)])
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, 8)])
     node.validate(sdfg, state)
 
 
 def test_scalar_gather_index():
     """deps = () -> _idx_<d> shape (1,) (scalar / loop-invariant index)."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(1, )])
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(1, )])
     node.validate(sdfg, state)
 
 
@@ -99,19 +99,19 @@ def test_mixed_gather_dims_distinct_shapes():
     both _idx_0 and _idx_2 vary over tile dim 0 (i) only.
     """
     # K=3 widths; gather on dims 0 and 2; each index full-K-dim (W_0, ONE, ONE).
-    sdfg, state, node = _build_load(widths=(4, 8, 16), gather_dims=(0, 2), idx_shapes=[(4, ONE, ONE), (4, ONE, ONE)])
+    sdfg, state, node = build_load(widths=(4, 8, 16), gather_dims=(0, 2), idx_shapes=[(4, ONE, ONE), (4, ONE, ONE)])
     node.validate(sdfg, state)
 
 
 def test_full_nd_gather():
     """deps = (0, 1, 2) on one gather dim -> _idx_<d> shape (W_0, W_1, W_2). Was _idx_full."""
-    sdfg, state, node = _build_load(widths=(2, 4, 8), gather_dims=(0, ), idx_shapes=[(2, 4, 8)])
+    sdfg, state, node = build_load(widths=(2, 4, 8), gather_dims=(0, ), idx_shapes=[(2, 4, 8)])
     node.validate(sdfg, state)
 
 
 def test_refuse_index_shape_not_cartesian():
     """A shape that isn't any Cartesian product of widths -> ValueError."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(3, )])
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(3, )])
     with pytest.raises(ValueError, match="not a Cartesian product"):
         node.validate(sdfg, state)
 
@@ -131,11 +131,11 @@ def test_refuse_negative_gather_dims():
 def test_validate_refuses_gather_dim_exceeding_src_ndim():
     """``validate()`` refuses ``gather_dims`` entries >= ``src_ndim`` (source-dim indexing).
 
-    ``_build_load`` mints ``Src`` with ndim = ``max(2, len(widths))``; widths=(4, 8) -> src_ndim=2.
+    ``build_load`` mints ``Src`` with ndim = ``max(2, len(widths))``; widths=(4, 8) -> src_ndim=2.
     gather_dims=(3,) exceeds src_ndim=2.
     """
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(3, ), idx_shapes=[(4, )])
-    # _build_load already wires Idx3 -> _idx_3 so the missing-conn check passes and the
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(3, ), idx_shapes=[(4, )])
+    # build_load already wires Idx3 -> _idx_3 so the missing-conn check passes and the
     # src-ndim upper bound is the failure cause.
     with pytest.raises(ValueError, match=r"gather_dims.*>= source ndim"):
         node.validate(sdfg, state)
@@ -149,7 +149,7 @@ def test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2():
     broadcast ONE; k is outer-const).
     """
     sdfg = dace.SDFG("icon_pattern_node")
-    _add_one_constant(sdfg)
+    add_one_constant(sdfg)
     sdfg.add_array("Src", (32, 32, 64), dace.float64, transient=False)
     sdfg.add_array("Dst", (4, 8), dace.float64, transient=True)
     sdfg.add_array("Idx0", (4, ONE), dace.int64, transient=True)
@@ -175,7 +175,7 @@ def test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2():
 def test_refuse_wrong_index_dtype():
     """Index dtype must be an integer one (design section 10.4). Uses a VALID
     full-K-dim shape so the dtype check (not the shape check) is the failure."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=dace.float64)
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=dace.float64)
     with pytest.raises(ValueError, match="dtype.*not in"):
         node.validate(sdfg, state)
 
@@ -184,7 +184,7 @@ def test_refuse_wrong_index_dtype():
 def test_accepts_unsigned_index_dtype(idx_dtype):
     """CSR/COO index arrays are commonly unsigned (npbench ``spmv``): accepted, and the
     emitted read is cast to ``long long`` so it cannot wrap the signed address sum."""
-    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=idx_dtype)
+    sdfg, state, node = build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=idx_dtype)
     node.validate(sdfg, state)
     assert "(long long)(_idx_0[" in gather_lane_offset((0, ), (4, 8), "_idx_0")
 
@@ -192,7 +192,7 @@ def test_accepts_unsigned_index_dtype(idx_dtype):
 def test_tile_scatter_gather_dims_symmetric():
     """TileScatter mirrors TileGather's gather_dims surface."""
     sdfg = dace.SDFG("ts_g")
-    _add_one_constant(sdfg)
+    add_one_constant(sdfg)
     sdfg.add_array("Src", (4, 8), dace.float64, transient=True)
     sdfg.add_array("Dst", (64, 64), dace.float64, transient=False)
     sdfg.add_array("Idx0", (4, ONE), dace.int64, transient=True)
@@ -214,12 +214,12 @@ def test_tile_scatter_gather_dims_symmetric():
 # for each lane-dependency pattern.
 
 
-def _run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
+def run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):
     """Build, expand, compile, and run a TileGather with the given gather setup;
     return the materialised destination tile as a numpy array."""
     import numpy as np
     sdfg = dace.SDFG(f"e2e_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
-    _add_one_constant(sdfg)
+    add_one_constant(sdfg)
     src_shape = src_np.shape
     sdfg.add_array("Src", src_shape, dace.float64, transient=False)
     sdfg.add_array("Dst", widths, dace.float64, transient=False)
@@ -256,7 +256,7 @@ def test_e2e_1d_gather_K1():
     W = 8
     src = np.arange(32, dtype=np.float64) * 10
     idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
-    out = _run_gather_load(src, {0: idx}, widths=(W, ), gather_dims=(0, ))
+    out = run_gather_load(src, {0: idx}, widths=(W, ), gather_dims=(0, ))
     expected = src[idx]
     np.testing.assert_array_equal(out, expected)
 
@@ -268,7 +268,7 @@ def test_e2e_partial_gather_K2():
     src = np.arange(16 * W1, dtype=np.float64).reshape(16, W1)
     idx0 = np.array([7, 2, 11, 5], dtype=np.int64)
     # Full-K-dim index: (W0, ONE) descriptor -> (W0, 1) runtime array.
-    out = _run_gather_load(src, {0: idx0.reshape(W0, 1)}, widths=(W0, W1), gather_dims=(0, ))
+    out = run_gather_load(src, {0: idx0.reshape(W0, 1)}, widths=(W0, W1), gather_dims=(0, ))
     expected = np.zeros((W0, W1), dtype=np.float64)
     for l0 in range(W0):
         for l1 in range(W1):
@@ -276,14 +276,14 @@ def test_e2e_partial_gather_K2():
     np.testing.assert_array_equal(out, expected)
 
 
-def _run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None):
+def run_scatter_store(src_tile, idx_np_per_d, dst_shape, widths, gather_dims, dst_dims=None, initial_dst=None):
     """Build, expand, compile, and run a TileScatter with scatter; return the dst array."""
     import numpy as np
     sdfg = dace.SDFG(f"e2e_store_K{len(widths)}_g{''.join(str(d) for d in gather_dims)}")
-    _add_one_constant(sdfg)
+    add_one_constant(sdfg)
     sdfg.add_array("Src", widths, dace.float64, transient=False)
     sdfg.add_array("Dst", dst_shape, dace.float64, transient=False)
-    # Full-K-dim index descriptor (see _run_gather_load): length-1 dims -> ONE.
+    # Full-K-dim index descriptor (see run_gather_load): length-1 dims -> ONE.
     idx_desc = {d: tuple(ONE if s == 1 else s for s in idx_np_per_d[d].shape) for d in gather_dims}
     for d in gather_dims:
         sdfg.add_array(f"Idx{d}", idx_desc[d], dace.int64, transient=False)
@@ -314,7 +314,7 @@ def test_e2e_1d_scatter_K1():
     W = 8
     src_tile = np.arange(W, dtype=np.float64) * 100
     idx = np.array([3, 7, 1, 5, 2, 6, 0, 4], dtype=np.int64)
-    out = _run_scatter_store(src_tile, {0: idx}, dst_shape=(32, ), widths=(W, ), gather_dims=(0, ))
+    out = run_scatter_store(src_tile, {0: idx}, dst_shape=(32, ), widths=(W, ), gather_dims=(0, ))
     expected = np.zeros(32, dtype=np.float64)
     for l in range(W):
         expected[idx[l]] = src_tile[l]
@@ -328,9 +328,31 @@ def test_e2e_partial_scatter_K2():
     src_tile = np.arange(W0 * W1, dtype=np.float64).reshape(W0, W1)
     idx0 = np.array([7, 2, 11, 5], dtype=np.int64)
     # Full-K-dim index: (W0, ONE) descriptor -> (W0, 1) runtime array.
-    out = _run_scatter_store(src_tile, {0: idx0.reshape(W0, 1)}, dst_shape=(16, W1), widths=(W0, W1), gather_dims=(0, ))
+    out = run_scatter_store(src_tile, {0: idx0.reshape(W0, 1)}, dst_shape=(16, W1), widths=(W0, W1), gather_dims=(0, ))
     expected = np.zeros((16, W1), dtype=np.float64)
     for l0 in range(W0):
         for l1 in range(W1):
             expected[idx0[l0], l1] = src_tile[l0, l1]
     np.testing.assert_array_equal(out, expected)
+
+
+if __name__ == '__main__':
+    test_no_gather_validates()
+    test_1d_gather_on_dim0()
+    test_2d_gather_on_dim0_with_full_shape()
+    test_scalar_gather_index()
+    test_mixed_gather_dims_distinct_shapes()
+    test_full_nd_gather()
+    test_refuse_index_shape_not_cartesian()
+    test_refuse_unsorted_gather_dims()
+    test_refuse_negative_gather_dims()
+    test_validate_refuses_gather_dim_exceeding_src_ndim()
+    test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2()
+    test_refuse_wrong_index_dtype()
+    test_accepts_unsigned_index_dtype(dace.uint32)
+    test_accepts_unsigned_index_dtype(dace.uint64)
+    test_tile_scatter_gather_dims_symmetric()
+    test_e2e_1d_gather_K1()
+    test_e2e_partial_gather_K2()
+    test_e2e_1d_scatter_K1()
+    test_e2e_partial_scatter_K2()
