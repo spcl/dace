@@ -18,6 +18,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops
 from .._isa_codegen import make_isa_expansions, make_reduce_tasklet
+from ..ops import REDUCE_OPS
 
 
 def _identity_literal(op: str, ctype: str) -> str:
@@ -56,9 +57,6 @@ def _combine_expr(op: str, acc: str, val: str, ctype: str) -> str:
         template = f"<{ctype}>" if cpf_lowering.standalone_c() else ""
         return f"std::{op}{template}({acc}, {val})"
     raise ValueError(f"unknown op {op!r}")
-
-
-VALID_OPS = ("+", "*", "min", "max")
 
 
 @library.expansion
@@ -233,8 +231,8 @@ class TileReduce(nodes.LibraryNode):
         :raises ValueError: On invalid ``op``, ``widths`` length, or
             out-of-range ``axis``.
         """
-        if op not in VALID_OPS:
-            raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {VALID_OPS}")
+        if op not in REDUCE_OPS:
+            raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {REDUCE_OPS}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileReduce: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if axis is not None and not (0 <= axis < len(widths)):

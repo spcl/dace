@@ -32,7 +32,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop, TileLoad
 from dace.libraries.tileops.dispatch import detect_host_isa
-from dace.libraries.tileops.nodes.tile_binop import COMPARISON_OPS
+from dace.libraries.tileops.ops import BINARY_OPS
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -125,7 +125,7 @@ def comparison_operand_loads(sdfg: dace.SDFG) -> list[tuple[str, list[str]]]:
     """For every tiled comparison, its ``_a`` operand kind and the arrays a ``TileLoad`` writes into that operand."""
     found = []
     for node, state in sdfg.all_nodes_recursive():
-        if not (isinstance(node, TileBinop) and node.op in COMPARISON_OPS):
+        if not (isinstance(node, TileBinop) and BINARY_OPS[node.op].comparison):
             continue
         # The operand may be a copy of the tile the load wrote (``b_tile -> b_index``); follow the copies.
         producers = [e.src for e in state.in_edges(node) if e.dst_conn == "_a"]

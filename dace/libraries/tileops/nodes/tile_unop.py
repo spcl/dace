@@ -21,49 +21,10 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from ..ops import CAST_OPS, UNARY_OPS
 from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import promotion_ok
-
-# op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
-#: Op -> (prefix, suffix) for the pure inline C++ form ``<pre>operand<suf>``.
-#:
-#: Uses ``std::`` for elemental functions to match the K=1 ISA backend's tile_unop_apply
-#: (which calls ``std::abs`` / ``std::exp`` / etc.). An earlier attempt to use the
-#: ``dace::math::`` namespace failed because ``dace::math::abs`` only has overloads for
-#: ``typeless_nan`` and ``unsigned integer`` -- a ``double`` argument trips the wrong
-#: overload at compile time.
-UNOP_CPP = {
-    "neg": ("(-", ")"),
-    "not": ("(!", ")"),
-    "abs": ("std::abs(", ")"),
-    "exp": ("std::exp(", ")"),
-    "log": ("std::log(", ")"),
-    "sqrt": ("std::sqrt(", ")"),
-    "sin": ("std::sin(", ")"),
-    "cos": ("std::cos(", ")"),
-    "tan": ("std::tan(", ")"),
-    "asin": ("std::asin(", ")"),
-    "acos": ("std::acos(", ")"),
-    "atan": ("std::atan(", ")"),
-    "sinh": ("std::sinh(", ")"),
-    "cosh": ("std::cosh(", ")"),
-    "floor": ("std::floor(", ")"),
-    "ceil": ("std::ceil(", ")"),
-    "tanh": ("std::tanh(", ")"),
-    # numpy>=2 ``sign``: ``(0 < x) - (x < 0)``. The runtime already carries the template, at global
-    # scope rather than in ``dace::math``, and the op label is the runtime's own name so the
-    # converter matches the tasklet body the frontend emits verbatim.
-    "sign_numpy_2": ("sign_numpy_2(", ")"),
-}
-
-# Explicit dtype-cast ops: the ``TileUnop.op`` label IS the target dtype name
-# (``float64`` / ``int32`` / ...), so a kept ``dace.float64(x)`` cast lowers to a
-# ``TileUnop`` whose op self-describes the conversion. Each maps to the
-# ``dace::<dtype>(x)`` cast function the C++ codegen already recognises (cppunparse
-# ``_typecast_func_to_cpp``) -- the sanctioned convert form, not a raw C cast. Built
-# from the dtype registry so dtype names are never hardcoded.
-CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
 
 
 @library.expansion
@@ -113,8 +74,8 @@ class ExpandTileUnopPure(ExpandTransformation):
             operand_ctype = out_dtype if broadcast else desc.dtype.ctype
             operand = f"{cast}({ref})" if broadcast else ref
 
-        if node.op not in CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
-            # Every ``UNOP_CPP`` op other than ``neg``/``not`` lowers to an
+        if node.op not in CAST_OPS and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
+            # Every ``UNARY_OPS`` op other than ``neg``/``not`` lowers to an
             # overloaded ``std::`` function (``sqrt``, ``exp``, ``abs``, ...)
             # with NO ``__half`` overload at all -- unlike a mixed-type infix
             # operator, this is not a "meets a different type" question, it
@@ -128,7 +89,7 @@ class ExpandTileUnopPure(ExpandTransformation):
             # runtime header's own ``_cuda_to_compute`` (tile_ops/cuda.h).
             operand = half_disambiguated(operand, operand_ctype, "float")
 
-        if node.op in CAST_OP_TO_CPP:
+        if node.op in CAST_OPS:
             # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as
             # a unop whose op IS the target dtype. A cast is the one op that may
             # narrow, emitted as the ``dace::<dtype>(x)`` cast function (the same form
@@ -140,10 +101,9 @@ class ExpandTileUnopPure(ExpandTransformation):
                 cast_src = f"_a[{off}]"
             else:  # Scalar: the descriptor-aware reference (uncast).
                 cast_src = ref
-            rhs_expr = f"{CAST_OP_TO_CPP[node.op]}({cast_src})"
+            rhs_expr = f"{CAST_OPS[node.op]}({cast_src})"
         else:
-            pre, post = UNOP_CPP[node.op]
-            rhs_expr = f"{pre}{operand}{post}"
+            rhs_expr = UNARY_OPS[node.op].cpp(operand)
         # Output kind dispatch (design 6.2): non-Tile input + a ``_c`` memlet moving one element ->
         # single assignment (no lane loop). Otherwise the K-fold tile loop.
         from .tile_binop import edge_moves_one_element
@@ -249,7 +209,7 @@ class TileUnop(nodes.LibraryNode):
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param op: One of the keys of :data:`UNOP_CPP`.
+        :param op: One of the keys of :data:`UNARY_OPS`.
         :param has_mask: When True, declare the ``_mask`` input connector.
         :param kind_a: ``"Tile"`` (default), ``"Scalar"`` or ``"Symbol"``.
         :param expr_a: Required when ``kind_a == "Symbol"``.
@@ -257,9 +217,9 @@ class TileUnop(nodes.LibraryNode):
         :raises ValueError: On invalid ``op``, ``widths`` length, kind, or a
             missing expression for the symbol kind.
         """
-        if op not in UNOP_CPP and op not in CAST_OP_TO_CPP:
+        if op not in UNARY_OPS and op not in CAST_OPS:
             raise ValueError(f"TileUnop: unknown op {op!r}; allowed: "
-                             f"{sorted(UNOP_CPP) + sorted(CAST_OP_TO_CPP)}")
+                             f"{sorted(UNARY_OPS) + sorted(CAST_OPS)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileUnop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if kind_a not in VALID_KINDS:
@@ -301,7 +261,7 @@ class TileUnop(nodes.LibraryNode):
         # that MAY narrow (int64 -> int32, double -> float); that is its purpose, so
         # the widening-only promotion guard is skipped. Every other unop preserves the
         # operand dtype, so a narrowing to the output dtype there is a real bug.
-        if self.kind_a == TILE and self.op not in CAST_OP_TO_CPP:
+        if self.kind_a == TILE and self.op not in CAST_OPS:
             src = sdfg.arrays[in_e["_a"].data.data].dtype
             # ``abs`` of a complex operand is the (real) magnitude -- ``std::abs(std::complex<T>)``
             # returns ``T`` -- so a complex -> real result is correct, not a lossy narrowing.

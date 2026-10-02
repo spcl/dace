@@ -22,6 +22,7 @@ from dace.sdfg import graph, nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
+from ..ops import BINARY_OPS
 from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 
@@ -159,66 +160,6 @@ def promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool
     return False
 
 
-#: Ops that answer ``bool`` whatever their operands are.
-COMPARISON_OPS = frozenset({"<", "<=", ">", ">=", "==", "!="})
-
-OP_CPP = {
-    "+": ("(", " + ", ")"),
-    "-": ("(", " - ", ")"),
-    "*": ("(", " * ", ")"),
-    "/": ("(", " / ", ")"),
-    # ``%`` is C's modulo; ``c_mod`` also takes floats.
-    "%": ("c_mod(", ", ", ")"),
-    "py_mod": ("py_mod(", ", ", ")"),
-    "<": ("(", " < ", ")"),
-    "<=": ("(", " <= ", ")"),
-    ">": ("(", " > ", ")"),
-    ">=": ("(", " >= ", ")"),
-    "==": ("(", " == ", ")"),
-    "!=": ("(", " != ", ")"),
-    "&&": ("(", " && ", ")"),
-    "||": ("(", " || ", ")"),
-    "&": ("(", " & ", ")"),
-    "|": ("(", " | ", ")"),
-    "^": ("(", " ^ ", ")"),
-    # Use ``std::`` for elemental functions: matches the K=1 ISA backend's
-    # tile_binop_apply (which calls ``std::min`` / ``std::max``).
-    "min": ("std::min(", ", ", ")"),
-    "max": ("std::max(", ", ", ")"),
-    # Python ``**`` -> ``std::pow``. ``PowerOperatorExpansion`` runs upstream in the multi-dim
-    # pipeline but only rewrites a LITERAL integer exponent > 1 to repeated multiplies
-    # (``x**2`` -> ``x*x``); exponents 0 / 1, a non-integer literal and any non-constant
-    # exponent are deliberately left as ``**`` and reach this lowering.
-    "**": ("std::pow(", ", ", ")"),
-    # ``pow(base, exp)`` -- the frontend / ``math.pow`` spelling -> ``std::pow`` (libm
-    # ``double``); vectorizes via libmvec through the pure per-lane loop.
-    "pow": ("std::pow(", ", ", ")"),
-    # ``ipow(base, exp)`` -- an integer-exponent power ``RelaxIntegerPowers`` relaxed from
-    # ``pow`` / ``**``. ``dace::math::ipow`` is exact repeated multiply (bit-exact with
-    # NumPy integer powers, and correct for a negative base where ``std::pow`` is not).
-    "ipow": ("dace::math::ipow(", ", ", ")"),
-    # Binary elemental math functions (``np.arctan2`` -> the frontend's bare
-    # ``atan2(a, b)``; likewise ``hypot`` / ``fmod``). Emitted as a per-lane
-    # ``std::atan2(a[i], b[i])`` inside the tile for-loop; the ``_dace_tile_vectorize``
-    # pragma lets the compiler's vector-math library (libmvec) capture the call.
-    "atan2": ("std::atan2(", ", ", ")"),
-    "hypot": ("std::hypot(", ", ", ")"),
-    "fmod": ("std::fmod(", ", ", ")"),
-}
-
-
-def _binop_rhs(op: str, lhs: str, rhs: str) -> str:
-    """Render the C++ expression for ``op`` on ``lhs`` and ``rhs``.
-
-    :param op: The operator symbol (key of :data:`OP_CPP`).
-    :param lhs: Left-hand-side C++ expression.
-    :param rhs: Right-hand-side C++ expression.
-    :returns: A C++ expression string.
-    """
-    pre, sep, post = OP_CPP[op]
-    return f"{pre}{lhs}{sep}{rhs}{post}"
-
-
 @library.expansion
 class ExpandTileBinopPure(ExpandTransformation):
     """Correctness-only CPP tasklet lowering of ``TileBinop``."""
@@ -323,7 +264,7 @@ class ExpandTileBinopPure(ExpandTransformation):
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a, ctype_b)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b, ctype_a)
-        rhs_expr = _binop_rhs(node.op, lhs, rhs)
+        rhs_expr = BINARY_OPS[node.op].cpp(lhs, rhs)
         # Output kind dispatch (design 6.2): when all inputs are non-Tile and the ``_c`` memlet moves
         # one element, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
         # ``_c[off] = ...`` over the tile.
@@ -449,7 +390,7 @@ class TileBinop(nodes.LibraryNode):
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param op: One of the keys of :data:`OP_CPP`.
+        :param op: One of the keys of :data:`~dace.libraries.tileops.ops.BINARY_OPS`.
         :param has_mask: When True, declare the ``_mask`` input
             connector.
         :param kind_a: ``"Tile"`` (default — read via ``_a`` connector),
@@ -464,8 +405,8 @@ class TileBinop(nodes.LibraryNode):
             missing expression for symbol kinds, or a no-Tile-operand
             pair (at least one operand must be a tile).
         """
-        if op not in OP_CPP:
-            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(OP_CPP)}")
+        if op not in BINARY_OPS:
+            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(BINARY_OPS)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileBinop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b)):
@@ -531,7 +472,7 @@ class TileBinop(nodes.LibraryNode):
                 # A comparison is exempt: the expansion compares a Tile operand at its own dtype and
                 # stores the ``bool`` it answers, which every numeric output holds exactly. The
                 # operand never meets the output, so ``b_index > 0.0`` into an int8 mask narrows nothing.
-                if kind == TILE and self.op not in COMPARISON_OPS:
+                if kind == TILE and not BINARY_OPS[self.op].comparison:
                     src = sdfg.arrays[in_e[label].data.data].dtype
                     if not promotion_ok(src, c_arr.dtype):
                         raise NotImplementedError(
