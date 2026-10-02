@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.symbolic import fma, pystr_to_symbolic
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd

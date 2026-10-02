@@ -21,7 +21,7 @@ from unittest import mock
 import dace
 from dace.libraries.tileops import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA, TileReduce,
                                     TileStore, TileUnop)
-import dace.libraries.tileops._dispatch as dispatch
+import dace.libraries.tileops.dispatch as dispatch
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (STRIDE_GUARD_PREFIX,
                                                                                    TILE_GUARD_STATE_LABEL,
                                                                                    TILE_MAIN_MARKER)

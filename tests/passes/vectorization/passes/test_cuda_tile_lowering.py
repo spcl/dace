@@ -12,7 +12,7 @@ import os
 import pytest
 
 import dace
-from dace.libraries.tileops import _dispatch
+from dace.libraries.tileops import dispatch
 from dace.libraries.tileops import environments as tile_env
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VALID_ISAS
 
@@ -21,7 +21,7 @@ CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dac
 
 def test_cuda_isa_registered():
     assert "CUDA" in VALID_ISAS
-    assert _dispatch.ISA_TO_IMPL["CUDA"] == "cuda"
+    assert dispatch.ISA_TO_IMPL["CUDA"] == "cuda"
 
 
 def test_cuda_environment_pulls_header():
@@ -64,7 +64,7 @@ def test_binop_selects_cuda_for_fp16_tile(op):
     from dace.libraries.tileops.nodes.tile_binop import TileBinop
     n = TileBinop("t", op=op, widths=(2, ))
     n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "cuda"
+    assert dispatch.select_tile_implementation(n) == "cuda"
 
 
 def test_kge2_tile_falls_back_to_pure_under_cuda():
@@ -72,7 +72,7 @@ def test_kge2_tile_falls_back_to_pure_under_cuda():
     from dace.libraries.tileops.nodes.tile_binop import TileBinop
     n = TileBinop("t", op="+", widths=(2, 2))
     n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "pure"
+    assert dispatch.select_tile_implementation(n) == "pure"
 
 
 def test_reduce_selects_cuda_for_full_k1_tile():
@@ -82,7 +82,7 @@ def test_reduce_selects_cuda_for_full_k1_tile():
     n = TileReduce("t", op="+", widths=(2, ))
     n.target_isa = "CUDA"
     assert "cuda" in n.implementations
-    assert _dispatch.select_tile_implementation(n) == "cuda"
+    assert dispatch.select_tile_implementation(n) == "cuda"
 
 
 def test_reduce_kge2_falls_back_to_pure_under_cuda():
@@ -91,7 +91,7 @@ def test_reduce_kge2_falls_back_to_pure_under_cuda():
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
     n = TileReduce("t", op="+", widths=(2, 2))
     n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "pure"
+    assert dispatch.select_tile_implementation(n) == "pure"
 
 
 def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):

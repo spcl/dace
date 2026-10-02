@@ -15,7 +15,7 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.libraries.tileops.nodes.tile_unop import UNOP_CPP, TileUnop
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig

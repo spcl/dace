@@ -101,7 +101,7 @@ from dace.transformation.passes.pattern_matching import collapse_multigraph_to_n
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
                                           TileReduce, TileStore, TileUnop)
-from dace.libraries.tileops._dispatch import select_tile_implementation
+from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
@@ -203,7 +203,7 @@ class _MultiOutputReductionMapFission(MapFission):
 
 
 #: "AUTO" resolves to the host's best ISA at expansion time
-#: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
+#: (``dace.libraries.tileops.dispatch.detect_host_isa``); the others pin one.
 VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
 _VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail", "branched_masked_tail")
 
@@ -1184,7 +1184,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
     def _select_tile_implementations(self, sdfg: dace.SDFG) -> None:
         # Stamp ``target_isa`` on every emitted tile lib node and resolve its concrete implementation before expansion.
-        from dace.libraries.tileops._dispatch import CPU_SIMD_ISAS
+        from dace.libraries.tileops.dispatch import CPU_SIMD_ISAS
         from dace.sdfg.scope import is_devicelevel_gpu
 
         host_isa = self._target_isa in CPU_SIMD_ISAS | {'SCALAR'}

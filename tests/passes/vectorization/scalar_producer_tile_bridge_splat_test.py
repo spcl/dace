@@ -24,7 +24,7 @@ import pytest
 import dace
 from dace import data as dd
 from dace.libraries.tileops import TileLoad, TileStore
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import AccessNode
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig

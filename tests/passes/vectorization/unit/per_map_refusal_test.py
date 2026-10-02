@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import vectorize_multi_dim

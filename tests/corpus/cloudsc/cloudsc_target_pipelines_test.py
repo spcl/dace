@@ -56,7 +56,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu

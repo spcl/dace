@@ -31,7 +31,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileLoad
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.libraries.tileops.nodes.tile_binop import COMPARISON_OPS
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize

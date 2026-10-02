@@ -16,7 +16,7 @@ import numpy
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorization_test

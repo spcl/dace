@@ -40,7 +40,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -85,7 +85,7 @@ UNTILED_KERNELS = frozenset({
 # is the HOST's best runnable one (``detect_host_isa`` -> AVX512 / AVX2 /
 # ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512: vectorization enforces
 # arch-native, so a forced non-host ISA would SIGILL at runtime (see
-# ``dace.libraries.tileops._dispatch.host_supported_isas``).
+# ``dace.libraries.tileops.dispatch.host_supported_isas``).
 HOST_ISA = detect_host_isa()
 MULTIDIM_KNOBS = [
     dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),

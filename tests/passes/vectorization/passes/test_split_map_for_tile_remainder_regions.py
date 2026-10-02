@@ -12,7 +12,7 @@ import signal
 import numpy as np
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig

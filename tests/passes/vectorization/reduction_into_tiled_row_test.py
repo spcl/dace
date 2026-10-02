@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileReduce
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA

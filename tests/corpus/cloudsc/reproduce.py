@@ -17,7 +17,7 @@ from typing import Callable, Dict, Tuple
 
 import dace
 from dace.config import set_temporary
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig

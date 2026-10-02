@@ -30,7 +30,7 @@ import textwrap
 from typing import Dict, Tuple
 
 from dace.frontend.python.parser import DaceProgram
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.interstate import LoopToMap
@@ -43,7 +43,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 #: ``TileITE`` select; "fp_factor" = ``c*x + (1-c)*y`` arithmetic). The SIMD ISA is the HOST's
 #: (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512:
 #: vectorization enforces arch-native (a forced non-host ISA would SIGILL at runtime -- see
-#: ``_dispatch.host_supported_isas``), so pinning AVX-512 made every avx512 phase fail on an
+#: ``dispatch.host_supported_isas``), so pinning AVX-512 made every avx512 phase fail on an
 #: AVX2-only or ARM box.
 #:
 #: The arm is labelled ``hostsimd``, NOT by the detected ISA: the label reaches the pytest test ID,
