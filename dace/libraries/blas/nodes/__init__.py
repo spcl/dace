@@ -10,14 +10,6 @@ from .axpy import Axpy
 from .einsum import Einsum
 
 from .scal import Scal
-from .copy import Copy
-from .swap import Swap
-
-from .trsv import Trsv
-from .trmv import Trmv
 from .symv import Symv
-
-from .trsm import Trsm
-from .trmm import Trmm
 from .symm import Symm
 from .syrk import Syrk

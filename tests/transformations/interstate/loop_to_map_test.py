@@ -507,6 +507,61 @@ def test_loop2map_accepts_peeled_affine_form():
     and LoopToMap accepts it."""
     sdfg = peeled_affine_loop.to_sdfg(simplify=True)
     assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
+    # Both variants carry ``sym``: it is read in ``B[i]`` before the body edge reassigns it to
+    # ``A[i-1]``, so a Map would pin it to 0.0 and compute ``B[i] = 0``.
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+
+def only_loop(sdfg: dace.SDFG) -> LoopRegion:
+    return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
+
+
+def test_loop2map_rejects_symbol_read_in_dataflow_before_assignment():
+    """TSVC s291: ``im`` is read in ``b[im]`` before the body reassigns it, so it is loop-carried."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def carried(a: dace.float64[N], b: dace.float64[N]):
+        im = N - 1
+        for i in range(N):
+            a[i] = b[i] + b[im]
+            im = i
+
+    sdfg = carried.to_sdfg(simplify=True)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
+
+
+def test_loop2map_accepts_peeled_affine_form():
+    """Peeled and induction-substituted, ``a[i] = b[i] + b[i-1]`` is affine and still accepted."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def peeled(a: dace.float64[N], b: dace.float64[N]):
+        a[0] = b[0] + b[N - 1]
+        for i in range(1, N):
+            a[i] = b[i] + b[i - 1]
+
+    sdfg = peeled.to_sdfg(simplify=True)
+    assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
+
+
+def test_loop2map_accepts_symbol_assigned_on_every_branch_before_read():
+    """``k`` is assigned on both arms before ``b[k]`` reads it, so it is iteration-local."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def both_arms(a: dace.float64[N], b: dace.float64[N], c: dace.int64[N]):
+        for i in range(N):
+            if c[i] > 0:
+                k = i
+            else:
+                k = N - 1 - i
+            a[i] = b[k]
+
+    sdfg = both_arms.to_sdfg(simplify=True)
+    loop = only_loop(sdfg)
+    assert 'k' in {sym for e in loop.all_interstate_edges() for sym in e.data.assignments}
+    assert LoopToMap.can_be_applied_to(sdfg, loop=loop)
 
 
 @pytest.mark.parametrize('overwrite', (False, True))
@@ -1042,6 +1097,22 @@ def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
     sdfg.validate()
     assert sdfg.apply_transformations_repeated(LoopToMap) == 1, \
         "re-parallelize must recover the map after the round-trip"
+
+
+def test_symbol_mapping_applies_to_typed_inner_symbols():
+    """The inner symbol keeps its declared dtype, so mapping it outward must match by name."""
+    from dace.transformation.interstate.loop_to_map import _through_symbol_mapping
+    inner = dace.SDFG('inner')
+    inner.add_symbol('M', dace.int64)
+    inner.add_array('x', [10], dace.float64)
+    outer = dace.SDFG('outer')
+    outer.add_symbol('K', dace.int32)
+    outer.add_array('x', [10], dace.float64)
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {'x'}, set(), symbol_mapping={'M': 'K + 1'})
+    subset = dace.subsets.Range([(dace.symbol('M', dace.int64), dace.symbol('M', dace.int64), 1)])
+    result = _through_symbol_mapping(subset, nsdfg)
+    assert {str(sym) for sym in result.ndrange()[0][0].free_symbols} == {'K'}
 
 
 def test_refuse_when_body_assigns_loop_range_symbol():

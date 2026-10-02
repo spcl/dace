@@ -126,6 +126,8 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
+        # Containers the calling code generator passes to nested SDFGs in addition to their connectors
+        self.extra_nsdfg_args = []
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -376,7 +378,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
@@ -457,7 +459,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         variable_length_array = stack_variable_length_array(sdfg, nodedesc, arrsize, top_lifetime, declared)
 
@@ -647,7 +649,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
@@ -1773,6 +1775,28 @@ class CPUCodeGen(TargetCodeGenerator):
                                               uconn,
                                               codegen=self,
                                               conntype=node.out_connectors[uconn]))
+
+        # Transients of the nested SDFG that the frame allocated in an ancestor scope must be passed in
+        for aname, adesc in node.sdfg.arrays.items():
+            if not adesc.transient or adesc.lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                         dtypes.AllocationLifetime.External):
+                continue
+            allocated_in = self._frame.where_allocated.get((node.sdfg, aname))
+            if allocated_in is None or allocated_in is node.sdfg:
+                continue
+            ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
+            if self._dispatcher.defined_vars.has(ptrname):
+                continue
+            # Already passed in by the calling code generator (e.g., in a GPU kernel)
+            if any(ptrname == extra for _, extra, _ in self.calling_codegen.extra_nsdfg_args):
+                continue
+            try:
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
+            except KeyError:
+                continue
+            self._dispatcher.defined_vars.add(ptrname, defined_type, ctype, allow_shadowing=True)
+            memlet_references.append((ctype, ptrname, ptrname))
+
         return memlet_references
 
     def _generate_NestedSDFG(
@@ -2008,12 +2032,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
-                # omp_get_max_threads() is the PROSPECTIVE team size; with OMP_DYNAMIC=true the
-                # region may be handed fewer threads. A thread-strided map whose stride is
-                # OMP_MAX_THREADS would then skip blocks -- a silent wrong answer. Forcing the team
-                # size makes stride and team provably equal.
-                if dtypes.OMP_MAX_THREADS_SYMBOL in {str(s) for s in sdfg.used_symbols(all_symbols=True)}:
-                    map_header += f" num_threads({dtypes.OMP_MAX_THREADS_SYMBOL})"
 
             # OpenMP schedule properties. ``schedule`` is a worksharing-loop clause, so it is valid
             # on a bare ``omp for`` just as it is on a combined ``parallel for`` -- it must NOT be
@@ -2044,11 +2062,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
 
-            # ``MarkSIMDMaps`` decided this; stamp the clause onto the existing pragma.
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
-                head, sep, rest = map_header.partition(' for')
-                map_header = f'{head}{sep} simd{rest}'
-
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
@@ -2064,6 +2077,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     cfg, state_id, node)
 
         result.write(map_header, cfg, state_id, node)
+
+        # Declare each map parameter with its inferred type rather than ``auto``, which would take the type of
+        # the range start alone (e.g., ``int`` for a literal ``0`` even when the end is a 64-bit symbol)
+        param_types = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node))
+
+        def param_ctype(param: str) -> str:
+            dtype = param_types.get(param)
+            return dtype.ctype if dtype is not None else 'auto'
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write('{\n', cfg, state_id, node)
@@ -2082,7 +2103,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
-                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                result.write(f'{param_ctype(node.map.params[0])} {node.map.params[0]} = omp_get_thread_num();', cfg,
+                             state_id, node)
             if ntid_is_used:
                 result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
         else:
@@ -2096,14 +2118,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
-                elif (node.map.omp_simd and node.map.schedule == dtypes.ScheduleType.Sequential
-                      and i == len(node.map.range) - 1):
-                    # Innermost dimension only: the pragma must precede the ``for`` it vectorizes.
-                    result.write("#pragma omp simd", cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
-                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s %s = %s; %s < %s; %s += %s) {\n" %
+                    (param_ctype(var), var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
@@ -2195,16 +2213,19 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
+        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
             "{num_pes}, {condition}"
-            "[&](int {pe_index}, {element_or_chunk}) {{".format(
+            "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
                 cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,
                 num_pes=cpp.sym2cpp(node.consume.num_pes),
+                pe_type=pe_type.ctype if pe_type is not None else 'int',
                 pe_index=node.consume.pe_index,
             ),
             cfg,

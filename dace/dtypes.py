@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
@@ -8,8 +9,9 @@ import ml_dtypes
 import re
 from sympy import Float, Integer
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from dace.config import Config
 
@@ -36,11 +38,38 @@ class StorageType(ExtensibleAttributeEnum):
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
     GPU_Global = auto()  #: GPU global memory
-    GPU_Shared = auto()  #: On-GPU shared memory
+
+    @dataclass(frozen=True)
+    class GPU_Shared:
+        """
+        On-GPU shared memory.
+
+        ``StorageType.GPU_Shared`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to choose how the memory is allocated, e.g., ``StorageType.GPU_Shared(dynamic=True)``.
+        """
+        #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
+        #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
+        dynamic: Optional[bool] = None
+
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
+
+
+def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
+    """
+    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
+
+    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
+    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
+             the case for the bare template).
+    """
+    if storage != StorageType.GPU_Shared:
+        raise ValueError(f'Expected a GPU_Shared storage type, got {storage}')
+    if storage._is_template:
+        return None
+    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
@@ -88,14 +117,6 @@ CPU_SCHEDULES = [
 GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
-
-#: Reserved symbol resolved by the CPU code generator, never by the caller. An SDFG that uses it
-#: gets ``int OMP_MAX_THREADS = omp_get_max_threads();`` at the top of each generated function
-#: body, and the symbol is kept out of ``arglist``/``init_signature`` so it reaches neither the
-#: exported ``__program_*`` nor ``__dace_init_*`` signature. Use it as the stride of a
-#: thread-strided map: the enclosing ``CPU_Persistent`` scope is then emitted with
-#: ``num_threads(OMP_MAX_THREADS)``, so the real team size cannot diverge from the stride.
-OMP_MAX_THREADS_SYMBOL = 'OMP_MAX_THREADS'
 
 
 class ReductionType(Enum):
@@ -302,6 +323,20 @@ _BYTES = {
     ml_dtypes.float8_e5m2: 1,
 }
 
+#: Width of Python's scalar types, per ``compiler.default_data_types``.
+_DEFAULT_DATA_TYPES = {
+    'python': {
+        int: numpy.int64,
+        float: numpy.float64,
+        complex: numpy.complex128
+    },
+    'c': {
+        int: numpy.int32,
+        float: numpy.float32,
+        complex: numpy.complex64
+    },
+}
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -323,30 +358,15 @@ class typeclass(object):
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
 
-        config_data_types = Config.get('compiler', 'default_data_types')
-
-        if wrapped_type is int:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.int64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.int32
-            else:
+        # Only Python's scalar types consult the configuration; every other type paid the lookup.
+        if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
+            config_data_types = Config.get('compiler', 'default_data_types')
+            widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
+            if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is float:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.float64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.float32
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is complex:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.complex128
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.complex64
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is bool:
+            wrapped_type = widths[wrapped_type]
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'

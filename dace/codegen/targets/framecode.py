@@ -428,7 +428,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         for storage, arrays in ext_arrays.items():
             size = 0
             for subsdfg, aname, arr in arrays:
-                size += arr.total_size * arr.dtype.bytes
+                size += arr.total_size_in_bytes
 
             # Size query functions
             callsite_stream.write(
@@ -449,7 +449,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for subsdfg, aname, arr in arrays:
                 allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
-                offset += arr.total_size * arr.dtype.bytes
+                offset += arr.total_size_in_bytes
 
             # Footer
             callsite_stream.write('}', sdfg)
@@ -561,6 +561,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG]) -> bool:
+        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
+        if isinstance(desc, data.View):
+            return True
+
         schedule = self._get_schedule(scope)
         # if not dtypes.can_allocate(desc.storage, schedule):
         #     return False
@@ -772,7 +776,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break
@@ -921,24 +926,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_deallocation_end(sdfg, scope, callsite_stream)
 
-    @staticmethod
-    def _omp_max_threads_decl(sdfg: SDFG) -> str:
-        """``int OMP_MAX_THREADS = omp_get_max_threads();`` when ``sdfg`` uses the reserved symbol.
-
-        Emitted once per generated function body, not per referencing map: velocity's block maps
-        sit in four different top-level states, and four scope-local copies would make every
-        ``num_threads(OMP_MAX_THREADS)`` clause read a different variable that merely happens to
-        hold the same number. One definition per call also tracks a caller that changes
-        ``OMP_NUM_THREADS`` between calls, which a load-time capture in ``__dace_init_*`` would not.
-        """
-        if not DaCeCodeGenerator._uses_omp_max_threads(sdfg):
-            return ''
-        return f'\nint {dtypes.OMP_MAX_THREADS_SYMBOL} = omp_get_max_threads();\n'
-
-    @staticmethod
-    def _uses_omp_max_threads(sdfg: SDFG) -> bool:
-        return dtypes.OMP_MAX_THREADS_SYMBOL in {str(s) for s in sdfg.used_symbols(all_symbols=True)}
-
     def generate_code(self,
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
@@ -960,12 +947,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
-
-        # Gated on actual use, like the CPU_Persistent path's ``ntid_is_used``: an SDFG that never
-        # names the reserved symbol emits neither the include nor the declaration, and so comes out
-        # byte-identical to before this was added.
-        if self._uses_omp_max_threads(sdfg):
-            global_stream.write('#include <omp.h>', sdfg)
 
         is_top_level = sdfg.parent is None
 
@@ -1098,18 +1079,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             all_code = CodeIOStream()
             all_code.write(function_signature)
-            if self._uses_omp_max_threads(sdfg):
-                all_code.write(self._omp_max_threads_decl(sdfg))
             all_code.write(header_stream.getvalue())
             all_code.write(callsite_stream.getvalue())
             all_code.write(footer_stream.getvalue())
             generated_code = all_code.getvalue()
         else:
             generated_header = global_stream.getvalue()
-            # A nested SDFG becomes its own C++ function, so it re-declares the symbol at its own
-            # entry rather than taking it as a parameter: only the EXPORTED signatures must stay
-            # clean of it, and one read of omp_get_max_threads() per function is free.
-            generated_code = self._omp_max_threads_decl(sdfg) + callsite_stream.getvalue()
+            generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)

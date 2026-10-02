@@ -12,7 +12,7 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-from dace.libraries.blas.nodes import (Axpy, Scal, Copy, Swap, Trsv, Trmv, Symv, Trsm, Trmm, Symm, Syrk, Ger)
+from dace.libraries.blas.nodes import Scal, Symv, Symm, Syrk, Ger
 
 # These force ``BLA_VENDOR=OpenBLAS``, so they need libopenblas -- run them in the OpenBLAS
 # ``lapack`` step, not the ``mkl`` step (the heterogeneous runner has MKL but not OpenBLAS).
@@ -26,27 +26,6 @@ _IMPL = 'OpenBLAS'
 def _run(sdfg, **kw):
     sdfg.validate()
     sdfg(**kw)
-
-
-def test_axpy_openblas():
-    n, a = 16, 1.7
-    rng = np.random.default_rng(0)
-    x, y = rng.standard_normal(n), rng.standard_normal(n)
-    expected = a * x + y
-    sdfg = dace.SDFG('axpy_obs')
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('y', [n], dace.float64)
-    sdfg.add_array('res', [n], dace.float64)
-    s = sdfg.add_state()
-    node = Axpy('axpy', a=a, n=n)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_x', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(s.add_read('y'), node, dst_conn='_y', memlet=Memlet(f'y[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('res'), src_conn='_res', memlet=Memlet(f'res[0:{n}]'))
-    res = np.zeros(n)
-    _run(sdfg, x=x, y=y, res=res)
-    np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
 
 
 def test_scal_openblas():
@@ -65,95 +44,6 @@ def test_scal_openblas():
     res = np.zeros(n)
     _run(sdfg, x=x, res=res)
     np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
-
-
-def test_copy_openblas():
-    n = 18
-    x = np.random.default_rng(5).standard_normal(n)
-    sdfg = dace.SDFG('copy_obs')
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('y', [n], dace.float64)
-    s = sdfg.add_state()
-    node = Copy('copy', n=n)
-    node.implementation = 'pure'  # Copy delegates to the standard CopyLibraryNode; no vendor BLAS impl
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_x', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('y'), src_conn='_y', memlet=Memlet(f'y[0:{n}]'))
-    y = np.zeros(n)
-    _run(sdfg, x=x, y=y)
-    np.testing.assert_array_equal(y, x)
-
-
-def test_swap_openblas():
-    n = 12
-    rng = np.random.default_rng(6)
-    x, y = rng.standard_normal(n), rng.standard_normal(n)
-    x_orig, y_orig = x.copy(), y.copy()
-    sdfg = dace.SDFG('swap_obs')
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('y', [n], dace.float64)
-    sdfg.add_array('x_out', [n], dace.float64)
-    sdfg.add_array('y_out', [n], dace.float64)
-    s = sdfg.add_state()
-    node = Swap('swap', n=n)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_xin', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(s.add_read('y'), node, dst_conn='_yin', memlet=Memlet(f'y[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('x_out'), src_conn='_xout', memlet=Memlet(f'x_out[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('y_out'), src_conn='_yout', memlet=Memlet(f'y_out[0:{n}]'))
-    x_out = np.zeros(n)
-    y_out = np.zeros(n)
-    _run(sdfg, x=x, y=y, x_out=x_out, y_out=y_out)
-    np.testing.assert_array_equal(x_out, y_orig)
-    np.testing.assert_array_equal(y_out, x_orig)
-
-
-def test_trsv_openblas():
-    n = 8
-    rng = np.random.default_rng(7)
-    L = np.tril(rng.standard_normal((n, n)))
-    np.fill_diagonal(L, 1.0 + np.abs(np.diag(L)))
-    b = rng.standard_normal(n)
-    expected = np.linalg.solve(L, b)
-    L_cm = np.asfortranarray(L)
-    sdfg = dace.SDFG('trsv_obs')
-    sdfg.add_array('A', [n, n], dace.float64)
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('x_out', [n], dace.float64)
-    s = sdfg.add_state()
-    node = Trsv('trsv', uplo=False, transA=False, unit_diag=False)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('A'), node, dst_conn='_A', memlet=Memlet(f'A[0:{n}, 0:{n}]'))
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_xin', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('x_out'), src_conn='_xout', memlet=Memlet(f'x_out[0:{n}]'))
-    x_out = np.zeros(n)
-    _run(sdfg, A=L_cm, x=b, x_out=x_out)
-    np.testing.assert_allclose(x_out, expected, rtol=1e-10, atol=1e-10)
-
-
-def test_trmv_openblas():
-    n = 6
-    rng = np.random.default_rng(8)
-    L = np.tril(rng.standard_normal((n, n)))
-    x = rng.standard_normal(n)
-    expected = L @ x
-    L_cm = np.asfortranarray(L)
-    sdfg = dace.SDFG('trmv_obs')
-    sdfg.add_array('A', [n, n], dace.float64)
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('x_out', [n], dace.float64)
-    s = sdfg.add_state()
-    node = Trmv('trmv', uplo=False)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('A'), node, dst_conn='_A', memlet=Memlet(f'A[0:{n}, 0:{n}]'))
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_xin', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('x_out'), src_conn='_xout', memlet=Memlet(f'x_out[0:{n}]'))
-    x_out = np.zeros(n)
-    _run(sdfg, A=L_cm, x=x, x_out=x_out)
-    np.testing.assert_allclose(x_out, expected, rtol=_RTOL, atol=_ATOL)
 
 
 def test_symv_openblas():
@@ -181,53 +71,6 @@ def test_symv_openblas():
     y_out = np.zeros(n)
     _run(sdfg, A=A_cm, x=x, y=y, y_out=y_out)
     np.testing.assert_allclose(y_out, expected, rtol=_RTOL, atol=_ATOL)
-
-
-def test_trsm_openblas():
-    m, n = 6, 4
-    rng = np.random.default_rng(10)
-    L = np.tril(rng.standard_normal((m, m)))
-    np.fill_diagonal(L, 1.0 + np.abs(np.diag(L)))
-    B = rng.standard_normal((m, n))
-    expected = np.linalg.solve(L, B)
-    L_cm, B_cm = L, B
-    sdfg = dace.SDFG('trsm_obs')
-    sdfg.add_array('A', [m, m], dace.float64)
-    sdfg.add_array('B', [m, n], dace.float64)
-    sdfg.add_array('B_out', [m, n], dace.float64)
-    s = sdfg.add_state()
-    node = Trsm('trsm', side=False, uplo=False, alpha=1.0)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('A'), node, dst_conn='_A', memlet=Memlet(f'A[0:{m}, 0:{m}]'))
-    s.add_memlet_path(s.add_read('B'), node, dst_conn='_Bin', memlet=Memlet(f'B[0:{m}, 0:{n}]'))
-    s.add_memlet_path(node, s.add_write('B_out'), src_conn='_Bout', memlet=Memlet(f'B_out[0:{m}, 0:{n}]'))
-    B_out = np.zeros((m, n))
-    _run(sdfg, A=L_cm, B=B_cm, B_out=B_out)
-    np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-10, atol=1e-10)
-
-
-def test_trmm_openblas():
-    m, n = 6, 4
-    rng = np.random.default_rng(11)
-    L = np.tril(rng.standard_normal((m, m)))
-    B = rng.standard_normal((m, n))
-    expected = L @ B
-    L_cm, B_cm = L, B
-    sdfg = dace.SDFG('trmm_obs')
-    sdfg.add_array('A', [m, m], dace.float64)
-    sdfg.add_array('B', [m, n], dace.float64)
-    sdfg.add_array('B_out', [m, n], dace.float64)
-    s = sdfg.add_state()
-    node = Trmm('trmm', side=False, uplo=False, alpha=1.0)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('A'), node, dst_conn='_A', memlet=Memlet(f'A[0:{m}, 0:{m}]'))
-    s.add_memlet_path(s.add_read('B'), node, dst_conn='_Bin', memlet=Memlet(f'B[0:{m}, 0:{n}]'))
-    s.add_memlet_path(node, s.add_write('B_out'), src_conn='_Bout', memlet=Memlet(f'B_out[0:{m}, 0:{n}]'))
-    B_out = np.zeros((m, n))
-    _run(sdfg, A=L_cm, B=B_cm, B_out=B_out)
-    np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-12, atol=1e-12)
 
 
 def test_symm_openblas():

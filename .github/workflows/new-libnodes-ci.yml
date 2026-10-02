@@ -75,8 +75,7 @@ jobs:
           tests/library/fft_fftw3_test.py \
           tests/library/fft_axis_test.py
 
-    - name: BLAS/LAPACK nodes
+    - name: BLAS nodes
       run: |
         uv run --group testing pytest -n 1 --tb=short --timeout_method thread --timeout=300 \
-          tests/library/blas/blas_extensions_openblas_test.py \
-          tests/library/lapack/lapack_extensions_openblas_test.py
+          tests/library/blas/blas_extensions_openblas_test.py

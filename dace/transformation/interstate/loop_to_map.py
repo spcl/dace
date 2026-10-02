@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set, Tuple, Union
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -19,8 +19,10 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from ordered_set import OrderedSet
 
+IndexExpr = Union[str, int, symbolic.SymbolicType]
 
-def _check_range(subset, a, itersym, b, step):
+
+def _check_range(subset: subsets.Subset, a: IndexExpr, itersym: symbolic.symbol, b: IndexExpr, step: IndexExpr) -> bool:
     found = False
     for rb, re, _ in subset.ndrange():
         if rb != 0:
@@ -40,10 +42,22 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
-def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def _through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
+    """Copy of an inner ``subset`` in terms of the outer symbols; matches by name, so the inner
+    symbol's dtype does not matter."""
+    outer = copy.deepcopy(subset)
+    inner_syms = {s for rng in outer.ndrange() for x in rng if symbolic.issymbolic(x) for s in x.free_symbols}
+    outer.replace({
+        s: symbolic.pystr_to_symbolic(nsdfg_node.symbol_mapping[s.name])
+        for s in inner_syms if s.name in nsdfg_node.symbol_mapping
+    })
+    return outer
+
+
+def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
+                                b: IndexExpr, step: IndexExpr) -> bool:
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
     found = False
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
@@ -60,18 +74,17 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 dst_subset = e.data.get_dst_subset(e, state)
                 if dst_subset is None:
                     return False
-                outer = copy.deepcopy(dst_subset)
-                outer.replace(repl)
+                outer = _through_symbol_mapping(dst_subset, nsdfg_node)
                 if not _check_range(outer, a, itersym, b, step):
                     return False
                 found = True
     return found
 
 
-def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
+                               b: IndexExpr, step: IndexExpr) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()}
     for state in nsdfg_node.sdfg.all_states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -86,8 +99,7 @@ def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 src_subset = e.data.get_src_subset(e, state)
                 if src_subset is None:
                     return False
-                outer = copy.deepcopy(src_subset)
-                outer.replace(repl)
+                outer = _through_symbol_mapping(src_subset, nsdfg_node)
                 if itersym not in outer.free_symbols:
                     continue
                 if not _check_range(outer, a, itersym, b, step):
@@ -112,11 +124,12 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
-def _affine_coeffs(expr, itersym):
+def _affine_coeffs(expr: IndexExpr,
+                   itersym: symbolic.symbol) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
     """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
     value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
     ``itersym`` is the degree test."""
-    e = symbolic.pystr_to_symbolic(expr)
+    e, itersym = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(expr), itersym)
     if not e.is_polynomial(itersym):
         return None
     a = sp.diff(e, itersym)
@@ -125,16 +138,18 @@ def _affine_coeffs(expr, itersym):
     return a, e.subs(itersym, 0)
 
 
-def _same_injective_index(idx1, idx2, itersym) -> bool:
+def _same_injective_index(idx1: IndexExpr, idx2: IndexExpr, itersym: symbolic.symbol) -> bool:
     """True iff ``idx1`` and ``idx2`` are the same injective affine ``a*i+b`` (``a != 0``) of ``itersym``."""
-    sym = symbolic.pystr_to_symbolic(str(itersym))
-    e1 = symbolic.pystr_to_symbolic(str(idx1))
-    e2 = symbolic.pystr_to_symbolic(str(idx2))
-    coeffs = _affine_coeffs(e1, sym)
+    e1, e2 = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(idx1), symbolic.pystr_to_symbolic(idx2))
+    coeffs = _affine_coeffs(e1, itersym)
     return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
 
 
-def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
+def _dim_provably_disjoint(idx1: IndexExpr,
+                           idx2: IndexExpr,
+                           itersym: symbolic.symbol,
+                           step: IndexExpr = 1,
+                           start: IndexExpr = 0) -> bool:
     """True iff ``idx1`` at any iteration can never equal ``idx2`` at any iteration. Over the
     counter ``t`` (``i == start + step*t``), ``A1*t1 + B1 == A2*t2 + B2`` is solvable iff
     ``gcd(A1, A2)`` divides ``B2 - B1``; ranging ``t`` over all integers is conservative."""
@@ -183,10 +198,11 @@ def loop_varying_symbols(loop: LoopRegion) -> OrderedSet[str]:
     return varying
 
 
-def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, itersym, step, start,
-                              varying: OrderedSet[str]) -> bool:
-    """Some dimension's read/write indices are disjoint for every pair of iterations, keeping the
-    constant dimensions propagate+intersect drops."""
+def _read_write_dims_ordered(read: subsets.Subset, write: subsets.Subset, itersym: symbolic.symbol, step: IndexExpr,
+                             start: IndexExpr, varying: OrderedSet[str]) -> bool:
+    """Some point dimension keeps read and write apart: disjoint for every pair of iterations
+    (keeping the constant dimensions propagate+intersect drops), or indexed alike so any overlap
+    stays within one iteration."""
     rnd = list(read.ndrange())
     wnd = list(write.ndrange())
     if len(rnd) != len(wnd) or len(rnd) == 0:
@@ -194,33 +210,17 @@ def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, iters
     for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
         if rb != re_ or wb != we_:  # non-point dimension: cannot decide here
             continue
-        # SOUNDNESS: a body-varying symbol looks constant per dimension yet aliases as it sweeps.
-        rw_syms = {s.name
-                   for s in symbolic.pystr_to_symbolic(rb).free_symbols
-                   } | {s.name
-                        for s in symbolic.pystr_to_symbolic(wb).free_symbols}
-        if rw_syms & varying:
-            continue
-        if _dim_provably_disjoint(rb, wb, itersym, step, start):
-            return True
-    return False
-
-
-def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym) -> bool:
-    """A point dimension indexing read and write alike confines any overlap to one iteration."""
-    rnd = list(read.ndrange())
-    wnd = list(write.ndrange())
-    if len(rnd) != len(wnd) or len(rnd) == 0:
-        return False
-    for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
-        if rb != re_ or wb != we_:  # only point dimensions carry an injective index
-            continue
         if _same_injective_index(rb, wb, itersym):
             return True
+        # SOUNDNESS: a body-varying symbol looks constant per dimension yet aliases as it sweeps.
+        rw_syms = {s.name for s in symbolic.pystr_to_symbolic(rb).free_symbols}
+        rw_syms |= {s.name for s in symbolic.pystr_to_symbolic(wb).free_symbols}
+        if not rw_syms & varying and _dim_provably_disjoint(rb, wb, itersym, step, start):
+            return True
     return False
 
 
-def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym,
+def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym: symbolic.symbol,
                                      varying: OrderedSet[str]) -> bool:
     """Prove two point subsets of one container collide only when their iterations coincide:
     with ``itersym`` replaced by ``p`` and ``q``, rationals ``lam_d`` with
@@ -261,7 +261,8 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, varying: OrderedSet[str]) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym: symbolic.symbol, step: IndexExpr,
+                        start: IndexExpr, varying: OrderedSet[str]) -> bool:
     """Whether two writes to one container may hit the same element from different iterations."""
     nd1 = list(m1.subset.ndrange())
     nd2 = list(m2.subset.ndrange())
@@ -279,6 +280,30 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     if _collision_forces_same_iteration(m1.subset, m2.subset, itersym, varying):
         return False
     return True
+
+
+def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> Optional[Set[str]]:
+    """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
+    symbols_that_may_be_used: Set[str] = {itervar}
+    used_before_assignment: Set[str] = set()
+    # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
+    for block in cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False):
+        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
+        used_before_assignment |= ({str(s) for s in block.free_symbols} - symbols_that_may_be_used)
+        for e in block.parent_graph.out_edges(block):
+            used_before_assignment |= e.data.read_symbols() - symbols_that_may_be_used
+            assigned_symbols = set()
+            for k, v in e.data.assignments.items():
+                try:
+                    fsyms = symbolic.pystr_to_symbolic(v).free_symbols
+                except AttributeError:
+                    fsyms = set()
+                if k not in fsyms:
+                    assigned_symbols.add(k)
+            if assigned_symbols & used_before_assignment:
+                return None
+            symbols_that_may_be_used |= e.data.assignments.keys()
+    return symbols_that_may_be_used
 
 
 @properties.make_properties
@@ -393,6 +418,9 @@ class LoopToMap(xf.MultiStateTransformation):
                         return False
 
                     symbols_that_may_be_used |= e.data.assignments.keys()
+        symbols_that_may_be_used |= symbols_assigned_before_use(self.loop, itervar)
+        if symbols_that_may_be_used is None:
+            return False
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
@@ -403,24 +431,6 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add non-transient nodes from loop state
         for state in loop_states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
-
-        # Symbols assigned inside the loop (other than the iterator) must not shape any data
-        # descriptor that survives outside the loop body; otherwise the assignment moves into
-        # a map and leaves the descriptor's dimensions undefined.
-        body_assigned_noiter = {s for s in body_assigned_syms if s != itervar}
-        if body_assigned_noiter:
-            desc_syms_outside: OrderedSet[str] = OrderedSet()
-            for desc in sdfg.arrays.values():
-                desc_syms_outside |= OrderedSet(str(s) for s in desc.free_symbols)
-            seen = {id(sdfg)}
-            parent = sdfg.parent_nsdfg_node
-            while parent is not None and id(parent.sdfg) not in seen:
-                seen.add(id(parent.sdfg))
-                for desc in parent.sdfg.arrays.values():
-                    desc_syms_outside |= OrderedSet(str(s) for s in desc.free_symbols)
-                parent = parent.sdfg.parent_nsdfg_node
-            if desc_syms_outside & body_assigned_noiter:
-                return False
 
         # Lazy: it walks every state and edge, and the cheap refusals above take 41k of 44k.
         _, write_set = self.loop.read_and_write_sets()
@@ -596,10 +606,8 @@ class LoopToMap(xf.MultiStateTransformation):
             write = candidate.dst_subset if candidate.dst_subset is not None else candidate.subset
             if read == write:
                 continue
-            # Step-aware disjointness; the fallback below drops constant dims and the stride.
-            if _read_write_dims_disjoint(read, write, itersym, step, start, varying):
-                continue
-            if _read_write_same_iteration(read, write, itersym):
+            # Step-aware; the fallback below drops constant dims and the stride.
+            if _read_write_dims_ordered(read, write, itersym, step, start, varying):
                 continue
             # A transpose settles no single dimension, yet the dependence is distance-0.
             if _collision_forces_same_iteration(read, write, itersym, varying):
