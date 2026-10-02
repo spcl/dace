@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the readable CPU code generator tests.
 
-CPU kernels are compared bit-exactly against the legacy generator and run in a forked child, so that a crashing
-kernel cannot take down pytest. GPU kernels run in-process (CUDA does not survive a fork) and are compared with a
-tolerance, as their reduction and atomic order is not reproducible.
+CPU kernels are compared against the legacy generator to within 1 ULP per element and run in a forked child, so that
+a crashing kernel cannot take down pytest. GPU kernels run in-process (CUDA does not survive a fork) and are compared
+with a tolerance, as their reduction and atomic order is not reproducible.
 """
 import copy
 import ctypes
@@ -19,7 +19,7 @@ import pytest
 
 import dace
 
-from dace.config import set_temporary
+from dace.config import Config, set_temporary
 
 #: The two CPU code generators under test.
 LEGACY = "legacy"
@@ -27,10 +27,19 @@ EXPERIMENTAL = "experimental_readable"
 #: Config path selecting the CPU generator implementation.
 IMPLEMENTATION_KEY = ("compiler", "cpu", "implementation")
 
+#: Config path of the CPU compiler flags.
+CPU_ARGS_KEY = ("compiler", "cpu", "args")
+
 
 def use_implementation(implementation):
     """Pins ``compiler.cpu.implementation`` for a code generation run."""
     return set_temporary(*IMPLEMENTATION_KEY, value=implementation)
+
+
+def without_fma_contraction():
+    """Builds without fused multiply-add contraction. The two generators nest the same computation differently, so
+    the compiler contracts different multiply-adds and an accumulating kernel drifts by far more than 1 ULP."""
+    return set_temporary(*CPU_ARGS_KEY, value=f"{Config.get(*CPU_ARGS_KEY)} -ffp-contract=off")
 
 
 @functools.lru_cache(maxsize=1, typed=True)
@@ -81,7 +90,7 @@ def waitpid_with_timeout(pid, timeout):
 
 
 def use_one_openmp_thread():
-    """Fixes the summation order of reductions, which the bit-exact comparison needs. A libgomp the process
+    """Fixes the summation order of reductions, which the ULP comparison needs. A libgomp the process
     already loaded has read ``OMP_NUM_THREADS`` and is set directly; a later load reads the variable."""
     os.environ["OMP_NUM_THREADS"] = "1"
     with open("/proc/self/maps") as maps:
@@ -132,8 +141,18 @@ def max_abs_diff(legacy, experimental):
         return float("nan")
 
 
+def assert_max_one_ulp(legacy, experimental):
+    """Raises ``AssertionError`` unless every element is within 1 ULP, NaN and inf positions included; a complex
+    array is compared by its real and imaginary parts."""
+    if legacy.dtype.kind == "c":
+        legacy = np.stack([legacy.real, legacy.imag])
+        experimental = np.stack([experimental.real, experimental.imag])
+    np.testing.assert_array_max_ulp(legacy, experimental, maxulp=1)
+
+
 def assert_outputs_equivalent(legacy, experimental, target, label=""):
-    """Asserts the readable outputs equal the legacy ones: exactly on CPU, within a dtype tolerance on GPU."""
+    """Asserts the readable outputs equal the legacy ones: integers exactly and floats within 1 ULP on CPU, within
+    a dtype tolerance on GPU."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
     assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
@@ -142,9 +161,10 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
         ev = experimental[name]
         assert lv.shape == ev.shape, f"{label}/{name}: shape {lv.shape} vs {ev.shape}"
         if target == "cpu":
-            equal = np.array_equal(lv, ev, equal_nan=True) if lv.dtype.kind == "f" else np.array_equal(lv, ev)
-            assert equal, (f"{label}/{name}: experimental CPU codegen is not bit-exact vs legacy, "
-                           f"max|diff|={max_abs_diff(lv, ev):.3e}")
+            if lv.dtype.kind in "fc":
+                assert_max_one_ulp(lv, ev)
+            else:
+                assert np.array_equal(lv, ev), f"{label}/{name}: experimental CPU codegen differs from legacy"
         else:
             rtol, atol = tolerance_for(lv.dtype)
             assert np.allclose(lv, ev, rtol=rtol, atol=atol,

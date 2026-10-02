@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Every kernel of the npbench polybench and misc tests must compile under the readable generator and reproduce the
-legacy result, on CPU bit-exactly and on GPU within a dtype-aware tolerance. Each run gets a name of its own, as the
+legacy result, on CPU to within 1 ULP and on GPU within a dtype-aware tolerance. Each run gets a name of its own, as the
 implementation is not part of the SDFG hash and a shared build folder would serve one generator's binary to the other.
 """
 import importlib
@@ -16,9 +16,12 @@ from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic import evaluate
 from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, gpu_available,
-                                             run_isolated, use_implementation)
+                                             run_isolated, use_implementation, without_fma_contraction)
 
 SYMBOL_SIZE = 13
+# scattering_self nests eight loops around a matrix product, so at 13 it runs for hours; 5 is the smallest size for
+# which the generated neigh_idx entries (1..4) index G in bounds
+KERNEL_SYMBOL_SIZES = {"scattering_self": 5}
 FAMILIES = ("polybench", "misc")
 
 # Inputs drawn at random are ill-defined for these: azimint_* read uninitialized bins and spmv needs a monotonic
@@ -85,10 +88,11 @@ def build_and_run(family, name, implementation, target):
     """A closure that builds and runs the kernel and returns its outputs."""
 
     def run():
-        with use_implementation(implementation):
+        with use_implementation(implementation), without_fma_contraction():
             sdfg = load_program(family, name).to_sdfg(simplify=True)
             sdfg.name = f"{sdfg.name}_{implementation}_{target}"
-            symbols = {symbol: SYMBOL_SIZE for symbol in map(str, sdfg.free_symbols)}
+            size = KERNEL_SYMBOL_SIZES.get(name, SYMBOL_SIZE)
+            symbols = dict.fromkeys(map(str, sdfg.free_symbols), size)
             if target == "gpu":
                 sdfg.apply_gpu_transformations()
             inputs = make_inputs(sdfg, symbols)
