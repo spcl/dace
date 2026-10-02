@@ -532,25 +532,25 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        // Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
-        template<typename T,
-                 typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
-        DACE_HDFI T ipow(const T a, const unsigned int b) {
-            T result = T(1);
-            for (unsigned int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
-
-        // Vector types have no scalar constructor, so seed at ``a``. Only ever reached with a
-        // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
-        template<typename T,
-                 typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
-        DACE_HDFI T ipow(const T a, const unsigned int b) {
-            T result = a;
-            for (unsigned int i = 1; i < b; ++i)
-                result *= a;
-            return result;
+        // ``a ** b`` by multiplication. A scalar seeds at ``T(1)``, so ``ipow(a, 0) == 1``. A vector type has no
+        // scalar constructor and seeds at ``a``, so it needs ``b >= 1`` (codegen emits a literal 1 for exponent 0).
+        template<typename T>
+        DACE_HDFI T ipow(const T a, const unsigned int b)
+        {
+            if constexpr (std::is_constructible<T, int>::value)
+            {
+                T result = T(1);
+                for (unsigned int i = 0; i < b; ++i)
+                    result *= a;
+                return result;
+            }
+            else
+            {
+                T result = a;
+                for (unsigned int i = 1; i < b; ++i)
+                    result *= a;
+                return result;
+            }
         }
 
         // ``a ** b``. An integral exponent multiplies, and takes the reciprocal for a negative ``b``; an integral
