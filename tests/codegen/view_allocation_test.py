@@ -22,7 +22,7 @@ if not hasattr(dace.ScheduleType, 'ViewTestLoop'):
         """A sequential loop in which CPU heap memory cannot be allocated."""
 
         def __init__(self, frame_codegen, sdfg):
-            self.frame = frame_codegen
+            self._frame = frame_codegen
             self.dispatcher = frame_codegen.dispatcher
             self.dispatcher.register_map_dispatcher(dace.ScheduleType.ViewTestLoop, self)
 
@@ -33,7 +33,7 @@ if not hasattr(dace.ScheduleType, 'ViewTestLoop'):
                 begin, end, stride = (sym2cpp(r) for r in rng)
                 callsite_stream.write(f'for (auto {param} = {begin}; {param} <= {end}; {param} += {stride}) {{', sdfg,
                                       state_id, entry_node)
-            self.frame.allocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
             self.dispatcher.dispatch_subgraph(sdfg,
                                               cfg,
                                               scope,
