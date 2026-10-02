@@ -9,6 +9,8 @@ combinations of the construction path, verify the pure expansion's
 numerics against ``numpy.roll``, and pin the loud-fail contract when
 ``shift`` was never set.
 """
+import re
+
 import numpy as np
 import pytest
 
@@ -20,7 +22,8 @@ def _build(in_shape, dtype, *, dim=1, shift=None):
     """Wire a CShift lib node into a fresh (unexpanded) SDFG with full-array memlets, ``in_shape``
     on both sides. ``shift=None`` means the runtime symbol ``__shift``; an integer or symbolic
     expression pins the value at construct time."""
-    label = f"cshift_dim{dim}_{'_'.join(map(str, in_shape))}"
+    shift_tag = 'none' if shift is None else re.sub(r'\W', '_', str(shift).replace('-', 'm'))
+    label = f"cshift_dim{dim}_{'_'.join(map(str, in_shape))}_shift{shift_tag}"
     sdfg = dace.SDFG(label)
     sdfg.add_array("v", list(in_shape), dtype)
     sdfg.add_array("out", list(in_shape), dtype)
