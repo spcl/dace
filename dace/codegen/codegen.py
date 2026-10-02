@@ -18,6 +18,7 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -224,6 +225,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # Storage is final, so the stack placement of register arrays can be decided
     from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
     ResolveStackAllocation().apply_pass(sdfg, {})
+
+    # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
+    # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
+    RelaxIntegerPowers().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
