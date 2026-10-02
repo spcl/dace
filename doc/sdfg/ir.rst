@@ -351,11 +351,11 @@ the other code by its name:
    * - ``a % b``, ``PyMod(a, b)``, ``FtnModulo(a, b)``
      - floored
      - Python code and symbolic expressions; ``numpy.mod`` and ``numpy.remainder``
-     - ``a % b`` if both operands are provably nonnegative integers, ``py_mod(a, b)`` otherwise
+     - ``a % b`` if the dividend is a provably nonnegative integer and the divisor a provably positive one, ``py_mod(a, b)`` otherwise
    * - ``a // b``, ``PyFloor(a, b)``, ``int_floor(a, b)``
      - floored division
      - Python code and symbolic expressions; ``numpy.floor_divide``
-     - ``a / b`` if both operands are provably nonnegative integers, ``py_floor(a, b)`` otherwise
+     - ``a / b`` if the dividend is a provably nonnegative integer and the divisor a provably positive one, ``py_floor(a, b)`` otherwise
    * - ``CMod(a, b)``, ``FtnMod(a, b)``
      - truncating
      - code that asks for C's modulo, such as Fortran's ``MOD``; ``numpy.fmod``
@@ -363,8 +363,8 @@ the other code by its name:
 
 ``FtnMod`` and ``FtnModulo`` name Fortran's ``MOD`` and ``MODULO``: they are other names of
 :class:`~dace.symbolic.CMod` and :class:`~dace.symbolic.PyMod`, and ``PyFloor`` is another name of ``int_floor``.
-Operands are provably nonnegative if they are nonnegative literals, variables of unsigned type, or symbols that
-SymPy knows to be nonnegative. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
+Operands are provable if they are literals, variables of unsigned type (as a dividend), or symbols that SymPy knows
+to be nonnegative or positive. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
 ``dace/runtime/include/dace/math.h`` and work on the host and the device. As in NumPy, floating-point ``PyMod`` and
 ``PyFloor`` follow the NumPy algorithm, and a zero divisor is not handled.
 

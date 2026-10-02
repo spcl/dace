@@ -1012,8 +1012,10 @@ class CPPUnparser:
         return False
 
     def _modulo_call(self, function: str, left: ast.AST, right: ast.AST):
-        """ ``function`` is ``PyMod``, ``CMod`` or ``PyFloor``: C's operators are used where they agree. """
-        if function != "CMod" and self._is_nonnegative_integer(left) and self._is_nonnegative_integer(right):
+        """ ``function`` is ``PyMod``, ``CMod`` or ``PyFloor``: C's operators are used where they agree, on a nonnegative
+            dividend and a positive literal divisor. """
+        if (function != "CMod" and self._is_nonnegative_integer(left) and isinstance(right, ast.Constant)
+                and self._is_nonnegative_integer(right) and right.value > 0):
             self.write("(")
             self.dispatch(left)
             self.write(" % " if function == "PyMod" else " / ")

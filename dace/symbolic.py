@@ -2470,9 +2470,10 @@ def simplify(expr: SymbolicType) -> SymbolicType:
     return sympy.simplify(expr)
 
 
-def nonnegative_integers(*operands) -> bool:
-    """ Whether C's ``%`` and ``/`` on ``operands`` agree with the floored ones, which is so on nonnegative integers. """
-    return all(operand.is_integer and operand.is_nonnegative for operand in operands)
+def nonnegative_integers(dividend, divisor) -> bool:
+    """ Whether C's ``%`` and ``/`` agree with the floored ones: on a nonnegative integer dividend and a positive integer
+        divisor. A zero divisor is excluded, where the floored helpers give 0 and C traps. """
+    return bool(dividend.is_integer and divisor.is_integer and dividend.is_nonnegative and divisor.is_positive)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
