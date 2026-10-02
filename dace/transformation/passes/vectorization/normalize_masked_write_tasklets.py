@@ -66,7 +66,34 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                 if self._normalize(tasklet) or self._demote_self_blend(state, tasklet):
                     self._mark_conditional_writes_dynamic(state, tasklet)
                     count += 1
+        for nested in sdfg.all_sdfgs_recursive():
+            if nested is not sdfg:
+                count += self._demote_cursor_indexed_self_blends(nested)
         return count or None
+
+    def _demote_cursor_indexed_self_blends(self, sdfg: SDFG) -> int:
+        """Demote the self-blends of a body nested before vectorization whose write lands on a slot a symbol assigned
+        on an interstate edge names (the stream-compaction scatter).
+
+        An iteration of such a body owns its slot only when its guard holds, so the blend's write-back of the old
+        value, through a lane that did not take the guard, overwrites a slot another thread of the parallel map owns.
+        """
+        assigned = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+        count = 0
+        for state in sdfg.all_states():
+            for tasklet in list(state.nodes()):
+                if not isinstance(tasklet, nd.Tasklet) or tasklet.code.language != dace.dtypes.Language.Python:
+                    continue
+                parsed = self._parse_self_blend(tasklet)
+                if parsed is None:
+                    continue
+                writes = [e.data for e in state.out_edges(tasklet) if e.src_conn == parsed[0]]
+                if len(writes) != 1 or not assigned & set(writes[0].subset.free_symbols):
+                    continue
+                if self._demote_self_blend(state, tasklet):
+                    self._mark_conditional_writes_dynamic(state, tasklet)
+                    count += 1
+        return count
 
     def _mark_conditional_writes_dynamic(self, state: SDFGState, tasklet: nd.Tasklet) -> None:
         # Mark every out-edge whose connector is written through ``IT`` as a DYNAMIC memlet.

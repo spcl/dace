@@ -35,6 +35,7 @@ from dace.libraries.tileops import MaskedCopyLibraryNode, TileBinop, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.libraries.tileops.ops import BINARY_OPS
 from dace.sdfg import nodes as nd
+from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
@@ -176,6 +177,25 @@ def test_expand_matches_numpy(n):
     run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'expand n={n}')
 
 
+def test_pack_is_race_free_across_threads():
+    """The compaction scatter of ``pack`` writes only the slots of the lanes that take the guard.
+
+    A lane that did not take it must not write its slot back: the slot belongs to the iteration that did, which runs
+    on another thread, and an old value written over its store is lost. The race shows in about one run in five at
+    ``n = 61``, so one compiled program is run many times on several threads.
+    """
+    n, runs = 61, 60
+    rng = np.random.default_rng(1234)
+    a, b = rng.random(n), rng.random(n) - 0.5
+    ref = pack_reference(a, b, n)
+    program = vectorized(pack_kernel, 'pack_threads').compile()
+    set_openmp_thread_count(4)
+    for run_index in range(runs):
+        work = a.copy()
+        program(a=work, b=b.copy(), N=n)
+        assert np.allclose(work, ref, rtol=1e-12, atol=1e-12), f'run {run_index} of {runs} lost a compacted element'
+
+
 def test_pack_mask_compares_every_lane_of_b():
     """Structural half: the mask map tiles, and its predicate compares ``b`` loaded per lane. The
     broadcast this guards against read ``b`` at the TILE BASE only, so all 8 lanes shared lane 0's
@@ -223,6 +243,7 @@ if __name__ == '__main__':
     test_pack_matches_numpy(61)
     test_expand_matches_numpy(64)
     test_expand_matches_numpy(61)
+    test_pack_is_race_free_across_threads()
     test_pack_mask_compares_every_lane_of_b()
     test_expand_mask_compares_every_lane_of_a()
     test_invariant_interstate_symbol_still_tiles()
