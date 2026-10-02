@@ -63,7 +63,8 @@ def _one_source_copied_into_two_arrays_sdfg() -> dace.SDFG:
 
 
 def _generate_code(sdfg: dace.SDFG):
-    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'), \
+            dace.config.set_temporary('compiler', 'cuda', 'backend', value='cuda'):
         return sdfg.generate_code()
 
 
@@ -90,7 +91,7 @@ def test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_d
 def test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeypatch):
     """Should a device copy still reach the codegen as a plain edge, it has no correct host lowering."""
     monkeypatch.setattr(insert_explicit_copies.InsertExplicitCopies, '_replace_direct_copies',
-                        lambda self, state, order: [])
+                        lambda self, state: 0)
     with pytest.raises(CodegenError, match='involves GPU memory'):
         _generate_code(_kernel_and_copy_into_one_array_sdfg())
 
