@@ -162,7 +162,7 @@ def test_int_floor_survives_codegen_where_floordiv_does_not(numerator, denominat
 
     expr = pystr_to_symbolic(numerator)
     floored = sym2cpp(int_floor(expr, denominator))
-    assert f"/ {denominator})" in floored, f"int_floor lost its divisor in codegen: {floored}"
+    assert f", {denominator})" in floored, f"int_floor lost its divisor in codegen: {floored}"
     assert "1 / 2" not in floored, f"a rational leaked into an integer index: {floored}"
 
     for value in range(0, 8):
@@ -180,7 +180,7 @@ def test_floordiv_does_not_survive_codegen():
 
     n = pystr_to_symbolic("N")
     assert "/ 8)" not in sym2cpp((n + 1) * 4 // 8)
-    assert "/ 8)" in sym2cpp(int_floor((n + 1) * 4, 8))
+    assert ", 8)" in sym2cpp(int_floor((n + 1) * 4, 8))
 
 
 def test_arithmetic_promotion_is_not_spelled_but_a_call_argument_keeps_it():
@@ -213,7 +213,8 @@ def _c_div(a: int, b: int) -> int:
     return q if (a < 0) == (b < 0) else -q
 
 
-@pytest.mark.parametrize('wrap,expected', [(sympy.floor, '((N - 1) / 8)'), (sympy.ceiling, 'int_ceil((N - 1), 8)')])
+@pytest.mark.parametrize('wrap,expected', [(sympy.floor, 'py_floor((N - 1), 8)'),
+                                           (sympy.ceiling, 'int_ceil((N - 1), 8)')])
 def test_distributed_rational_recombines_before_lowering(wrap, expected):
     """``floor``/``ceiling`` of a distributed rational sum must keep its real denominator.
 
@@ -246,8 +247,10 @@ def test_floor_of_distributed_rational_is_numerically_right_in_c():
 def test_plain_division_lowering_is_unchanged():
     """The shapes that were already correct must not move: a bare ``N/8`` has nothing to recombine,
     and ``ceiling(N/32)`` is the case the Wild properties exist to keep from matching as ``1/N``."""
+    from dace.symbolic import int_floor
+
     N = sympy.Symbol('N', nonnegative=True, integer=True)
-    assert symstr(sympy.floor(N / 8), cpp_mode=True) == symstr(pystr_to_symbolic('int_floor(N, 8)'), cpp_mode=True)
+    assert symstr(sympy.floor(N / 8), cpp_mode=True) == symstr(int_floor(N, 8), cpp_mode=True)
     assert 'int_ceil' in symstr(sympy.ceiling(N / 32), cpp_mode=True)
 
 

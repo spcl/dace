@@ -103,8 +103,8 @@ def test_the_band_covers_the_axis_exactly_once():
     assert '__dace_num_threads' in code, 'the band count must be the thread count'
     # Lower bound of band t and upper bound of band t-1 are the same expression, so consecutive
     # bands abut; at t = P the bound is the full extent, so the last band ends at the axis end.
-    assert re.search(r'__dace_band\)\s*/\s*__dace_num_threads', code), 'band lower bound missing'
-    assert re.search(r'__dace_band \+ 1\)+\s*/\s*__dace_num_threads', code), 'band upper bound missing'
+    assert re.search(r'__dace_band\)\s*[/,]\s*__dace_num_threads', code), 'band lower bound missing'
+    assert re.search(r'__dace_band \+ 1\)+\s*[/,]\s*__dace_num_threads', code), 'band upper bound missing'
 
 
 @pytest.mark.parametrize('program,reference,names,tag',

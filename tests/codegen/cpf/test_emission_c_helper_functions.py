@@ -297,23 +297,23 @@ def duplicate_check_case(repeat: bool) -> Case:
     })
 
 
-def c_mod_assign_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('c_mod_assign')
+def c_mod_sdfg() -> dace.SDFG:
+    sdfg = dace.SDFG('c_mod')
     for name in ('x', 'y', 'z'):
         sdfg.add_array(name, [N], dace.float64)
     state = sdfg.add_state()
     me, mx = state.add_map('m', dict(i='0:N'))
-    tasklet = state.add_tasklet('rem', {'a': dace.float64, 'b': dace.float64}, {'o': dace.float64}, 'o = a\no %= b')
+    tasklet = state.add_tasklet('rem', {'a': dace.float64, 'b': dace.float64}, {'o': dace.float64}, 'o = CMod(a, b)')
     state.add_memlet_path(state.add_read('x'), me, tasklet, dst_conn='a', memlet=dace.Memlet('x[i]'))
     state.add_memlet_path(state.add_read('y'), me, tasklet, dst_conn='b', memlet=dace.Memlet('y[i]'))
     state.add_memlet_path(tasklet, mx, state.add_write('z'), src_conn='o', memlet=dace.Memlet('z[i]'))
     return sdfg
 
 
-def c_mod_assign_case() -> Case:
+def c_mod_case() -> Case:
     x = np.linspace(-7.5, 7.5, 31)
     y = np.where(np.arange(x.size) % 2 == 0, 2.5, -2.25)
-    return (c_mod_assign_sdfg(), ('cpf_c_mod_float64(', ), {
+    return (c_mod_sdfg(), ('cpf_c_mod_float64(', ), {
         'x': x,
         'y': y,
         'z': np.zeros_like(x),
@@ -327,7 +327,7 @@ CASES: Dict[str, Callable[[], Case]] = {
     'minmax_float64': minmax_case,
     'minmax_int64_through_a_symbol': minmax_through_a_symbol_case,
     'floored_int64': floored_case,
-    'c_mod_assign_float64': c_mod_assign_case,
+    'c_mod_float64': c_mod_case,
     'maths_float32': maths_case,
     'int_ceil': int_ceil_case,
     'scan_product_int64': scan_product_case,

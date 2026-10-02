@@ -1834,11 +1834,6 @@ class int_floor(DaceFunction):
     def _eval_is_integer(self):
         return True
 
-    def _eval_is_nonnegative(self):
-        if self.args[0].is_nonnegative and self.args[1].is_positive:
-            return True
-        return None
-
 
 class __int_floor(int_floor):
     """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
@@ -3883,9 +3878,11 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
     return simplify(e.subs(relaxed)).is_nonnegative is True
 
 
-def nonnegative_integers(*operands) -> bool:
-    """ Whether C's ``%`` and ``/`` on ``operands`` agree with the floored ones, which is so on nonnegative integers. """
-    return all(operand.is_integer and operand.is_nonnegative for operand in operands)
+def nonnegative_integers(dividend, divisor) -> bool:
+    """ Whether C's ``%`` and ``/`` agree with the floored ones: on a nonnegative integer dividend and a positive integer
+        divisor. A zero divisor is excluded, where the floored helpers give 0 and C traps. """
+    return bool(dividend.is_integer and divisor.is_integer and divisor.is_positive
+                and (dividend.is_nonnegative or (has_rounding(dividend) and provably_nonnegative(dividend))))
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
