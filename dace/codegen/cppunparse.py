@@ -1573,8 +1573,8 @@ class CPPUnparser:
 
     def _modulo_call(self, function: str, left: ast.AST, right: ast.AST):
         """ ``function`` is a key of ``modulo_calls``: C's operators are used where they agree with a floored one. """
-        if function in ("PyMod", "Mod", "FtnModulo", "PyFloor", "int_floor") and self._is_nonnegative_integer(
-                left) and self._is_nonnegative_integer(right):
+        if function in ("PyMod", "Mod", "FtnModulo", "PyFloor",
+                        "int_floor") and self._is_nonnegative_integer(left) and self._is_nonnegative_integer(right):
             self.write("(")
             self.dispatch(left)
             self.write(" / " if function in ("PyFloor", "int_floor") else " % ")
