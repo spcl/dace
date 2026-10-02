@@ -96,4 +96,10 @@ def test_code_is_generated_for_a_program_with_two_maps_over_a_transient():
 
 
 if __name__ == '__main__':
-    pytest.main([__file__])
+    for shape in IDOM_BY_SHAPE:
+        test_the_start_block_is_its_own_immediate_dominator(shape)
+        test_the_sink_is_its_own_immediate_postdominator(shape)
+        test_all_dominators_of_the_start_block_are_empty_and_cover_every_block(shape)
+        test_block_parent_tree_roots_at_the_start_block(shape)
+        test_control_flow_block_dominators_cover_every_block(shape)
+    test_code_is_generated_for_a_program_with_two_maps_over_a_transient()
