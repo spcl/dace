@@ -230,20 +230,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-// tile_scatter
-// dst[idx[i]] = src[i] ; RMW skip-inactive (inactive lane never written, so a
-// garbage / OOB index is safe).
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-
 // tile_mask_gen: iteration mask, out[l] = (base + l) < ub for l in 0..VLEN-1.
 template <typename IdxT, int VLEN>
 inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
@@ -384,19 +370,6 @@ inline std::enable_if_t<VLEN == 1, void> tile_gather(Dst&& dst, const T* __restr
     tile_store_value<T>(dst, mask[0] ? src[iv] : T(0));
   else
     tile_store_value<T>(dst, src[iv]);
-}
-
-// VLEN=1 tile_scatter: ``dst`` stays a pointer; ``src``/``idx`` may be
-// scalars.
-template <typename T, typename IdxT, int VLEN, bool Masked, typename Src, typename Idx>
-inline std::enable_if_t<VLEN == 1, void> tile_scatter(T* __restrict__ dst, Src&& src, Idx&& idx,
-                                                      const bool* __restrict__ mask) {
-  const T sv = tile_load_value<T>(src);
-  const IdxT iv = tile_load_value<IdxT>(idx);
-  if constexpr (Masked) {
-    if (mask[0]) dst[iv] = sv;
-  } else
-    dst[iv] = sv;
 }
 
 }  // namespace tileops

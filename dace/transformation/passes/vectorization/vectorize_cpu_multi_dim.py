@@ -10,7 +10,7 @@ from dace.transformation.passes.vectorization.vectorize_multi_dim import (
     VectorizeGPUMultiDim,
     normalize_loop_nests,
     _validate_knobs,
-    _VALID_ISAS,
+    VALID_ISAS,
     _TILE_NODE_TYPES,
 )
 
@@ -20,6 +20,6 @@ __all__ = [
     "VectorizeGPUMultiDim",
     "normalize_loop_nests",
     "_validate_knobs",
-    "_VALID_ISAS",
+    "VALID_ISAS",
     "_TILE_NODE_TYPES",
 ]

@@ -204,7 +204,7 @@ class _MultiOutputReductionMapFission(MapFission):
 
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
-_VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA", "CUDA_WARP")
+VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
 _VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail", "branched_masked_tail")
 
 #: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``
@@ -627,7 +627,7 @@ def _validate_knobs(widths: tuple[int, ...], target_isa: str, remainder_strategy
          f"scalar_remainder_emit='tile_k1' requires remainder_strategy='scalar_postamble'; "
          f"got remainder_strategy={remainder_strategy!r}"),
         (1 <= len(widths) <= 3, f"K={len(widths)} not in {{1, 2, 3}}; got widths={widths!r}"),
-        (target_isa in _VALID_ISAS, f"target_isa {target_isa!r} not in {_VALID_ISAS}"),
+        (target_isa in VALID_ISAS, f"target_isa {target_isa!r} not in {VALID_ISAS}"),
         (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
         (target_isa != "AVX512" or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
         (target_isa != "CUDA"

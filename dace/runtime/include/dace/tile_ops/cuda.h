@@ -490,25 +490,11 @@ DACE_DFI void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const 
   }
 }
 
-// tile_scatter
-template <typename T, typename IdxT, int VLEN, bool Masked>
-DACE_DFI void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                           const bool* __restrict__ mask) {
-#pragma unroll
-  for (int i = 0; i < VLEN; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-
 // tile_mask_gen
-// ``stride`` mirrors tile_load's: 1 per thread, the lane count under CUDA_WARP.
 template <typename IdxT, int VLEN>
-DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub, IdxT stride = 1) {
+DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
 #pragma unroll
-  for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i) * stride) < ub;
+  for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
 }
 
 // tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
@@ -652,17 +638,6 @@ DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_gather(Dst&& dst, c
     tile_store_value<T>(dst, mask[0] ? src[iv] : T(0));
   else
     tile_store_value<T>(dst, src[iv]);
-}
-
-template <typename T, typename IdxT, int VLEN, bool Masked, typename Src, typename Idx>
-DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_scatter(T* __restrict__ dst, Src&& src, Idx&& idx,
-                                                                     const bool* __restrict__ mask) {
-  const T sv = tile_load_value<T>(src);
-  const IdxT iv = tile_load_value<IdxT>(idx);
-  if constexpr (Masked) {
-    if (mask[0]) dst[iv] = sv;
-  } else
-    dst[iv] = sv;
 }
 
 }  // namespace tileops

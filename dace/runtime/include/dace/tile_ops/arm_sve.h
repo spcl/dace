@@ -642,56 +642,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-// tile_scatter : dst[idx[i]] = src[i]
-// WRITER -> RMW skip-inactive (inactive / masked-off lane never written, so a
-// garbage / OOB index is safe).
-template <typename T, typename IdxT, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask, int vlen) {
-  for (int i = 0; i < vlen; i += sve_cnt<T>()) {
-    svbool_t pg = sve_whilelt<T>(i, vlen);
-    svbool_t wp = pg;
-    if constexpr (Masked) wp = sve_mask<T>(pg, mask, i);
-    auto v = sve_ld1(wp, src + i);
-    if constexpr (sizeof(T) == 4) {
-      svint32_t vidx = sve_load_idx32<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, float>::value)
-        svst1_scatter_s32index_f32(wp, dst, vidx, v);
-      else
-        svst1_scatter_s32index_s32(wp, dst, vidx, v);
-    } else {
-      svint64_t vidx = sve_load_idx64<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, double>::value)
-        svst1_scatter_s64index_f64(wp, dst, vidx, v);
-      else
-        svst1_scatter_s64index_s64(wp, dst, vidx, v);
-    }
-  }
-}
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; i += sve_cnt<T>()) {
-    svbool_t pg = sve_whilelt<T>(i, VLEN);
-    svbool_t wp = pg;
-    if constexpr (Masked) wp = sve_mask<T>(pg, mask, i);
-    auto v = sve_ld1(wp, src + i);
-    if constexpr (sizeof(T) == 4) {
-      svint32_t vidx = sve_load_idx32<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, float>::value)
-        svst1_scatter_s32index_f32(wp, dst, vidx, v);
-      else
-        svst1_scatter_s32index_s32(wp, dst, vidx, v);
-    } else {
-      svint64_t vidx = sve_load_idx64<IdxT>(wp, idx, i);
-      if constexpr (std::is_same<T, double>::value)
-        svst1_scatter_s64index_f64(wp, dst, vidx, v);
-      else
-        svst1_scatter_s64index_s64(wp, dst, vidx, v);
-    }
-  }
-}
-
 // tile_mask_gen
 // out[l] = (base + l) < ub. SVE: per 64-bit-lane chunk, svindex + svcmplt give
 // the active predicate; narrowing svst1b writes 1/0 bytes. (Written on an x86

@@ -540,24 +540,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   tile_gather<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// tile_scatter: dst[idx[i]] = src[i], RMW skip-inactive. NEON has no scatter
-// intrinsic, so this is always scalar.
-template <typename T, typename IdxT, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask, int vlen) {
-  for (int i = 0; i < vlen; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
-}
-
 // tile_mask_gen
 // out[l] = (base + l) < ub. NEON (AArch64): 64-bit-lane compare (vcltq_s64,
 // W=2) extracted to bool bytes; scalar tail.

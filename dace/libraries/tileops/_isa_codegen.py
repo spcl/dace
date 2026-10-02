@@ -58,7 +58,6 @@ ISA_BACKENDS = (
     ("neon", "Neon", "TileOpsNeon"),
     ("sve", "SVE", "TileOpsSVE"),
     ("cuda", "CUDA", "TileOpsCUDA"),
-    ("cuda_warp", "CUDAWarp", "TileOpsCUDAWarp"),
 )
 
 
@@ -893,10 +892,6 @@ def _align_template_arg(node: TileLoad | TileStore,
     ``allow_shift`` is the load/store asymmetry: a load may read the aligned window around its
     elements and discard the extras, a store may not write them -- that would clobber the
     neighbours the widened word covers -- so a shifted store keeps the per-element loop.
-
-    ``cuda_warp`` is excluded even though it reuses this header: there a tile is split across the
-    lanes of a warp and each lane loads its own fragment, so the per-lane base is not the memlet
-    offset this analysis reads and its alignment has not been established.
     """
     if backend != "cuda":
         return ""

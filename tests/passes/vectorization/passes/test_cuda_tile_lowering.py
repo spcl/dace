@@ -14,13 +14,13 @@ import pytest
 import dace
 from dace.libraries.tileops import _dispatch
 from dace.libraries.tileops import environments as tile_env
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _VALID_ISAS
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VALID_ISAS
 
 CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
 
 
 def test_cuda_isa_registered():
-    assert "CUDA" in _VALID_ISAS
+    assert "CUDA" in VALID_ISAS
     assert _dispatch.ISA_TO_IMPL["CUDA"] == "cuda"
 
 
@@ -47,7 +47,7 @@ def test_cuda_header_has_half2_intrinsics():
     # Same tileops contract as the other ISA headers, plus the composed half2
     # horizontal reduce (no native "reduce half2 -> half" intrinsic exists).
     assert "namespace tileops" in src
-    for op in ("tile_binop", "tile_unop", "tile_load", "tile_store", "tile_gather", "tile_scatter", "tile_reduce"):
+    for op in ("tile_binop", "tile_unop", "tile_load", "tile_store", "tile_gather", "tile_reduce"):
         assert op in src, f"cuda.h missing {op}"
     # tile_reduce folds pairwise via half2 then combines the 2 lanes into one half.
     for intr in ("__hadd", "__hmax", "__hmin", "__low2half", "__high2half"):

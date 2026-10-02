@@ -432,17 +432,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-
 // tile_mask_gen
 // out[l] = (base + l) < ub. AVX-512: 64-bit-lane threshold compare
 // (``_mm512_cmplt_epi64_mask``, W=8) -> ``__mmask8`` expanded to bool bytes;

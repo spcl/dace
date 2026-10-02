@@ -117,13 +117,11 @@ inline void drive_load_store() {
 }
 
 template <typename T, int VLEN, typename IdxT>
-inline void drive_gather_scatter() {
+inline void drive_gather() {
   Buf<T, VLEN> z{};
   IdxT idx[VLEN]{};
   tile_gather<T, IdxT, VLEN, false>(z.out, z.a, idx, z.mask);
   tile_gather<T, IdxT, VLEN, true>(z.out, z.a, idx, z.mask);
-  tile_scatter<T, IdxT, VLEN, false>(z.out, z.a, idx, z.mask);
-  tile_scatter<T, IdxT, VLEN, true>(z.out, z.a, idx, z.mask);
 }
 
 template <typename T, int VLEN>
@@ -148,8 +146,8 @@ inline void drive_all_ops() {
   drive_fma<T, VLEN>();
   drive_ite<T, VLEN>();
   drive_load_store<T, VLEN>();
-  drive_gather_scatter<T, VLEN, std::int32_t>();
-  drive_gather_scatter<T, VLEN, std::int64_t>();
+  drive_gather<T, VLEN, std::int32_t>();
+  drive_gather<T, VLEN, std::int64_t>();
   drive_reduce<T, VLEN>();
 }
 
