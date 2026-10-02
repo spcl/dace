@@ -1850,28 +1850,9 @@ class __int_floor(int_floor):
 #: Unmangled alias: ``__int_floor`` named inside a class body becomes ``_symbol__int_floor``.
 operator_int_floor = __int_floor
 
-
-class PyMod(DaceFunction):
-    """ Python's modulo, the meaning of ``%``: the quotient is floored, so the result takes the sign of the divisor. """
-
-    @classmethod
-    def eval(cls, x, y):
-        if y == 0:
-            return None
-        folded = sympy.Mod(x, y)  # SymPy's Mod is floored too, so everything it simplifies holds here
-        if not isinstance(folded, sympy.Mod):
-            return folded
-        if folded.args != (x, y):
-            return cls(*folded.args)
-        return None
-
-    def _eval_is_integer(self):
-        return self.args[0].is_integer and self.args[1].is_integer
-
-    def _eval_is_nonnegative(self):
-        if self.args[1].is_positive:
-            return True
-        return None
+#: Python's modulo, the meaning of ``%``: the quotient is floored, so the result takes the sign of the divisor, which is
+#: SymPy's ``Mod``.
+PyMod = sympy.Mod
 
 
 class CMod(DaceFunction):
@@ -3172,7 +3153,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(PyMod, a, b)
+        return _construct_function_uncached(PyMod, a, b, evaluate=False)
 
     @staticmethod
     def _unary_minus(a):
@@ -4231,15 +4212,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return cpf_lowering.c_common_type(types)
 
     def _print_binary_call(self, name: str, expr):
-        return '%s(%s, %s)' % (name, self._print(expr.args[0]), self._print(expr.args[1]))
+        # Through the function printer, so that the dialect picks the helper's spelling
+        return self._print(sympy.Function(name)(*expr.args))
 
-    def _print_PyMod(self, expr):
+    def _print_Mod(self, expr):
         # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
         if not self.cpp_mode or nonnegative_integers(*expr.args):
             return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         return self._print_binary_call('py_mod', expr)
-
-    _print_Mod = _print_PyMod  # SymPy's own Mod is floored as well
 
     def _print_CMod(self, expr):
         if not self.cpp_mode:

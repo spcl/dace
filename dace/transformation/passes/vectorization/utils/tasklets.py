@@ -163,9 +163,9 @@ def emit_op(op_: str) -> str:
 
 
 def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
-    """C++ rendering of a binary operator in the CPP fallback lane loop; ``%`` is ``c_mod``, which takes floats."""
+    """C++ rendering of a binary operator in the CPP fallback lane loop; ``%`` floors, as ``py_mod``."""
     if op_ == "%":
-        return f"c_mod({l_op}, {r_op})"
+        return f"py_mod({l_op}, {r_op})"
     return f"({l_op} {op_} {r_op})"
 
 
@@ -381,7 +381,7 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
     else:
         if op_ in BINARY_OPERATORS:
             # Constant operand emitted bare; array operand indexed ``[_vi]``.
-            # ``binop_cpp`` renders ``%`` as ``c_mod``, every other operator infix.
+            # ``binop_cpp`` renders ``%`` as ``py_mod``, every other operator infix.
             l_operand = rhs_left if rhs_left == const1_ else f"{rhs_left}[_vi]"
             r_operand = rhs_right if rhs_right == const2_ else f"{rhs_right}[_vi]"
             code_lines.append(f"{lhs_expr} = {binop_cpp(l_operand, op_, r_operand)}{comparison_suffix};")

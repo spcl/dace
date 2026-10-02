@@ -245,28 +245,52 @@ def _strip_power_exponent_cast(src: str) -> str:
     return ast.unparse(tree)
 
 
-#: Floored modulo spellings renamed to ``py_mod``; a bare ``%`` is C's and stays.
+#: Floored modulo spellings, renamed to ``py_mod``; C's, renamed to ``c_mod``. A ``%`` in Python code floors.
 FLOORED_MODULO_NAMES = frozenset({'Mod', 'PyMod', 'FtnModulo', 'ftn_modulo'})
+C_MODULO_NAMES = frozenset({'CMod', 'FtnMod', 'ftn_mod'})
 
 
 class ModuloToPyModExpander(ast.NodeTransformer):
-    """Rename every floored modulo call (``PyMod(a, b)``, ``FtnModulo(a, b)``, ...) to ``py_mod(a, b)``."""
+    """Rename every modulo to a call of the runtime function: ``a % b``, ``PyMod(a, b)`` and ``FtnModulo(a, b)`` to
+    ``py_mod(a, b)``, ``CMod(a, b)`` and ``FtnMod(a, b)`` to ``c_mod(a, b)``."""
 
     def __init__(self) -> None:
         super().__init__()
         self.renamed = False
 
+    @staticmethod
+    def call(name: str, args: list[ast.expr], like: ast.AST) -> ast.Call:
+        return ast.copy_location(ast.Call(func=ast.Name(id=name, ctx=ast.Load()), args=args, keywords=[]), like)
+
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
-        if isinstance(node.func, ast.Name) and node.func.id in FLOORED_MODULO_NAMES:
-            node.func = ast.copy_location(ast.Name(id="py_mod", ctx=ast.Load()), node.func)
+        if isinstance(node.func, ast.Name) and node.func.id in FLOORED_MODULO_NAMES | C_MODULO_NAMES:
+            node.func = ast.copy_location(
+                ast.Name(id="py_mod" if node.func.id in FLOORED_MODULO_NAMES else "c_mod", ctx=ast.Load()), node.func)
             self.renamed = True
         return node
 
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)
+        if not isinstance(node.op, ast.Mod) or (isinstance(node.left, ast.Constant)
+                                                and isinstance(node.left.value, str)):
+            return node
+        self.renamed = True
+        return self.call("py_mod", [node.left, node.right], node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        self.generic_visit(node)
+        if not isinstance(node.op, ast.Mod):
+            return node
+        self.renamed = True
+        current = ast.copy_location(ast.parse(ast.unparse(node.target), mode='eval').body, node.target)
+        return ast.copy_location(
+            ast.Assign(targets=[node.target], value=self.call("py_mod", [current, node.value], node)), node)
+
 
 def _rewrite_modulo(src: str) -> str:
-    # Rename floored modulo calls to ``py_mod`` in a Python source string; ``src`` itself when none.
-    if not any(name in src for name in FLOORED_MODULO_NAMES):
+    # Rename modulos to ``py_mod`` and ``c_mod`` in a Python source string; ``src`` itself when none.
+    if '%' not in src and not any(name in src for name in FLOORED_MODULO_NAMES | C_MODULO_NAMES):
         return src
     expander = ModuloToPyModExpander()
     tree = expander.visit(ast.parse(src))
@@ -277,13 +301,16 @@ def _rewrite_modulo(src: str) -> str:
 
 
 _PY_MOD = sympy.Function("py_mod")
+_C_MOD = sympy.Function("c_mod")
 
 
 def _subs_py_mod_symbolic(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    # Rewrite every floored sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``.
-    if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod):
+    # Rewrite every floored modulo ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``, and ``CMod`` to ``c_mod``.
+    if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod, symbolic.CMod):
         return expr
-    return expr.replace(sympy.Mod, _PY_MOD)
+    return expr.replace(lambda e: isinstance(e, sympy.Mod),
+                        lambda e: _PY_MOD(*e.args)).replace(lambda e: isinstance(e, symbolic.CMod),
+                                                            lambda e: _C_MOD(*e.args))
 
 
 def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
@@ -294,7 +321,7 @@ def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
         exprs = list(subset.indices)
     else:
         return False
-    return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod) for x in exprs)
+    return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod, symbolic.CMod) for x in exprs)
 
 
 def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
@@ -357,8 +384,8 @@ class PowerOperatorExpansion(_BodyRewritePass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RewriteModuloToPyMod(_BodyRewritePass):
-    """Spell every floored modulo in an SDFG as ``py_mod``: tasklets, loop and branch conditions, subsets, map
-    ranges and interstate edges. C's ``%`` is left alone."""
+    """Spell every modulo in an SDFG as the runtime call, ``py_mod`` for a floored one (``%``) and ``c_mod`` for C's:
+    tasklets, loop and branch conditions, subsets, map ranges and interstate edges."""
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Scopes)
