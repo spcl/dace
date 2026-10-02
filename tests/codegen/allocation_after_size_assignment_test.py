@@ -75,6 +75,31 @@ def sized_by_assignment_into_a_branch(name: str) -> dace.SDFG:
     return sdfg
 
 
+def sized_by_assignment_inside_both_branches(name: str) -> dace.SDFG:
+    """``K`` is assigned on an edge inside each branch of a conditional, and both loops follow the conditional."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('Nt', dace.int64)
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_array('out', [LENGTH], dace.float64)
+    sdfg.add_transient('b', ['K'], dace.float64)
+
+    head = sdfg.add_state('head', is_start_block=True)
+    branch = ConditionalBlock('branch')
+    sdfg.add_node(branch)
+    for label, condition, size in (('taken', 'Nt > 0', 'Nt'), ('not_taken', 'Nt <= 0', 'Nt + 4')):
+        region = ControlFlowRegion(label)
+        branch.add_branch(dace.properties.CodeBlock(condition), region)
+        enter = region.add_state(f'{label}_enter', is_start_block=True)
+        region.add_edge(enter, region.add_state(f'{label}_sized'), dace.InterstateEdge(assignments={'K': size}))
+    fill = add_fill(sdfg, 'fill')
+    drain = add_drain(sdfg, 'drain')
+    sdfg.add_edge(head, branch, dace.InterstateEdge())
+    sdfg.add_edge(branch, fill, dace.InterstateEdge())
+    sdfg.add_edge(fill, drain, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
 def sized_by_assignment_in_a_nested_sdfg(name: str) -> dace.SDFG:
     """:func:`sized_by_assignment` as the body of a nested SDFG."""
     sdfg = dace.SDFG(name)
@@ -88,11 +113,11 @@ def sized_by_assignment_in_a_nested_sdfg(name: str) -> dace.SDFG:
 
 
 def allocation_and_assignment_lines(sdfg: dace.SDFG):
-    """The line indices of the allocation of ``b`` and of the assignment of ``K``, and whether ``b`` is freed."""
+    """The line indices of the allocation of ``b`` and of the last assignment of ``K``, and whether ``b`` is freed."""
     lines = sdfg.generate_code()[0].clean_code.splitlines()
     # The allocation and the free read differently with and without an aligned allocation.
     alloc = next(i for i, line in enumerate(lines) if re.search(r'\bb = new\b', line))
-    assign = next(i for i, line in enumerate(lines) if re.match(r'\s*K = ', line))
+    assign = max(i for i, line in enumerate(lines) if re.match(r'\s*K = ', line))
     freed = any(re.search(r'delete\[\]\s*b\b|delete\[\]\s*\(\s*b\b', line) for line in lines)
     return alloc, assign, freed
 
@@ -119,6 +144,14 @@ def test_a_size_assigned_into_a_conditional_is_defined_before_the_allocation():
     assert np.allclose(run(sdfg), np.arange(LENGTH))
 
 
+def test_a_size_assigned_inside_both_branches_is_defined_before_the_allocation():
+    sdfg = sized_by_assignment_inside_both_branches('alloc_after_assignment_inside_branches')
+    alloc, assign, freed = allocation_and_assignment_lines(sdfg)
+    assert assign < alloc
+    assert freed, 'the array is never freed'
+    assert np.allclose(run(sdfg), np.arange(LENGTH))
+
+
 def test_a_size_assigned_in_a_nested_sdfg_is_defined_before_the_allocation():
     sdfg = sized_by_assignment_in_a_nested_sdfg('alloc_after_assignment_nested')
     alloc, assign, freed = allocation_and_assignment_lines(sdfg)
@@ -130,4 +163,5 @@ def test_a_size_assigned_in_a_nested_sdfg_is_defined_before_the_allocation():
 if __name__ == '__main__':
     test_a_size_assigned_into_loops_is_defined_before_the_allocation()
     test_a_size_assigned_into_a_conditional_is_defined_before_the_allocation()
+    test_a_size_assigned_inside_both_branches_is_defined_before_the_allocation()
     test_a_size_assigned_in_a_nested_sdfg_is_defined_before_the_allocation()
