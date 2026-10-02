@@ -3,7 +3,7 @@
 
 A diagonal access ``a[i, i]`` (the tile var ``i`` indexes two array dims) is
 NOT a perfect box, so ``classify_tile_access`` reports GATHER and
-``EmitTileOps`` lowers it to a :class:`TileLoad` (gather) (read) / :class:`TileStore` (scatter)
+``EmitTileOps`` lowers it to a :class:`TileGather` (gather) (read) / :class:`TileScatter` (scatter)
 (write) over an affine per-dim index map (``_idx_k[lane] = i + lane``), rather
 than a strided load. This pins the diagonal numerically against the
 unvectorized reference and asserts the gather/scatter lib nodes are emitted.
@@ -16,7 +16,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -107,7 +107,8 @@ def test_floor_division_index_off_the_group_boundary_is_gathered() -> None:
     a, b = np.arange(16.0), np.zeros(16)
     sdfg = half_group_offset_kernel.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
-    assert {tuple(n.gather_dims) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)} == {(0, )}
+    assert {tuple(n.gather_dims)
+            for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)} == {(0, )}
     sdfg(a=a, b=b, N=16)
     np.testing.assert_array_equal(b, [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8])
 

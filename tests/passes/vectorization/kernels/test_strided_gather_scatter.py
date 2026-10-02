@@ -3,7 +3,7 @@
 import pytest
 import dace
 import numpy
-from dace.libraries.tileops import TileLoad
+from dace.libraries.tileops import TileGather
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
@@ -922,7 +922,7 @@ def test_scatter_loop_permissive_tile(n):
     """For-loop data scatter ``dst[idx[i]] = src[i] + 1.0`` tiles on the v2
     path: ``loop_to_map_permissive`` parallelises the scatter loop (the write is
     not uniquely indexed, so plain LoopToMap refuses) and the body descent routes
-    the ``dst[idx[i]]`` store through a :class:`TileStore` (scatter). The result matches
+    the ``dst[idx[i]]`` store through a :class:`TileScatter` (scatter). The result matches
     the unvectorized reference (``n=17`` exercises the masked tail).
 
     Driven through the orchestrator directly (not ``run_vectorization_test``)
@@ -959,7 +959,7 @@ def gather_fp32_data(src: dace.float32[N], idx: dace.int64[N], dst: dace.float32
 
 
 def test_gather_fp32_data_lowers_the_indirection_to_a_tile_load(vectorize_config):
-    """fp32 data + int64 idx: ``src[idx[i]]`` becomes a ``TileLoad``, not a per-lane fan."""
+    """fp32 data + int64 idx: ``src[idx[i]]`` becomes a ``TileGather``, not a per-lane fan."""
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
@@ -977,8 +977,8 @@ def test_gather_fp32_data_lowers_the_indirection_to_a_tile_load(vectorize_config
         vectorize_config=vectorize_config,
     )
 
-    loads = [n for n, _ in vectorized.all_nodes_recursive() if isinstance(n, TileLoad)]
-    assert loads, ("the indirect read did not lower to a TileLoad; the harness only proves SOME tile op "
+    loads = [n for n, node_state in vectorized.all_nodes_recursive() if isinstance(n, TileGather)]
+    assert loads, ("the indirect read did not lower to a TileGather; the harness only proves SOME tile op "
                    "was emitted, which the store alone would satisfy")
 
 

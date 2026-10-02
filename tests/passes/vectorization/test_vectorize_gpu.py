@@ -19,7 +19,7 @@ import dace
 from dace.dtypes import ScheduleType
 from dace.transformation.interstate import LoopToMap
 from dace.libraries.tileops import TileMaskGen, TileBinop
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _TILE_NODE_TYPES
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -112,12 +112,12 @@ def test_assume_even_single_strided_gpu_map_no_mask():
 
 def test_deferred_tile_nodes_are_cuda_stamped():
     """By default the GPU pipeline does NOT expand the tile lib nodes: the SDFG
-    returns with ``TileBinop`` / ``TileLoad`` present, each stamped with the
+    returns with ``TileBinop`` / ``TileGather`` present, each stamped with the
     ``CUDA`` ISA + ``cuda`` implementation, ready for a later
     ``expand_library_nodes()`` (or ``compile()``)."""
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
-    tiles = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_NODE_TYPES)]
+    tiles = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
     assert tiles, "expected tile lib nodes to remain (deferred expansion)"
     for n in tiles:
         assert n.target_isa == "CUDA"
@@ -150,7 +150,7 @@ def test_a_narrow_float_outside_numpy_s_hierarchy_still_vectorizes():
     array therefore died in validation, on the same path fp16 takes without complaint."""
     sdfg = _prep(where_bf16)
     VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
-    assert [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_NODE_TYPES)], \
+    assert [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)], \
         "the bfloat16 comparison did not reach the tile path at all"
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")

@@ -14,7 +14,7 @@ The ``pure`` expansion of :class:`TileBinop` / :class:`TileFMA` /
 Tile-kind operand's own dtype uncast, relying on the C++ compiler's own
 implicit conversion to resolve a mixed-type expression -- fine for every
 ordinary numeric pair, broken for fp16. ``half_disambiguated``
-(``_pure_codegen.py``) now routes a bare ``dace::float16`` value through one
+(``lanes.py``) now routes a bare ``dace::float16`` value through one
 explicit, lossless ``(float)`` hop wherever it would otherwise meet a
 differently-typed sibling operand or an overloaded math function.
 
@@ -38,7 +38,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileUnop
-from dace.libraries.tileops._pure_codegen import half_disambiguated
+from dace.libraries.tileops.lanes import half_disambiguated
 
 
 # The disambiguation rule itself, in isolation.

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the design section 2.3 packed-layout lock.
 
-``TileLoad._src`` and ``TileStore._dst`` must each carry an array whose
+``TileGather._src`` and ``TileScatter._dst`` must each carry an array whose
 stride pattern is either packed C (row-major, no padding) or packed
 Fortran (column-major, no padding). Any other layout raises
 ``NotImplementedError`` at ``validate()`` time -- padded layouts will
@@ -10,36 +10,36 @@ land when per-arch codegen supports them.
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileStore
-from dace.libraries.tileops._pure_codegen import (_strides_match_packed, validate_packed_layout)
+from dace.libraries.tileops import TileGather, TileScatter
+from dace.libraries.tileops.validation import strides_match_packed, validate_packed_layout
 from dace.memlet import Memlet
 
-# _strides_match_packed
+# strides_match_packed
 
 
 def test_packed_c_layout_match_returns_true_for_canonical_strides():
     """``(M, N)`` with strides ``(N, 1)`` is packed C."""
-    assert _strides_match_packed(shape=(8, 16), strides=(16, 1), order="C")
+    assert strides_match_packed(shape=(8, 16), strides=(16, 1), order="C")
 
 
 def test_packed_c_layout_match_returns_false_for_padded_inner_dim():
     """``(M, N)`` with strides ``(N+4, 1)`` is NOT packed C."""
-    assert not _strides_match_packed(shape=(8, 16), strides=(20, 1), order="C")
+    assert not strides_match_packed(shape=(8, 16), strides=(20, 1), order="C")
 
 
 def test_packed_fortran_layout_match_returns_true_for_canonical_strides():
     """``(M, N)`` with strides ``(1, M)`` is packed Fortran."""
-    assert _strides_match_packed(shape=(8, 16), strides=(1, 8), order="F")
+    assert strides_match_packed(shape=(8, 16), strides=(1, 8), order="F")
 
 
 def test_packed_fortran_layout_match_returns_false_for_padded():
     """``(M, N)`` with strides ``(1, M+4)`` is NOT packed Fortran."""
-    assert not _strides_match_packed(shape=(8, 16), strides=(1, 12), order="F")
+    assert not strides_match_packed(shape=(8, 16), strides=(1, 12), order="F")
 
 
 def test_packed_match_returns_false_for_length_mismatch():
     """Stride / shape length mismatch is refused."""
-    assert not _strides_match_packed(shape=(8, ), strides=(1, 1), order="C")
+    assert not strides_match_packed(shape=(8, ), strides=(1, 1), order="C")
 
 
 # validate_packed_layout
@@ -96,10 +96,10 @@ def test_validate_accepts_scalar_descriptor_as_noop():
     validate_packed_layout("tl", "_src", sdfg.arrays["S"])
 
 
-# end-to-end through TileLoad / TileStore
+# end-to-end through TileGather / TileScatter
 
 
-def test_tileload_refuses_padded_source_at_validate():
+def test_tile_gather_refuses_padded_source_at_validate():
     """A wired ``_src`` with padded strides triggers ``NotImplementedError``."""
     sdfg = dace.SDFG("tl_padded")
     sdfg.add_array("Src", (8, 16), dace.float64, strides=(20, 1), transient=False)
@@ -107,7 +107,7 @@ def test_tileload_refuses_padded_source_at_validate():
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileLoad("tl", widths=(4, 8))
+    node = TileGather("tl", widths=(4, 8))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:8, 0:16]"))
     state.add_edge(node, "_dst", dst, None, Memlet("Dst[0:4, 0:8]"))
@@ -115,7 +115,7 @@ def test_tileload_refuses_padded_source_at_validate():
         node.validate(sdfg, state)
 
 
-def test_tilestore_refuses_padded_dest_at_validate():
+def test_tile_scatter_refuses_padded_dest_at_validate():
     """A wired ``_dst`` with padded strides triggers ``NotImplementedError``."""
     sdfg = dace.SDFG("ts_padded")
     sdfg.add_array("Src", (4, 8), dace.float64, transient=True)
@@ -123,7 +123,7 @@ def test_tilestore_refuses_padded_dest_at_validate():
     state = sdfg.add_state("s")
     src = state.add_access("Src")
     dst = state.add_access("Dst")
-    node = TileStore("ts", widths=(4, 8))
+    node = TileScatter("ts", widths=(4, 8))
     state.add_node(node)
     state.add_edge(src, None, node, "_src", Memlet("Src[0:4, 0:8]"))
     state.add_edge(node, "_dst", dst, None, Memlet("Dst[0:8, 0:16]"))

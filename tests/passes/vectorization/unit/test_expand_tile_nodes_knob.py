@@ -20,7 +20,7 @@ import dace
 from dace.transformation.passes.canonicalize import canonicalize
 import pytest
 
-from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
+from dace.libraries.tileops import TileBinop, TileGather, TileMaskGen, TileReduce, TileScatter, TileUnop
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
@@ -28,10 +28,10 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
 
 TILE_LIB_NODE_TYPES = (
     TileBinop,
-    TileLoad,
+    TileGather,
     TileMaskGen,
     TileReduce,
-    TileStore,
+    TileScatter,
     TileUnop,
 )
 

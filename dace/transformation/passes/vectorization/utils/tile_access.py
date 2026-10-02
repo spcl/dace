@@ -5,8 +5,8 @@
 SDFG, how does access vary as the K-dim tile iterates its (W_0, ..., W_{K-1}) lanes?
 
 Target-isa-agnostic, no SDFG mutation. Sole output = :class:`TileAccess` record; emitter consumes
-it to pick a tile lib node (``TileLoad`` / ``TileLoadStrided`` / ``TileLoad`` (``gather_dims``) /
-``TileStore`` / ``TileStore`` (``gather_dims``) / ``TileBroadcast``). Arch intrinsics live in
+it to pick a tile lib node (``TileGather`` / ``TileLoadStrided`` / ``TileGather`` (``gather_dims``) /
+``TileScatter`` / ``TileScatter`` (``gather_dims``) / ``TileBroadcast``). Arch intrinsics live in
 lib-node expansions.
 
 Per-dim classification
@@ -20,7 +20,7 @@ Each subset dim tagged independently as a :class:`PerDimKind`:
 * **AFFINE** -- iter-var(s) as direct symbols, non-unit coeff (``2*i + 3``) or combined (``i + j``).
   Emitter picks strided-load / loop-of-loads / GATHER fallback per arch.
 * **GATHER** -- tile iter-var inside a :class:`Subscript` (``arr[idx[i]]``). Data-dependent; always
-  lowers to TileLoad (gather_dims).
+  lowers to TileGather (gather_dims).
 
 Whole-subset composition (DIAGONAL / TRANSPOSE flags)
 -----------------------------------------------------
@@ -31,7 +31,7 @@ Two composition flags:
 * **diagonal** -- a STRUCTURED_1 iter-var is direct symbol in multiple dims (``arr[i, i]``).
 * **transpose** -- STRUCTURED_1 iter-vars in non-canonical permutation of ``spec.iter_vars``.
 
-Both informational; per locked design both fold into ``TileLoad`` (``gather_dims``) today
+Both informational; per locked design both fold into ``TileGather`` (``gather_dims``) today
 (diagonal → 1-D index tile; transpose → permuted index tile or transpose intrinsic).
 
 dim_strides convention
@@ -822,9 +822,9 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
     dividend, divisor = expr.args
     # Divisor: positive integer OR symbolic (e.g. ``DV`` in ``i // DV``). Per user direction
     # 2026-06-10 (tile dim must be a multiple of replicate factor):
-    # * Static: TileLoad construction validates ``W % k == 0``, ValueError on violation.
+    # * Static: TileGather construction validates ``W % k == 0``, ValueError on violation.
     # * Symbolic: not statically verifiable; codegen emits ``__l / DV``, CORRECT only when
-    #   ``W % DV == 0`` at runtime (user responsibility, documented on TileLoad property).
+    #   ``W % DV == 0`` at runtime (user responsibility, documented on TileGather property).
     #   Non-dividing symbolic divisors (e.g. ``test_div_index_symbol[3]``: DV=3, W=8) give wrong
     #   results -- by-design refusal, not a codegen bug.
     # Refuse floats: access exprs integer-valued; float divisor = upstream pass leaked a numeric

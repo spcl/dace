@@ -26,7 +26,7 @@ import dace
 from dace import nodes
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
@@ -101,7 +101,7 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
     # One reduction buffer per accumulator, and one per-lane select per accumulator. The counter
     # used to reach its buffer through an unmasked constant broadcast and no select at all, so it
     # is the SECOND select that this pins -- a count of one is the old miscompile.
-    assert len(_tile_nodes(sdfg, 'TileStore', into='_red_buf')) == 2, 'expected two reduction buffers'
+    assert len(_tile_nodes(sdfg, 'TileScatter', into='_red_buf')) == 2, 'expected two reduction buffers'
     selects = _tile_nodes(sdfg, 'TileITE')
     assert len(selects) == 2, (f"expected a per-lane select for the float accumulator AND the counter, "
                                f"got {[n.label for n in selects]}")

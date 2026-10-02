@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.passes.canonicalize import canonicalize

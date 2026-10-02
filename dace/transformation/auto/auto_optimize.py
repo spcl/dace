@@ -601,6 +601,10 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
 
     if not isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck, CopyLibraryNode, FillLibraryNode)):
         return False
+    # A node that opts out of the selection chose its own lowering: a masked tile copy is a ``CopyLibraryNode`` but is
+    # lowered from the vectorizer's target ISA.
+    if not node.auto_select_implementation:
+        return False
     impls = type(node).implementations
     # The rule, both halves. A node opens its own parallel region only when nothing re-enters it
     # (:func:`libnode_is_sequential`) AND its own schedule would run as an OpenMP team

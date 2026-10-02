@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops.nodes.tile_binop import edge_moves_a_tile
+from dace.libraries.tileops.validation import edge_moves_a_tile
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim

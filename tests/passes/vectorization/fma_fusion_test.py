@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.symbolic import fma, pystr_to_symbolic
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
@@ -97,10 +97,10 @@ def test_fuse_pass_refuses_reused_intermediate():
 
 
 def test_tile_fma_registered():
-    """``TileFMA`` exposes the pure + cutile + all six ISA expansions."""
+    """``TileFMA`` exposes the pure + all six ISA expansions."""
     node = TileFMA("fma", widths=[8], kind_a="Tile", kind_b="Tile", kind_c="Tile")
     impls = set(node.implementations)
-    assert {"pure", "cutile", "scalar", "avx512", "avx2", "neon", "sve", "cuda"} <= impls
+    assert {"pure", "scalar", "avx512", "avx2", "neon", "sve", "cuda"} <= impls
     assert node.default_implementation == "pure"
 
 

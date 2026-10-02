@@ -37,7 +37,7 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import STRIDE_GUARD_PREFIX
+from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 N = dace.symbol("N")

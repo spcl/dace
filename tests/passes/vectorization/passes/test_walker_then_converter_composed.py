@@ -203,21 +203,21 @@ def _build_full_io_binop_kernel():
 
 
 def test_walker_extends_load_and_store_then_converter_replaces_tasklet():
-    """End-to-end: walker stages BOTH read (TileLoad) AND write (TileStore) sides, then
+    """End-to-end: walker stages BOTH read (TileGather) AND write (TileScatter) sides, then
     converter replaces the in-body binop tasklet with TileBinop. The body NSDFG should
     have:
 
     * 0 raw tasklets,
-    * >= 1 TileLoad on the read boundary,
-    * exactly 1 TileStore on the write boundary,
+    * >= 1 TileGather on the read boundary,
+    * exactly 1 TileScatter on the write boundary,
     * exactly 1 TileBinop in the middle.
     """
-    from dace.libraries.tileops import TileLoad, TileStore
+    from dace.libraries.tileops import TileGather, TileScatter
     sdfg, inner = _build_full_io_binop_kernel()
     InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
     ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0, "expected no raw tasklets after composed pipeline"
-    assert _count(body, TileLoad) >= 1, "expected at least one TileLoad on the read boundary"
-    assert _count(body, TileStore) == 1, "expected exactly one TileStore on the write boundary"
+    assert _count(body, TileGather) >= 1, "expected at least one TileGather on the read boundary"
+    assert _count(body, TileScatter) == 1, "expected exactly one TileScatter on the write boundary"
     assert _count(body, TileBinop) == 1, "expected exactly one TileBinop in the middle"

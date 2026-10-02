@@ -61,10 +61,9 @@ def k1_scatter(A: dace.float64[N_SCATTER], idx: dace.int64[N_SCATTER], B: dace.f
 def test_k1_scatter_matches_reference():
     """K=1 ``B[idx[i]] = A[i]`` (scatter) -- bit-equal to the unvectorised reference.
 
-    Exercises the symmetric scatter path through the walker (TileStore with
-    ``gather_dims`` lowering via :class:`ExpandTileStorePure` because
-    ``make_store_tasklet`` now delegates to pure when ``gather_dims`` is set,
-    mirroring the gather load fix in commit 4ad424945).
+    Exercises the symmetric scatter path through the walker (TileScatter with
+    ``gather_dims`` lowering through the pure expansion, because a store with
+    ``gather_dims`` has no header lowering).
     """
     n = 8
     rng = np.random.default_rng(seed=n)
@@ -105,7 +104,7 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     via :func:`compute_per_iter_var_dep_mask` which walks interstate edges
     to resolve post-Bypass per-lane symbols (``__sym_<> = idx[i]`` becomes
     "dep on i, not on j"). The materialiser receives the mask explicitly
-    and emits ``(W_0, ONE)`` per the cuTile contract.
+    and emits ``(W_0, ONE)``.
     """
     m, n = 8, 8
     vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)

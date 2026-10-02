@@ -73,7 +73,7 @@ def test_a_small_constant_copy_is_the_only_one_that_takes_the_single_call():
     assert is_parallel_cpu_transfer_size(threshold)
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'vectorized', 'Auto', 'GPUAuto', 'CUDA', 'PBLAS', 'cutile'])
+@pytest.mark.parametrize('implementation', ['CPU', 'vectorized', 'Auto', 'GPUAuto', 'CUDA', 'PBLAS'])
 def test_implementations_that_lower_onto_a_runtime_are_not_selectable(implementation):
     """Named one by one rather than filtered on ``environments``, which reports none for all of these."""
     assert implementation not in RENDERABLE_IMPLEMENTATIONS

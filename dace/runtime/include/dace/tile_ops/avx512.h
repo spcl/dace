@@ -11,50 +11,14 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "dace/tile_ops/common.h"
+
 #if !defined(__AVX512F__)
 #error Included the AVX-512 tile-op header without AVX-512 support (build with -mavx512f)
 #endif
 
 namespace dace {
 namespace tileops {
-
-// Per-lane binary op (scalar reference semantics; used for fallback paths and
-// the comparison / logical / integer cases).
-template <typename T, char Op>
-inline T tile_apply(T a, T b) {
-  if constexpr (Op == '+')
-    return a + b;
-  else if constexpr (Op == '-')
-    return a - b;
-  else if constexpr (Op == '*')
-    return a * b;
-  else if constexpr (Op == '/')
-    return a / b;
-  else if constexpr (Op == '%')
-    return c_mod(a, b);
-  else if constexpr (Op == 'p')
-    return py_mod(a, b);
-  else if constexpr (Op == 'm')
-    return std::min(a, b);
-  else if constexpr (Op == 'M')
-    return std::max(a, b);
-  else if constexpr (Op == '<')
-    return (a < b) ? T(1) : T(0);
-  else if constexpr (Op == 'l')
-    return (a <= b) ? T(1) : T(0);
-  else if constexpr (Op == '>')
-    return (a > b) ? T(1) : T(0);
-  else if constexpr (Op == 'g')
-    return (a >= b) ? T(1) : T(0);
-  else if constexpr (Op == '=')
-    return (a == b) ? T(1) : T(0);
-  else if constexpr (Op == '!')
-    return (a != b) ? T(1) : T(0);
-  else if constexpr (Op == '&')
-    return (a && b) ? T(1) : T(0);
-  else /* '|' */
-    return (a || b) ? T(1) : T(0);
-}
 
 // True iff ``Op`` has a direct ``_mm512_<op>_{ps,pd}`` form (the arithmetic ops).
 template <char Op>
@@ -110,7 +74,6 @@ inline void avx512_arith_pd(double* __restrict__ out, __m512d va, __m512d vb, __
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask) {
-#if defined(__AVX512F__)
   if constexpr (avx512_is_simd_arith<Op>() && std::is_same<T, float>::value) {
     constexpr int W = 16;
     int i = 0;
@@ -159,8 +122,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
     }
     return;
   }
-#endif
-  // Scalar path: comparisons / logical / integer types / no-AVX512 build.
+  // Scalar path: comparisons / logical / integer types.
   for (int i = 0; i < VLEN; ++i) {
     const T av = BroadcastA ? a[0] : a[i];
     const T bv = BroadcastB ? b[0] : b[i];
@@ -174,12 +136,11 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 // tile_fma
 // out[i] = fma(a, b, c) = a*b + c (single rounding). fp32/fp64 -> AVX-512 W-chunk
 // fused multiply-add (``_mm512_fmadd_p{s,d}``) + a scalar ``std::fma`` tail;
-// integer types / a no-AVX512 build take the scalar ``std::fma`` loop. ``std::fma``
+// integer types take the scalar ``std::fma`` loop. ``std::fma``
 // everywhere (native FMA is single-rounded too) so pure and ISA agree bit-for-bit.
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                      const bool* __restrict__ mask) {
-#if defined(__AVX512F__)
   if constexpr (std::is_same<T, float>::value) {
     constexpr int W = 16;
     int i = 0;
@@ -236,8 +197,7 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
     }
     return;
   }
-#endif
-  // Integer types / no-AVX512 build: scalar std::fma (bit-exact with the pure path).
+  // Integer types: scalar std::fma (bit-exact with the pure path).
   for (int i = 0; i < VLEN; ++i) {
     const T av = BroadcastA ? a[0] : a[i];
     const T bv = BroadcastB ? b[0] : b[i];
@@ -246,50 +206,6 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
       out[i] = mask[i] ? T(std::fma(av, bv, cv)) : T(0);
     else
       out[i] = T(std::fma(av, bv, cv));
-  }
-}
-
-// merge / load / store / gather / scatter
-// Correct per-lane forms (matching scalar.h); SIMD-ized incrementally. Producers
-// ZERO-FILL inactive + guard the read; writers RMW skip-inactive.
-// Per-lane unary op (op codes: n neg, ! not, a abs, e exp, l log, s sqrt,
-// S sin, C cos, f floor, c ceil, t tanh). The transcendentals have no portable
-// SIMD intrinsic, so this shares scalar.h's lane-loop form in every backend.
-template <typename T, char Op>
-inline T tile_unop_apply(T a) {
-  if constexpr (Op == 'n')
-    return -a;
-  else if constexpr (Op == '!')
-    return T(!a);
-  else if constexpr (Op == 'a')
-    return std::abs(a);
-  else if constexpr (Op == 'e')
-    return std::exp(a);
-  else if constexpr (Op == 'l')
-    return std::log(a);
-  else if constexpr (Op == 's')
-    return std::sqrt(a);
-  else if constexpr (Op == 'S')
-    return std::sin(a);
-  else if constexpr (Op == 'C')
-    return std::cos(a);
-  else if constexpr (Op == 'f')
-    return std::floor(a);
-  else if constexpr (Op == 'c')
-    return std::ceil(a);
-  else /* 't' */
-    return std::tanh(a);
-}
-
-// out[i] = <op> a-operand ; ZERO-FILL inactive (operand read is in-tile).
-template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
-inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; ++i) {
-    const T av = Broadcast ? a[0] : a[i];
-    if constexpr (Masked)
-      out[i] = mask[i] ? tile_unop_apply<T, Op>(av) : T(0);
-    else
-      out[i] = tile_unop_apply<T, Op>(av);
   }
 }
 
@@ -432,17 +348,6 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-template <typename T, typename IdxT, int VLEN, bool Masked>
-inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
-                         const bool* __restrict__ mask) {
-  for (int i = 0; i < VLEN; ++i) {
-    if constexpr (Masked) {
-      if (mask[i]) dst[idx[i]] = src[i];
-    } else
-      dst[idx[i]] = src[i];
-  }
-}
-
 // tile_mask_gen
 // out[l] = (base + l) < ub. AVX-512: 64-bit-lane threshold compare
 // (``_mm512_cmplt_epi64_mask``, W=8) -> ``__mmask8`` expanded to bool bytes;
@@ -459,22 +364,6 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
     for (int j = 0; j < W; ++j) out[i + j] = (k >> j) & 1;
   }
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
-}
-
-// tile_reduce: reduce a VLEN-lane tile to one scalar ('+', '*', 'm', 'M'); full reductions only. Uses the
-// balanced pairwise fold of the other backends, not ``_mm512_reduce_*``, to stay bit-identical.
-template <typename T, int VLEN, char Op>
-inline T tile_reduce(const T* __restrict__ src) {
-  T buf[VLEN];
-  for (int i = 0; i < VLEN; ++i) buf[i] = src[i];
-  int n = VLEN;
-  while (n > 1) {
-    int half = n / 2;
-    for (int i = 0; i < half; ++i) buf[i] = tile_apply<T, Op>(buf[2 * i], buf[2 * i + 1]);
-    if (n & 1) buf[half] = buf[n - 1];
-    n = half + (n & 1);
-  }
-  return buf[0];
 }
 
 }  // namespace tileops

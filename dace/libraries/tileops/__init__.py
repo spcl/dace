@@ -1,24 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Multi-dim fixed-length tile-op library nodes.
+"""Library nodes for fixed-width tiles of one to three dims, the IR of the masked tile vectorization.
 
-These library nodes are the IR for the K-dim (``K \\in \\{1, 2\\}``)
-masked tile vectorization track. The 4 MVP nodes cover axpy / triad /
-5-point stencil correctness gates; the post-MVP set adds ternary blends,
-indirect accesses and reductions. Each node carries a ``widths`` tuple
-(per-dim register-tile widths, innermost-last) and an optional ``_mask``
-connector enabled via a ``has_mask`` constructor knob.
+A node carries the ``widths`` of its tile, innermost last. Elementwise nodes read each operand as a ``Tile``, a
+``Scalar`` or an inline ``Symbol`` (:mod:`~dace.libraries.tileops.kinds`), and the ones that can be gated take a
+``_mask`` connector. Every node lowers as a loop over the lanes, and for K=1 most also as a call into the header of an
+ISA backend; :mod:`~dace.libraries.tileops.dispatch` selects between them.
 
-``TileBinop`` accepts a ``Symbol``-kind operand (a free-symbol
-expression embedded inline in the tasklet body), so a standalone
-``TileBroadcastSymbol`` lib node is unnecessary — outer-scope symbols
-flow into ``TileBinop`` directly without an intermediate broadcast.
-
-Layout mirrors :mod:`dace.libraries.standard`: ``nodes`` exports the
-:class:`LibraryNode` subclasses; ``environments`` is reserved for
-per-arch toolchain shims (empty in T1 — pure expansions only).
+Layout mirrors :mod:`dace.libraries.standard`: ``nodes`` holds the library nodes and ``environments`` the toolchain
+environments of the ISA backends.
 """
 from dace.library import register_library
-from .nodes import *
-from .environments import *
+from dace.libraries.tileops.nodes import *
+from dace.libraries.tileops.environments import *
 
 register_library(__name__, "tileops")

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import _dispatch
+from dace.libraries.tileops import dispatch
 from dace.libraries.tileops.nodes.tile_reduce import (
     ExpandTileReduceAVX512,
     ExpandTileReduceScalar,
@@ -31,23 +31,25 @@ def test_reduce_selects_isa_for_full_k1(isa: str) -> None:
     # arch-native (``host_supported_isas``), so an ISA foreign to this host
     # (e.g. ARM_NEON on an x86 box) must be REFUSED with a ValueError, not
     # silently mismapped -- both branches are the contract here.
-    n = TileReduce("t", op="+", widths=(8, ))
+    sdfg, st, n = _reduce_sdfg(dace.float64, 8)
     n.target_isa = isa
-    impl = _dispatch.ISA_TO_IMPL[isa]
+    impl = dispatch.ISA_TO_IMPL[isa]
     assert impl in n.implementations
-    if isa != "SCALAR" and isa not in _dispatch.host_supported_isas():
+    if isa != "SCALAR" and isa not in dispatch.host_supported_isas():
         with pytest.raises(ValueError, match="not executable on this host"):
-            _dispatch.select_tile_implementation(n)
+            dispatch.select_tile_implementation(n, st)
         return
-    assert _dispatch.select_tile_implementation(n) == impl
+    assert dispatch.select_tile_implementation(n, st) == impl
 
 
 def test_reduce_kge2_falls_back_to_pure_on_cpu():
     # K>=2 always lowers to 'pure' regardless of ISA (the intrinsic is a K==1
     # horizontal fold; the selector routes K>=2 to the pure per-lane expansion).
     n = TileReduce("t", op="+", widths=(4, 8))
+    st = dace.SDFG("cpu_selection_reduce").add_state()
+    st.add_node(n)
     n.target_isa = "AVX512"
-    assert _dispatch.select_tile_implementation(n) == "pure"
+    assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):
@@ -85,13 +87,12 @@ def test_reduce_cpu_emits_intrinsic_for_full_k1():
     assert "tile_reduce<double, 8, 'M'>" in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
 
 
-def test_reduce_cpu_falls_back_to_pure_for_masked_and_axis():
+def test_reduce_cpu_selects_pure_for_masked_and_axis():
     # The tile_reduce intrinsic takes no mask and only does a full reduction, so a
-    # masked reduce or a single-axis reduce delegates to the pure per-lane expansion.
-    sdfg, st, n = _reduce_sdfg(dace.float64, 8, "+", mask=True)
-    assert "tile_reduce" not in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
-    sdfg, st, n = _reduce_sdfg(dace.float64, 8, "+", axis=1)
-    assert "tile_reduce" not in ExpandTileReduceScalar.expansion(n, st, sdfg).code.as_string
+    # masked reduce or a single-axis reduce lowers to the pure per-lane loop.
+    for sdfg, st, n in (_reduce_sdfg(dace.float64, 8, "+", mask=True), _reduce_sdfg(dace.float64, 8, "+", axis=1)):
+        n.target_isa = "SCALAR"
+        assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def _build_host_reduce_sdfg(W, op, dtype=dace.float64, target_isa=None):
@@ -101,7 +102,7 @@ def _build_host_reduce_sdfg(W, op, dtype=dace.float64, target_isa=None):
     ``detect_host_isa``). A pinned ISA must be one the host can execute -- callers guard
     with ``host_supported_isas`` -- else ``select_tile_implementation`` refuses it."""
     op_tag = {"+": "add", "*": "mul", "min": "min", "max": "max"}[op]
-    isa = target_isa if target_isa is not None else _dispatch.detect_host_isa()
+    isa = target_isa if target_isa is not None else dispatch.detect_host_isa()
     sdfg = dace.SDFG(f"tile_reduce_hostisa_{W}_{op_tag}_{isa.lower()}")
     sdfg.add_array("SRC", (W, ), dtype, transient=False)
     sdfg.add_array("DST", (1, ), dtype, transient=False)
@@ -112,7 +113,7 @@ def _build_host_reduce_sdfg(W, op, dtype=dace.float64, target_isa=None):
     state.add_edge(node, "_dst", state.add_access("DST"), None, dace.Memlet("DST[0]"))
     # Force the concrete host ISA backend (not the default 'pure').
     node.target_isa = isa
-    node.implementation = _dispatch.select_tile_implementation(node)
+    node.implementation = dispatch.select_tile_implementation(node, state)
     sdfg.expand_library_nodes()
     sdfg.validate()
     return sdfg
@@ -137,7 +138,7 @@ def test_reduce_cpu_end_to_end_numeric(op, ref, W):
     np.testing.assert_allclose(DST[0], ref(SRC), rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.skipif("AVX2" not in _dispatch.host_supported_isas(), reason="host cannot execute AVX2")
+@pytest.mark.skipif("AVX2" not in dispatch.host_supported_isas(), reason="host cannot execute AVX2")
 @pytest.mark.parametrize("op,ref", [("+", np.sum), ("max", np.max)])
 @pytest.mark.parametrize("W", [8, 16, 17])
 def test_reduce_avx2_end_to_end_numeric(op, ref, W):
