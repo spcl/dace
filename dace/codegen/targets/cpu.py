@@ -1355,6 +1355,7 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage == dtypes.StorageType.Register and not on_stack)):
 
             if nodedesc.storage == dtypes.StorageType.Register:
+
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on the heap instead of '
