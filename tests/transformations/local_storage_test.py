@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-import pytest
 import dace
 import numpy as np
 from dace.transformation.dataflow import MapTiling, OutLocalStorage
@@ -235,19 +234,17 @@ class LocalStorageTests(unittest.TestCase):
 
     def test_even(self):
         sdfg = arange.to_sdfg()
-        sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
+        self.assertEqual(applied, 2)
         self.assertTrue(np.array_equal(sdfg(N=16), np.arange(16, dtype=np.int32)))
 
-    # Not strict: what overflows is uninitialized memory, which may happen to hold the expected values.
-    @pytest.mark.xfail(reason='OutLocalStorage copies the whole local buffer back, overflowing the output on a '
-                       'partial tile. The test passed before only because pattern matching applied MapTiling twice '
-                       'instead of OutLocalStorage.')
     def test_uneven(self):
         # For testing uneven decomposition, use longer buffer and ensure
         # it's not filled over
         output = np.ones(20, np.int32)
         sdfg = arange.to_sdfg()
-        sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [5]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [5]}, {}])
+        self.assertEqual(applied, 2)
         dace.propagate_memlets_sdfg(sdfg)
         sdfg(N=16, __return=output)
         self.assertTrue(np.array_equal(output[:16], np.arange(16, dtype=np.int32)))
