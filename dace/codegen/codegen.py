@@ -18,6 +18,7 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -279,6 +280,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         cuda_args = config.Config.get('compiler', 'cuda', 'args')
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
+
+    # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
+    # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
+    RelaxIntegerPowers().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
