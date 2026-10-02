@@ -28,6 +28,31 @@ def branch_code(operand) -> str:
     return symbolic.symstr(operand) if symbolic.issymbolic(operand) else operand
 
 
+def where_as_merge_node(state: SDFGState, cond: str, left: str, right: str, out: str,
+                        left_node: Optional[nodes.AccessNode], right_node: Optional[nodes.AccessNode],
+                        generated_nodes: Optional[Set[nodes.Node]]) -> bool:
+    """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode where that node says it exactly: three
+    arrays of one type (so no cast), and a condition that does not widen the result."""
+    from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
+
+    arrays = state.sdfg.arrays
+    if left not in arrays or right not in arrays or arrays[left].dtype != arrays[right].dtype:
+        return False
+    if list(broadcast_together(arrays[cond].shape, arrays[out].shape)[0]) != list(arrays[out].shape):
+        return False
+    node = MergeLibraryNode('_where_')
+    new_nodes = [node, state.add_write(out)]
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, new_nodes[1], None, Memlet.from_array(out, arrays[out]))
+    for conn, name, given in ((node.TRUE_CONNECTOR_NAME, left, left_node),
+                              (node.FALSE_CONNECTOR_NAME, right, right_node), (node.MASK_CONNECTOR_NAME, cond, None)):
+        src = given or state.add_read(name)
+        new_nodes += [] if given else [src]
+        state.add_edge(src, None, node, conn, Memlet.from_array(name, arrays[name]))
+    if generated_nodes is not None:
+        generated_nodes.update(new_nodes)
+    return True
+
+
 @oprepo.replaces('numpy.where')
 def _array_array_where(visitor: ProgramVisitor,
                        sdfg: SDFG,
@@ -138,40 +163,9 @@ def _array_array_where(visitor: ProgramVisitor,
                     generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
-    elif (left_arr is not None and right_arr is not None and left_cast is None and right_cast is None
-          and list(cond_out_shape) == list(out_shape)):
-        # A per-element select IS Fortran ``MERGE``, so hand the whole thing to the library node
-        # and let its expansion do the broadcasting -- that keeps one implementation of the select
-        # for both frontends and leaves the choice of lowering (vectorised, GPU, a vendor call) to
-        # whoever picks the node's implementation later.
-        #
-        # Restricted to the case the node can express exactly: three real arrays, no cast to insert
-        # (the node's tasklet assigns straight across and has nowhere to put one), and a condition
-        # that broadcasts into the result rather than widening it.
-        from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
-
-        node = MergeLibraryNode('_where_')
-        state.add_node(node)
-        n_cond = state.add_read(cond_operand)
-        n_left = left_operand_node if left_operand_node else state.add_read(left_operand)
-        n_right = right_operand_node if right_operand_node else state.add_read(right_operand)
-        n_out = state.add_write(out_operand)
-        state.add_edge(n_left, None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME,
-                       Memlet.from_array(left_operand, left_arr))
-        state.add_edge(n_right, None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME,
-                       Memlet.from_array(right_operand, right_arr))
-        state.add_edge(n_cond, None, node, MergeLibraryNode.MASK_CONNECTOR_NAME,
-                       Memlet.from_array(cond_operand, cond_arr))
-        state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, n_out, None,
-                       Memlet.from_array(out_operand, out_arr))
-        if generated_nodes is not None:
-            generated_nodes.add(node)
-            generated_nodes.add(n_cond)
-            generated_nodes.add(n_out)
-            if not left_operand_node:
-                generated_nodes.add(n_left)
-            if not right_operand_node:
-                generated_nodes.add(n_right)
+    elif where_as_merge_node(state, cond_operand, left_operand, right_operand, out_operand, left_operand_node,
+                             right_operand_node, generated_nodes):
+        pass
     else:
         inputs = {}
         inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)
