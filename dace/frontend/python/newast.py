@@ -320,6 +320,13 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
+def is_affine_in(expr, sym) -> bool:
+    """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
+    expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
+    matches = [f for f in expr.free_symbols if str(f) == str(sym)]
+    return not matches or (expr.is_polynomial(matches[0]) and sympy.degree(expr, matches[0]) <= 1)
+
+
 def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
     for n, ostep in enumerate(orng.strides()):
         if ostep == 1:
@@ -354,6 +361,39 @@ def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'Program
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
+
+
+def _subset_symbols(subset: subsets.Subset) -> Set[symbolic.symbol]:
+    result = set()
+    for dim in subset:
+        if not isinstance(dim, tuple):
+            dim = [dim]
+        for r in dim:
+            if isinstance(r, symbolic.SymExpr):
+                r = r.expr
+            if symbolic.issymbolic(r):
+                result.update(s for s in r.free_symbols if isinstance(s, symbolic.symbol))
+    return result
+
+
+def _retype_symbols_like(subset: subsets.Subset, reference: subsets.Subset) -> subsets.Subset:
+    """
+    Replaces the symbols of a subset, by name, with the same-named symbols of another subset.
+
+    Symbols compare by name *and* dtype, and a memlet built from a string carries default-typed symbols. Without this,
+    bounds of the two subsets could not be ordered (e.g., ``N - 1`` and ``N - 2`` if ``N`` is typed in only one).
+
+    :param subset: The subset whose symbols to replace. It is not modified; a copy is returned if any symbol differs.
+    :param reference: The subset whose symbols to use.
+    :return: The subset, or a retyped copy of it.
+    """
+    by_name = {s.name: s for s in _subset_symbols(reference)}
+    repl = {s: by_name[s.name] for s in _subset_symbols(subset) if s.name in by_name and s != by_name[s.name]}
+    if not repl:
+        return subset
+    subset = copy.deepcopy(subset)
+    subset.replace(repl)
+    return subset
 
 
 def add_indirection_subgraph(sdfg: SDFG,
@@ -765,8 +805,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3356,8 +3397,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
+                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
+                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                             repl_dict = {}
                             break
@@ -3841,7 +3883,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
-                read_rng = self.views[result][1].subset
+                # The view's memlet is built from a string, so match its symbols to the target's by name
+                read_rng = _retype_symbols_like(self.views[result][1].subset, new_rng)
                 try:
                     needs_copy = not (new_rng.intersects(read_rng) == False)
                 except TypeError:
@@ -3875,7 +3918,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
                 wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
+                memlet = Memlet(data=new_name, subset=str(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
                 with_wcr = False
@@ -3904,7 +3947,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
+                    memlet = Memlet(data=new_name, subset=str(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name
