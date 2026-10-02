@@ -919,7 +919,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         DaCe deliberately routes the declaration and the allocation to two streams so a transient's
         DECLARATION can be hoisted to an outer scope while its ALLOCATION stays in an inner one.
         Fusing is a purely textual merge of two writes, so it is sound only when both land in the
-        same scope with nothing in between. All three of these must hold:
+        same scope with nothing in between. Both of these must hold:
 
         * ``not declared`` -- otherwise ``declare_array`` already emitted ``T *p = nullptr;`` in an
           enclosing scope (a transient whose size depends on a non-free symbol) and registered it in
@@ -933,26 +933,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
           unallocated member. For every other lifetime the dispatcher passes ONE stream for both
           (``declaration_stream = callsite_stream``) and the base writes the declaration immediately
           before the allocation, so merging them changes nothing but the text.
-        * ``arrsize`` is a RUNTIME extent -- a compile-time constant one keeps the split form because
-          GCC rejects the fused spelling. ``heap_alloc_stmt`` emits the element type carrying
-          ``DACE_ALIGN(64)`` (== ``__attribute__((aligned(64)))``), which is load-bearing: it makes
-          ``new`` call the over-aligned ``operator new[](size_t, align_val_t)``. With a constant
-          bound the new-type-id in a DECLARATION names the fixed array type ``double[1]``, whose
-          elements would each need 64-byte alignment at 8 bytes of size -- "error: alignment of array
-          elements is greater than element size". The very same ``new`` expression is accepted as a
-          bare assignment (the split form), and with a runtime bound no fixed array type is formed,
-          so both of those stay legal. No fused spelling avoids this (``::new``, a cast, an aligned
-          type alias and brace-init were all tried), and dropping ``DACE_ALIGN`` would silently
-          de-align the allocation, so a constant-extent heap array stays split.
 
         Registration is untouched: the caller still runs ``define_var(...)`` after this, so
         ``defined_vars`` (and ``declared_arrays``, which only ``declare_array`` populates) resolve
         later accesses exactly as before.
         """
         if declared or declaration_stream is not allocation_stream:
-            return None
-        # The same test the base uses to route a variable-length Register array to the heap.
-        if not symbolic.issymbolic(arrsize, sdfg.constants):
             return None
         return self.array_pointer_declarator(name, nodedesc)
 
@@ -980,21 +966,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                         sdfg: Optional['SDFG'] = None,
                         nodedesc: Optional[dt.Data] = None,
                         data_name: Optional[str] = None) -> str:
-        # A plain ``DACE_ALIGN(64)`` ``new[]`` (paired with ``delete[]`` in heap_free_stmt), and
-        # route the element count through a generated ``<array>_size(...)`` helper when worthwhile
-        # (see _register_size_function) so the allocation extent reads as a named function; fall back
-        # to the classic ``sym2cpp(total_size)`` string (``arrsize``) otherwise.
+        # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one
+        # is worthwhile (_register_size_function).
         count = arrsize
         if sdfg is not None and nodedesc is not None and data_name is not None:
             registered = self._register_size_function(data_name, nodedesc)
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
-
-    def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[dt.Data] = None) -> str:
-        # Pairs with the ``DACE_ALIGN(64)`` allocation above, which is a plain ``new[]``.
-        return ("delete[] %s;\n" if is_array else "delete %s;\n") % alloc_name
+        return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG

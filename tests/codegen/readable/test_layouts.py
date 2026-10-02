@@ -284,10 +284,10 @@ def test_alignment(require_experimental):
     _, experimental = assert_bit_exact(build, 'aligned', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
 
-    # The experimental generator allocates T with the base aligned new[] (T = new T DACE_ALIGN(64)[...]).
+    # The experimental generator allocates T with the base aligned new[], at the descriptor's alignment.
     code = experimental_code(build, 'aligned_inspect')
-    assert any('T = new ' in line and 'DACE_ALIGN' in line for line in code.splitlines()), \
-        'experimental codegen did not use an aligned new[] for T'
+    assert any('T = new (std::align_val_t(128))' in line for line in code.splitlines()), \
+        'experimental codegen did not use a 128-byte aligned new[] for T'
 
 
 if __name__ == '__main__':
