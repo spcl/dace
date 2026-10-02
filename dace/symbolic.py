@@ -144,6 +144,11 @@ def declare_symbol_dtype(name: str, dtype: 'dtypes.typeclass') -> None:
     _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
 
 
+def declared_symbol_dtype(name: str) -> Optional['dtypes.typeclass']:
+    """The dtype the active symbol-dtype authority declares for ``name``, or ``None``."""
+    return _SERIALIZATION_SYMBOL_DTYPES.get().get(name)
+
+
 def symbol_dtype_authority_active() -> bool:
     """Whether an enclosing scope already declares the symbol dtypes that parsing uses."""
     return len(_SERIALIZATION_SYMBOL_DTYPES.ctx_stack) > 1

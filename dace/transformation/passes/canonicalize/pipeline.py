@@ -41,6 +41,7 @@ from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR
                                                        RetargetWCRAccumulator)
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.propagate_memlets import PropagateMemlets
+from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import (PatternApplyOnceEverywhere, PatternMatchAndApply,
@@ -256,6 +257,7 @@ class StructuralCleanup(ppl.Pass):
         walk_fuse = FuseStates()
         walk_fuse.progress = False
         return [
+            EqualizeSymbolDtypes(),
             SymbolDedup(),
             SymbolPropagation(),
             ConstantPropagation(),
@@ -1721,6 +1723,7 @@ class CanonicalizationPipeline(ppl.Pass):
             if self.dump_dir:
                 sdfg.save(os.path.join(self.dump_dir, f'{index:03d}_{label}.sdfgz'), compress=True)
         disable_openmp_sections(sdfg)
+        equalize(sdfg)
         if self.validate:
             sdfg.validate()
         return len(stages)

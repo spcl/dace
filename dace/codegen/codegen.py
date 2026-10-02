@@ -16,6 +16,7 @@ from dace.sdfg import infer_types
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.equalize_symbol_dtypes import equalize
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -360,8 +361,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         lower_implicit_copies(sdfg)
         copies_lifted = True
 
-    # Recursively expand library nodes that have not yet been expanded
+    # Recursively expand library nodes that have not yet been expanded. An expansion builds its bounds from
+    # strings, so the result is rebuilt at the dtypes the SDFG declares before the passes below read it.
     sdfg.expand_library_nodes()
+    equalize(sdfg)
 
     # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.
     if config.Config.get_bool('compiler', 'cpu', 'simd_maps'):

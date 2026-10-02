@@ -38,6 +38,7 @@ from dace.transformation.passes.vectorization.enums import ISA, RemainderStrateg
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
+from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
@@ -981,12 +982,18 @@ class VectorizeMultiDim(ppl.Pipeline):
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
         The K-dim tile is taken over the last ``K`` params of one innermost map of the canonical
-        input (see the class docstring for the input contract).
+        input (see the class docstring for the input contract). Every pass of the pipeline parses names from text, so
+        the whole run is under the dtypes the input declares, with the input rebuilt at them first.
 
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Carry-in from any enclosing pipeline.
         :returns: Whatever the inner pipeline returned (count of rewrites).
         """
+        with equalized(sdfg):
+            return self.vectorize(sdfg, pipeline_results)
+
+    def vectorize(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """The body of :meth:`apply_pass`, once the input is equalized."""
         # Snapshot the caller's SDFG BEFORE any mutation so a later ``VectorizeUnsupported``
         # refusal (an un-tileable body-WCR reduction, or a prep pass that could not lower the
         # kernel to a valid tileable form) can roll the caller-owned object back to this pristine,

@@ -50,6 +50,7 @@ from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation import helpers as xfh
 
@@ -617,7 +618,16 @@ def finalize_for_target(sdfg: SDFG,
     if target not in TARGET_DEVICE:
         raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
     device = TARGET_DEVICE[target]
+    with equalized(sdfg):
+        finalize_stages(sdfg, device, break_anti_dependence)
+    if validate:
+        assert_no_nested_parallel_maps(sdfg, device)
+        sdfg.validate()
+    return sdfg
 
+
+def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence: bool) -> None:
+    """The stages of :func:`finalize_for_target`, for the ``device`` it resolved."""
     # Offload is NOT part of this tail: the caller runs it, so passes can be inserted between
     # canonicalization and the device move (see :func:`offload_to_gpu`). Everything below still
     # requires it to have happened -- the fast GPU library picks (cuBLAS/cuSolverDn/CUB) and the
@@ -670,8 +680,3 @@ def finalize_for_target(sdfg: SDFG,
         banded = BandCarriedLoops().apply_pass(sdfg, {})
         if HoistParallelRegion().apply_pass(sdfg, {}) or banded:
             infer_types.infer_connector_types(sdfg)
-
-    if validate:
-        assert_no_nested_parallel_maps(sdfg, device)
-        sdfg.validate()
-    return sdfg
