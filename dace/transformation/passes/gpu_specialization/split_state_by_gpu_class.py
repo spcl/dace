@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Split mixed-class states into a chain of class-pure CPU / GPU / CPU states.
 
-When a state entangles CPU and GPU work, :class:`AutoSingleStreamGPUScheduler` would fall back to
-:class:`NaiveGPUStreamScheduler`. This preprocess pass rearranges such states into class-pure ones
+When a state entangles CPU and GPU work, :class:`AutoGPUStreamScheduler` would fall back to
+:class:`PerComponentGPUStreamScheduler`. This preprocess pass rearranges such states into class-pure ones
 when the structure allows: independent CPU WCCs and the CPU prefixes of mixed ``[CPU?, GPU, CPU?]``
 WCCs lift into a new predecessor state; CPU suffixes are left trailing.
 

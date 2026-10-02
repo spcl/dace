@@ -80,7 +80,7 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
         raise NotImplementedError(f"{type(self).__name__} did not implement insert_sync_tasklets(sdfg, assignments).")
 
 
-# Naive strategy -- WCC stream assignment + per-edge sync rules
+# Per-component strategy -- WCC stream assignment + per-edge sync rules
 
 
 def is_gpu_global_access(node, state: SDFGState) -> bool:
@@ -107,7 +107,7 @@ def both_within_gpu_kernel(state: SDFGState, src: nodes.Node, dst: nodes.Node) -
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class NaiveGPUStreamScheduler(GPUStreamSchedulingStrategy):
+class PerComponentGPUStreamScheduler(GPUStreamSchedulingStrategy):
     """Stream assignment via weakly-connected-component grouping; per-edge sync rules.
 
     Nodes in one weakly connected component share a stream. Each top-level component gets a fresh
@@ -277,7 +277,7 @@ def crosses_host_device(src: dtypes.StorageType, dst: dtypes.StorageType) -> boo
             or (src in GPU_RESIDENT_STORAGES and dst in CPU_RESIDENT_STORAGES))
 
 
-# Auto single-stream strategy -- state-classified single stream + naive fallback
+# Auto single-stream strategy -- state-classified single stream, per-component fallback
 
 
 class NodeKind(Enum):
@@ -517,12 +517,12 @@ def pooled_gpu_access_nodes(sdfg: SDFG) -> List[nodes.AccessNode]:
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
-    """Default GPU stream strategy: stream 0 everywhere, syncs only at CPU/GPU boundaries.
+class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
+    """Stream 0 everywhere, syncs only at CPU/GPU boundaries.
 
-    Classifies every top-level node as ``CPU`` / ``GPU`` / ``MIXED``. Any ``MIXED`` node (work
-    this strategy can't single-stream) triggers a warning and global fallback to
-    :class:`NaiveGPUStreamScheduler`. Otherwise every GPU consumer binds to stream 0 and
+    Classifies every top-level node as ``CPU`` / ``GPU`` / ``MIXED``. A ``MIXED`` node (work that
+    cannot be single-streamed) raises; :class:`AutoGPUStreamScheduler` falls back instead. Otherwise
+    every GPU consumer binds to stream 0 and
     :meth:`insert_sync_tasklets` splices a one-tasklet *sync state* between any GPU state and
     (a) a CPU successor, (b) a successor via an iedge that reads a GPU-written array, or
     (c) a region-level sink; the original iedge cond/assignments ride the outgoing leg so they
@@ -542,8 +542,7 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         self._synchronize_on_exit: Optional[bool] = synchronize_on_exit
         self._monolithic: bool = monolithic
         # Analysis below is per-instance, rebuilt every ``assign_streams`` call (one SDFG per run).
-        self._fell_back: bool = False
-        self._naive_fallback: Optional['NaiveGPUStreamScheduler'] = None
+        self._per_component_fallback: Optional['PerComponentGPUStreamScheduler'] = None
         self._state_kinds: Dict[SDFGState, NodeKind] = {}
         self._gpu_written: OrderedSet[str] = OrderedSet()
 
@@ -559,14 +558,13 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         # ``SplitStateByGPUClass`` preps for this strategy: it lifts CPU-only WCCs / prefixes out
-        # of mixed states so the classifier sees pure states, reducing Naive fallbacks. Local
+        # of mixed states so the classifier sees pure states, reducing per-component fallbacks. Local
         # import breaks the circular dependency (split pass imports ``classify_node`` / ``NodeKind``).
         from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import (SplitStateByGPUClass)
         return super().depends_on() | {SplitStateByGPUClass}
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
-        self._fell_back = False
-        self._naive_fallback = None
+        self._per_component_fallback = None
         self._state_kinds = {}
         self._gpu_written = OrderedSet()
         # A stream pipeline already ran (e.g. ``GPUStreamPipeline`` before ``sdfg.compile()``): reuse its
@@ -578,18 +576,9 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             require_all_on_device(sdfg)
             return pin_to_stream_zero([node for node, _, _ in find_inner_gpu_consumers(sdfg)])
 
-        # A MIXED top-level node cannot be single-streamed: fall back to Naive for the whole SDFG.
         offenders = mixed_nodes(sdfg)
         if offenders:
-            warnings.warn(
-                f"AutoSingleStreamGPUScheduler: {len(offenders)} top-level node(s) classified as MIXED "
-                f"(first: {offenders[0]}); falling back to NaiveGPUStreamScheduler.",
-                UserWarning,
-                stacklevel=2,
-            )
-            self._fell_back = True
-            self._naive_fallback = NaiveGPUStreamScheduler()
-            return self._naive_fallback.assign_streams(sdfg)
+            return self.assign_mixed_streams(sdfg, offenders)
 
         # Only root blocks are classified; nested SDFGs fold into their state, so syncs stay at the root.
         self._state_kinds = {block: classify_root_block(block) for block in sdfg.nodes()}
@@ -597,6 +586,10 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         # Pooled transients allocate and free on their access node's stream, so they get stream 0 too.
         consumers = [node for node, _, _ in find_inner_gpu_consumers(sdfg)]
         return pin_to_stream_zero(consumers + pooled_gpu_access_nodes(sdfg))
+
+    def assign_mixed_streams(self, sdfg: SDFG, offenders: List[str]) -> Dict[nodes.Node, int]:
+        raise ValueError(f"{type(self).__name__}: {len(offenders)} top-level node(s) mix host and GPU work "
+                         f"(first: {offenders[0]}); use AutoGPUStreamScheduler or PerComponentGPUStreamScheduler.")
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: Dict[nodes.Node, int]):
         """Splice sync states between GPU and CPU iedges; append after GPU sinks.
@@ -612,8 +605,8 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         - GPU sink block: append a trailing sync.
         Iedges out of CPU blocks never sync (host work is sequential).
         """
-        if self._fell_back and self._naive_fallback is not None:
-            self._naive_fallback.insert_sync_tasklets(sdfg, assignments)
+        if self._per_component_fallback is not None:
+            self._per_component_fallback.insert_sync_tasklets(sdfg, assignments)
             return
         if self._monolithic:
             insert_state_end_syncs(sdfg, monolithic_sync_states(sdfg), assignments)
@@ -701,6 +694,22 @@ class AutoSingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             if (not sink_writes_host_visible_output(state) and not self.should_synchronize_on_exit()):
                 continue
             append_program_end_sync_state(state.parent_graph, state, stream_array_name)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class AutoGPUStreamScheduler(SingleStreamGPUScheduler):
+    """Default GPU stream strategy: :class:`SingleStreamGPUScheduler`, but an SDFG with a node that mixes host and
+    GPU work falls back to :class:`PerComponentGPUStreamScheduler` as a whole, with a warning."""
+
+    def assign_mixed_streams(self, sdfg: SDFG, offenders: List[str]) -> Dict[nodes.Node, int]:
+        warnings.warn(
+            f"AutoGPUStreamScheduler: {len(offenders)} top-level node(s) classified as MIXED "
+            f"(first: {offenders[0]}); falling back to PerComponentGPUStreamScheduler.",
+            UserWarning,
+            stacklevel=3)
+        self._per_component_fallback = PerComponentGPUStreamScheduler()
+        return self._per_component_fallback.assign_streams(sdfg)
 
 
 # Stream-array allocation + propagation.
