@@ -993,7 +993,7 @@ class CPPUnparser:
         "Or": ast.Or,
     }
 
-    modulo_calls = {"PyMod": "py_mod", "CMod": "cpp_mod", "PyFloor": "py_floor"}
+    modulo_calls = {"PyMod": "py_mod", "CMod": "cpp_mod", "PyFloor": "py_floor", "int_floor": "py_floor"}
     floored_functions = {ast.Mod: "PyMod", ast.FloorDiv: "PyFloor"}
 
     def _is_floored(self, op: ast.operator) -> bool:

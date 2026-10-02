@@ -409,6 +409,22 @@ def test_a_periodic_read_in_a_map_wraps_like_numpy():
     assert np.array_equal(b, np.roll(a, -1))
 
 
+def test_an_int_floor_call_in_python_text_floors():
+    sdfg = dace.SDFG('int_floor_edge')
+    sdfg.add_symbol('a', dace.int64)
+    sdfg.add_symbol('b', dace.int64)
+    sdfg.add_array('out', [1], dace.int64)
+    first, second = sdfg.add_state('first', is_start_block=True), sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'r': 'int_floor(a, b)'}))
+    tasklet = second.add_tasklet('store', {}, {'o'}, 'o = r')
+    second.add_edge(tasklet, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(out=out, a=-7, b=2)
+
+    assert out[0] == -4
+
+
 def test_a_symbol_that_is_not_known_nonnegative_prints_the_floored_helper():
     sdfg = shifted_read.to_sdfg()
     sdfg.name = 'shifted_read'
@@ -458,4 +474,5 @@ if __name__ == '__main__':
     test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_floored_one()
     test_the_modulo_functions_have_one_implementation_per_rounding()
     test_a_periodic_read_in_a_map_wraps_like_numpy()
+    test_an_int_floor_call_in_python_text_floors()
     test_a_symbol_that_is_not_known_nonnegative_prints_the_floored_helper()
