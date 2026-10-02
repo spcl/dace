@@ -605,13 +605,26 @@ DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
   return std::pow(a, b);
 }
 
+// ``a ** b`` for an integral ``a`` and a negative ``b``: the real value ``1 / a**|b|`` truncated toward
+// zero, which is non-zero only for ``a == +-1``. ``a == 0`` has no integral result and answers 0.
+template <typename T, typename U>
+DACE_CONSTEXPR DACE_HDFI T negative_integer_power(const T& a, const U& b) {
+  if (a == T(1)) return T(1);
+  if constexpr (std::is_signed<T>::value) {
+    if (a == T(-1)) return (b % 2 == 0) ? T(1) : T(-1);
+  }
+  return T(0);
+}
+
 // An integer base raised to an integer exponent stays an integer for every integral width
 // (not just int/unsigned int), since falling through to std::pow returns double where an
-// OpenMP loop bound or pointer offset cannot take one. Negative exponents answer 0.
+// OpenMP loop bound or pointer offset cannot take one.
 template <typename T, typename U,
           typename std::enable_if<std::is_integral<T>::value && std::is_integral<U>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
-  if (b < U(0)) return T(0);
+  if constexpr (std::is_signed<U>::value) {
+    if (b < 0) return negative_integer_power(a, b);
+  }
   T result = T(1);
   for (U i = U(0); i < b; ++i) result *= a;
   return result;
@@ -862,10 +875,20 @@ DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a) {
 }  // namespace dace
 
 // Global-scope wrapper (like ``min`` / ``max`` / ``int_ceil``) so codegen can emit the
-// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``.
+// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``, whose exponent
+// is unsigned. A negative exponent is the reciprocal: truncated to an integer for an integral base,
+// exact for a floating-point or complex one. Vector bases have no reciprocal and need ``b >= 0``.
 template <typename T, typename U>
 static DACE_HDFI T ipow(const T& a, const U& b) {
-  return dace::math::ipow(a, b);
+  if constexpr (std::is_signed<U>::value) {
+    if (b < 0) {
+      if constexpr (std::is_integral<T>::value)
+        return dace::math::negative_integer_power(a, b);
+      else if constexpr (std::is_constructible<T, int>::value)
+        return T(1) / dace::math::ipow(a, 0u - static_cast<unsigned int>(b));
+    }
+  }
+  return dace::math::ipow(a, static_cast<unsigned int>(b));
 }
 
 #endif  // __DACE_MATH_H

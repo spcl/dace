@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``ipow`` symbolic Function and the ``RelaxIntegerPowers`` pass."""
+
 import numpy as np
 import pytest
 import sympy
@@ -191,17 +192,29 @@ def test_end_to_end_complex_power_shape_compiles():
     assert np.allclose(x, ref)
 
 
-def test_rejects_negative_constant_exponent():
-    """A negative constant exponent would wrap the C++ ``unsigned`` -- ``ipow`` rejects it at
-    construction, so a bad relaxation can never reach codegen."""
-    R = symbolic.symbol('R', positive=True, integer=True)
-    for bad in (sympy.Integer(-1), sympy.Integer(-7)):
-        with pytest.raises(ValueError):
-            ipow(R, bad)
-    # ... and even when a symbolic exponent is later driven negative by substitution.
-    K = symbolic.symbol('K', positive=True, integer=True)
+@pytest.mark.parametrize('bad', [sympy.Integer(-1), sympy.Integer(-7), sympy.Rational(-1, 2), sympy.Float(-0.5)])
+def test_ipow_rejects_a_negative_constant_exponent_integral_or_not(bad):
+    """A negative constant is a reciprocal, so it is a ``Pow``; the sign test does not ask for an integer."""
     with pytest.raises(ValueError):
-        ipow(R, K).subs(K, -1)
+        ipow(symbolic.symbol('R', positive=True, integer=True), bad)
+
+
+def test_ipow_leaves_an_exponent_of_unknown_sign_to_the_caller():
+    base = symbolic.symbol('R', positive=True, integer=True)
+    unknown = symbolic.symbol('M', integer=True)
+    assert isinstance(ipow(base, unknown), ipow)
+    with pytest.raises(ValueError):
+        ipow(base, unknown).subs(unknown, -1)
+
+
+def test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass():
+    R = dace.symbol('R', positive=True, integer=True)
+    M = dace.symbol('M', integer=True)
+    sdfg = dace.SDFG('unknown_sign_exponent')
+    sdfg.add_array('u', [R**M], dace.float64)
+    sdfg.add_state().add_access('u')
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+    assert _ipow_count(sdfg) == 0
 
 
 def test_loop_range_direction_from_stride_sign():
@@ -340,3 +353,46 @@ def test_nested_sdfg_inherits_outer_sign_facts():
     assert RelaxIntegerPowers().apply_pass(outer, {}) is not None
     assert len(inner.arrays['y'].shape[0].atoms(ipow)) == 1
     assert not inner.arrays['y'].shape[0].atoms(sympy.Pow)
+
+
+def test_int64_power_compiles_as_an_integer():
+    """``pow`` on int64 symbols must stay integral: as a double it is neither a legal OpenMP
+    controlling predicate nor a pointer offset, and the generated code fails to build."""
+    R = dace.symbol('R', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64)
+
+    @dace.program
+    def tester(A: dace.float64[R**K]):
+        for i in dace.map[0:R**K]:
+            A[i] = 1.0
+
+    a = np.zeros(8)
+    tester(a, R=2, K=3)
+    assert np.allclose(a, 1.0)
+
+
+if __name__ == '__main__':
+    test_ipow_lowers_to_cpp_ipow()
+    test_ipow_roundtrips_through_serialization()
+    test_ipow_survives_property_json_roundtrip_and_folds()
+    test_ipow_is_integer_and_positive()
+    test_ipow_folds_constant_power()
+    test_interval_proves_radix_decomposition()
+    test_interval_refuses_unbounded_iterator()
+    test_relaxes_pow_inside_loop()
+    test_relaxes_pow_inside_map_and_nested_sdfg()
+    test_relaxes_under_dynamic_map_symbol()
+    test_refuses_unprovable_and_negative_exponents()
+    test_end_to_end_complex_power_shape_compiles()
+    for bad in (sympy.Integer(-1), sympy.Integer(-7), sympy.Rational(-1, 2), sympy.Float(-0.5)):
+        test_ipow_rejects_a_negative_constant_exponent_integral_or_not(bad)
+    test_ipow_leaves_an_exponent_of_unknown_sign_to_the_caller()
+    test_a_symbolic_exponent_of_unknown_sign_is_not_relaxed_by_the_pass()
+    test_loop_range_direction_from_stride_sign()
+    test_ordered_range_accepts_raw_int_step()
+    test_refuses_pow_under_unknown_sign_stride()
+    test_descending_loop_still_relaxes()
+    test_loop_condition_off_by_one_not_relaxed()
+    test_relaxes_pow_inside_a_packed_product()
+    test_nested_sdfg_inherits_outer_sign_facts()
+    test_int64_power_compiles_as_an_integer()
