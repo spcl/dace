@@ -23,11 +23,19 @@ def _map_over_nested_sdfg(mapped_value: str = 'i', start: int = 0) -> dace.SDFG:
     sdfg = dace.SDFG('nested_sdfg_symbol_widening')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [N], dace.int64)
+    # The nested SDFG sees exactly its one-element connector, so the element of A goes through a view
+    sdfg.add_view('A_element', [1], dace.int64)
     state = sdfg.add_state()
     map_entry, map_exit = state.add_map('m', {'i': f'{start}:{start} + N'})
     nsdfg = state.add_nested_sdfg(inner, {}, {'a'}, symbol_mapping={'n': mapped_value})
     state.add_nedge(map_entry, nsdfg, dace.Memlet())
-    state.add_memlet_path(nsdfg, map_exit, state.add_write('A'), src_conn='a', memlet=dace.Memlet(f'A[i - {start}]'))
+    element = state.add_access('A_element')
+    state.add_edge(nsdfg, 'a', element, None, dace.Memlet('A_element[0]'))
+    state.add_memlet_path(element,
+                          map_exit,
+                          state.add_write('A'),
+                          src_conn='views',
+                          memlet=dace.Memlet(f'A[i - {start}]'))
     return sdfg
 
 
