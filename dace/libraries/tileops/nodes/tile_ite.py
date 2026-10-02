@@ -30,10 +30,10 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
+from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, promotion_ok, edge_moves_a_tile,
-                         scalar_operand_ref)
+from .tile_binop import (is_tile_shape, promotion_ok, edge_moves_a_tile, scalar_operand_ref)
 
 
 @library.expansion

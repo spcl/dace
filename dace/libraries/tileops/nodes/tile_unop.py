@@ -20,14 +20,10 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
+from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import promotion_ok
-
-TILE = "Tile"
-SYMBOL = "Symbol"
-SCALAR = "Scalar"
-VALID_KINDS = (TILE, SYMBOL, SCALAR)
 
 # op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
 #: Op -> (prefix, suffix) for the pure inline C++ form ``<pre>operand<suf>``.

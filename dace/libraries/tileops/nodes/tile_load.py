@@ -16,6 +16,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import graph, nodes
 from dace.transformation.transformation import ExpandTransformation
 
+from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from .._pure_codegen import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
                              resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
@@ -155,9 +156,9 @@ class ExpandTileLoadPure(ExpandTransformation):
         dst_off = tile_offset(widths)
         dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_dst").data.data].dtype.ctype
-        if node.src_kind == "Symbol":
+        if node.src_kind == SYMBOL:
             src_ref = f"({dst_dtype})({pyexpr2cpp(node.src_expr)})"
-        elif node.src_kind == "Scalar":
+        elif node.src_kind == SCALAR:
             # A volume-1 source (a true ``dace.data.Scalar``, a length-1 Array,
             # or a single-element access) is passed by value (``T _src``) and
             # referenced bare; a tile-shape source widened upstream is a pointer
@@ -245,7 +246,7 @@ class ExpandTileLoadPure(ExpandTransformation):
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
-        inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
+        inputs = (set() if node.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if node.has_mask else set())
         inputs |= {f"_idx_{d}" for d in node.gather_dims}
         tasklet = nodes.Tasklet(
             label=f"{node.label}_pure",
@@ -322,7 +323,7 @@ class TileLoad(nodes.LibraryNode):
     src_kind = properties.Property(
         dtype=str,
         allow_none=False,
-        default="Tile",
+        default=TILE,
         desc="Source kind. 'Tile' (default) reads the per-lane indexed element from a "
         "tile transient / strided view via ``_src``. 'Symbol' broadcasts ``src_expr`` "
         "(a numeric literal or in-scope symbolic expression) to every lane, omitting "
@@ -370,7 +371,7 @@ class TileLoad(nodes.LibraryNode):
                  dim_strides: Optional[Tuple[int, ...]] = None,
                  src_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
-                 src_kind: str = "Tile",
+                 src_kind: str = TILE,
                  src_expr: Optional[str] = None,
                  replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
                  gather_dims: Optional[Tuple[int, ...]] = None,
@@ -402,9 +403,9 @@ class TileLoad(nodes.LibraryNode):
             raise ValueError(f"TileLoad: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
             raise ValueError(f"TileLoad: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
-        if src_kind not in ("Tile", "Symbol", "Scalar"):
+        if src_kind not in VALID_KINDS:
             raise ValueError(f"TileLoad: src_kind must be one of 'Tile' | 'Symbol' | 'Scalar', got {src_kind!r}")
-        if src_kind == "Symbol" and not src_expr:
+        if src_kind == SYMBOL and not src_expr:
             raise ValueError("TileLoad: src_kind='Symbol' requires a non-empty src_expr")
         if replicate_factor_per_dim is not None:
             if len(replicate_factor_per_dim) != len(widths):
@@ -433,7 +434,7 @@ class TileLoad(nodes.LibraryNode):
                              f"source-dim indices; got {g!r}")
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.
-        inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
+        inputs = (set() if src_kind == SYMBOL else {"_src"}) | ({"_mask"} if has_mask else set())
         inputs |= {f"_idx_{d}" for d in g}
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
@@ -457,7 +458,7 @@ class TileLoad(nodes.LibraryNode):
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if self.src_kind != "Symbol" and "_src" not in in_e:
+        if self.src_kind != SYMBOL and "_src" not in in_e:
             raise ValueError(f"{self.label}: required input '_src' not connected (src_kind={self.src_kind!r})")
         if "_dst" not in out_e:
             raise ValueError(f"{self.label}: required output '_dst' not connected")
@@ -468,13 +469,13 @@ class TileLoad(nodes.LibraryNode):
             mask_arr = sdfg.arrays[in_e["_mask"].data.data]
             validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
         # Packed-layout lock (design section 2.3): refuse non-C non-Fortran source strides.
-        if self.src_kind == "Tile":
+        if self.src_kind == TILE:
             from .._pure_codegen import validate_packed_layout
             src_arr = sdfg.arrays[in_e["_src"].data.data]
             validate_packed_layout(self.label, "_src", src_arr)
         # gather_dims source-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
-        if self.gather_dims and self.src_kind == "Tile":
+        if self.gather_dims and self.src_kind == TILE:
             src_arr = sdfg.arrays[in_e["_src"].data.data]
             src_ndim = len(src_arr.shape)
             if any(d >= src_ndim for d in self.gather_dims):

@@ -29,6 +29,8 @@ from dace.sdfg.state import SDFGState
 from dace.subsets import Subset
 from dace.symbolic import SymbolicType, symstr
 
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE
+
 if TYPE_CHECKING:
     # For typing only, kept out of the runtime import (already lazy-imported where used below).
     from dace.transformation.transformation import ExpandTransformation
@@ -134,10 +136,6 @@ OP_TO_CHAR = {
     "&&": "&",
     "||": "|",
 }
-
-TILE = "Tile"
-SYMBOL = "Symbol"
-SCALAR = "Scalar"
 
 # TileUnop.op -> the single-char op code the backend headers' ``tile_unop``
 # templates on (legend in scalar.h: n neg, a abs, e exp, l log, s sqrt, ...).
@@ -1036,11 +1034,11 @@ def make_load_tasklet(node: TileLoad, parent_state: SDFGState, parent_sdfg: SDFG
     :class:`ExpandTileLoadPure`, which emits the per-lane indirect read using the
     ``_idx_<d>`` connectors (design section 9.3).
     """
-    if node.src_kind == "Tile" and node.gather_dims:
+    if node.src_kind == TILE and node.gather_dims:
         gather_tasklet = _try_make_gather_tasklet(node, parent_state, parent_sdfg, suffix)
         if gather_tasklet is not None:
             return gather_tasklet
-    if node.src_kind != "Tile" or node.gather_dims:
+    if node.src_kind != TILE or node.gather_dims:
         from dace.libraries.tileops.nodes.tile_load import ExpandTileLoadPure
         return ExpandTileLoadPure.expansion(node, parent_state, parent_sdfg)
     # REPLICATE codegen (user direction 2026-06-10): the K=1 intrinsic
@@ -1128,7 +1126,7 @@ def make_store_tasklet(node: TileStore, parent_state: SDFGState, parent_sdfg: SD
     Symmetric to the ``make_load_tasklet`` gather fallback added in
     commit 4ad424945.
     """
-    if node.src_kind != "Tile" or node.gather_dims:
+    if node.src_kind != TILE or node.gather_dims:
         from dace.libraries.tileops.nodes.tile_store import ExpandTileStorePure
         return ExpandTileStorePure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)

@@ -14,6 +14,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
+from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from .._pure_codegen import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
                              resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
@@ -88,9 +89,9 @@ class ExpandTileStorePure(ExpandTransformation):
         #   * ``Scalar`` — a volume-1 source passed by value, broadcast to every
         #     lane (or a tile-shape source widened upstream, read per lane).
         out_dtype = dst_arr.dtype.ctype
-        if node.src_kind == "Symbol":
+        if node.src_kind == SYMBOL:
             src_ref = f"({out_dtype})({pyexpr2cpp(node.src_expr)})"
-        elif node.src_kind == "Scalar":
+        elif node.src_kind == SCALAR:
             # A volume-1 source is passed by value (bare ``_src``); a tile-shape
             # source widened upstream is a pointer read per lane (``_src[off]``).
             # ``[0]`` is a memlet concern, not a tasklet-body one.
@@ -106,7 +107,7 @@ class ExpandTileStorePure(ExpandTransformation):
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
         code = nested_loops(widths, body)
-        inputs = (set() if node.src_kind == "Symbol" else {"_src"}) | ({"_mask"} if node.has_mask else set())
+        inputs = (set() if node.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if node.has_mask else set())
         inputs |= {f"_idx_{d}" for d in node.gather_dims}
         return nodes.Tasklet(
             label=f"{node.label}_pure",
@@ -201,7 +202,7 @@ class TileStore(nodes.LibraryNode):
     src_kind = properties.Property(
         dtype=str,
         allow_none=False,
-        default="Tile",
+        default=TILE,
         desc="Source operand kind. 'Tile' (default) reads a ``widths``-shaped "
         "tile transient via ``_src``. 'Symbol' broadcasts ``src_expr`` (a "
         "symbolic expression / numeric literal) to every lane and omits the "
@@ -242,7 +243,7 @@ class TileStore(nodes.LibraryNode):
                  dim_strides: Optional[Tuple[int, ...]] = None,
                  dst_dims: Optional[Tuple[int, ...]] = None,
                  has_mask: bool = False,
-                 src_kind: str = "Tile",
+                 src_kind: str = TILE,
                  src_expr: Optional[str] = None,
                  wcr: Optional[str] = None,
                  gather_dims: Optional[Tuple[int, ...]] = None,
@@ -268,9 +269,9 @@ class TileStore(nodes.LibraryNode):
             raise ValueError(f"TileStore: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if dim_strides is not None and len(dim_strides) != len(widths):
             raise ValueError(f"TileStore: dim_strides length {len(dim_strides)} != widths length {len(widths)}")
-        if src_kind not in ("Tile", "Symbol", "Scalar"):
+        if src_kind not in VALID_KINDS:
             raise ValueError(f"TileStore: src_kind must be one of {{'Tile', 'Symbol', 'Scalar'}}, got {src_kind!r}")
-        if src_kind == "Symbol" and not src_expr:
+        if src_kind == SYMBOL and not src_expr:
             raise ValueError("TileStore: src_kind='Symbol' requires a non-empty src_expr")
         resolved_dim_strides = list(dim_strides) if dim_strides else [1] * len(widths)
         # Validate gather_dims: sorted, unique, non-negative dest-dim indices.
@@ -294,7 +295,7 @@ class TileStore(nodes.LibraryNode):
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
-        inputs = (set() if src_kind == "Symbol" else {"_src"}) | ({"_mask"} if has_mask else set())
+        inputs = (set() if src_kind == SYMBOL else {"_src"}) | ({"_mask"} if has_mask else set())
         inputs |= {f"_idx_{d}" for d in g}
         super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
         self.widths = list(widths)
@@ -317,7 +318,7 @@ class TileStore(nodes.LibraryNode):
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if self.src_kind != "Symbol" and "_src" not in in_e:
+        if self.src_kind != SYMBOL and "_src" not in in_e:
             raise ValueError(f"{self.label}: required input '_src' not connected (src_kind={self.src_kind!r})")
         if "_dst" not in out_e:
             raise ValueError(f"{self.label}: required output '_dst' not connected")

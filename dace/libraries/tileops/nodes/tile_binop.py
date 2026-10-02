@@ -21,6 +21,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import graph, nodes
 from dace.transformation.transformation import ExpandTransformation
 
+from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 
@@ -157,11 +158,6 @@ def promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool
         return True
     return False
 
-
-TILE = "Tile"
-SYMBOL = "Symbol"
-SCALAR = "Scalar"
-VALID_KINDS = (TILE, SYMBOL, SCALAR)
 
 #: Ops that answer ``bool`` whatever their operands are.
 COMPARISON_OPS = frozenset({"<", "<=", ">", ">=", "==", "!="})
