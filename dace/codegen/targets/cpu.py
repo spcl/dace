@@ -2000,37 +2000,19 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP header
             in_persistent = False
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
-                # Either an enclosing CPU_Persistent Map scope, or an enclosing ControlFlowRegion
-                # flagged ``omp_parallel_region``. The latter cannot be seen from here -- a Map
-                # node has no path to the regions above it -- so the control-flow generator sets a
-                # flag on the frame while it emits the wrapped body.
-                in_persistent = (is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
-                                 or getattr(self._frame, 'in_region_parallel', False))
+                in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
-                    if node.map.nowait:
-                        map_header += " nowait"
+                    # TODO(later): barriers and map_header += " nowait"
                 else:
-                    # ``nowait`` is a worksharing clause: on the COMBINED `parallel for` emitted
-                    # here it is invalid OpenMP, and the implicit barrier being dropped is the one
-                    # at the end of the parallel region, which cannot be dropped at all. Refuse
-                    # loudly rather than emit code the compiler will reject (or worse, accept).
-                    if node.map.nowait:
-                        raise ValueError(f"Map {node.map.label} has nowait=True but is not nested in a "
-                                         f"CPU_Persistent scope, so it lowers to a combined '#pragma omp "
-                                         f"parallel for', where 'nowait' is invalid OpenMP")
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
 
-            # OpenMP schedule properties. ``schedule`` is a worksharing-loop clause, so it is valid
-            # on a bare ``omp for`` just as it is on a combined ``parallel for`` -- it must NOT be
-            # dropped inside an enclosing parallel region, or the region-parallel shape would
-            # silently lose the schedule. ``num_threads`` is a parallel-region clause and stays
-            # gated: on an ``omp for`` it is invalid.
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+            # OpenMP schedule properties
+            if not in_persistent:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -2046,7 +2028,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     schedule += ")"
                     map_header += schedule
 
-            if not in_persistent:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 

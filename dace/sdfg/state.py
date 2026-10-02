@@ -2745,17 +2745,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
-    omp_parallel_region = Property(dtype=bool,
-                                   default=False,
-                                   desc="Emit this region's body inside a single '#pragma omp parallel'. Every "
-                                   "CPU_Multicore Map in it -- including maps nested inside a ConditionalBlock, which "
-                                   "no Map scope can reach -- then lowers to a worksharing '#pragma omp for' instead "
-                                   "of its own 'parallel for', so the team is forked once for the region rather than "
-                                   "once per map. ``SDFG`` inherits this, so setting it there wraps a whole routine. "
-                                   "Declared here rather than on ``ControlFlowRegion`` because this is the "
-                                   "``make_properties`` class in the chain: declaring it on a subclass would "
-                                   "re-register it for ``SDFG`` and raise PropertyError")
-
     def __init__(self,
                  label: str = '',
                  sdfg: Optional['SDFG'] = None,

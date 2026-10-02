@@ -45,11 +45,6 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
             b >> _out(1, lambda a, b: a + b)[i]
 
 
-##################################################################################################
-# N-dimensional native DFT (separable, rank-generic)
-##################################################################################################
-
-
 def _normalize_axes(ndim, axis):
     """Resolve the FFT node's ``axis`` property to a concrete transform-axis list.
 
