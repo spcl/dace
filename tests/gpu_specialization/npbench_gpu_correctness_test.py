@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """NPBench kernels through the new GPU stream pipeline compared element-wise against the CPU SDFG."""
-import importlib.util
-import os
+import importlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -10,7 +9,6 @@ import pytest
 pytestmark = [pytest.mark.gpu, pytest.mark.new_gpu_codegen_only]
 
 TSTEPS = 3
-NPBENCH_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "npbench")
 
 
 @dataclass(frozen=True)
@@ -119,12 +117,8 @@ CASES = {
 
 
 def load_kernel_module(case: Case):
-    """Load the kernel-test module by path (no ``sys.path`` mutation)."""
-    path = os.path.join(NPBENCH_DIR, case.subdir, f"{case.module}.py")
-    spec = importlib.util.spec_from_file_location(case.module, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """The kernel-test module, imported as ``tests.npbench.<subdir>.<module>`` from the repository root."""
+    return importlib.import_module(f"tests.npbench.{case.subdir}.{case.module}")
 
 
 def build_arguments(case: Case, module):
