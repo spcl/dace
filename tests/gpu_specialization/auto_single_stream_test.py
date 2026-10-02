@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`AutoSingleStreamGPUScheduler`.
+"""Tests for :class:`AutoGPUStreamScheduler`.
 
 The strategy is the new default for the GPU stream pipeline. It classifies each top-level node
 in the SDFG hierarchy as CPU / GPU / MIXED, pins every GPU consumer to stream 0 when no MIXED
 node exists, and splices a one-tasklet sync state between any GPU state and a CPU successor
 (or any successor reached via an iedge whose condition / assignment reads a GPU-written
 array). If any top-level node classifies as MIXED, the strategy falls back to
-:class:`NaiveGPUStreamScheduler` and emits a ``UserWarning``.
+:class:`PerComponentGPUStreamScheduler` and emits a ``UserWarning``.
 
 Tests build SDFGs through the Python frontend, run ``apply_gpu_transformations``, then push them
 through the pipeline so we can inspect the *real* shape the strategy sees in production.
@@ -20,7 +20,8 @@ import pytest
 from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoGPUStreamScheduler,
+                                                                                 SingleStreamGPUScheduler)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
 N = dace.symbol('N')
@@ -54,9 +55,9 @@ def _build_gpu_sdfg(program, *, strategy=None):
 
 
 def test_default_strategy_is_auto_single_stream():
-    """``GPUStreamPipeline()`` selects :class:`AutoSingleStreamGPUScheduler`."""
+    """``GPUStreamPipeline()`` selects :class:`AutoGPUStreamScheduler`."""
     pipe = GPUStreamPipeline()
-    assert isinstance(pipe._scheduling_strategy, AutoSingleStreamGPUScheduler)
+    assert isinstance(pipe._scheduling_strategy, AutoGPUStreamScheduler)
 
 
 # Pure GPU programs -- single stream, sync state at the program exit only.
@@ -93,7 +94,7 @@ def test_pure_gpu_jacobi_2d_one_stream_sync_at_exit():
 
     # At least one sync state inserted (program-end sink).
     sync_locations = _all_sync_states(sdfg)
-    assert sync_locations, "AutoSingleStreamGPUScheduler should append at least one sync state"
+    assert sync_locations, "AutoGPUStreamScheduler should append at least one sync state"
 
     # Numerical correctness.
     A_gpu, B_gpu = A.copy(), B.copy()
@@ -123,9 +124,7 @@ def test_pure_cpu_program_no_streams():
         GPUStreamPipeline().apply_pass(sdfg, {})
 
     # The strategy must not warn about its own fallback (no MIXED nodes here).
-    fallback = [
-        w for w in caught if 'AutoSingleStreamGPUScheduler' in str(w.message) and 'falling back' in str(w.message)
-    ]
+    fallback = [w for w in caught if 'AutoGPUStreamScheduler' in str(w.message) and 'falling back' in str(w.message)]
     assert not fallback, f"Strategy must not fall back on pure-CPU input. Got: {[str(w.message) for w in caught]}"
 
     # No sync states, no stream consumers (no GPU work to wire).
@@ -142,13 +141,9 @@ def test_pure_cpu_program_no_streams():
 # CPU -> GPU transition needs no sync state; GPU -> CPU needs one.
 
 
-def test_mixed_program_fallback_to_naive_emits_warning():
-    """A NestedSDFG that interleaves a free host tasklet with a GPU kernel inside *the same*
-    NestedSDFG (no inner GPU_Device map wrapping the tasklet) classifies as MIXED. The strategy
-    must warn and delegate to :class:`NaiveGPUStreamScheduler`."""
-
-    # Construct a NestedSDFG with one host-side tasklet and one GPU_Device map. Built by hand
-    # because the frontend won't produce a free host tasklet next to a GPU kernel in one body.
+def mixed_host_gpu_sdfg() -> dace.SDFG:
+    """A NestedSDFG whose one state holds a free host tasklet next to a GPU kernel, so it classifies as MIXED."""
+    # Built by hand: the frontend won't produce a free host tasklet next to a GPU kernel in one body.
     outer = dace.SDFG('outer_mixed')
     outer.add_array('A', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     outer.add_array('B', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
@@ -179,19 +174,29 @@ def test_mixed_program_fallback_to_naive_emits_warning():
     state.add_edge(state.add_read('B'), None, nsdfg_node, 'b', dace.Memlet('B[0:16]'))
     state.add_edge(nsdfg_node, 'b', state.add_write('B'), None, dace.Memlet('B[0:16]'))
     state.add_edge(nsdfg_node, 'c', state.add_write('C'), None, dace.Memlet('C[0:1]'))
+    return outer
 
-    strategy = AutoSingleStreamGPUScheduler()
+
+def test_mixed_program_fallback_to_per_component_emits_warning():
+    """A MIXED NestedSDFG makes the auto strategy warn and delegate to :class:`PerComponentGPUStreamScheduler`."""
+    outer = mixed_host_gpu_sdfg()
+    strategy = AutoGPUStreamScheduler()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         GPUStreamPipeline(scheduling_strategy=strategy).apply_pass(outer, {})
 
     fallback_msgs = [
-        w for w in caught if 'AutoSingleStreamGPUScheduler' in str(w.message) and 'falling back' in str(w.message)
+        w for w in caught if 'AutoGPUStreamScheduler' in str(w.message) and 'falling back' in str(w.message)
     ]
-    assert fallback_msgs, ("Expected an AutoSingleStreamGPUScheduler fallback warning when a "
+    assert fallback_msgs, ("Expected an AutoGPUStreamScheduler fallback warning when a "
                            f"NestedSDFG mixes CPU + GPU work. Got: {[str(w.message) for w in caught]}")
-    # Naive-style wiring landed: gpu_streams allocated.
+    # Per-component wiring landed: gpu_streams allocated.
     assert _STREAM_ARRAY in outer.arrays
+
+
+def test_single_stream_strategy_rejects_a_mixed_program():
+    with pytest.raises(ValueError, match="mix host and GPU work"):
+        GPUStreamPipeline(scheduling_strategy=SingleStreamGPUScheduler()).apply_pass(mixed_host_gpu_sdfg(), {})
 
 
 # GPU -> GPU with no host iedge work: no sync state spliced between consecutive GPU states.
@@ -240,7 +245,7 @@ def test_e2e_cpu_init_feeds_gpu_kernel_via_split():
     """CPU computes a scalar (``s = x + 1``), GPU map uses it. After the codegen pipeline runs
     its preprocess + scheduler chain, the resulting SDFG must compile and produce the right
     numerical result. The split pass is responsible for moving the CPU init into its own state
-    so the scheduler doesn't fall back to Naive.
+    so the scheduler doesn't fall back to per-component streams.
     """
 
     @dace.program
@@ -409,7 +414,7 @@ def _build_gpu_resident_pipeline(strategy=None):
     t1 = s1.add_tasklet('b1', {'a': None}, {'o': None}, 'o = a + 1.0')
     s1.add_memlet_path(s1.add_read('B'), me1, t1, dst_conn='a', memlet=dace.Memlet('B[i]'))
     s1.add_memlet_path(t1, mx1, s1.add_write('C'), src_conn='o', memlet=dace.Memlet('C[i]'))
-    GPUStreamPipeline(scheduling_strategy=strategy or AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    GPUStreamPipeline(scheduling_strategy=strategy or AutoGPUStreamScheduler()).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -480,12 +485,12 @@ def test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag():
     """GPU -> trailing host state that reads no GPU output (ICON metrics/exit shape). Default keeps
     the GPU->host edge sync; opt-out drops it (the host block consumes no GPU-produced data)."""
     sdfg = _build_gpu_then_host_nonconsumer()
-    GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+    GPUStreamPipeline(scheduling_strategy=AutoGPUStreamScheduler()).apply_pass(sdfg, {})
     assert len(_all_sync_states(sdfg)) == 1, "default must keep the GPU->host edge sync"
 
     with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
         sdfg = _build_gpu_then_host_nonconsumer()
-        GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler()).apply_pass(sdfg, {})
+        GPUStreamPipeline(scheduling_strategy=AutoGPUStreamScheduler()).apply_pass(sdfg, {})
     assert len(_all_sync_states(sdfg)) == 0, "opt-out must drop the sync to a non-GPU-consuming host block"
 
 
@@ -493,14 +498,27 @@ def test_synchronize_on_exit_as_strategy_argument():
     """synchronize_on_exit is also a strategy constructor argument; an explicit value wins over the
     config (None defers to config, which is the path the codegen takes)."""
     # explicit False drops the exit sync even with the config left at its default (True)
-    sdfg = _build_gpu_resident_pipeline(strategy=AutoSingleStreamGPUScheduler(synchronize_on_exit=False))
+    sdfg = _build_gpu_resident_pipeline(strategy=AutoGPUStreamScheduler(synchronize_on_exit=False))
     assert len(_all_sync_states(sdfg)) == 0, "explicit synchronize_on_exit=False must drop the exit sync"
     # explicit True overrides a config that is flipped off
     with dace.config.set_temporary('compiler', 'cuda', 'synchronize_on_exit', value=False):
-        sdfg = _build_gpu_resident_pipeline(strategy=AutoSingleStreamGPUScheduler(synchronize_on_exit=True))
+        sdfg = _build_gpu_resident_pipeline(strategy=AutoGPUStreamScheduler(synchronize_on_exit=True))
     assert len(_all_sync_states(sdfg)) == 1, "explicit synchronize_on_exit=True must override config=False"
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_default_strategy_is_auto_single_stream()
+    test_pure_cpu_program_no_streams()
+    test_mixed_program_fallback_to_per_component_emits_warning()
+    test_single_stream_strategy_rejects_a_mixed_program()
+    test_sync_count_independent_of_kernel_count()
+    test_gpu_resident_sink_synced_by_default()
+    test_gpu_resident_sink_exit_sync_dropped_when_opted_out()
+    test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag()
+    test_synchronize_on_exit_as_strategy_argument()
+    test_pure_gpu_jacobi_2d_one_stream_sync_at_exit()
+    test_chain_of_gpu_kernels_one_sync_at_exit()
+    test_e2e_cpu_init_feeds_gpu_kernel_via_split()
+    test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu()
+    test_multikernel_stencil_pipeline_one_sync_at_exit()
+    test_host_visible_output_always_synced_even_when_opted_out()

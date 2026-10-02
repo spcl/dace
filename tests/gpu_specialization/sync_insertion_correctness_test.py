@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end correctness + sync-count tests for :class:`AutoSingleStreamGPUScheduler`.
+"""End-to-end correctness + sync-count tests for :class:`AutoGPUStreamScheduler`.
 
 Each test defines a small ``@dace.program`` using only ``range(...)`` for host-side
 sequential loops and ``dace.map[...]`` (no explicit ``@ScheduleType``) for
@@ -13,7 +13,7 @@ then two contracts are asserted:
 2. Running the SDFG and comparing against the in-Python numpy reference returns
    element-wise-matching outputs.
 
-The patterns target the rules ``AutoSingleStreamGPUScheduler`` claims to handle:
+The patterns target the rules ``AutoGPUStreamScheduler`` claims to handle:
 
 * **Three-state CPU -> GPU -> CPU** -- canonical
   :class:`SplitStateByGPUClass` shape; the host suffix reads the kernel output.

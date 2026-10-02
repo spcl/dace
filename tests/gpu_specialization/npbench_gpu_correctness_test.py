@@ -10,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.new_gpu_codegen_only
 
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import PerComponentGPUStreamScheduler
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
@@ -64,7 +64,7 @@ vadv_test = _kernel_module("weather_stencils", "vadv_test")
 _GPU_STREAM_PIPELINE = Pipeline([
     MoveArrayOutOfKernel(),
     InsertExplicitCopies(),
-    NaiveGPUStreamScheduler(),
+    PerComponentGPUStreamScheduler(),
 ])
 
 _TSTEPS_SMALL = 3

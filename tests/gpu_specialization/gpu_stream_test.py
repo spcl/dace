@@ -5,13 +5,13 @@ import pytest
 import dace
 from dace.codegen import common
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import PerComponentGPUStreamScheduler
 
-# These tests pin Naive-specific behaviour (per-WCC streams + end-of-state fused sync tasklet
+# These tests pin per-component behaviour (per-WCC streams + end-of-state fused sync tasklet
 # wired inside the same state). The pipeline's default is now
-# :class:`AutoSingleStreamGPUScheduler`, which uses stream 0 only and places syncs in a
-# dedicated sync state, so the assertions here would fire. Wire Naive explicitly.
-gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=NaiveGPUStreamScheduler())
+# :class:`AutoGPUStreamScheduler`, which uses stream 0 only and places syncs in a
+# dedicated sync state, so the assertions here would fire. Wire per-component explicitly.
+gpu_stream_pipeline = GPUStreamPipeline(scheduling_strategy=PerComponentGPUStreamScheduler())
 
 backend = common.get_gpu_backend()
 

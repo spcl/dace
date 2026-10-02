@@ -11,7 +11,7 @@ from dace import SDFG
 from dace.sdfg import nodes
 from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoGPUStreamScheduler,
                                                                                  GPUStreamSchedulingStrategy)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 
@@ -57,7 +57,7 @@ class GPUStreamPipeline(Pipeline):
 
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
         if scheduling_strategy is None:
-            scheduling_strategy = AutoSingleStreamGPUScheduler(
+            scheduling_strategy = AutoGPUStreamScheduler(
                 synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         elif not isinstance(scheduling_strategy, GPUStreamSchedulingStrategy):
             raise TypeError(f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
@@ -94,8 +94,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     connectors that re-inference then re-derives as scalar references.
         #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
-        strategy = AutoSingleStreamGPUScheduler(
-            synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
+        strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
         super().__init__([
