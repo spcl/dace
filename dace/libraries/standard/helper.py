@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
-from typing import Callable, List, Tuple
+"""Shared helpers for the standard library node expansions."""
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import dace
 from dace import dtypes
@@ -94,3 +94,67 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
+def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = None) -> List[str]:
+    """The subscripts, one per axis of an operand of ``shape``, that read it for the result iterators
+    ``__i0, __i1, ...`` by the NumPy broadcasting rule: an axis of extent 1 is read at ``0``.
+
+    :param axis: The result axis the operand lacks (Fortran ``SPREAD``), or ``None`` to right-align the
+                 operand's axes against the result's (NumPy). An operand of one element is a Fortran scalar
+                 whatever its rank, and broadcasts to every shape.
+    :raises ValueError: if the operand cannot broadcast to ``result``. Extents that are not provably unequal
+                        are taken to match.
+    """
+    from dace.frontend.python.replacements.utils import broadcast_together  # Avoid import loop
+
+    shape = list(shape)
+    if all(extent == 1 for extent in shape):
+        return ['0'] * len(shape)
+    if axis is not None:
+        shape.insert(axis, 1)
+        if len(shape) != len(result):
+            raise ValueError(f'a spread adds one axis, so rank {len(shape) - 1} cannot become rank {len(result)}')
+    try:
+        indices = broadcast_together(result, shape, unidirectional=True)[4]
+    except IndexError as ex:
+        raise ValueError(f'cannot broadcast shape {tuple(shape)} to {tuple(result)}') from ex
+    indices = indices.split(', ') if indices else []
+    return indices if axis is None else indices[:axis] + indices[axis + 1:]
+
+
+def broadcast_map_expansion(label: str, parent_sdfg: dace.SDFG, inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
+                            output: Tuple[str, dace.Memlet], code: str) -> dace.SDFG:
+    """Expand an element-wise library node into one map over its output.
+
+    Every operand keeps its own layout and is read by :func:`broadcast_indices`. The tasklet connector of a
+    node connector ``c`` is ``c_v``.
+
+    :param inputs: Node input connector -> (its memlet, the ``axis`` of :func:`broadcast_indices`).
+    :param output: The node output connector and its memlet.
+    :param code: The tasklet code.
+    :returns: The nested SDFG.
+    """
+    out_conn, out_memlet = output
+    result = out_memlet.subset.size()
+    params = [f'__i{d}' for d in range(len(result))]
+    sdfg = dace.SDFG(f'{label}_sdfg')
+
+    def operand(conn: str, memlet: dace.Memlet, indices: List[str]) -> dace.Memlet:
+        desc = parent_sdfg.arrays[memlet.data]
+        strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+        sdfg.add_array(conn, memlet.subset.size(), desc.dtype, desc.storage, strides=strides)
+        return dace.Memlet(f"{conn}[{', '.join(indices)}]")
+
+    tasklet_inputs = {
+        f'{conn}_v': operand(conn, memlet, broadcast_indices(memlet.subset.size(), result, axis))
+        for conn, (memlet, axis) in inputs.items()
+    }
+    sdfg.add_state().add_mapped_tasklet(f'{label}_tasklet', {
+        p: f'0:{n}'
+        for p, n in zip(params, result)
+    },
+                                        tasklet_inputs,
+                                        code, {f'{out_conn}_v': operand(out_conn, out_memlet, params)},
+                                        external_edges=True)
+    return sdfg
