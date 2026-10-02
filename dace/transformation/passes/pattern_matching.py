@@ -133,14 +133,12 @@ class PatternMatchAndApply(ppl.Pass):
                                   'for more information.')
                     continue
 
-            # Find only the first match
-            try:
-                match = next(m for m in match_patterns(sdfg, [xform],
-                                                       metadata=self._metadata,
-                                                       permissive=self.permissive,
-                                                       states=self.states,
-                                                       pipeline_results=pipeline_results))
-            except StopIteration:
+            # Find only the first match. No metadata: the cached one covers all transformations and would
+            #  override `[xform]`.
+            match = next(
+                match_patterns(sdfg, [xform], permissive=self.permissive, states=self.states,
+                               pipeline_results=pipeline_results), None)
+            if match is None:
                 continue
 
             tcfg = sdfg.cfg_list[match.cfg_id]
@@ -157,15 +155,17 @@ class PatternMatchAndApply(ppl.Pass):
             if self.validate_all:
                 self.validate_after_match(match, graph, sdfg)
 
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
+
         if self.validate:
             sdfg.validate()
 
-        if (len(applied_transformations) > 0
-                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
+        if self.print_report or (self.print_report is None and Config.get_bool('debugprint')):
             print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
 
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
-            return None
         return applied_transformations
 
 
@@ -181,7 +181,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     CATEGORY: str = 'Helper'
 
     order_by_transformation = properties.Property(dtype=bool,
-                                                  default=True,
+                                                  default=False,
                                                   desc='Whether or not to order by transformation.')
 
     state_local = properties.Property(
@@ -201,7 +201,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                  states: Optional[List[SDFGState]] = None,
                  print_report: Optional[bool] = None,
                  progress: Optional[bool] = None,
-                 order_by_transformation: bool = True,
+                 order_by_transformation: bool = False,
                  state_local: bool = False) -> None:
         super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
         self.order_by_transformation = order_by_transformation
@@ -257,57 +257,81 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             raise ValueError('Transformation set must be unique')
 
         if self.order_by_transformation:
-            # `match_patterns()` matches on `self._metadata`, which covers every transformation of
-            # this pass, and ignores its `patterns` argument. A loop per transformation therefore
-            # enumerates the same matches and applies them in the same order as the loop below, and
-            # only adds enumerations that apply nothing: one per remaining transformation, plus a
-            # full round of them once anything applied. The loop here keeps the warning those
-            # enumerations would have emitted.
-            for xform in xforms:
-                if sdfg.root_sdfg.using_explicit_control_flow:
-                    if not xform.__explicit_cf_compatible__:
-                        warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                      ' due to incompatibility with experimental control flow blocks. If the ' +
-                                      'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                      'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                      xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                      'please annotate it with the class decorator ' +
-                                      '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                      '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                      'for more information.')
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    if sdfg.root_sdfg.using_explicit_control_flow:
+                        if not xform.__explicit_cf_compatible__:
+                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                          ' due to incompatibility with experimental control flow blocks. If the ' +
+                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
+                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                                          'please annotate it with the class decorator ' +
+                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
+                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                          'for more information.')
+                            continue
 
-        applied = not self.state_local
-        if self.state_local:
-            self.apply_state_local(sdfg, start, pipeline_results, applied_transformations)
-        while applied:
-            applied = False
-            matched_pattern = next(
-                match_patterns(sdfg,
-                               permissive=self.permissive,
-                               patterns=xforms,
-                               states=self.states,
-                               metadata=self._metadata,
-                               pipeline_results=pipeline_results), None)
-            if matched_pattern is not None:
-                self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
-                applied = True
+                    applied = True
+                    while applied:
+                        applied = False
+                        matched_pattern = next(
+                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on
+                            #  the cached order of transformations.
+                            match_patterns(sdfg,
+                                           permissive=self.permissive,
+                                           patterns=[xform],
+                                           states=self.states,
+                                           metadata=None,
+                                           pipeline_results=pipeline_results),
+                            None)
+                        if matched_pattern is not None:
+                            self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results,
+                                                     applied_transformations)
+                            match = matched_pattern
+                            applied = True
+                            applied_anything = True
+
+                if apply_once:
+                    break
+        else:
+            applied = not self.state_local
+            if self.state_local:
+                self.apply_state_local(sdfg, start, pipeline_results, applied_transformations)
+            while applied:
+                applied = False
+                matched_pattern = next(
+                    match_patterns(sdfg,
+                                   permissive=self.permissive,
+                                   patterns=xforms,
+                                   states=self.states,
+                                   metadata=self._metadata,
+                                   pipeline_results=pipeline_results), None)
+                if matched_pattern is not None:
+                    self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                    match = matched_pattern
+                    applied = True
+
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied and matched_pattern is not None:
-                    # Defensive: unreachable -- ``applied`` is always False here -- but kept correct.
-                    tcfg = sdfg.cfg_list[matched_pattern.cfg_id]
-                    raise InvalidSDFGError(f'Validation failed after applying {matched_pattern.print_match(tcfg)}.',
-                                           sdfg,
-                                           matched_pattern.state_id,
-                                           cfg=tcfg) from err
-                else:
-                    raise err
-
-        if len(applied_transformations) == 0:
-            return None
+                if match is None:
+                    raise
+                # `match` is the last applied transformation. `print_match()` needs the control flow region
+                #  it belongs to, not this pass.
+                tcfg = sdfg.cfg_list[match.cfg_id]
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.",
+                                       sdfg,
+                                       match.state_id,
+                                       cfg=tcfg) from err
 
         return applied_transformations
 
