@@ -52,7 +52,11 @@ class SignFacts:
                 # which raises on a symbol carrying a non-numeric typeclass (``dace.callback``, whose
                 # ``.type`` is an instance rather than a scalar class).
                 if isinstance(dtype.type, type) and issubclass(dtype.type, numpy.integer):
-                    facts.setdefault(name, OrderedSet()).add('integer')
+                    declared = facts.setdefault(name, OrderedSet())
+                    declared.add('integer')
+                    # An unsigned dtype is a sign fact sympy's assumptions do not carry
+                    if issubclass(dtype.type, numpy.unsignedinteger):
+                        declared.add('nonnegative')
             for desc in g.arrays.values():
                 if not isinstance(desc, data.Array):
                     continue

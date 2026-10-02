@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-``dace::math::pow`` on two integral operands and the global ``ipow`` in ``dace/math.h``, compiled with the
+``dace::math::pow`` and ``dace::math::ipow`` in ``dace/math.h``, compiled with the
 configured host compiler under UBSan and compared with NumPy.
 
-A negative exponent is the reciprocal: for an integral base the real value truncated toward zero (so non-zero only
-for a base of +-1, and 0 for a zero base), and exact for a floating-point or complex base.
+``dace::math::pow`` with an integral exponent multiplies, and takes the reciprocal for a negative one; an
+integral base with a signed exponent gives a double. ``dace::math::ipow`` takes an unsigned exponent and keeps the
+base type.
 """
 import itertools
 import os
@@ -26,36 +27,36 @@ NONNEGATIVE_EXPONENTS = (0, 1, 2, 5)
 INTEGRAL_TYPES = ('int', 'long long')
 
 
-def truncated_reciprocal_power(base: int, exponent: int) -> int:
-    """The real ``base ** exponent`` truncated toward zero, with 0 for a zero base."""
-    with np.errstate(divide='ignore'):
-        value = np.float_power(base, exponent)
-    return 0 if np.isinf(value) else int(np.trunc(value))
-
-
 def build_cases():
     """``id -> (C++ expression, kind, expected)``; kind is ``i`` for an integer result, ``f`` for a double."""
     cases = {}
-    for function, ctype, exp_ctype in itertools.product(('dace::math::pow', 'ipow'), INTEGRAL_TYPES, INTEGRAL_TYPES):
+
+    def key(*parts):
+        return '_'.join(str(p) for p in parts).replace(' ', '_').replace('.', 'p').replace('-', 'm')
+
+    for ctype, exp_ctype in itertools.product(INTEGRAL_TYPES, INTEGRAL_TYPES):
         for base, exponent in itertools.product(INTEGRAL_BASES, NEGATIVE_EXPONENTS + NONNEGATIVE_EXPONENTS):
-            expected = (truncated_reciprocal_power(base, exponent) if exponent < 0 else int(
-                np.power(np.int64(base), exponent)))
-            name = f'{function}_{ctype}_{exp_ctype}_{base}_{exponent}'.replace(' ', '_').replace(':',
-                                                                                                 '_').replace('-', 'm')
-            cases[name] = (f'{function}(({ctype}){base}, ({exp_ctype}){exponent})', 'i', expected)
-    for ctype, base, exponent in itertools.product(('double', 'float'), FLOATING_BASES,
-                                                   NEGATIVE_EXPONENTS + NONNEGATIVE_EXPONENTS):
-        name = f'ipow_{ctype}_{base}_{exponent}'.replace('.', 'p').replace('-', 'm')
-        cases[name] = (f'ipow(({ctype}){base!r}, (int){exponent})', 'f', float(np.float_power(base, exponent)))
-    with np.errstate(divide='ignore'):
-        cases['ipow_double_zero_negative'] = ('ipow(0.0, -2)', 'f', float(np.float_power(0.0, -2)))
-    cases['ipow_double_zero_zero'] = ('ipow(0.0, 0)', 'f', 1.0)
-    cases['ipow_unsigned_exponent'] = ('ipow(2.0, 5u)', 'f', 32.0)
-    cases['ipow_unsigned_exponent_integral_base'] = ('ipow(3, 4u)', 'i', 81)
+            with np.errstate(divide='ignore'):
+                expected = float(np.float_power(base, exponent))
+            cases[key('pow', ctype, exp_ctype, base,
+                      exponent)] = (f'dace::math::pow(({ctype}){base}, ({exp_ctype}){exponent})', 'f', expected)
+    for ctype, base, exponent in itertools.product(INTEGRAL_TYPES, INTEGRAL_BASES, NONNEGATIVE_EXPONENTS):
+        expected = int(np.power(np.int64(base), exponent))
+        cases[key('pow_unsigned', ctype, base,
+                  exponent)] = (f'dace::math::pow(({ctype}){base}, {exponent}u)', 'i', expected)
+        cases[key('ipow', ctype, base, exponent)] = (f'dace::math::ipow(({ctype}){base}, {exponent}u)', 'i', expected)
+    for ctype, base in itertools.product(('double', 'float'), FLOATING_BASES):
+        for exponent in NEGATIVE_EXPONENTS + NONNEGATIVE_EXPONENTS:
+            cases[key('pow', ctype, base, exponent)] = (f'dace::math::pow(({ctype}){base!r}, (int){exponent})', 'f',
+                                                        float(np.float_power(base, exponent)))
+        for exponent in NONNEGATIVE_EXPONENTS:
+            cases[key('ipow', ctype, base, exponent)] = (f'dace::math::ipow(({ctype}){base!r}, {exponent}u)', 'f',
+                                                         float(np.float_power(base, exponent)))
+        cases[key('pow_fractional', ctype, base)] = (f'dace::math::pow(({ctype}){base!r}, 0.5)', 'f',
+                                                     float(np.sqrt(abs(base))) if base > 0 else float('nan'))
     for exponent in NEGATIVE_EXPONENTS + NONNEGATIVE_EXPONENTS:
-        value = complex(np.power(1j * 1.0, exponent))
-        cases[f'ipow_complex_{exponent}'.replace('-', 'm')] = (f'ipow(std::complex<double>(0.0, 1.0), {exponent})', 'c',
-                                                               value)
+        cases[key('pow_complex', exponent)] = (f'dace::math::pow(std::complex<double>(0.0, 1.0), {exponent})', 'c',
+                                               complex(np.power(1j * 1.0, exponent)))
     return cases
 
 
@@ -99,7 +100,7 @@ def test_the_power_matches_numpy(name, results):
     if kind == 'i':
         assert int(got[0]) == expected
     elif kind == 'f':
-        np.testing.assert_allclose(float(got[0]), expected, rtol=1e-6)
+        np.testing.assert_allclose(float(got[0]), expected, rtol=1e-6, equal_nan=True)
     else:
         np.testing.assert_allclose(complex(float(got[0]), float(got[1])), expected, atol=1e-12)
 
