@@ -1,7 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Stack or heap placement of register arrays, chosen by ``Data.stack_vla``. """
 
+import contextlib
 import json
+import os
+import sys
+import tempfile
 
 import numpy as np
 import pytest
@@ -43,7 +47,7 @@ def run_scratch(sdfg: dace.SDFG, size: int, **symbols):
     np.testing.assert_allclose(b, a + 1.0, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize('size, placement, resolved', [
+PLACEMENT_CASES = [
     (16, StackAllocation.Auto, StackAllocation.Stack),
     (2047, StackAllocation.Auto, StackAllocation.Stack),
     (2048, StackAllocation.Auto, StackAllocation.Heap),
@@ -51,7 +55,28 @@ def run_scratch(sdfg: dace.SDFG, size: int, **symbols):
     (16, StackAllocation.Heap, StackAllocation.Heap),
     (4096, StackAllocation.Stack, StackAllocation.Stack),
     (N, StackAllocation.Stack, StackAllocation.Stack),
-])
+]
+
+
+@contextlib.contextmanager
+def captured_stderr_fd():
+    """ Collects what compiled code writes to file descriptor 2 into the one-item list it yields. """
+    captured = ['']
+    sys.stderr.flush()
+    saved_fd = os.dup(2)
+    with tempfile.TemporaryFile(mode='w+') as sink:
+        os.dup2(sink.fileno(), 2)
+        try:
+            yield captured
+        finally:
+            sys.stderr.flush()
+            os.dup2(saved_fd, 2)
+            os.close(saved_fd)
+            sink.seek(0)
+            captured[0] = sink.read()
+
+
+@pytest.mark.parametrize('size, placement, resolved', PLACEMENT_CASES)
 def test_auto_placement_resolves_by_size_and_explicit_placement_is_kept(size, placement, resolved):
     sdfg = register_scratch_sdfg('resolve_placement', size, placement)
     ResolveStackAllocation().apply_pass(sdfg, {})
@@ -74,14 +99,14 @@ def test_a_symbolic_stack_array_is_a_variable_length_array():
     run_scratch(sdfg, 32, N=32)
 
 
-def test_a_zero_extent_stack_array_has_a_positive_bound(capfd):
+def test_a_zero_extent_stack_array_has_a_positive_bound():
     """A zero-length VLA is undefined behaviour, and Fortran automatic arrays are often empty."""
     sdfg = register_scratch_sdfg('vla_zero', N, StackAllocation.Stack)
     args = dace.Config.get('compiler', 'cpu', 'args')
     with dace.config.set_temporary('compiler', 'cpu', 'args', value=f'{args} -fsanitize=vla-bound'), \
-            dace.config.set_temporary('compiler', 'cpu', 'libs', value='ubsan'):
+            dace.config.set_temporary('compiler', 'cpu', 'libs', value='ubsan'), captured_stderr_fd() as stderr:
         run_scratch(sdfg, 0, N=0)
-    assert 'runtime error' not in capfd.readouterr().err
+    assert 'runtime error' not in stderr[0], stderr[0]
 
 
 def test_a_zeroed_symbolic_stack_array_is_cleared_by_memset():
@@ -164,3 +189,18 @@ def test_stack_placement_survives_clone_and_serialization():
     assert desc.clone().stack_vla is StackAllocation.Stack
     reloaded = dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json())))
     assert reloaded.arrays['tmp'].stack_vla is StackAllocation.Stack
+
+
+if __name__ == '__main__':
+    for case in PLACEMENT_CASES:
+        test_auto_placement_resolves_by_size_and_explicit_placement_is_kept(*case)
+    test_auto_placement_of_a_large_constant_array_respects_max_stack_array_size()
+    test_a_symbolic_stack_array_is_a_variable_length_array()
+    test_a_zero_extent_stack_array_has_a_positive_bound()
+    test_a_zeroed_symbolic_stack_array_is_cleared_by_memset()
+    test_an_auto_symbolic_register_array_stays_on_the_heap()
+    test_a_small_constant_register_array_stays_aligned_on_the_stack()
+    test_a_large_constant_register_array_moves_to_the_heap()
+    test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap()
+    test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap()
+    test_stack_placement_survives_clone_and_serialization()
