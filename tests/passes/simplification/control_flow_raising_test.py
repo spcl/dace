@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
@@ -114,7 +114,8 @@ def test_elif_chain(lowered_returns: bool):
     assert elif_chain(15)[0] == 4
 
 
-def test_unstructured_control_flow_sibling_loops():
+@pytest.mark.parametrize('simplify', [False, True])
+def test_unstructured_control_flow_sibling_loops(simplify: bool):
     sdfg = dace.SDFG('unstructured_control_flow_sibling_loops')
 
     sdfg.add_array('A', (10, ), dace.int32)
@@ -126,7 +127,7 @@ def test_unstructured_control_flow_sibling_loops():
     l1_before = sdfg.add_state_after(init_state, 'l1_before')
     l1_guard = sdfg.add_state('l1_guard')
     l1_body1 = sdfg.add_state('l1_body1')
-    l1_body2 = sdfg.add_state_after(l1_body1, 'l1_body2')
+    l1_body2 = sdfg.add_state('l1_body2')
     l1_exit = sdfg.add_state('l1_exit')
     sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={'i': '0'}))
     sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge('i < 10'))
@@ -146,8 +147,10 @@ def test_unstructured_control_flow_sibling_loops():
 
     exit_state = sdfg.add_state_after(l2_exit, 'exit')
 
-    # Add an edge from the body of the first loop to the body of the second loop - this is the unstructured control flow
+    # Add an edge from the body of the first loop to the body of the second loop - this is the unstructured control flow.
+    # The loop continues otherwise, such that exactly one of the transitions is taken.
     sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition='A[i] == 1', assignments={'j': '3'}))
+    sdfg.add_edge(l1_body1, l1_body2, dace.InterstateEdge(condition='A[i] != 1'))
 
     # Add some computation
     a1 = l1_body2.add_access('A')
@@ -173,6 +176,11 @@ def test_unstructured_control_flow_sibling_loops():
     assert all(n in unstructured_nodes
                for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit])
 
+    if simplify:
+        # Simplification must not repeatedly inline and raise the unstructured region again
+        sdfg.simplify()
+        assert any(isinstance(block, UnstructuredControlFlow) for block in sdfg.all_control_flow_blocks())
+
     A_test = np.zeros((10, ), np.int32)
     B_test = np.zeros((10, ), np.int32)
     A_test[3] = 1  # This will trigger the jump from the first loop to the second loop
@@ -188,6 +196,32 @@ def test_unstructured_control_flow_sibling_loops():
     assert np.allclose(B_test, B_valid)
 
 
+def test_simplify_irreducible_loops():
+    """
+    Simplification raises irreducible control flow into an unstructured region and must not inline it again, which
+    previously made simplification alternate between raising and inlining forever.
+    """
+    sdfg = dace.SDFG('simplify_irreducible_loops')
+    start = sdfg.add_state('start', is_start_block=True)
+    s1 = sdfg.add_state_after(sdfg.add_state_after(start))
+    s2 = sdfg.add_state('s2')
+    end = sdfg.add_state('end')
+
+    # Two loops in sequence, with a jump from the body of the second loop into the body of the first
+    l1 = sdfg.add_state('l1')
+    l2 = sdfg.add_state_after(l1, 'l2')
+    sdfg.add_loop_state_machine(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
+    l3 = sdfg.add_state('l3')
+    l4 = sdfg.add_state_after(l3, 'l4')
+    sdfg.add_loop_state_machine(s2, l3, end, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
+    sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
+    sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
+
+    sdfg.simplify()
+    sdfg.validate()
+    assert any(isinstance(block, UnstructuredControlFlow) for block in sdfg.all_control_flow_blocks(recursive=True))
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -195,4 +229,6 @@ if __name__ == '__main__':
     test_nested_if_chain(True)
     test_elif_chain(False)
     test_elif_chain(True)
-    test_unstructured_control_flow_sibling_loops()
+    test_unstructured_control_flow_sibling_loops(False)
+    test_unstructured_control_flow_sibling_loops(True)
+    test_simplify_irreducible_loops()

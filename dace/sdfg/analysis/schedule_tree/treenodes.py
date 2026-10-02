@@ -9,12 +9,13 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.memlet import Memlet
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
 
 if TYPE_CHECKING:
     from dace import SDFG
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import StateBoundaryBehavior
 
 INDENTATION = '  '
 
@@ -237,6 +238,9 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     constants: dict[str, tuple[data.Data, Any]]
     callback_mapping: dict[str, str]
     arg_names: list[str]
+    global_code: dict[str, CodeBlock]  #: Code generated in a global scope, per target
+    init_code: dict[str, CodeBlock]  #: Code generated in the initialization function, per target
+    exit_code: dict[str, CodeBlock]  #: Code generated in the finalization function, per target
 
     def __init__(
         self,
@@ -248,6 +252,9 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         constants: dict[str, tuple[data.Data, Any]] | None = None,
         callback_mapping: dict[str, str] | None = None,
         arg_names: list[str] | None = None,
+        global_code: dict[str, CodeBlock] | None = None,
+        init_code: dict[str, CodeBlock] | None = None,
+        exit_code: dict[str, CodeBlock] | None = None,
     ) -> None:
         super().__init__(children=children, parent=None)
 
@@ -257,13 +264,17 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         self.constants = constants if constants is not None else dict()
         self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
         self.arg_names = arg_names if arg_names is not None else list()
+        self.global_code = global_code if global_code is not None else dict()
+        self.init_code = init_code if init_code is not None else dict()
+        self.exit_code = exit_code if exit_code is not None else dict()
 
     def as_sdfg(self,
                 validate: bool = True,
                 simplify: bool = True,
                 validate_all: bool = False,
                 skip: set[str] | None = None,
-                verbose: bool = False) -> SDFG:
+                verbose: bool = False,
+                state_boundary_behavior: Optional['StateBoundaryBehavior'] = None) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
 
@@ -274,11 +285,15 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         :param validate_all: When simplifying, validate all intermediate SDFGs. Unused if simplify is False.
         :param skip: Set of names of simplify passes to skip. Unused if simplify is False.
         :param verbose: Turn on verbose logging of simplify. Unused if simplify is False.
+        :param state_boundary_behavior: How state boundaries (e.g., due to write-after-write) are converted, see
+                                        ``tree_to_sdfg.StateBoundaryBehavior``. Defaults to state transitions.
 
         :return: SDFG version of this schedule tree.
         """
         from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
-        sdfg = t2s.from_schedule_tree(self)
+        if state_boundary_behavior is None:
+            state_boundary_behavior = t2s.StateBoundaryBehavior.STATE_TRANSITION
+        sdfg = t2s.from_schedule_tree(self, state_boundary_behavior)
 
         if validate:
             sdfg.validate()
@@ -298,6 +313,29 @@ class ControlFlowScope(ScheduleTreeScope):
 
     def __init__(self, *, children: list[ScheduleTreeNode], parent: ScheduleTreeScope | None = None) -> None:
         super().__init__(children=children, parent=parent)
+
+
+@dataclass
+class NamedRegionScope(ControlFlowScope):
+    """
+    A labeled grouping of statements, corresponding to a :class:`~dace.sdfg.state.NamedRegion` in the SDFG.
+
+    The label carries no semantics -- the region groups its children for readability, profiling, and transformation
+    targeting -- so the scope is transparent to everything except the code that reproduces it.
+    """
+    label: str = ''
+
+    def __init__(self,
+                 *,
+                 label: str = '',
+                 children: list[ScheduleTreeNode],
+                 parent: ScheduleTreeScope | None = None) -> None:
+        super().__init__(children=children, parent=parent)
+        self.label = label
+
+    def as_string(self, indent: int = 0):
+        result = indent * INDENTATION + f'named region "{self.label}":\n'
+        return result + super().as_string(indent)
 
 
 @dataclass
@@ -335,10 +373,18 @@ class GBlock(ControlFlowScope):
 
 @dataclass
 class StateLabel(ScheduleTreeNode):
-    state: SDFGState
+    """
+    A label that can be the target of a ``GotoNode``.
+    """
+    state: ControlFlowBlock | str  #: The labeled control flow block, or the name of a label without a block
+
+    @property
+    def name(self) -> str:
+        """The name of the label, which is used as the target of gotos."""
+        return self.state if isinstance(self.state, str) else self.state.label
 
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'label {self.state.name}:'
+        return indent * INDENTATION + f'label {self.name}:'
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         return MemletSet()
