@@ -163,7 +163,7 @@ def test_bert():
     class BertTokenSoftmaxClf(nn.Module):
 
         def __init__(self):
-            super().__init__()
+            super(BertTokenSoftmaxClf, self).__init__()
             self.bert = BertLayer(BertConfig(hidden_act="relu")).eval()
             self.sm = nn.LogSoftmax(dim=-1)
 
