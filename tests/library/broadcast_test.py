@@ -32,7 +32,10 @@ def spread(src, dim, ncopies):
     return np.repeat(np.expand_dims(src, dim - 1), ncopies, axis=dim - 1)
 
 
-@pytest.mark.parametrize('src_shape, dim, ncopies', [((3, ), 1, 2), ((3, ), 2, 4), ((2, 3), 2, 5), ((1, ), 1, 4)])
+SPREAD_CASES = [((3, ), 1, 2), ((3, ), 2, 4), ((2, 3), 2, 5), ((1, ), 1, 4)]
+
+
+@pytest.mark.parametrize('src_shape, dim, ncopies', SPREAD_CASES)
 def test_spread_inserts_the_axis_at_dim(src_shape, dim, ncopies):
     src = np.arange(1.0, np.prod(src_shape) + 1).reshape(src_shape).copy()
     expected = spread(src, dim, ncopies)
@@ -48,13 +51,16 @@ def test_spread_of_a_fortran_scalar_fills_a_vector():
     np.testing.assert_array_equal(dst, np.full(5, 2.5))
 
 
-@pytest.mark.parametrize('src_shape, dst_shape', [
+NUMPY_RULE_CASES = [
     ((3, ), (2, 3)),
     ((3, 1), (3, 4)),
     ((1, 4), (3, 4)),
     ((1, ), (2, 5)),
     ((2, 3), (4, 2, 3)),
-])
+]
+
+
+@pytest.mark.parametrize('src_shape, dst_shape', NUMPY_RULE_CASES)
 def test_numpy_rule_agrees_with_numpy(src_shape, dst_shape):
     src = np.arange(np.prod(src_shape), dtype=np.float64).reshape(src_shape).copy()
     dst = np.zeros(dst_shape)
@@ -62,11 +68,14 @@ def test_numpy_rule_agrees_with_numpy(src_shape, dst_shape):
     np.testing.assert_array_equal(dst, np.broadcast_to(src, dst_shape))
 
 
-@pytest.mark.parametrize('src_shape, dst_shape, dim, message', [
+REFUSED_CASES = [
     ((3, ), (2, 5), None, 'cannot broadcast'),
     ((3, 2), (4, 3, 2, 2), 1, 'adds one axis'),
     ((3, ), (3, 3), 3, 'out of range'),
-])
+]
+
+
+@pytest.mark.parametrize('src_shape, dst_shape, dim, message', REFUSED_CASES)
 def test_a_shape_that_cannot_broadcast_is_refused_before_expansion(src_shape, dst_shape, dim, message):
     with pytest.raises(ValueError, match=message):
         sdfg = build(src_shape, dst_shape, dim)
@@ -135,3 +144,19 @@ def test_the_library_call_in_a_program_keeps_its_dim():
     out = np.zeros((3, 4))
     program(a=a, out=out)
     np.testing.assert_array_equal(out, spread(a, 2, 4))
+
+
+if __name__ == '__main__':
+    for case in SPREAD_CASES:
+        test_spread_inserts_the_axis_at_dim(*case)
+    test_spread_of_a_fortran_scalar_fills_a_vector()
+    for case in NUMPY_RULE_CASES:
+        test_numpy_rule_agrees_with_numpy(*case)
+    for case in REFUSED_CASES:
+        test_a_shape_that_cannot_broadcast_is_refused_before_expansion(*case)
+    test_symbolic_extents_expand_and_run()
+    test_operands_are_read_and_written_by_their_own_strides()
+    test_a_sliced_source_with_a_lower_bound_offset()
+    test_the_destination_type_converts()
+    test_broadcast_to_in_a_program()
+    test_the_library_call_in_a_program_keeps_its_dim()

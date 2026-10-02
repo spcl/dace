@@ -51,7 +51,7 @@ def operands(shapes, seed=0):
     }
 
 
-@pytest.mark.parametrize('t, f, mask, out', [
+BROADCAST_CASES = [
     ((1, ), (1, ), (1, ), (1, )),
     ((16, ), (16, ), (16, ), (16, )),
     ((6, 8), (6, 8), (6, 8), (6, 8)),
@@ -62,8 +62,10 @@ def operands(shapes, seed=0):
     ((4, ), (5, 4), (5, 4), (5, 4)),
     ((5, 4), (5, 4), (1, ), (5, 4)),
     ((1, 1), (1, ), (1, ), (1, )),
-],
-                         ids=lambda shape: 'x'.join(map(str, shape)))
+]
+
+
+@pytest.mark.parametrize('t, f, mask, out', BROADCAST_CASES, ids=lambda shape: 'x'.join(map(str, shape)))
 def test_each_operand_broadcasts_against_the_result(t, f, mask, out):
     shapes = {'t': t, 'f': f, 'mask': mask, 'out': out}
     arrays = operands(shapes)
@@ -122,3 +124,13 @@ def test_an_operand_that_cannot_broadcast_is_refused_before_expansion():
     node = next(n for n in state.nodes() if isinstance(n, MergeLibraryNode))
     with pytest.raises(ValueError, match='_mrg_t'):
         node.validate(sdfg, state)
+
+
+if __name__ == '__main__':
+    for case in BROADCAST_CASES:
+        test_each_operand_broadcasts_against_the_result(*case)
+    test_fortran_layout_operands_are_addressed_by_their_strides()
+    test_symbolic_extents_give_a_map_over_that_extent()
+    test_sliced_operands_with_a_lower_bound_offset()
+    test_operand_types_convert_to_the_result_type()
+    test_an_operand_that_cannot_broadcast_is_refused_before_expansion()
