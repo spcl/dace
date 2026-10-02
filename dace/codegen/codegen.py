@@ -439,6 +439,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     # simplify) so SymPy's power laws can still fold Pow expressions beforehand.
     from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
     RelaxIntegerPowers().apply_pass(sdfg, {})
+    # Storage is final, so the stack placement of register arrays can be decided
+    from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
+    ResolveStackAllocation().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 

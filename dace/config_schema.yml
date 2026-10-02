@@ -374,8 +374,9 @@ required:
                 default: 65536
                 title: Max stack-allocated array size (bytes)
                 description: >
-                    All stack allocated arrays (i.e. StorageType.Register) with
-                    size larger than this will be allocated on the heap.
+                    Register arrays whose stack_vla property is Auto are allocated on
+                    the heap if they are larger than this, have at least 2048 elements,
+                    or have a symbolic size. An explicit stack_vla overrides this limit.
 
             extra_cmake_args:
                 type: str
