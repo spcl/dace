@@ -455,10 +455,8 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
-                # expression, or a Symbol carrying assumptions that maps a name to itself)
-                # must not become an assignment key -- only rename when new_name is a valid name.
-                if validate_name(new_name):
+                # A symbolic-expression replacement must not become an assignment key.
+                if validate_name(str(new_name)):
                     _replace_dict_keys(self.assignments, name, new_name)
 
         # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
