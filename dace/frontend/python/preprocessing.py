@@ -1676,20 +1676,6 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
-class ModuloConverter(ast.NodeTransformer):
-    """ Rewrites Python's ``a % b`` to ``PyMod(a, b)``, which names the floored modulo explicitly. """
-
-    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
-        node = self.generic_visit(node)
-        if not isinstance(node.op, ast.Mod):
-            return node
-        if isinstance(node.left, ast.JoinedStr) or (isinstance(node.left, ast.Constant)
-                                                    and isinstance(node.left.value, str)):
-            return node
-        call = ast.Call(func=ast.Name(id='PyMod', ctx=ast.Load()), args=[node.left, node.right], keywords=[])
-        return ast.copy_location(call, node)
-
-
 def symbol_names(value: Any) -> Set[str]:
     """Names ``GlobalResolver`` inlines for a closure value: the free symbols of a symbolic value or of a list/tuple of them."""
     if isinstance(value, (list, tuple)):
@@ -1822,8 +1808,6 @@ def preprocess_dace_program(f: Callable[..., Any],
                 print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')
                 print(astutils.unparse(src_ast))
             raise
-
-    src_ast = ModuloConverter().visit(src_ast)
 
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)
