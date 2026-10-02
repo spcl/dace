@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`WavefrontSkew`. Classical 2-D wavefront pattern (TSVC s2111)."""
+import pathlib
 import sys
+import tempfile
 from fractions import Fraction
 
 import numpy as np
@@ -14,6 +16,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX)
+from dace.transformation.passes.equalize_symbol_dtypes import equalize
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
@@ -349,6 +352,18 @@ def gauss_seidel_5pt(aa: dace.float64[N, N]):
     for i in range(1, N - 1):
         for j in range(1, N - 1):
             aa[i, j] = (aa[i, j - 1] + aa[i - 1, j] + aa[i, j + 1] + aa[i + 1, j]) / 4.0
+
+
+@pytest.mark.parametrize('prog', [seidel_perfect, gauss_seidel_5pt])
+def test_wavefront_skew_names_its_iterators_at_the_dtype_it_declares(prog):
+    """``t`` and ``p`` are declared int64, so every spelling of them in the skewed nest must be int64: a name
+    spelled at two dtypes is two symbols that never cancel."""
+    sdfg = prog.to_sdfg(simplify=True)
+    equalize(sdfg)
+
+    assert WavefrontSkew().apply_pass(sdfg, {}) == 1
+
+    assert equalize(sdfg) is None, 'the skew spelled an iterator at a dtype its loop or map does not declare'
 
 
 def test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map():
@@ -1253,4 +1268,46 @@ def test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, la
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
+    test_wavefront_skew_value_preserving()
+    test_wavefront_skew_then_l2m_parallelises_inner()
+    test_wavefront_skew_accepts_symbolic_offsets()
+    test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol()
+    test_wavefront_skew_refuses_when_inner_already_parallel()
+    with tempfile.TemporaryDirectory() as tmp:
+        test_wavefront_skew_runtime_guard_traps_on_violation(pathlib.Path(tmp))
+    test_wavefront_skew_steep_gauss_seidel_lifts_inner_to_map()
+    test_wavefront_skew_steep_gauss_seidel_value_preserving()
+    test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop()
+    test_dependence_kind_classifies_backward_flow_forward_anti()
+    for prog in (seidel_perfect, gauss_seidel_5pt):
+        test_wavefront_skew_names_its_iterators_at_the_dtype_it_declares(prog)
+    test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map()
+    test_wavefront_skew_five_point_gauss_seidel_value_preserving()
+    test_wavefront_skew_fires_on_nussinov_through_full_pipeline()
+    test_wavefront_skew_nussinov_value_preserving_through_full_pipeline()
+    test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline()
+    test_wavefront_skew_five_point_snapshot_absorb_value_preserving()
+    test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
+    test_split_snapshot_window_accepts_a_narrowed_copy_but_demands_identity_indexing()
+    test_snapshot_reads_outside_the_copied_window_refuse_the_absorb()
+    test_plan_split_snapshots_refuses_external_snapshot_reader()
+    test_plan_split_snapshots_is_non_mutating_then_commit_applies()
+    test_dependence_kind_symbolic_forward_positive_is_anti()
+    test_wavefront_skew_symbolic_positive_forward_read_value_preserving()
+    test_wavefront_skew_symbolic_backward_read_not_over_refused()
+    test_wavefront_skew_non_2d_carried_dependence_value_preserving()
+    test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator()
+    for assignments in ({'y': 'a[i - 1, j + 2]'}, {'y': 'x', 'x': 'a[i, j]'}):
+        test_wavefront_skew_refuses_nest_carrying_a_value_through_an_interstate_edge(assignments)
+    for prog in (row_stencil_forward_read, row_stencil_diagonal_read):
+        test_sequential_outer_parallel_inner_row_stencil_lifts_inner_to_map(prog)
+    test_row_stencil_forward_read_value_preserving()
+    test_row_stencil_diagonal_read_value_preserving()
+    for prog, interchangeable in ((same_lane_carry, True), (lane_crossing_carry, False)):
+        test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable)
+    test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs()
+    test_row_sweep_ti_wavefront_is_detected()
+    for program, with_scalar_accumulator, label in ((lu_factorization, False, 'lu'), (ludcmp_factorization, True,
+                                                                                      'ludcmp')):
+        test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label)

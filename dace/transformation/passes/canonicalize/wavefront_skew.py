@@ -140,6 +140,14 @@ def sym(name: str):
     return symbolic.pystr_to_symbolic(name)
 
 
+def declare_iterators(sdfg: SDFG, *names: str) -> None:
+    """Declare the pass's new iterators as int64 symbols of ``sdfg``, and to the symbol-dtype authority so that
+    :func:`sym` mints them at that dtype too."""
+    for name in names:
+        sdfg.add_symbol(name, dace.int64)
+        symbolic.declare_symbol_dtype(name, dace.int64)
+
+
 def canonical_iterators(expr, iters: tuple[str, ...]):
     """``expr`` with every free symbol NAMED in ``iters`` re-keyed onto :func:`sym`'s object.
 
@@ -1251,6 +1259,10 @@ class WavefrontSkew(ppl.Pass):
         no-op and the loops stay sequential)."""
         if not poly.HAVE_ISL:
             return None
+        with symbolic.serialization_symbol_dtypes({}, inherit=True):
+            return self.skew_all(sdfg)
+
+    def skew_all(self, sdfg: SDFG) -> Optional[int]:
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
@@ -1437,8 +1449,7 @@ class WavefrontSkew(ppl.Pass):
         nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
-        sdfg.add_symbol(t_var, dace.int64)
-        sdfg.add_symbol(p_var, dace.int64)
+        declare_iterators(sdfg, t_var, p_var)
         subs = {f'{SKEW_T_PREFIX}probe': sym(t_var), f'{SKEW_P_PREFIX}probe': sym(p_var)}
 
         t_lo = bound_expr(bounds.t_lo_terms, subs, 'max')
@@ -1497,8 +1508,7 @@ class WavefrontSkew(ppl.Pass):
         nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
-        sdfg.add_symbol(t_var, dace.int64)
-        sdfg.add_symbol(p_var, dace.int64)
+        declare_iterators(sdfg, t_var, p_var)
         subs = {
             f'{SKEW_T_PREFIX}probe': sym(t_var),
             f'{SKEW_P_PREFIX}probe': sym(p_var),
@@ -1632,8 +1642,7 @@ class WavefrontSkew(ppl.Pass):
         nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
         d_var = f'{SKEW_T_PREFIX}{nid}'
         k_var = f'{SKEW_P_PREFIX}{nid}'
-        sdfg.add_symbol(d_var, dace.int64)
-        sdfg.add_symbol(k_var, dace.int64)
+        declare_iterators(sdfg, d_var, k_var)
         subs = {f'{SKEW_T_PREFIX}probe': sym(d_var), f'{SKEW_P_PREFIX}probe': sym(k_var)}
         p_lo = bound_expr(bounds.p_lo_terms, subs, 'max')
         p_hi = bound_expr(bounds.p_hi_terms, subs, 'min')
