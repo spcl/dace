@@ -136,7 +136,9 @@ class PatternMatchAndApply(ppl.Pass):
             # Find only the first match. No metadata: the cached one covers all transformations and would
             #  override `[xform]`.
             match = next(
-                match_patterns(sdfg, [xform], permissive=self.permissive, states=self.states,
+                match_patterns(sdfg, [xform],
+                               permissive=self.permissive,
+                               states=self.states,
                                pipeline_results=pipeline_results), None)
             if match is None:
                 continue
