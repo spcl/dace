@@ -122,7 +122,7 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     :param idom: Optional precomputed immediate dominators.
     :return: A dictionary keyed by control flow blocks, containing the dominance frontier for each control flow block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
     dom_frontiers = {block: OrderedSet() for block in cfg.nodes()}
     for u in idom:
@@ -209,7 +209,7 @@ def all_postdominators(cfg: ControlFlowRegion,
         for s in sinks:
             cfg.add_edge(s, sink, InterstateEdge())
 
-    ipostdom = ipostdom or nx.immediate_dominators(cfg.nx.reverse(), sink)
+    ipostdom = ipostdom or sdutil.immediate_dominators(cfg.nx.reverse(), sink)
 
     # Create a dictionary of all postdominators of each node by using the transitive closure of the DAG induced by the
     # ipostdoms
