@@ -599,7 +599,9 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState],
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
         # After setup_match, which resets it to None.
         match._pipeline_results = pipeline_results
-        match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
+        # The predicate parses names from text just as the application does, so it decides under the same dtypes.
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+            match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
             raise

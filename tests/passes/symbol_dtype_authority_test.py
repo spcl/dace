@@ -12,7 +12,10 @@ import numpy as np
 import dace
 from dace import dtypes, symbolic
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
+from dace.transformation import transformation
+from dace.transformation.passes.pattern_matching import match_patterns
 from dace.transformation.passes.canonicalize import pipeline as canon
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -76,7 +79,35 @@ def test_a_two_dimensional_argmax_lifts():
     assert np.isclose(got[0], want), f'{got[0]} != {want}'
 
 
+class ReadsNAtTheDeclaredDtype(transformation.SingleStateTransformation):
+    """Applicable only when ``N``, read from text, comes out at the dtype the SDFG declares."""
+
+    access = transformation.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.access)]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        return symbolic.pystr_to_symbolic('N').dtype == sdfg.symbols['N']
+
+    def apply(self, graph, sdfg):
+        return None
+
+
+def test_a_predicate_reads_names_at_the_dtype_the_sdfg_declares():
+    """A predicate that decides on a re-parsed name decides as the application will: a match the application
+    cannot reproduce is applied forever by a repeated pass."""
+    sdfg = dace.SDFG('predicate_declared_dtype')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_state().add_read('A')
+
+    assert len(list(match_patterns(sdfg, [ReadsNAtTheDeclaredDtype]))) == 1
+
+
 if __name__ == '__main__':
     test_a_reparse_under_an_authority_takes_the_declared_dtype()
     test_the_cache_is_not_shared_across_authorities()
     test_a_two_dimensional_argmax_lifts()
+    test_a_predicate_reads_names_at_the_dtype_the_sdfg_declares()
