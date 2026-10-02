@@ -203,6 +203,9 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            if node_re != node_re or node_rb != node_rb or node_rs != node_rs:
+                # UndefinedSymbol hangs in SymPy's expand(), fail early
+                return False
             result_begin = subexprs[0].subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
@@ -1830,10 +1833,8 @@ def propagate_subset(memlets: List[Memlet],
     # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
     defined_variables = set(map(str, defined_variables)) - {symbolic.UNDEFINED_NAME}
 
-    if undefined_variables is not None:
-        defined_variables -= set(map(str, undefined_variables))
-    else:
-        undefined_variables = set()
+    undefined_names = set(map(str, undefined_variables)) if undefined_variables is not None else set()
+    defined_variables -= undefined_names
 
     # Scope parameters are matched against the subsets, so they must be the very instances those carry.
     scope_symbols = symbolic.symbols_in([md.subset for md in memlets] + [md.other_subset for md in memlets] + [rng])
@@ -1880,7 +1881,7 @@ def propagate_subset(memlets: List[Memlet],
                     fsyms = _freesyms(s)
                     fsyms_str = set(map(str, fsyms))
                     contains_params = len(fsyms_str & paramset) != 0
-                    contains_undefs = len(fsyms & undefined_variables) != 0
+                    contains_undefs = len(fsyms_str & undefined_names) != 0
                 else:
                     contains_params = False
                     contains_undefs = False
@@ -1888,7 +1889,7 @@ def propagate_subset(memlets: List[Memlet],
                         fsyms = _freesyms(sdim)
                         fsyms_str = set(map(str, fsyms))
                         contains_params |= len(fsyms_str & paramset) != 0
-                        contains_undefs |= len(fsyms & undefined_variables) != 0
+                        contains_undefs |= len(fsyms_str & undefined_names) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:

@@ -415,6 +415,33 @@ def test_insert_self_copy_subset_is_src_side():
     np.testing.assert_array_equal(p, expected)
 
 
+@pytest.mark.parametrize("memlet", ["[0:4, 3] -> p[0:4, 4]", "p[0:4, 3] -> [0:4, 4]"],
+                         ids=["data_is_dst", "data_is_src"])
+def test_insert_self_copy_direction(memlet):
+    """Self-copy ``p -> p``: both endpoints match ``data``, so the memlet's ``_is_data_src`` decides which of
+    ``subset``/``other_subset`` is the source (as in copy-edge codegen); reversing them would silently produce a
+    backwards copy."""
+    sdfg = dace.SDFG("self_copy_direction")
+    sdfg.add_array("p", [4, 5], dace.float64)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("p")
+    b = st.add_access("p")
+    st.add_edge(a, None, b, None, Memlet(memlet))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    copies = [n for n in st.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1
+    cn = copies[0]
+    in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
+    out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
+
+    assert str(in_e.data.subset) == "0:4, 3", f"src side should read column 3; got {in_e.data.subset}"
+    assert str(out_e.data.subset) == "0:4, 4", f"dst side should write column 4; got {out_e.data.subset}"
+
+
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
     """Assert the SDFG validates and the single lifted ``CopyLibraryNode`` output memlet spans the full ``dst_shape``."""
     sdfg.validate()

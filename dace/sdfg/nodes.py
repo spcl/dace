@@ -4,6 +4,8 @@
 
 import ast
 import collections.abc
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -44,6 +46,31 @@ def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
                 result[name] = desc.dtype
         sdfg = sdfg.parent_sdfg
     return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict['dace.SDFG', Set[str]]]] = contextvars.ContextVar(
+    'nested_used_symbols_memo', default=None)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
 
 
 @make_properties
@@ -750,7 +777,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.

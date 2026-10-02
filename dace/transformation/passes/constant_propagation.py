@@ -2,6 +2,7 @@
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import InterstateEdge
@@ -34,6 +35,23 @@ def cached_free_names(value: Any, names_cache: NamesCacheT) -> FrozenSet[str]:
         entry = (value, frozenset(symbolic.free_symbols_and_functions(value)))
         names_cache[key] = entry
     return entry[1]
+
+
+@lru_cache(maxsize=16384, typed=True)
+def _parse_assignment(value: str) -> Tuple[str, FrozenSet[str]]:
+    """
+    Parses an assignment value once.
+
+    :return: A tuple of the value as it is unparsed after a replacement, and the names ``ASTFindReplace`` would visit.
+    """
+    tree = ast.parse(value)
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.keyword) and node.arg is not None:
+            names.add(node.arg)
+    return astutils.unparse(tree), frozenset(names)
 
 
 @dataclass(unsafe_hash=True)
@@ -82,8 +100,13 @@ class ConstantPropagation(ppl.Pass):
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A set of propagated constants, or None if nothing was changed.
         """
-        initial_symbols = initial_symbols or {}
+        # Nested SDFGs are complete before the symbols of their parent are cleaned up, so their used symbols can be
+        # computed once rather than on every enclosing SDFG
+        with nodes.memoize_nested_used_symbols() as used_symbols_memo:
+            return self._apply_pass(sdfg, _, initial_symbols or {}, used_symbols_memo)
 
+    def _apply_pass(self, sdfg: SDFG, _, initial_symbols: Dict[str, Any],
+                    used_symbols_memo: Dict[SDFG, Set[str]]) -> Optional[Set[str]]:
         # A constant for a Scalar data descriptor is baked with specialize_scalars (folds reads, drops the
         # node); the replace_dict path below would rename its data to the literal and leave a dangling ref.
         from dace.sdfg.utils import specialize_scalars
@@ -208,21 +231,8 @@ class ConstantPropagation(ppl.Pass):
                     for sym in intersection:
                         del edge.data.assignments[sym]
 
-                # If symbols are never unknown any longer, remove from SDFG
-                fsyms = sdfg.used_symbols(all_symbols=False)
-                result = {k: v for k, v in result.items() if k not in fsyms}
-                for sym in result:
-                    if sym in sdfg.symbols:
-                        # Remove from symbol repository and nested SDFG symbol mapping
-                        sdfg.remove_symbol(sym)
-
-        result = set(result.keys()) | specialized_scalars
-
+        nested_result = set()
         if self.recursive:
-            # Change result to set of tuples
-            sid = sdfg.cfg_id
-            result = set((sid, sym) for sym in result)
-
             for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
@@ -237,7 +247,7 @@ class ConstantPropagation(ppl.Pass):
                             for k, v in node.symbol_mapping.items()
                             if not symbolic.issymbolic(symbolic.pystr_to_symbolic(v))
                         }
-                        internal = self.apply_pass(node.sdfg, _, const_syms)
+                        internal = self._apply_pass(node.sdfg, _, const_syms, used_symbols_memo)
                         # ``is not None``, not truthiness: a nested run that edited the graph but
                         #  propagated no surviving symbol returns an EMPTY collection (mutated but
                         #  empty). Testing ``if internal:`` would drop that signal and this SDFG
@@ -245,10 +255,28 @@ class ConstantPropagation(ppl.Pass):
                         if internal is not None:
                             mutated = True
                             for nid, removed in internal:
-                                result.add((nid, removed))
+                                nested_result.add((nid, removed))
                                 # Remove symbol mapping if constant was completely propagated
                                 if nid == nested_id and removed in node.symbol_mapping:
                                     del node.symbol_mapping[removed]
+
+        # If symbols are never unknown any longer, remove from SDFG
+        if result:
+            fsyms = sdfg.used_symbols(all_symbols=False)
+            # Removing unused symbols below does not change the used ones, so the enclosing SDFG can reuse them
+            used_symbols_memo[sdfg] = fsyms
+            result = {k: v for k, v in result.items() if k not in fsyms}
+        for sym in result:
+            if sym in sdfg.symbols:
+                # Remove from symbol repository and nested SDFG symbol mapping
+                sdfg.remove_symbol(sym)
+
+        result = set(result.keys()) | specialized_scalars
+
+        if self.recursive:
+            # Change result to set of tuples
+            sid = sdfg.cfg_id
+            result = set((sid, sym) for sym in result) | nested_result
 
         # Return result. An empty SET distinguishes "edited the graph but propagated no symbol
         # that survived filtering" from "did nothing at all" -- only the latter is None. Must be a
@@ -445,7 +473,7 @@ class ConstantPropagation(ppl.Pass):
 
         # Collection does not mutate the CFG, so the order is the same on every sweep below.
         if cfg not in order_cache:
-            order_cache[cfg] = list(cfg_analysis.blockorder_topological_sort(cfg, recursive=False))
+            order_cache[cfg] = cfg_analysis.blockorder_reverse_postorder(cfg)
         block_order = order_cache[cfg]
 
         redo = True
@@ -608,6 +636,11 @@ class ConstantPropagation(ppl.Pass):
                 return v
             if dtypes.validate_name(v) and v in repl:
                 return repl[v]
+
+            # Nothing to replace or trigger on: the result is the (normalized) value itself
+            unparsed, names = _parse_assignment(v)
+            if not (names & assignment) and names.isdisjoint(repl.keys()):
+                return unparsed
 
             vast = ast.parse(v)
             replacer = astutils.ASTFindReplace(repl, assignment)

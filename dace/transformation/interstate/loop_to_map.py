@@ -1932,7 +1932,8 @@ class LoopToMap(xf.MultiStateTransformation):
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
-                    nsdfg.symbols[s] = sdfg.symbols[s]
+                    # Other passes map symbols without declaring them; type it off the symbol.
+                    nsdfg.symbols[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
         for name in read_set:
             r = body.add_read(name)
             body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))

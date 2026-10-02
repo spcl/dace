@@ -727,6 +727,33 @@ def _chain_order(cfg: ControlFlowRegion) -> Optional[List[ControlFlowBlock]]:
     return order
 
 
+def blockorder_reverse_postorder(cfg: ControlFlowRegion) -> List[ControlFlowBlock]:
+    """
+    Returns the blocks of a control flow region that are reachable from its start block, in reverse postorder: every
+    block comes after its predecessors, except across edges that close a cycle. Unlike
+    ``blockorder_topological_sort``, which also groups branches by the block they merge in, this is linear in the size
+    of the region, which makes it the better choice for iterating a dataflow analysis to a fixed point.
+
+    :param cfg: The CFG to order (not recursing into nested regions).
+    :return: A list of control flow blocks in reverse postorder.
+    """
+    start = cfg.start_block
+    postorder: List[ControlFlowBlock] = []
+    visited = {start}
+    stack = [(start, iter(cfg.successors(start)))]
+    while stack:
+        block, successors = stack[-1]
+        for succ in successors:
+            if succ not in visited:
+                visited.add(succ)
+                stack.append((succ, iter(cfg.successors(succ))))
+                break
+        else:
+            stack.pop()
+            postorder.append(block)
+    return postorder[::-1]
+
+
 def blockorder_topological_sort(cfg: ControlFlowRegion,
                                 recursive: bool = True,
                                 ignore_nonstate_blocks: bool = False) -> Iterator[ControlFlowBlock]:
