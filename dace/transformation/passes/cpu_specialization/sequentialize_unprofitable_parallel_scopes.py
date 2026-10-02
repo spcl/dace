@@ -26,8 +26,7 @@ Two independent reasons to take the parallelism away, in the order they are chec
    per entry for a handful of elements (measured on amg_setup: three such loops, 230 ms against
    30 ms). Those keep their Map and their parallel schedule and carry the cost model as an
    ``if(parallel: count >= threshold)`` clause instead, decided per call. The clause names
-   ``parallel`` explicitly so a combined ``parallel for simd`` keeps its simd clause -- a BARE
-   ``if`` there devectorizes, which is why one is never emitted.
+   ``parallel`` explicitly, so it guards the fork and nothing else.
 
 The map's own iteration count, not the work of its whole subtree: a 16-iteration map wrapping a
 1M-element inner map is better served by sequentializing the outer one and letting rule 1 release

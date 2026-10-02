@@ -214,7 +214,7 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
 #: DELIBERATELY ABSENT, and the reason this list is a checked allowlist rather than a filter on
 #: ``environments``: DaCe's faster-sounding implementations declare no environment and still name a
 #: symbol nothing here defines. ``Reduce``'s ``CPU`` lowers onto ``dace::reduce`` and its
-#: ``vectorized`` onto ``horizontal_reduce_*`` from the vectorizable-math headers. ``Auto`` is a
+#: ``vectorized`` onto ``horizontal_reduce_*`` from ``dace/horizontal_reduce.h``. ``Auto`` is a
 #: per-node dispatcher that can land on those, so it is listed only for the nodes whose ``Auto``
 #: always renders (:data:`RENDERABLE_BY_NODE`).
 RENDERABLE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
