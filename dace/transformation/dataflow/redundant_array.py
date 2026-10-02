@@ -768,6 +768,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
+                # Set explicitly: in a self-copy (``B -> A -> B``) the data name alone cannot tell the sides apart
+                e3.data._is_data_src = src_is_data
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
