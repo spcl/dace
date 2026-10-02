@@ -50,7 +50,7 @@ class SVECodeGen(TargetCodeGenerator):
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         self.has_generated_header = False
 
-        self.frame = frame_codegen
+        self._frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
@@ -69,9 +69,6 @@ class SVECodeGen(TargetCodeGenerator):
                                                  self)
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
-
-    def get_framecode_generator(self) -> DaCeCodeGenerator:
-        return self.frame
 
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
@@ -535,4 +532,4 @@ class SVECodeGen(TargetCodeGenerator):
         :param ancestor: Scope ancestor level.
         :return: C-compatible name that can be used to access the data.
         """
-        return cpp.ptr(name, desc, sdfg, self.frame)
+        return cpp.ptr(name, desc, sdfg, self._frame)
