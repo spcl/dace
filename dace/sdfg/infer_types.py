@@ -9,7 +9,7 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 #############################################################################
 # Connector type inference
@@ -122,6 +122,38 @@ def infer_connector_types(sdfg: SDFG):
                                     ' connector "%s" of node "%s"' % (cname, node))
 
 
+def mapped_symbol_types(
+    state: SDFGState,
+    node: nodes.NestedSDFG,
+    defined_at: Optional[Callable[[SDFGState, nodes.Node], Dict[str, dtypes.typeclass]]] = None
+) -> Iterator[Tuple[str, dtypes.typeclass, dtypes.typeclass]]:
+    """
+    Yields ``(name, declared, mapped)`` for each symbol of a nested SDFG that is declared there and whose mapped
+    expression has an inferable type.
+
+    :param state: The state that contains ``node``.
+    :param node: The nested SDFG node.
+    :param defined_at: The symbols visible at ``node``, by default ``state.symbols_defined_at``. A caller walking many
+                       nodes passes a cached oracle.
+    """
+    outer_symbols = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer_symbols is None:
+            outer_symbols = defined_at(state, node) if defined_at is not None else state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer_symbols)
+        if mapped is not None:
+            yield name, declared, mapped
+
+
+def same_scalar_kind(declared: dtypes.typeclass, mapped: dtypes.typeclass) -> bool:
+    """Whether two dtypes are plain scalars of one kind (signed, unsigned or floating point)."""
+    return (type(declared) is type(mapped) is dtypes.typeclass
+            and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind)
+
+
 def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     """
     Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
@@ -131,17 +163,9 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     :param state: The state that contains ``node``.
     :param node: The nested SDFG node.
     """
-    outer_symbols = None
-    for name, value in node.symbol_mapping.items():
-        declared = node.sdfg.symbols.get(name)
-        if declared is None:
-            continue
-        if outer_symbols is None:
-            outer_symbols = state.symbols_defined_at(node)
-        mapped = infer_expr_type(value, outer_symbols)
+    for name, declared, mapped in mapped_symbol_types(state, node):
         # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
-        if (mapped is not None and mapped.bytes > declared.bytes and type(declared) is type(mapped) is dtypes.typeclass
-                and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind):
+        if mapped.bytes > declared.bytes and same_scalar_kind(declared, mapped):
             node.sdfg.symbols[name] = mapped
 
 

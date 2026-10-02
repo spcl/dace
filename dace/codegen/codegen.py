@@ -152,17 +152,26 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     restructure what the CPU target emits. A nested SDFG inside a GPU scope belongs to the CUDA target,
     which emits it as a ``DACE_DFI`` device function; inlining it deletes that function and with it the
     const-qualification of its parameters (:func:`dace.codegen.targets.cpp.emit_memlet_reference`).
+
+    A nested SDFG that declares a mapped symbol at another kind than its value (an integer fed a float, a signed
+    symbol an unsigned value) is left alone too: the call converts the value, inlining would substitute it as is.
     """
+    from dace.sdfg.infer_types import mapped_symbol_types, same_scalar_kind
     from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.transformation.passes.analysis.scopes import ScopedSymbolResolver
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
     from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 
     # Both inline transformations honour ``no_inline``, so pin the device-level nests for the sweep and
     # hand the SDFG back exactly as it came in. Inlining reuses node objects and never moves a node into
     # a scope it was not already inside, so device-level membership cannot change under the sweep.
+    resolver = ScopedSymbolResolver()
     pinned = [
-        node for node, parent in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)
-        and not node.no_inline and isinstance(parent, SDFGState) and is_devicelevel_gpu(parent.sdfg, parent, node)
+        node for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and not node.no_inline and isinstance(parent, SDFGState) and (
+            is_devicelevel_gpu(parent.sdfg, parent, node) or any(
+                not same_scalar_kind(declared, mapped)
+                for _, declared, mapped in mapped_symbol_types(parent, node, resolver.defined_at)))
     ]
     for node in pinned:
         node.no_inline = True
