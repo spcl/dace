@@ -4,13 +4,12 @@ import collections.abc
 from collections import OrderedDict
 import copy
 import itertools
-import re
 import sys
 import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional
+from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple, Union, Callable, Optional, Literal
 import operator
 
 import dace
@@ -24,8 +23,9 @@ from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
-from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, align_memlet
+from dace.sdfg import nodes, dealias
+from dace.sdfg.propagation import (propagate_memlet, propagate_memlets_map_scope, propagate_memlets_nested_sdfg,
+                                   propagate_subset, propagate_states, align_memlet)
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -51,7 +51,17 @@ Size = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
-DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
+
+
+class DependencyType(NamedTuple):
+    """
+    Represents a dependency in the SDFG, including the control flow block,
+    the memlet or tasklet involved, and the inner dimension indices, if differ from the outer indices on the memlet.
+    """
+    block: ControlFlowBlock
+    memlet: Union[Memlet, nodes.Tasklet]
+    inner_indices: tuple[int, ...]
+
 
 _simple_ast_nodes = (ast.Constant, ast.Name)
 
@@ -315,6 +325,23 @@ def _disallow_stmt(visitor, node):
     raise DaceSyntaxError(visitor, node, 'Keyword "%s" disallowed' % (type(node).__name__))
 
 
+def _connected_container(dependency: Union[Memlet, nodes.Tasklet], connector: str) -> str:
+    """
+    Returns the name of the container a dependency of a call refers to.
+
+    A call's dependencies are keyed by connector, which is the name the callee knows the container
+    by. The scope around the call knows it by the name of its own container, which is the one its
+    parent connects, and that is the name the memlet carries.
+
+    :param dependency: The memlet passed to the connector, or the tasklet that feeds it.
+    :param connector: The name of the connector, used when there is no container behind it.
+    :return: The name of the container, or the connector's name if the dependency is not a memlet.
+    """
+    if isinstance(dependency, Memlet) and dependency.data is not None:
+        return dependency.data
+    return connector
+
+
 ###############################################################
 # Parsing functions
 ###############################################################
@@ -514,22 +541,12 @@ def add_indirection_subgraph(sdfg: SDFG,
                 access = list(access)
             if not isinstance(access, (list, tuple)):
                 access = [access]
-            if pvisitor.nested:
-                # TODO: Make this work for nested for-loops
-                arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
-                if output:
-                    arrname, rng = pvisitor._add_write_access(arr_name, arr_rng, target=None)
-                else:
-                    arrname, rng = pvisitor._add_read_access(arr_name, arr_rng, target=None)
-                arr = sdfg.arrays[arrname]
-                subset = subsets.Range.from_array(arr)
-            else:
-                subset = subsets.Range.from_indices(access)
+            subset = subsets.Range.from_indices(access)
             # Memlet to load the indirection index
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname, debuginfo=pvisitor.current_lineinfo)
-            if pvisitor.nested or not isinstance(src, nodes.EntryNode):
+            if not isinstance(src, nodes.EntryNode):
                 path = [read_node] + inp_base_path
             else:
                 if output:
@@ -688,12 +705,9 @@ class TaskletTransformer(ExtNodeTransformer):
                  filename: str,
                  lang=None,
                  location: dict = {},
-                 nested: bool = False,
-                 scope_arrays: Dict[str, data.Data] = dict(),
                  scope_vars: Dict[str, str] = dict(),
                  variables: Dict[str, str] = dict(),
-                 accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict(),
-                 symbols: Dict[str, "dace.symbol"] = dict()):
+                 accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict()):
         """ Creates an AST parser for tasklets.
 
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
@@ -718,17 +732,9 @@ class TaskletTransformer(ExtNodeTransformer):
         self.exitcode = ''
         self.location = location
 
-        self.nested = nested
-        self.scope_arrays = scope_arrays
         self.scope_vars = scope_vars
         self.variables = variables
         self.accesses = accesses
-
-        self.sdfg_inputs: Dict[str, Tuple[Memlet, Set[int]]] = {}
-        self.sdfg_outputs: Dict[str, Tuple[Memlet, Set[int]]] = {}
-
-        # Tmp fix for missing state symbol propatation
-        self.symbols = symbols
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
@@ -771,209 +777,12 @@ class TaskletTransformer(ExtNodeTransformer):
 
         return t, self.inputs, self.outputs, self.accesses
 
-    def _add_access(
-            self,
-            name: str,
-            rng: subsets.Range,
-            access_type: str,  # 'r' or 'w'
-            target: Union[ast.Name, ast.Subscript],
-            new_name: str = None,
-            arr_type: data.Data = None) -> str:
-        if access_type not in ('r', 'w'):
-            raise ValueError("Access type {} is invalid".format(access_type))
-        if new_name:
-            var_name = new_name
-        elif target:
-            var_name = "__tmp_{l}_{c}".format(l=target.lineno, c=target.col_offset)
-        else:
-            var_name = self.visitor._get_name_from_node(target)
-
-        parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
-        if _subset_has_indirection(rng):
-            squeezed_rng = list(range(len(rng)))
-            shape = parent_array.shape
-            strides = [parent_array.strides[d] for d in squeezed_rng]
-            # TODO: Why is squeezed_rng an index in the first place?
-            squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
-        else:
-            ignore_indices = []
-            sym_rng = []
-            offset = []
-            for i, r in enumerate(rng):
-                repl_dict = {}
-                for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).values():
-                        ignore_indices.append(i)
-                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
-                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
-                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
-                            repl_dict = {}
-                            break
-                        else:
-                            sym_rng.append(sr)
-                            # NOTE: Assume that the i-th index of the range is
-                            # dependent on a local symbol s, i.e, rng[i] = f(s).
-                            # Therefore, the i-th index will not be squeezed
-                            # even if it has length equal to 1. However, it must
-                            # still be offsetted by f(min(sr)), so that the indices
-                            # for the squeezed connector start from 0.
-                            # Example:
-                            # Memlet range: [i+1, j, k+1]
-                            # k: local symbol with range(1, 4)
-                            # i,j: global symbols
-                            # Squeezed range: [f(k)] = [k+1]
-                            # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
-                            #                        [f(k)-f(1)] = [k-1]
-                            # NOTE: The code takes into account the case where an
-                            # index is dependent on multiple symbols. See also
-                            # tests/python_frontend/nested_name_accesses_test.py.
-                            step = sr[0][2]
-                            if (step < 0) == True:
-                                repl_dict[s] = sr[0][1]
-                            else:
-                                repl_dict[s] = sr[0][0]
-                if repl_dict:
-                    offset.append(r[0].subs(repl_dict))
-                else:
-                    offset.append(0)
-
-            if ignore_indices:
-                tmp_memlet = Memlet.simple(parent_name, rng)
-                use_dst = True if access_type == 'w' else False
-                for s, r in self.symbols.items():
-                    tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
-
-            to_squeeze_rng = rng
-            if ignore_indices:
-                to_squeeze_rng = rng.offset_new(offset, True)
-            squeezed_rng = copy.deepcopy(to_squeeze_rng)
-            non_squeezed = squeezed_rng.squeeze(ignore_indices)
-            # TODO: Need custom shape computation here
-            shape = squeezed_rng.size()
-            for i, sr in zip(ignore_indices, sym_rng):
-                iMin, iMax, step = sr.ranges[0]
-                if (step < 0) == True:
-                    iMin, iMax, step = iMax, iMin, -step
-                ts = to_squeeze_rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
-                shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                                                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                                    (step.approx if isinstance(step, symbolic.SymExpr) else step))
-            # squeezed_rng = copy.deepcopy(rng)
-            # non_squeezed = squeezed_rng.squeeze()
-            # shape = squeezed_rng.size()
-            if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
-            else:
-                strides = [1]
-        dtype = parent_array.dtype
-
-        if arr_type is None:
-            arr_type = type(parent_array)
-        if arr_type == data.Scalar:
-            var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
-        elif issubclass(arr_type, data.Array):
-            var_name, _ = self.sdfg.add_array(var_name, shape, dtype, strides=strides, find_new_name=True)
-        elif arr_type == data.Stream:
-            var_name, _ = self.sdfg.add_stream(var_name, dtype, find_new_name=True)
-        else:
-            raise NotImplementedError("Data type {} is not implemented".format(arr_type))
-
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
-
-        inner_indices = set()
-        for n, r in reversed(list(enumerate(squeezed_rng))):
-            if r == rng[n]:
-                inner_indices.add(n)
-
-        if access_type == 'r':
-            if _subset_has_indirection(rng):
-                self.sdfg_inputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
-            else:
-                self.sdfg_inputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
-        else:
-            if _subset_has_indirection(rng):
-                self.sdfg_outputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
-            else:
-                self.sdfg_outputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
-
-        return (var_name, squeezed_rng)
-
-    def _add_read_access(self,
-                         name: str,
-                         rng: subsets.Range,
-                         target: Union[ast.Name, ast.Subscript],
-                         new_name: str = None,
-                         arr_type: data.Data = None):
-
-        if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
-        elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')]
-        elif name in self.variables:
-            return (self.variables[name], None)
-        elif name in self.scope_vars:
-            # TODO: Does the TaskletTransformer need the double slice fix?
-            new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
-            return (new_name, new_rng)
-        else:
-            raise NotImplementedError
-
-    def _add_write_access(self,
-                          name: str,
-                          rng: subsets.Range,
-                          target: Union[ast.Name, ast.Subscript],
-                          new_name: str = None,
-                          arr_type: data.Data = None):
-
-        if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
-        elif name in self.variables:
-            return (self.variables[name], None)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
-            return self._add_access(name, rng, 'w', target, new_name, arr_type)
-        else:
-            raise NotImplementedError
-
-    def _get_range(self, node: Union[ast.Name, ast.Subscript, ast.Call], name: str):
-        if isinstance(node, ast.Name):
-            actual_node = copy.copy(node)
-            actual_node.id = name
-            expr: MemletExpr = ParseMemlet(self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined}, actual_node)
-            rng = expr.subset
-        elif isinstance(node, ast.Subscript):
-            actual_node = copy.copy(node)
-            if isinstance(actual_node.value, ast.Call):
-                actual_node.value = copy.copy(actual_node.value)
-                actual_node.value.func = copy.copy(actual_node.value.func)
-                actual_node.value.func.id = name
-            else:
-                actual_node.value = copy.copy(actual_node.value)
-                actual_node.value.id = name
-            expr: MemletExpr = ParseMemlet(self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined}, actual_node)
-            rng = expr.subset
-        elif isinstance(node, ast.Call):
-            rng = dace.subsets.Range.from_array({**self.sdfg.arrays, **self.scope_arrays}[name])
-        else:
-            raise NotImplementedError
-
-        if isinstance(rng, subsets.Indices):
-            rng = subsets.Range.from_indices(rng)
-
-        return rng
-
-    def _update_names(self, node: Union[ast.Name, ast.Subscript, ast.Call], name: str, name_subscript: bool = False):
+    def _update_names(self, node: Union[ast.Name, ast.Subscript, ast.Call], name: str):
         if isinstance(node, ast.Name):
             node.id = name
         elif isinstance(node, ast.Subscript):
             if isinstance(node.value, ast.Call):
-                node = node.value
-                node.func.id = name
-            elif name_subscript:
-                node = node.value
-                node.id = name
+                node.value.func.id = name
             else:
                 node.value.id = name
         elif isinstance(node, ast.Call):
@@ -989,76 +798,23 @@ class TaskletTransformer(ExtNodeTransformer):
                 variables = {**self.variables, **self.scope_vars}
                 target = node.value.right
                 name = rname(target)
-                name_sub = False
                 if isinstance(node.value.right, ast.Name) and node.value.right.id in self.defined:
                     if isinstance(self.defined[node.value.right.id], symbolic.symbol):
                         raise DaceSyntaxError(self, node, 'Symbolic variables cannot be used as memlet targets')
                 if isinstance(node.value.op, ast.LShift):
-                    squeezed_rng = None
-                    if self.nested:
-                        real_name = variables[name]
-                        rng = self._get_range(target, real_name)
-                        name, squeezed_rng = self._add_read_access(name, rng, target)
-                        if squeezed_rng is not None:
-                            name_sub = True
-                    else:
-                        if name in variables:
-                            name = variables[name]
-                    node.value.right = self._update_names(node.value.right, name, name_subscript=name_sub)
+                    if name in variables:
+                        name = variables[name]
+                    node.value.right = self._update_names(node.value.right, name)
                     connector, memlet = parse_memlet(self, node.value.right, node.value.left, self.sdfg.arrays)
-                    # Fix memlet with correct subset
-                    if squeezed_rng is not None:
-                        # TODO: Fix for `contains_sympy_functions`
-                        # not liking ints
-                        if isinstance(squeezed_rng, subsets.Indices):
-                            memlet.subset = subsets.Range([(symbolic.pystr_to_symbolic(i),
-                                                            symbolic.pystr_to_symbolic(i), 1)
-                                                           for i in squeezed_rng.indices])
-                        else:
-                            memlet.subset = subsets.Range([
-                                (symbolic.pystr_to_symbolic(b), symbolic.pystr_to_symbolic(e),
-                                 symbolic.pystr_to_symbolic(s)) for b, e, s in squeezed_rng.ranges
-                            ])
-                    if self.nested and _subset_has_indirection(rng):
-                        memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(self, node, 'Local variable is already a tasklet input or output')
                     self.inputs[connector] = memlet
                     return None  # Remove from final tasklet code
                 elif isinstance(node.value.op, ast.RShift):
-                    squeezed_rng = None
-                    if self.nested:
-                        real_name = variables[name]
-                        rng = self._get_range(target, real_name)
-                        name, squeezed_rng = self._add_write_access(name, rng, target)
-                        if squeezed_rng is not None:
-                            name_sub = True
-                    else:
-                        if name in variables:
-                            name = variables[name]
-                    node.value.right = self._update_names(node.value.right, name, name_subscript=name_sub)
+                    if name in variables:
+                        name = variables[name]
+                    node.value.right = self._update_names(node.value.right, name)
                     connector, memlet = parse_memlet(self, node.value.left, node.value.right, self.sdfg.arrays)
-                    # Fix memlet with correct subset
-                    if squeezed_rng is not None:
-                        # TODO: Fix for `contains_sympy_functions`
-                        # not liking ints
-                        if isinstance(squeezed_rng, subsets.Indices):
-                            memlet.subset = subsets.Range([(symbolic.pystr_to_symbolic(i),
-                                                            symbolic.pystr_to_symbolic(i), 1)
-                                                           for i in squeezed_rng.indices])
-                        else:
-                            memlet.subset = subsets.Range([
-                                (symbolic.pystr_to_symbolic(b), symbolic.pystr_to_symbolic(e),
-                                 symbolic.pystr_to_symbolic(s)) for b, e, s in squeezed_rng.ranges
-                            ])
-                    if self.nested and _subset_has_indirection(rng):
-                        memlet = dace.Memlet.simple(memlet.data, rng)
-                    if self.nested and name in self.sdfg_outputs:
-                        out_memlet = self.sdfg_outputs[name][0]
-                        out_memlet.volume = memlet.volume
-                        out_memlet.dynamic = memlet.dynamic
-                        out_memlet.wcr = memlet.wcr
-                        out_memlet.wcr_nonatomic = memlet.wcr_nonatomic
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(self, node, 'Local variable is already a tasklet input or output')
                     self.outputs[connector] = memlet
@@ -1231,7 +987,6 @@ class ProgramVisitor(ExtNodeVisitor):
                  map_symbols: Set[Union[str, symbolic.symbol]] = None,
                  annotated_types: Dict[str, data.Data] = None,
                  closure: SDFGClosure = None,
-                 nested: bool = False,
                  simplify: Optional[bool] = None):
         """ ProgramVisitor init method
 
@@ -1246,23 +1001,16 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_vars {Dict[str, str]} -- Scope variables
             closure {SDFGClosure} -- The closure of this program
             simplify {bool} -- Whether to apply simplification pass after parsing nested dace programs
-
-        Keyword Arguments:
-            nested {bool} -- True, if SDFG is nested (default: {False})
         """
 
         self.filename = filename
         self.src_line = line_offset
         self.src_col = col_offset
         self.orig_name = name
-        if nested:
-            self.name = "{n}_{l}_{c}".format(n=name, l=line_offset, c=col_offset)
-        else:
-            self.name = name
+        self.name = name
 
         self.globals = global_vars
         self.closure = closure
-        self.nested = nested
         self.simplify = simplify
 
         # Keeps track of scope arrays, numbers, variables and accesses
@@ -1285,19 +1033,19 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         # self.program = None
         self.sdfg = SDFG(self.name)
-        if not self.nested:
-            self.sdfg.arrays.update(scope_arrays)
-            for arr in self.sdfg.arrays.values():
-                for sym in arr.free_symbols:
-                    if sym.name not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(sym.name, sym.dtype)
+        for k, v in scope_arrays.items():
+            self.sdfg.add_datadesc(k, copy.deepcopy(v))
+        for arr in self.sdfg.arrays.values():
+            for sym in arr.free_symbols:
+                if sym.name not in self.sdfg.symbols:
+                    self.sdfg.add_symbol(sym.name, sym.dtype)
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
         self.last_cfg_target = self.sdfg
 
-        self.inputs: DependencyType = {}
-        self.outputs: DependencyType = {}
+        self.inputs: dict[str, DependencyType] = {}
+        self.outputs: dict[str, DependencyType] = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
         self.current_ast_stack: List[ast.AST] = []
         self.default_output_index: int = 0
@@ -1321,6 +1069,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+        # Scalars already promoted to symbols here, so a second promotion reuses the symbol
+        self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -1726,11 +1476,49 @@ class ProgramVisitor(ExtNodeVisitor):
                             },
                             map_symbols=map_symbols,
                             annotated_types=self.annotated_types,
-                            closure=self.closure,
-                            nested=True)
+                            closure=self.closure)
+        # A container reaching a subprogram is the caller's, so it is not the subprogram's to allocate.
+        # A view has nothing to view in there, so it stands for the container it addresses.
+        for aname, desc in pv.sdfg.arrays.items():
+            if isinstance(desc, data.View):
+                desc = desc.as_structure() if isinstance(desc, data.StructureView) else desc.as_array()
+                pv.sdfg.arrays[aname] = desc
+            desc.transient = False
 
         try:
-            return pv.parse_program(node, is_tasklet)
+            nested_sdfg, nested_inputs, nested_outputs, nested_symbols = pv.parse_program(node, is_tasklet)
+            # Add inputs and outputs to nested inputs/outputs
+            cached_defined = self.defined
+
+            def _container_root(name: str) -> Optional[str]:
+                # The structure itself, not the member, is the container of the enclosing scope
+                if name in cached_defined:
+                    return name
+                root = name.split('.')[0]
+                return root if root in cached_defined else None
+
+            for s in nested_sdfg.all_states():
+                for n in s.data_nodes():
+                    root = _container_root(n.data)
+                    if root is None:
+                        continue
+                    if s.in_degree(n) > 0 and root not in nested_outputs:
+                        nested_outputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
+                    if s.out_degree(n) > 0 and root not in nested_inputs:
+                        nested_inputs[root] = (s, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
+            for e in nested_sdfg.all_interstate_edges():
+                for memlet in e.data.get_read_memlets(nested_sdfg.arrays):
+                    root = memlet.data.split('.')[0]
+                    if root not in nested_inputs:
+                        nested_inputs[root] = (e.dst, Memlet.from_array(root, nested_sdfg.arrays[root]), [])
+
+            # Remove unused non-transients from nested SDFG
+            used = set(nested_inputs.keys()).union(set(nested_outputs.keys()))
+            to_remove = [aname for aname, arr in nested_sdfg.arrays.items() if not arr.transient and aname not in used]
+            for aname in to_remove:
+                nested_sdfg.remove_data(aname, validate=False)
+
+            return nested_sdfg, nested_inputs, nested_outputs, nested_symbols
         except SkipCall:
             raise
         except Exception:
@@ -1798,15 +1586,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Select primitive according to function type
         if dec == 'dace.tasklet':  # Tasklet
-            internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node)
+            internal_node, inputs, outputs = self._parse_tasklet(state, node)
 
             # Add memlets
             inputs = {k: (state, v, set()) for k, v in inputs.items()}
             outputs = {k: (state, v, set()) for k, v in outputs.items()}
 
             self._add_dependencies(state, internal_node, None, None, inputs, outputs)
-            self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
-            self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
 
         elif dec.startswith('dace.map') or dec.startswith('dace.consume'):  # Scope or scope+tasklet
             if 'map' in dec:
@@ -1970,6 +1756,36 @@ class ProgramVisitor(ExtNodeVisitor):
         return (self._parse_value(node.lower), self._parse_value(node.upper),
                 self._parse_value(node.step) if node.step is not None else "1")
 
+    def _parse_map_bound(self, node: ast.AST) -> str:
+        """
+        Parses a bound of a map range. Array elements read by the bound are kept as subscripts, so that the map reads
+        them directly as dynamic inputs (see ``_parse_map_inputs``) instead of through a copy in the enclosing scope.
+
+        :param node: The AST of the bound.
+        :return: The bound as a string.
+        """
+
+        def is_element_read(subscript: ast.Subscript) -> bool:
+            # Indirect accesses (subscripts or calls within a subscript) are parsed as any other value
+            return (isinstance(subscript.value, ast.Name)
+                    and isinstance(self.defined.get(subscript.value.id), data.Array)
+                    and not any(isinstance(n, (ast.Subscript, ast.Call)) for n in ast.walk(subscript.slice)))
+
+        subscripts = [n for n in ast.walk(node) if isinstance(n, ast.Subscript)]
+        if subscripts and all(is_element_read(n) for n in subscripts):
+            return astutils.unparse(node)
+        return self._parse_value(node)
+
+    def _parse_map_slice(self, node: ast.Slice) -> Tuple[str, str, str]:
+        """
+        Parses a range of a map (see ``_parse_map_bound``).
+
+        :param node: Slice node.
+        :return: Range in (from, to, step) format.
+        """
+        return (self._parse_map_bound(node.lower), self._parse_map_bound(node.upper),
+                self._parse_map_bound(node.step) if node.step is not None else "1")
+
     def _parse_index_as_range(self, node: Union[Index, ast.Tuple]):
         """
         Parses an index as range
@@ -2084,9 +1900,9 @@ class ProgramVisitor(ExtNodeVisitor):
             ranges = []
             if isinstance(node.slice, (ast.Tuple, ExtSlice)):
                 for s in node.slice.dims:
-                    ranges.append(self._parse_slice(s))
+                    ranges.append(self._parse_map_slice(s))
             elif isinstance(node.slice, ast.Slice):
-                ranges.append(self._parse_slice(node.slice))
+                ranges.append(self._parse_map_slice(node.slice))
             else:  # isinstance(node.slice, ast.Index) is True
                 ranges.append(self._parse_index_as_range(node.slice))
 
@@ -2110,8 +1926,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 # variables
                 repldict = {}
                 symval = pystr_to_symbolic(val)
+                # Arrays read through a subscript are handled below
+                subscripted = {str(e.args[0]) for e in symbolic.swalk(symval) if isinstance(e, symbolic.Subscript)}
 
                 for atom in symval.free_symbols:
+                    if str(atom) in subscripted:
+                        continue
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         atomstr = str(atom)
@@ -2123,12 +1943,14 @@ class ProgramVisitor(ExtNodeVisitor):
                         candidate = atomstr
                         if candidate in self.variables and self.variables[candidate] in self.sdfg.arrays:
                             candidate = self.variables[candidate]
+                        elif candidate in self.scope_vars and self.scope_vars[candidate] in self.sdfg.arrays:
+                            candidate = self.scope_vars[candidate]
 
                         if candidate in self.sdfg.arrays and (isinstance(self.sdfg.arrays[candidate], data.Scalar) or
                                                               (isinstance(self.sdfg.arrays[candidate], data.Array)
                                                                and self.sdfg.arrays[candidate].shape == (1, ))):
                             newvar = '__%s_%s%d' % (name, vid, ctr)
-                            repldict[atomstr] = newvar
+                            repldict[atom] = newvar
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
                         elif candidate not in self.sdfg.symbols:
@@ -2146,7 +1968,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if any(symbolic.contains_sympy_functions(a) for a in indices):
                         raise DaceSyntaxError(self, node, 'Indirect accesses not supported in map ranges')
                     newvar = '__%s_%s%d' % (name, vid, ctr)
-                    repldict[arr] = newvar
+                    repldict[expr] = newvar
                     # Create memlet
                     args = ','.join([str(a) for a in indices])
                     if arr in self.variables:
@@ -2156,9 +1978,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         args = str(rng)
                     map_inputs[newvar] = Memlet.simple(arr, args)
                     ctr += 1
-                # Replace functions with new variables
-                for find, replace in repldict.items():
-                    val = re.sub(r"%s\(.*?\)" % find, val, replace)
+                # Replace scalars and array accesses with new variables
+                if repldict:
+                    val = str(symval.xreplace({k: symbolic.symbol(v) for k, v in repldict.items()}))
                 vsp[i] = val
 
             new_params.append((k, ':'.join(vsp)))
@@ -2237,14 +2059,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse map inputs (for memory-based ranges)
         if map_inputs:
             for conn, memlet in map_inputs.items():
-                if self.nested:
-                    # TODO: Make this work nested for-loops
-                    new_name, _ = self._add_read_access(memlet.data, memlet.subset, None)
-                    memlet = Memlet.from_array(new_name, self.sdfg.arrays[new_name])
-                else:
-                    new_name = memlet.data
-
-                read_node = state.add_read(new_name, debuginfo=self.current_lineinfo)
+                read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
                 entry_node.add_in_connector(conn)
                 state.add_edge(read_node, None, entry_node, conn, memlet)
 
@@ -2345,7 +2160,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
                         self.inputs[vname] = (state, scope_memlet, inner_indices)
                         memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
 
@@ -2438,7 +2252,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
                         self.outputs[vname] = (state, scope_memlet, inner_indices)
                         inner_memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
@@ -2454,6 +2267,16 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
+
+        # After parsing and connecting the nested SDFG, ensure the data descriptors match the outer SDFG
+        if isinstance(internal_node, nodes.NestedSDFG):
+            dealias.integrate_nested_sdfg(internal_node.sdfg)
+
+            # Re-propagate: connectors span whole containers
+            if isinstance(entry_node, nodes.MapEntry):
+                propagate_memlets_map_scope(self.sdfg, state, entry_node)
+            else:
+                propagate_memlets_nested_sdfg(self.sdfg, state, internal_node)
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """
@@ -2564,9 +2387,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
-            self._add_nested_symbols(tasklet)
-            self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
+            nsdfg_node = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
+            self._add_nested_symbols(nsdfg_node)
+            self._add_dependencies(state, nsdfg_node, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
@@ -2589,11 +2412,13 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 pass
 
+            data_dtypes = {k: v.dtype for k, v in self.defined.items() if hasattr(v, 'dtype')}
+            data_dtypes.update(self.sdfg.symbols)
             sym_obj = symbolic.symbol(indices[0],
                                       infer_iteration_symbol_type(ranges[0][0],
                                                                   ranges[0][1],
                                                                   ranges[0][2],
-                                                                  symbols=self.sdfg.symbols),
+                                                                  symbols=data_dtypes),
                                       integer=integer,
                                       nonnegative=nonnegative,
                                       positive=positive)
@@ -2628,6 +2453,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
+
+            # Add used symbols as loop inputs
+            used_symbols_set = set(loop_region.used_symbols(all_symbols=True))
+            used_data_descs = {
+                k: v
+                for k, v in self.defined.items() if k in used_symbols_set and not getattr(v, 'transient', True)
+            }
+            self.inputs.update({k: (self.cfg_target, Memlet.from_array(k, v), []) for k, v in used_data_descs.items()})
+
             _, first_subblock, _, _ = self._recursive_visit(node.body,
                                                             f'for_{node.lineno}',
                                                             node.lineno,
@@ -2900,12 +2734,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                     state,
                                     self.filename,
                                     lang=langInf,
-                                    nested=self.nested,
-                                    scope_arrays=self.scope_arrays,
                                     scope_vars=self.scope_vars,
                                     variables=self.variables,
-                                    accesses=self.accesses,
-                                    symbols=self.symbols)
+                                    accesses=self.accesses)
         node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node, name)
 
         if side_effects is not None:
@@ -2918,7 +2749,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for o in outputs.values():
             if not isinstance(o, tuple) and o.data in self.scope_vars.keys():
                 o.data = self.scope_vars[o.data]
-        return node, inputs, outputs, ttrans.sdfg_inputs, ttrans.sdfg_outputs
+        return node, inputs, outputs
 
     def _add_assignment(self,
                         node: Union[ast.Assign, ast.AugAssign],
@@ -3353,14 +3184,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
-    def _add_access(
-            self,
-            name: str,
-            rng: subsets.Range,
-            access_type: str,  # 'r' or 'w'
-            target: Union[ast.Name, ast.Subscript],
-            new_name: str = None,
-            arr_type: data.Data = None) -> str:
+    def _add_access(self,
+                    name: str,
+                    rng: subsets.Range,
+                    access_type: Literal['r', 'w'],
+                    target: Union[ast.Name, ast.Subscript],
+                    new_name: str = None,
+                    arr_type: data.Data = None) -> str:
         if access_type not in ('r', 'w'):
             raise ValueError("Access type {} is invalid".format(access_type))
         if new_name:
@@ -3389,78 +3219,15 @@ class ProgramVisitor(ExtNodeVisitor):
             nested_rng = subsets.Range.from_array(parent_array)
             non_squeezed = list(range(len(rng)))
         else:
-            ignore_indices = []
-            sym_rng = []
-            offset = []
-            for i, r in enumerate(rng):
-                repl_dict = {}
-                for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).values():
-                        ignore_indices.append(i)
-                        # Offsetting by f(min(sr)) needs f affine in s; otherwise keep the whole dimension.
-                        if (any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                                for t in sr.free_symbols) or not all(is_affine_in(b, s) for b in r[:2])):
-                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
-                            repl_dict = {}
-                            break
-                        else:
-                            sym_rng.append(sr)
-                            # NOTE: Assume that the i-th index of the range is
-                            # dependent on a local symbol s, i.e, rng[i] = f(s).
-                            # Therefore, the i-th index will not be squeezed
-                            # even if it has length equal to 1. However, it must
-                            # still be offsetted by f(min(sr)), so that the indices
-                            # for the squeezed connector start from 0.
-                            # Example:
-                            # Memlet range: [i+1, j, k+1]
-                            # k: local symbol with range(1, 4)
-                            # i,j: global symbols
-                            # Squeezed range: [f(k)] = [k+1]
-                            # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
-                            #                        [f(k)-f(1)] = [k-1]
-                            # NOTE: The code takes into account the case where an
-                            # index is dependent on multiple symbols. See also
-                            # tests/python_frontend/nested_name_accesses_test.py.
-                            step = sr[0][2]
-                            if (step < 0) == True:
-                                repl_dict[s] = sr[0][1]
-                            else:
-                                repl_dict[s] = sr[0][0]
-                if repl_dict:
-                    offset.append(r[0].subs(repl_dict))
-                else:
-                    offset.append(0)
-
-            if ignore_indices:
-                tmp_memlet = Memlet.simple(parent_name, rng)
-                use_dst = True if access_type == 'w' else False
-                for s, r in self.symbols.items():
-                    tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
-            to_squeeze_rng = rng
-            if ignore_indices:
-                to_squeeze_rng = rng.offset_new(offset, True)
-            squeezed_rng = copy.deepcopy(to_squeeze_rng)
-            non_squeezed = squeezed_rng.squeeze(ignore_indices)
+            non_squeezed = list(range(len(rng)))
             # TODO: Need custom shape computation here
-            shape = squeezed_rng.size()
+            shape = rng.size()
             nested_rng = subsets.Range([(0, s - 1, 1) for s in shape])
             for i, r in enumerate(rng.ranges):
-                if i in ignore_indices:
-                    continue
                 _, _, step = r
                 if (step < 0) == True:
                     step = -step
                 strides[i] *= step
-            for i, sr in zip(ignore_indices, sym_rng):
-                iMin, iMax, step = sr.ranges[0]
-                if (step < 0) == True:
-                    iMin, iMax, step = iMax, iMin, -step
-                ts = to_squeeze_rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
-                shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                                                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                                    (step.approx if isinstance(step, symbolic.SymExpr) else step))
-                nested_rng.ranges[sqz_idx] = squeezed_rng[sqz_idx]
         dtype = parent_array.dtype
 
         if arr_type is None:
@@ -3654,7 +3421,6 @@ class ProgramVisitor(ExtNodeVisitor):
             tokens.pop(0)
             true_name = None
             true_array = None
-            visited_target = False
 
             if name in defined_vars:
                 # Handle complex object assignment (e.g., A.flat[:])
@@ -3672,7 +3438,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
                     defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
-                    visited_target = True
                 else:
                     true_name = defined_vars[name]
                     while len(tokens):
@@ -3782,13 +3547,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif (not name.startswith('__return')
                           and (isinstance(result_data, data.View) or
                                (not result_data.transient and isinstance(result_data, data.Array)))):
-                        true_name, new_data = self.sdfg.add_view(result,
-                                                                 result_data.shape,
-                                                                 result_data.dtype,
-                                                                 result_data.storage,
-                                                                 result_data.strides,
-                                                                 result_data.offset,
-                                                                 find_new_name=True)
+                        new_data = data.View.view(result_data)
+                        true_name = self.sdfg.add_datadesc(result, new_data, find_new_name=True)
                         self.views[true_name] = (result, Memlet.from_array(result, result_data))
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
@@ -3868,13 +3628,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
-            if self.nested and not new_data and not visited_target:
-                new_name, new_rng = self._add_write_access(true_name, rng, target)
-                # Local symbol or local data dependent
-                if _subset_is_local_symbol_dependent(rng, self):
-                    new_rng = rng
-            else:
-                new_name, new_rng = true_name, rng
+            new_name, new_rng = true_name, rng
 
             # Change the range in case indirect indices are used
             if indirect_indices:
@@ -3903,13 +3657,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 independent = False
                 if not _subset_is_local_symbol_dependent(new_rng, self):
                     independent = True
-                    waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
-                    if self.map_symbols and waccess:
+                    if self.map_symbols:
                         if not Config.get_bool('frontend', 'avoid_wcr'):
                             independent = False
                         else:
                             for s in self.map_symbols:
-                                if s not in waccess[1].free_symbols:
+                                if s not in new_rng.free_symbols:
                                     independent = False
                                     break
 
@@ -4251,14 +4004,24 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
 
                 # First, we do an inverse lookup on the already added closure arrays for `arr`.
+                # The closure's mapping is shared across visitors, so consult it before minting a second name
                 is_new_arr = True
+                known_outer = None
                 for k, v in self.nested_closure_arrays.items():
                     if arr is v[0]:
                         is_new_arr = False
                         break
+                if is_new_arr and self.closure is not None and id(arr) in self.closure.array_mapping:
+                    known = self.closure.array_mapping[id(arr)]
+                    if known in self.sdfg.arrays:
+                        is_new_arr = False
+                        known_outer = known
                 # `arr` has not been added yet: add it with a (possibly) new name.
                 if is_new_arr:
                     outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
+                # The connector keeps the name the callee knows the array by; only the outer name follows
+                elif known_outer is not None:
+                    outer_name = known_outer
                 # `arr` has already been added, but is not in the SDFG: add it with the same name.
                 # NOTE: This may occur when `arr` has already been added in a nested scope.
                 elif aname not in self.sdfg.arrays:
@@ -4412,10 +4175,11 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 narrname = arrname
 
+            # Pass on the container the memlet names under this scope's name for it, not the connector
             if narrname in inputs:
-                self.inputs[arrname] = (state, inputs[narrname], [])
+                self.inputs[_connected_container(inputs[narrname], arrname)] = (state, inputs[narrname], [])
             if narrname in outputs:
-                self.outputs[arrname] = (state, outputs[narrname], [])
+                self.outputs[_connected_container(outputs[narrname], arrname)] = (state, outputs[narrname], [])
 
         # Unset parent inputs/read accesses that
         # turn out to be outputs/write accesses.
@@ -4535,9 +4299,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 continue
             strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
             if len(strides) == len(sdfg.arrays[a].shape):
+                # The nested SDFGs below describe this container as it was written, so they follow it
+                old_desc = copy.deepcopy(sdfg.arrays[a])
                 sdfg.arrays[a]._strides = strides
                 if inv_mapping:
                     symbolic.safe_replace(inv_mapping, lambda m: sd.replace_properties_dict(sdfg.arrays[a], m))
+                dealias.rebase_descendants(sdfg, a, old_desc, sdfg.arrays[a])
             else:
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
@@ -5086,19 +4853,26 @@ class ProgramVisitor(ExtNodeVisitor):
             src_rng = None
             if src_name not in self.sdfg.arrays:
                 src_name, src_rng = self._add_read_access(src_name, src_expr.subset, None)
+            else:
+                # The expression's subset already addresses this scope's own container
+                src_rng = src_expr.subset
             dst_name = dst_expr.name
             dst_rng = None
             if dst_name not in self.sdfg.arrays:
                 dst_name, dst_rng = self._add_write_access(dst_name, dst_expr.subset, None)
+            else:
+                dst_rng = dst_expr.subset
 
             rnode = state.add_read(src_name, debuginfo=self.current_lineinfo)
             wnode = state.add_write(dst_name, debuginfo=self.current_lineinfo)
+            src_rng = src_rng or subsets.Range.from_array(self.sdfg.arrays[src_name])
+            dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
             if isinstance(self.sdfg.arrays[dst_name], data.Stream):
-                dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
                 mem = Memlet.simple(dst_name, dst_rng, num_accesses=dst_expr.accesses, wcr_str=dst_expr.wcr)
+                mem.other_subset = src_rng
             else:
-                src_rng = src_rng or subsets.Range.from_array(self.sdfg.arrays[src_name])
                 mem = Memlet.simple(src_name, src_rng, num_accesses=src_expr.accesses, wcr_str=dst_expr.wcr)
+                mem.other_subset = dst_rng
             state.add_nedge(rnode, wnode, mem)
             return
 
@@ -5153,14 +4927,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = self.name
 
-                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node, name)
+                tasklet, inputs, outputs = self._parse_tasklet(state, node, name)
 
                 # Add memlets
                 inputs = {k: (state, v, set()) for k, v in inputs.items()}
                 outputs = {k: (state, v, set()) for k, v in outputs.items()}
                 self._add_dependencies(state, tasklet, None, None, inputs, outputs)
-                self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
-                self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
                 return
             elif funcname == "dace.named":
                 evald = astutils.evalnode(node.items[0].context_expr, self.globals)
@@ -5484,7 +5256,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if is_index:
             tmp = self.get_target_name(default=f'{array}_index')
-            tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True, find_new_name=True)
+            # The temporary holds a value, not a piece of the array, so let its scope decide the storage
+            tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, transient=True, find_new_name=True)
         else:
             for i in range(len(other_subset.ranges)):
                 rb, re, rs = other_subset.ranges[i]
@@ -5551,14 +5324,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 desc = self.sdfg.arrays[scalar]
                 if isinstance(desc, data.Scalar):
                     if not sym:
-                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
+                        sym = self.promoted_scalars.get(scalar)
+                    if not sym:
+                        # A name that already means something else here would shadow it
+                        symname = f'__sym_{scalar}'
+                        if symname in self.sdfg.symbols:
+                            symname = data.find_new_name(symname,
+                                                         set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
+                        sym = dace.symbol(symname, dtype=desc.dtype)
+                        self.sdfg.add_symbol(symname, desc.dtype)
+                        self.promoted_scalars[scalar] = sym
                         self.indirections[node_str] = sym
-                        try:
-                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
-                        except FileExistsError:
-                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
-                            # `not sym` returns True. This exception is benign.
-                            pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = state.parent_graph.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}
@@ -5605,50 +5381,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Subscript(self, node: ast.Subscript, inference: bool = False):
 
         is_read: bool = not isinstance(node.ctx, ast.Store)
-
-        if self.nested:
-
-            defined_vars = {**self.variables, **self.scope_vars}
-            defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
-
-            name = rname(node)
-            tokens = name.split('.')
-            true_name = defined_vars[tokens[0]]
-            if len(tokens) > 1:
-                true_name = '.'.join([true_name, *tokens[1:]])
-
-            # If this subscript originates from an external array, create the
-            # subset in the edge going to the connector, as well as a local
-            # reference to the subset
-            if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
-                true_node = copy.deepcopy(node)
-                true_node.value.id = true_name
-
-                # Visit slice contents
-                nslice = self._parse_subscript_slice(node.slice)
-
-                # Try to construct memlet from subscript
-                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
-                rng = expr.subset
-                if isinstance(rng, subsets.Indices):
-                    rng = subsets.Range.from_indices(rng)
-                if inference:
-                    rng.offset(rng, True)
-                    return self.sdfg.arrays[true_name].dtype, rng.size()
-                if is_read:
-                    new_name, new_rng = self._add_read_access(name, rng, node)
-                else:
-                    new_name, new_rng = self._add_write_access(name, rng, node)
-                new_arr = self.sdfg.arrays[new_name]
-                full_rng = subsets.Range.from_array(new_arr)
-                if new_rng.ranges == full_rng.ranges:
-                    return new_name
-                else:
-                    if is_read:
-                        new_name, _ = self.make_slice(new_name, new_rng)
-                    else:
-                        raise NotImplementedError('Cannot slice a write access')
-                    return new_name
 
         # Obtain array/tuple
         node_parsed = self._gettype(node.value)

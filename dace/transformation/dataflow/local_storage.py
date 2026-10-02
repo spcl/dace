@@ -8,7 +8,7 @@ from abc import ABC
 
 from dace import symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -111,9 +111,13 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
 
         # Offset all edges in the memlet tree (including the new edge)
-        for edge in graph.memlet_tree(new_edge):
+        moved = list(graph.memlet_tree(new_edge))
+        for edge in moved:
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
+
+        # A nested SDFG consumer moves to the local copy's origin
+        dealias.rebase_reconnected_edges(moved, offset)
 
         return data_node
 

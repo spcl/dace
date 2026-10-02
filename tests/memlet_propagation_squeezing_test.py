@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.sdfg import propagation
+from dace.sdfg import propagation, dealias
 import numpy as np
 
 
@@ -27,8 +27,8 @@ def make_sdfg(squeeze, name):
     a2 = nstate.add_write('a2' if squeeze else 'a')
     t1 = nstate.add_tasklet('add99', {}, {'out'}, 'out = i + 99')
     t2 = nstate.add_tasklet('add101', {}, {'out'}, 'out = i + 101')
-    nstate.add_edge(t1, 'out', a1, None, dace.Memlet('a1[i]' if squeeze else 'a[i, 1]'))
-    nstate.add_edge(t2, 'out', a2, None, dace.Memlet('a2[i]' if squeeze else 'a[i+2, 0]'))
+    nstate.add_edge(t1, 'out', a1, None, dace.Memlet('a1[i]' if squeeze else 'a[i, j]'))
+    nstate.add_edge(t2, 'out', a2, None, dace.Memlet('a2[i]' if squeeze else 'a[i+2, j-1]'))
     nsdfg.add_loop(None, nstate, None, 'i', '0', 'i < N - 2', 'i + 1')
 
     # Connect nested SDFG to toplevel one
@@ -44,6 +44,7 @@ def make_sdfg(squeeze, name):
     else:
         # This memlet is expected to propagate to A[0:N, j - 1:j + 1].
         state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
+    dealias.integrate_nested_sdfg(nsdfg)
 
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -63,7 +64,8 @@ def make_conditional_sdfg():
     nsdfg = dace.SDFG('nested_conditional')
     nsdfg.add_symbol('M', dace.int64)
     nsdfg.add_symbol('cond', dace.bool_)
-    nsdfg.add_array('a', [4, M], dace.int64)
+    # The connector is the window the outer memlet selects
+    nsdfg.add_array('a', [4, 2], dace.int64, strides=(M, 1))
 
     cond_region = dace.sdfg.state.ConditionalBlock('if_region', sdfg=nsdfg)
 
@@ -88,6 +90,7 @@ def make_conditional_sdfg():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(j='j', M='M', cond='cond'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
     state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:4, j-1:j+1]'))
+    nsdfg_node.integrate_into_parent()
 
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -107,7 +110,8 @@ def make_inverted_loop_sdfg():
     nsdfg.using_explicit_control_flow = True
     nsdfg.add_symbol('M', dace.int64)
     nsdfg.add_symbol('i', dace.int64)
-    nsdfg.add_array('a', [5, M], dace.int64)
+    # The connector is the window the outer memlet selects
+    nsdfg.add_array('a', [5, 2], dace.int64, strides=(M, 1))
 
     loop_region = dace.sdfg.state.LoopRegion('loop_region',
                                              condition_expr='i < 3',
@@ -127,7 +131,8 @@ def make_inverted_loop_sdfg():
 
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(j='j', M='M'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
-    state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:5, j-1]'))
+    state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:5, j-1:j+1]'))
+    nsdfg_node.integrate_into_parent()
 
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -232,7 +237,8 @@ def test_memlets_inverted_loop():
     assert out_memlet.volume == 4
     assert out_memlet.dynamic == False
     assert out_memlet.subset[0] == (0, 3, 1)
-    assert out_memlet.subset[1] == (j - 1, j, 1)
+    # Only column 1 of the window, column j of A, is written
+    assert out_memlet.subset[1] == (j, j, 1)
 
 
 if __name__ == '__main__':

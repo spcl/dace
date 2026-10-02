@@ -198,8 +198,9 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         size_b = b[4]
         size_c = c[4]
 
-        # Check if this is a batched operation (at least one input has 3+ dimensions)
-        is_batched = len(size_a) >= 3 or len(size_b) >= 3
+        # Check if this is a batched operation (at least one input has 3+ dimensions).
+        # A degenerate operand dimension is squeezed with a unit batch, so also check the output
+        is_batched = (len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3)))
 
         if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM

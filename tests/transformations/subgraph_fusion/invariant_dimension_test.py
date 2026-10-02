@@ -90,6 +90,9 @@ def fix_sdfg(sdfg, graph):
     utils.change_edge_dest(graph, nested_original, nnode)
     utils.change_edge_src(graph, nested_original, nnode)
     graph.remove_node(nested_original)
+
+    nnode.integrate_into_parent()
+
     sdfg.validate()
 
 

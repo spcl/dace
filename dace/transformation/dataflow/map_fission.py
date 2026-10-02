@@ -73,8 +73,9 @@ class MapFission(transformation.SingleStateTransformation):
         schildren = subgraph.scope_children()
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
-            return set(node.data for node in subset.nodes()
-                       if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].transient)
+            # Views alias storage that already spans every iteration
+            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode)
+                       and sdfg.arrays[node.data].transient and not isinstance(sdfg.arrays[node.data], dt.View))
         else:
             return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
 
@@ -442,6 +443,7 @@ class MapFission(transformation.SingleStateTransformation):
                     state.add_edge(component_out, None, mx, None, mm.Memlet())
             # Connect other sources/sinks not in components (access nodes)
             # directly to external nodes
+            outside_border_edges = set()
             if self.expr_index == 0:
                 for node in sources:
                     if isinstance(node, nodes.AccessNode):
@@ -449,9 +451,10 @@ class MapFission(transformation.SingleStateTransformation):
                             outer_edge = edge_to_outer.get(edge)
                             if outer_edge is None:  # No outer feeder: nothing to rewire.
                                 continue
-                            memlet = dcpy(edge.data)
-                            memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
-                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
+                            # The added map dimensions are filled in below
+                            new_edge = state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn,
+                                                      dcpy(edge.data))
+                            outside_border_edges.add(new_edge)
 
                 for node in sinks:
                     if isinstance(node, nodes.AccessNode):
@@ -459,8 +462,9 @@ class MapFission(transformation.SingleStateTransformation):
                             outer_edge = edge_to_outer.get(edge)
                             if outer_edge is None:  # No outer consumer: nothing to rewire.
                                 continue
-                            state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
-                                           dcpy(outer_edge.data))
+                            new_edge = state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
+                                                      dcpy(outer_edge.data))
+                            outside_border_edges.add(new_edge)
 
             # Augment arrays by prepending map dimensions
             for array in arrays:
@@ -523,6 +527,8 @@ class MapFission(transformation.SingleStateTransformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
+                        # An integrated nested SDFG already uses the outer coordinate system
+                        already_integrated = desc.is_equivalent(outer_desc)
                         if isinstance(desc, dt.Scalar):
                             parent.arrays[node.data] = dcpy(outer_desc)
                             desc = parent.arrays[node.data]
@@ -537,13 +543,15 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
-                                e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                if not already_integrated:
+                                    e.data.subset.offset(desc.offset, False)
+                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
+                                    outside_border_edges.add(e)
                                     e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
 
                         # Only after offsetting memlets we can modify the
@@ -553,6 +561,8 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
+            # NOTE: Edges rewired outside the new Map scopes cannot refer to the map parameters
+            full_map_ranges = [(0, sz - 1, 1) for sz in mapsize]
             for node in subgraph.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in arrays:
                     is_scalar_like = node.data in scalar_like_arrays
@@ -562,7 +572,15 @@ class MapFission(transformation.SingleStateTransformation):
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
-                            map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
+                            if e in outside_border_edges:
+                                map_ranges = full_map_ranges
+                                # The external subset may still name the out-of-scope map parameters
+                                if (e.data.data != node.data and e.data.subset is not None
+                                        and set(outer_map.params) & set(map(str, e.data.subset.free_symbols))):
+                                    e.data.subset = propagate_subset([e.data], parent.arrays[e.data.data],
+                                                                     outer_map.params, outer_map.range).subset
+                            else:
+                                map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:
                                 if e.data.subset:
                                     if is_scalar_like:
@@ -575,6 +593,13 @@ class MapFission(transformation.SingleStateTransformation):
                                         e.data.other_subset = subsets.Range(map_ranges)
                                     else:
                                         e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
+
+        # A connector selecting one element of an augmented container becomes a view of it
+        for state in parent.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
+                    node.integrate_into_parent()
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:

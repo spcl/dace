@@ -189,7 +189,7 @@ class Property(Generic[T]):
             raise RuntimeError("Attribute name not set")
         return getattr(obj, name)
 
-    def __set__(self, obj, val):
+    def __set__(self, obj, val: T):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
@@ -244,7 +244,7 @@ class Property(Generic[T]):
         self._setter = val
 
     @property
-    def dtype(self):
+    def dtype(self) -> type[T]:
         return self._dtype
 
     @property
@@ -478,7 +478,7 @@ class ListProperty(Property[List[T]]):
     """ Property type for lists.
     """
 
-    def __init__(self, element_type: T, *args, **kwargs):
+    def __init__(self, element_type: type[T], *args, **kwargs):
         """
         Create a List property with a uniform element type.
 
@@ -783,10 +783,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
             return None
 
 
-class RangeProperty(Property):
+class RangeProperty(Property[dace.subsets.Range]):
     """ Custom Property type for `dace.subsets.Range` members. """
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value: Union[dace.subsets.Range, List[int]]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
         super(RangeProperty, self).__set__(obj, value)

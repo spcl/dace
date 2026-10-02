@@ -109,6 +109,37 @@ def test_double_buffering_final_computation_symbols():
     assert np.allclose(B, A.sum(axis=1))
 
 
+def test_double_buffering_of_a_nested_sdfg_input():
+    """The tile gains a buffer dimension, so the connector reading it becomes a view of one buffer."""
+    A = np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS).copy()
+    expected = A.sum(axis=1)
+
+    sdfg = dace.SDFG('double_buffered_nested')
+    sdfg.add_array('A', [ROWS, COLS], dace.float64)
+    sdfg.add_array('B', [ROWS], dace.float64)
+    sdfg.add_transient('tile', [COLS], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(k='0:%d' % ROWS))
+    tile = state.add_access('tile')
+    node = state.add_nested_sdfg(_row_sum_body(), {'t'}, {'o'}, {'k': 'k'})
+    state.add_memlet_path(state.add_read('A'), entry, tile, memlet=dace.Memlet('A[k, 0:%d]' % COLS))
+    state.add_edge(tile, None, node, 't', dace.Memlet('tile[0:%d]' % COLS))
+    state.add_memlet_path(node,
+                          exit_,
+                          state.add_write('B'),
+                          src_conn='o',
+                          memlet=dace.Memlet('B[k]', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    DoubleBuffering.apply_to(sdfg, map_entry=entry, transient=tile, verify=True, save=False)
+    sdfg.validate()
+
+    B = np.zeros(ROWS)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected)
+
+
 if __name__ == '__main__':
     test_double_buffering()
     test_double_buffering_final_computation_symbols()
+    test_double_buffering_of_a_nested_sdfg_input()

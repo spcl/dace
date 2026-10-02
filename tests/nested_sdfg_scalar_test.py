@@ -25,6 +25,7 @@ def _construct_sdfg():
     state.add_edge(r, None, n, 'a', dace.Memlet.simple('A', '1'))
     state.add_edge(n, 'b', w, None, dace.Memlet.simple('A', '0'))
 
+    n.integrate_into_parent()
     return sdfg
 
 

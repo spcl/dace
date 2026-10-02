@@ -151,6 +151,7 @@ def _gen_sdfg_with_symbol_use_in_nsdfg(write_only: bool = True) -> dace.SDFG:
     )
     an0 = s2.add_access(array_or_stream_name="A")
     s2.add_edge(an0, None, t0, "_in_A", dace.Memlet(expr="A[0]"))
+    nsdfg.integrate_into_parent()
     return sdfg, s1, nsdfg
 
 

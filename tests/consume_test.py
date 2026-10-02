@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import dace
 import dace as dp
 import numpy as np
 
@@ -70,5 +71,42 @@ def test_fibonacci_recursion_using_consume():
     assert diff <= 1e-5
 
 
+@dace.program
+def fib_program(iv: dace.int32[1], res: dace.float32[1]):
+    """The same recursion written for the Python frontend: the consume body pushes onto ``S``."""
+    S = dace.define_stream(dace.int32, 0)
+
+    with dace.tasklet:
+        i << iv
+        s >> S
+        s = i
+
+    @dace.consume(S, 4)
+    def scope(elem, p):
+        sout >> S(-1)
+        val >> res(-1, lambda a, b: a + b)
+
+        if elem == 1:
+            val = 1
+        elif elem > 1:
+            sout = elem - 1
+            sout = elem - 2
+
+
+def test_fibonacci_recursion_using_consume_program():
+    """The consume body reads and writes one stream, so both of its connectors name one container."""
+    input = np.ndarray([1], np.int32)
+    output = np.ndarray([1], np.float32)
+    input[0] = 10
+    output[0] = 0
+    regression = fibonacci(input[0])
+
+    fib_program(input, output)
+
+    diff = (regression - output[0])**2
+    assert diff <= 1e-5
+
+
 if __name__ == '__main__':
     test_fibonacci_recursion_using_consume()
+    test_fibonacci_recursion_using_consume_program()

@@ -39,6 +39,8 @@ def test_map_unroll():
     inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet(f"x[0]"))
     inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet(f"y[0]"))
 
+    nsdfg_node.integrate_into_parent()
+
     assert sdfg.apply_transformations_repeated(MapUnroll) == 4
 
     input_array = np.copy(np.arange(0, 6, dtype=np.int32).reshape((3, 2, 1)))
