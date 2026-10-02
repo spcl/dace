@@ -390,9 +390,6 @@ def test_fill_symbolic_size_emits_omp_parallel_for():
         assert 'std::fill_n' not in code
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
-
 NARROW_FLOATS = [
     pytest.param(dace.float16, 'float16'),
     pytest.param(dace.bfloat16, 'bfloat16'),
