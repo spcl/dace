@@ -2,11 +2,12 @@
 """ Exception classes and methods for validation of SDFGs. """
 
 import copy
+import functools
 import os
 import re
 import warnings
 from collections import Counter, defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 import sympy
 
@@ -101,8 +102,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
         ##########################################
         # Edge
         # Check inter-state edge for undefined symbols
-        # free_symbols is already a fresh set; a keys view avoids copying the symbol table per edge.
-        undef_syms = edge.data.free_symbols - symbols.keys()
+        undef_syms = {s for s in edge.data.free_symbols if s not in symbols}
         if len(undef_syms) > 0:
             eid = region.edge_id(edge)
             raise InvalidSDFGInterstateEdgeError(
@@ -406,6 +406,34 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     return True
 
 
+@functools.lru_cache(maxsize=16384)
+def _is_negative_index(index, offset) -> bool:
+    """
+    Returns True if an offset index is provably negative. Since the symbolic comparison is costly and the same
+    expressions reappear in many memlets, results are cached (the comparison only depends on the expressions, which
+    are integers or hashable symbolic expressions).
+
+    :param index: The (symbolic) index.
+    :param offset: The (symbolic) offset of the data container dimension.
+    :return: True if ``index + offset < 0`` is provably true.
+    """
+    return ((index + offset) < 0) == True
+
+
+@functools.lru_cache(maxsize=16384)
+def _is_out_of_bounds_index(index, offset, size) -> bool:
+    """
+    Returns True if an offset index is provably out of the upper bound of a data container dimension. Results are
+    cached as in ``_is_negative_index``.
+
+    :param index: The (symbolic) index.
+    :param offset: The (symbolic) offset of the data container dimension.
+    :param size: The (symbolic) size of the data container dimension.
+    :return: True if ``index + offset >= size`` is provably true.
+    """
+    return ((index + offset) >= size) == True
+
+
 def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.MultiConnectorEdge[Memlet]']):
     """
     Helper function that determines if a memlet is going to dereference a scalar value.
@@ -469,27 +497,6 @@ def state_has_reachable_cycle(state: 'dace.sdfg.SDFGState') -> bool:
                 color[node] = finished
                 stack.pop()
     return False
-
-
-def below_lower_bound(memo: Dict[Tuple[str, Any, Any], bool], minel: Any, offset: Any) -> bool:
-    """``((minel + offset) < 0) == True``, answered once per distinct pair in ``memo``: every memlet of a
-    state repeats the same few bounds, and each sympy comparison runs the assumption system."""
-    key = ('lower', minel, offset)
-    verdict = memo.get(key)
-    if verdict is None:
-        verdict = ((minel + offset) < 0) == True
-        memo[key] = verdict
-    return verdict
-
-
-def past_upper_bound(memo: Dict[Tuple[str, Any, Any], bool], maxel: Any, extent: Any, offset: Any) -> bool:
-    """``((maxel + offset) >= extent) == True``, memoized like :func:`below_lower_bound`."""
-    key = ('upper', maxel + offset, extent)
-    verdict = memo.get(key)
-    if verdict is None:
-        verdict = ((maxel + offset) >= extent) == True
-        memo[key] = verdict
-    return verdict
 
 
 def may_end_a_memlet_path(node: 'nd.Node') -> bool:
@@ -576,8 +583,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id, cfg=cfg)
 
     scope = state.scope_dict()
-    # Memlet bounds verdicts for this state, keyed by the compared expressions.
-    bounds_memo: Dict[Tuple[str, Any, Any], bool] = {}
 
     for nid, node in enumerate(state.nodes()):
         # Reference check
@@ -755,9 +760,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid, cfg=cfg)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                # Not `in (a.keys() | ...)`: NestedDict.keys() expands Structure members every call.
-                # __contains__ walks dotted names too, so "P.x" still answers the same.
-                if conn in sdfg.constants_prop or conn in sdfg.symbols or conn in sdfg.arrays:
+                # Only names with a dot can refer to nested data (``arrays.keys()`` enumerates all of it)
+                if (conn in sdfg.constants_prop or conn in sdfg.symbols
+                        or (conn in sdfg.arrays.keys() if '.' in conn else conn in sdfg.arrays)):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
                             "Connector name '%s' is already used as a symbol, constant, or array name" % conn,
@@ -999,16 +1004,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                                cfg=cfg)
 
                 # Bounds
-                if any(
-                        below_lower_bound(bounds_memo, minel, off)
-                        for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if any(_is_negative_index(minel, off) for minel, off in zip(e.data.subset.min_element(), arr.offset)):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
                     else:
                         raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid, cfg=cfg)
                 if any(
-                        past_upper_bound(bounds_memo, maxel, s, off)
+                        _is_out_of_bounds_index(maxel, off, s)
                         for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
@@ -1029,7 +1032,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
                 # Bounds
                 if any(
-                        below_lower_bound(bounds_memo, minel, off)
+                        _is_negative_index(minel, off)
                         for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
@@ -1040,7 +1043,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                                    eid,
                                                    cfg=cfg)
                 if any(
-                        past_upper_bound(bounds_memo, maxel, s, off)
+                        _is_out_of_bounds_index(maxel, off, s)
                         for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')

@@ -23,7 +23,7 @@ def assert_names_match(sdfg: dace.SDFG) -> int:
                 if not isinstance(node, nodes.EntryNode):
                     continue
                 entries += 1
-                assert node.new_symbol_names(state) == set(node.new_symbols(state.sdfg, state, {}).keys())
+                assert node.new_symbol_names(state.sdfg, state) == set(node.new_symbols(state.sdfg, state, {}).keys())
     return entries
 
 
@@ -78,7 +78,7 @@ def test_new_symbol_names_dynamic_map_range():
     state.add_memlet_path(state.add_access('A'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
     state.add_memlet_path(tasklet, exit_node, state.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
 
-    names = entry.new_symbol_names(state)
+    names = entry.new_symbol_names(sdfg, state)
     assert names == set(entry.new_symbols(sdfg, state, {}).keys())
     assert 'i' in names and 'dyn' in names
 
@@ -94,13 +94,13 @@ def test_new_symbol_names_consume():
     state.add_memlet_path(state.add_access('S'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('S[0]'))
     state.add_memlet_path(tasklet, exit_node, state.add_access('A'), src_conn='b', memlet=dace.Memlet('A[p]'))
 
-    names = entry.new_symbol_names(state)
+    names = entry.new_symbol_names(sdfg, state)
     assert names == set(entry.new_symbols(sdfg, state, {}).keys())
     assert 'p' in names
 
 
 def test_node_base_defines_nothing():
-    assert nodes.Tasklet('t').new_symbol_names(None) == set()
+    assert nodes.Tasklet('t').new_symbol_names(None, None) == set()
 
 
 def test_python_bool_normalizes_like_the_other_scalars():

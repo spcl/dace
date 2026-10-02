@@ -1,15 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``symbol_scopes`` must agree with ``symbols_defined_at`` node for node.
+"""The code generator's ``symbols_defined_at`` must agree with ``SDFGState.symbols_defined_at`` node for node.
 
-The pass exists only to avoid recomputing an SDFG-invariant table per node, so equivalence is the
-whole specification: same keys, same types, and the same ORDER (both return an OrderedDict, and
-callers such as ``mpi.py`` feed the result straight back into ``new_symbols``).
+The frame's resolver exists only to avoid recomputing a state-invariant table per node, so equivalence is the
+whole specification: same keys, same types, and the same ORDER (callers such as ``mpi.py`` feed the result
+straight back into ``new_symbols``).
 """
 
 import dace
 import pytest
 from dace import dtypes
-from dace.transformation.passes.analysis.scopes import SymbolScopes, defined_at
+from dace.sdfg.state import SymbolResolver
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -17,13 +17,13 @@ M = dace.symbol('M')
 
 def assert_matches(sdfg: dace.SDFG):
     """Every node of every state must get the identical table from both routes."""
-    scopes = SymbolScopes().apply_pass(sdfg, {})
+    resolver = SymbolResolver()
     checked = 0
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
             for node in state.nodes():
                 expected = state.symbols_defined_at(node)
-                actual = defined_at(scopes, state, node)
+                actual = resolver.defined_at(state, node)
                 assert list(actual.keys()) == list(expected.keys()), \
                     f'{state.label}/{node}: key order differs\n  {list(actual.keys())}\n  {list(expected.keys())}'
                 assert actual == expected, f'{state.label}/{node}: values differ'
@@ -53,8 +53,8 @@ def test_loop_region_iterator_is_visible():
     tasklet = body.add_tasklet('w', {}, {'o'}, 'o = i')
     body.add_edge(tasklet, 'o', body.add_access('A'), None, dace.Memlet('A[i]'))
 
-    scopes = SymbolScopes().apply_pass(sdfg, {})
-    assert 'i' in defined_at(scopes, body, tasklet), 'loop iterator must be in scope'
+    resolver = SymbolResolver()
+    assert 'i' in resolver.defined_at(body, tasklet), 'loop iterator must be in scope'
     assert_matches(sdfg)
 
 
@@ -71,11 +71,11 @@ def test_dynamic_map_range_connector():
     state.add_nedge(entry, tasklet, dace.Memlet())
     state.add_memlet_path(tasklet, exit_, state.add_access('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
 
-    scopes = SymbolScopes().apply_pass(sdfg, {})
-    inner = defined_at(scopes, state, tasklet)
+    resolver = SymbolResolver()
+    inner = resolver.defined_at(state, tasklet)
     assert 'i' in inner and 'bound' in inner, f'dynamic range connector missing: {sorted(inner)}'
     # The entry itself sees its OUTER scope, not its own parameters
-    assert 'i' not in defined_at(scopes, state, entry)
+    assert 'i' not in resolver.defined_at(state, entry)
     assert_matches(sdfg)
 
 
@@ -117,8 +117,8 @@ def test_scalar_free_symbols_reach_every_scope():
     state.add_nedge(entry, tasklet, dace.Memlet())
     state.add_memlet_path(tasklet, exit_, state.add_access('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
 
-    scopes = SymbolScopes().apply_pass(sdfg, {})
-    inner = defined_at(scopes, state, tasklet)
+    resolver = SymbolResolver()
+    inner = resolver.defined_at(state, tasklet)
     assert 'N' in inner and 'M' in inner
     assert isinstance(inner['N'], dtypes.typeclass)
     assert_matches(sdfg)

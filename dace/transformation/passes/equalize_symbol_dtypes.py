@@ -121,7 +121,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
                 scoped = tables[node]
-                self.declare({name: scoped[name] for name in node.new_symbol_names(state) if name in scoped})
+                self.declare({name: scoped[name] for name in node.new_symbol_names(sdfg, state) if name in scoped})
             if isinstance(node, nodes.MapEntry):
                 table = tables[state.entry_node(node)]
                 range_ = retype_subset(node.map.range, table)

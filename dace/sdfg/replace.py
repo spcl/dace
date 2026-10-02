@@ -332,8 +332,9 @@ def replace_properties_dict(node: Any,
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                propval = symbolic.pystr_to_symbolic(str(propval))
-            setattr(node, pname, propval.subs(replacements_for((propval, ), symrepl)))
+                setattr(node, pname, _internal_replace(symbolic.pystr_to_symbolic(str(propval)), symrepl))
+            else:
+                setattr(node, pname, _internal_replace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])

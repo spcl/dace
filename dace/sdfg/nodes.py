@@ -337,9 +337,10 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
-    def new_symbol_names(self, state) -> Set[str]:
-        """ Returns the names :meth:`new_symbols` defines, without inferring their types. """
-        return set()
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """ Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+            without inferring their types. """
+        return set(self.new_symbols(sdfg, state, {}).keys())
 
     def infer_connector_types(self, sdfg, state):
         """
@@ -1002,7 +1003,7 @@ class MapEntry(EntryNode):
 
         return result
 
-    def new_symbol_names(self, state) -> Set[str]:
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
         dyn_inputs = self.dynamic_input_connectors
         # Zipped as in new_symbols: a param without a matching range defines nothing.
         return ({p
@@ -1024,7 +1025,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= n.new_symbol_names(parent_state)
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -1374,7 +1375,7 @@ class ConsumeEntry(EntryNode):
 
         return result
 
-    def new_symbol_names(self, state) -> Set[str]:
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
         dyn_inputs = self.dynamic_input_connectors
         return {self._consume.pe_index} | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 

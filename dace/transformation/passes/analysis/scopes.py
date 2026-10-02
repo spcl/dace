@@ -4,7 +4,6 @@ import collections
 from collections.abc import Mapping
 from typing import Dict, Final, List, NoReturn, Optional, Set
 
-import dace
 from dace import data, dtypes, properties
 from dace.dtypes import typeclass
 from dace.memlet import Memlet
@@ -18,9 +17,6 @@ from dace.transformation.passes.analysis.analysis import StateReachability
 
 #: The scopes of one state mapped to the symbols visible there; ``None`` keys the state's own top level.
 StateScopeTables = dict[nodes.EntryNode | None, dict[str, typeclass]]
-
-#: Per state, the symbols visible at each scope entry; ``None`` keys the state's own top level.
-StateSymbolScopes = Dict[SDFGState, StateScopeTables]
 
 
 def state_scope_symbol_tables(sdfg: SDFG,
@@ -39,8 +35,8 @@ def state_scope_symbol_tables(sdfg: SDFG,
     :param region_tables: Optional memo of :func:`~dace.sdfg.state.enclosing_region_symbols`, keyed by
                           ``id(state.parent_graph)``. That table depends only on ``base`` and the region
                           chain above the state, so all states of one region share it. Valid while
-                          ``base`` and the region tree are unchanged -- one :class:`SymbolScopes` run,
-                          which modifies nothing and keeps every region alive, so ids cannot recycle.
+                          ``base`` and the region tree are unchanged -- one table-building run, which
+                          modifies nothing and keeps every region alive, so ids cannot recycle.
                           Each state still gets its own copy: code generation extends these tables in place.
     :return: Scope entry node (``None`` for the state's top level) to its visible symbols.
     """
@@ -65,49 +61,6 @@ def state_scope_symbol_tables(sdfg: SDFG,
             per_scope[node] = symbols
             stack.append(node)
     return per_scope
-
-
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class SymbolScopes(ppl.Pass):
-    """For each scope of each state, the symbols visible there (the per-node answer of ``symbols_defined_at``)."""
-
-    CATEGORY: str = 'Analysis'
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nothing
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified
-                    & (ppl.Modifies.Descriptors | ppl.Modifies.Symbols | ppl.Modifies.CFG | ppl.Modifies.Scopes))
-
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, StateSymbolScopes]:
-        """
-        :return: A dictionary mapping each CFG id to its states' per-scope symbol tables.
-        """
-        result: Dict[int, StateSymbolScopes] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            base = sdfg_scope_symbols(sdfg)
-            region_tables: Dict[int, Dict[str, typeclass]] = {}
-            per_sdfg: StateSymbolScopes = {}
-            for state in sdfg.states():
-                per_sdfg[state] = state_scope_symbol_tables(sdfg, state, base, region_tables)
-            result[sdfg.cfg_id] = per_sdfg
-        return result
-
-
-def defined_at(scopes: Dict[int, StateSymbolScopes], state: SDFGState,
-               node: Optional[nodes.Node]) -> Dict[str, 'dace.dtypes.typeclass']:
-    """Table for ``node``'s innermost enclosing scope; falls back to ``symbols_defined_at`` on a miss."""
-    if node is None:
-        return collections.OrderedDict()
-    per_scope = scopes.get(state.sdfg.cfg_id, {}).get(state)
-    if per_scope is None:
-        return state.symbols_defined_at(node)
-    table = per_scope.get(state.entry_node(node))
-    if table is None:
-        return state.symbols_defined_at(node)
-    return table
 
 
 @properties.make_properties
@@ -233,7 +186,7 @@ class CodegenAnalysisPipeline(ppl.Pipeline):
     """The read-only analyses code generation runs on a frozen SDFG before emitting; shares ``depends_on`` results."""
 
     def __init__(self):
-        super().__init__([StateReachability(), SymbolScopes(), AllocationScopes(), AccessInstances()])
+        super().__init__([StateReachability(), AllocationScopes(), AccessInstances()])
 
 
 def enclosing_loop_iterators(block: ControlFlowBlock) -> dict[str, None]:

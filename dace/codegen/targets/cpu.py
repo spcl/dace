@@ -26,7 +26,6 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
 from dace.transformation.passes.resolve_stack_allocation import resolve_stack_allocation
 from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, Union
@@ -2805,7 +2804,7 @@ class CPUCodeGen(TargetCodeGenerator):
         standalone = cpf_lowering.standalone()
         if setting in ('int32', 'int64') or (setting == 'auto' and not standalone):
             return [LOOP_INDEX_CTYPES[setting]] * len(node.map.params)
-        resolved = node.new_symbols(sdfg, state, scope_analysis.defined_at(self._frame.symbol_scopes, state, node))
+        resolved = node.new_symbols(sdfg, state, self._frame.symbols_defined_at(state, node))
         if not standalone:
             return [resolved[p].ctype if resolved.get(p) is not None else 'auto' for p in node.map.params]
         ctypes = []
@@ -3906,7 +3905,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
-        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+        pe_type = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg,
+                                                                                   node)).get(node.consume.pe_index)
 
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "

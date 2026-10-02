@@ -878,7 +878,10 @@ def _default_assumptions_for_dtype(dtype: 'dtypes.typeclass') -> types.MappingPr
     return types.MappingProxyType(sympy_symbol('__assumption_probe', dtype=dtype).assumptions0)
 
 
+@lru_cache(maxsize=16384, typed=True)
 def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
+    # Cached: the result only depends on the assumptions of the symbol (part of its equality) and on ``dtype``.
+    # The returned dictionary must not be modified.
     kwargs = {}
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{dtype.to_string()}'
@@ -3523,6 +3526,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return '*'.join(parts) if parts else '1'
 
 
+# SymPy integer types that ``DaceSympySerializer`` prints as their value
+_PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
+
+
 def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
     if isinstance(expr, SymExpr):
         return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
@@ -3539,8 +3546,26 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
         # the SDFG save->load->save equality check.
         return _format_float(expr)
     if isinstance(expr, sympy.Basic):
-        return DaceSympySerializer().doprint(expr)
+        # Fast paths for the most common expressions (integers and lone symbols), printed as the serializer would
+        expr_type = type(expr)
+        if expr_type in _PLAIN_INTEGER_TYPES:
+            return str(expr.p)
+        if expr_type is symbol or expr_type is sympy.Symbol:
+            return DaceSympySerializer()._print_Symbol(expr)
+        # SymPy equality ignores the dtypes of DaCe symbols, which are printed, so they are part of the key
+        scope_dtypes = _SERIALIZATION_SYMBOL_DTYPES.get()
+        symbol_dtypes = frozenset((s.name, scope_dtypes.get(s.name, s.dtype)) for s in expr.atoms(symbol))
+        return _serialize_sympy_expression(expr, symbol_dtypes)
     return str(expr)
+
+
+@lru_cache(maxsize=16384)
+def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: FrozenSet[Tuple[str, 'dtypes.typeclass']]) -> str:
+    """
+    Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
+    serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
+    """
+    return DaceSympySerializer().doprint(expr)
 
 
 def serialize_symbolic(expr):

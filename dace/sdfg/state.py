@@ -745,7 +745,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Free symbols from nodes
         for n in self.nodes():
             if isinstance(n, nd.EntryNode):
-                new_symbols |= n.new_symbol_names(self)
+                new_symbols |= n.new_symbol_names(sdfg, self)
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 desc = n.desc(sdfg)
@@ -863,6 +863,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         Determines what data is read and written in this subgraph, returning
         dictionaries from data containers to all subsets that are read/written.
         """
+        return copy.deepcopy(self._read_and_write_subsets())
+
+    def _read_and_write_subsets(self) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
+        """
+        Determines what data is read and written in this subgraph, returning dictionaries from data containers to all
+        subsets that are read/written. Unlike ``_read_and_write_sets``, the subsets are not copied and may be those of
+        the memlets, so the result must not be modified.
+        """
         from dace.sdfg import utils  # Avoid cyclic import
 
         # Ensures that the `{src,dst}_subset` are properly set.
@@ -921,7 +929,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             for data, accesses in subgraph_write_set.items():
                 write_set[data] += accesses
 
-        return copy.deepcopy((read_set, write_set))
+        return read_set, write_set
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
@@ -1710,7 +1718,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
         edges_json = []
         for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
-            authority = {**authority_by_node.get(e.src, {}), **authority_by_node.get(e.dst, {})}
+            src_authority = authority_by_node.get(e.src, {})
+            dst_authority = authority_by_node.get(e.dst, {})
+            if src_authority is dst_authority:
+                authority = src_authority
+            else:
+                # Looks names up as ``{**src_authority, **dst_authority}`` would, without copying
+                authority = collections.ChainMap(dst_authority, src_authority)
             with symbolic.serialization_symbol_dtypes(authority):
                 edges_json.append(e.to_json(self))
 
@@ -1814,10 +1828,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         return sdfg_scope_symbols(self.sdfg)
 
-    def symbols_defined_at_state(self,
-                                 *,
-                                 sdfg_symbols: Optional[Dict[str,
-                                                             dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
+    def symbols_defined_at_state(
+        self,
+        *,
+        sdfg_symbols: Optional[Dict[str, dtypes.typeclass]] = None,
+        region_updates: Optional[Dict[Tuple['ControlFlowBlock', Optional['ControlFlowBlock']],
+                                      List[Dict[str, dtypes.typeclass]]]] = None
+    ) -> Dict[str, dtypes.typeclass]:
         """
         Returns the symbols available to every node of this state, i.e. the part of
         ``symbols_defined_at()`` that does not depend on the node: the symbols of the SDFG, the
@@ -1826,6 +1843,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         :param sdfg_symbols: The result of ``sdfg_symbols()``, for callers that resolve several
                              states of one SDFG; it is computed here if not given. Never mutated.
+        :param region_updates: An optional cache, shared by callers that resolve several states of one SDFG, of the
+                               symbol updates that each enclosing control flow region defines (keyed by the region
+                               and None) and of those of the inter-state edges leading to each enclosing block (keyed
+                               by its region and the block). They only depend on the blocks around them, so they are
+                               computed once and replayed for the other states.
         :return: A dictionary mapping symbol names to their types.
         """
         from dace.sdfg.sdfg import SDFG
@@ -1842,8 +1864,26 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # From the outermost region inward, add the symbols each control flow region defines and the ones of the
         # inter-state edges along the paths to the block of the path it contains
         for graph, block in reversed(list(zip(path[1:], path[:-1]))):
+            # The symbols the region defines only depend on the regions around it
             if graph is not sdfg:
-                symbols.update({k: v for k, v in graph.new_symbols(symbols).items() if v is not None})
+                cached = region_updates.get((graph, None)) if region_updates is not None else None
+                if cached is None:
+                    cached = {k: v for k, v in graph.new_symbols(symbols).items() if v is not None}
+                    if region_updates is not None:
+                        region_updates[(graph, None)] = [cached]
+                    symbols.update(cached)
+                else:
+                    # Replaying the same updates in the same order yields the same symbols (and order)
+                    for update in cached:
+                        symbols.update(update)
+
+            # The symbols of the inter-state edges leading to the block only depend on the block
+            cached = region_updates.get((graph, block)) if region_updates is not None else None
+            if cached is not None:
+                for update in cached:
+                    symbols.update(update)
+                continue
+            updates: List[Dict[str, dtypes.typeclass]] = []
             try:
                 graph.start_block
                 edges = graph.edge_bfs(block, reverse=True)
@@ -1851,7 +1891,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 # Cannot determine starting block (possibly some inter-state edges do not yet exist)
                 edges = graph.edges()
             for e in edges:
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+                update = e.data.new_symbols(sdfg, symbols)
+                symbols.update(update)
+                updates.append(update)
+            if region_updates is not None and block is not self:
+                region_updates[(graph, block)] = updates
 
         return symbols
 
@@ -2846,6 +2890,8 @@ class SymbolResolver:
         self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
         if sdfg is not None and sdfg_symbols is not None:
             self._per_sdfg[sdfg] = sdfg_symbols
+        self._region_updates: Dict[Tuple['ControlFlowBlock', Optional['ControlFlowBlock']],
+                                   List[Dict[str, dtypes.typeclass]]] = {}
 
     def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
         state_symbols = self._per_state.get(state)
@@ -2853,7 +2899,8 @@ class SymbolResolver:
             sdfg_symbols = self._per_sdfg.get(state.sdfg)
             if sdfg_symbols is None:
                 sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
-            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
+            state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols,
+                                                                                    region_updates=self._region_updates)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
 
@@ -3147,6 +3194,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
+        # Position of this CFG in ``_cfg_list`` when last computed (see ``cfg_id``)
+        self._cfg_id_cache: Optional[int] = None
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
         """
@@ -3207,8 +3256,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         else:
             # Propagate new CFG list to all children
             all_cfgs = list(self.all_control_flow_regions(recursive=True))
-            for g in all_cfgs:
+            seen = set()
+            for i, g in enumerate(all_cfgs):
                 g._cfg_list = all_cfgs
+                # Also record the position of each CFG (its ``cfg_id``, i.e., its first occurrence in the list)
+                if id(g) not in seen:
+                    seen.add(id(g))
+                    g._cfg_id_cache = i
         return self._cfg_list
 
     def update_cfg_list(self, cfg_list):
@@ -3716,7 +3770,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
         CFGs/SDFGs are greater).
         """
-        return self.cfg_list.index(self)
+        cfg_list = self.cfg_list
+        # The index found last time is still correct if this CFG is still at that position
+        index = self._cfg_id_cache
+        if index is None or index >= len(cfg_list) or cfg_list[index] is not self:
+            index = cfg_list.index(self)
+            self._cfg_id_cache = index
+        return index
 
     @property
     def start_block(self):
@@ -4333,8 +4393,8 @@ class LoopRegion(ControlFlowRegion):
                 return dict(self._new_symbols_value)
             self._new_symbols_key = key
             self._new_symbols_value = {}
-            alltypes = copy.copy(symbols)
-            alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
+            # As the key, the inferred type only depends on the data containers named in the header
+            alltypes = collections.ChainMap({n: arrays[n].dtype for n in names if n in arrays}, symbols)
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)

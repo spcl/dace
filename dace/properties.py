@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
@@ -43,15 +44,20 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
-#: First version whose symbolic properties carry the typed wire format.
-_TYPED_SYMBOLIC_WIRE_VERSION = parse_version("2.0.0a4")
+@functools.lru_cache(maxsize=16384)
+def _normalize_python_code(code: str) -> str:
+    """
+    Parses and unparses Python code that was already unparsed from an AST (e.g., ``CodeBlock.as_string``). The second
+    unparsing roundtrip avoids issues in AST parsing/unparsing of negative numbers, i.e., "(-1)" becomes "(- 1)".
+    The result only depends on the string, so it is cached.
+    """
+    return unparse(ast.parse(code))
 
 
-@lru_cache(maxsize=None, typed=True)
-def _parsed_version(version: str):
-    """One version string per load, but it was parsed -- twice -- per deserialized property: 208k
-    calls and 12.5% of a CloudSC load."""
-    return parse_version(version)
+@functools.lru_cache(maxsize=None)
+def _predates_symbolic_serialization(version: str) -> bool:
+    """ Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format. """
+    return parse_version(version) < parse_version("2.0.0a4")
 
 
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
@@ -63,7 +69,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if _parsed_version(version) < _TYPED_SYMBOLIC_WIRE_VERSION:
+    if _predates_symbolic_serialization(version):
         # A `$`-escape below the wire version proves the stamp lied: no writer that old could emit one.
         if symbolic.has_serialized_symbol_escape(value):
             return symbolic.deserialize_symbolic(value)
@@ -1103,7 +1109,10 @@ class CodeBlock(object):
             self.code = code
 
     def __eq__(self, other):
-        if isinstance(other, str) or other is None:
+        if other is None:
+            # Only code that is None has no string representation
+            return self.code is None
+        if isinstance(other, str):
             return self.as_string == other
         elif isinstance(other, CodeBlock):
             return self.as_string == other.as_string and self.language == other.language
@@ -1114,7 +1123,7 @@ class CodeBlock(object):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if self.language == dace.dtypes.Language.Python and self.code is not None:
-            code = unparse(ast.parse(self.as_string))
+            code = _normalize_python_code(self.as_string)
         else:
             code = self.as_string
 
@@ -1170,7 +1179,7 @@ class CodeProperty(Property):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if obj.language == dace.dtypes.Language.Python and obj.code is not None:
-            code = unparse(ast.parse(obj.as_string))
+            code = _normalize_python_code(obj.as_string)
         else:
             code = obj.as_string
 

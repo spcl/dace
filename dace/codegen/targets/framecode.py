@@ -11,8 +11,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.transformation.passes.analysis.scopes import (AccessInstances, AllocationScopes, CodegenAnalysisPipeline,
-                                                        SymbolScopes)
+from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
 from dace.ordered import OrderedSet
@@ -21,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion)
+                             LoopRegion, SymbolResolver)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 from dace.transformation.passes.canonicalize import supply_num_threads
 
@@ -88,15 +87,13 @@ class DaCeCodeGenerator(object):
         # cannot be recycled by a later, unrelated object for as long as the entry lives
         # (a WeakValueDictionary would not do this: it lets obj die and the id go stale).
         self.fsyms: Dict[int, Tuple[Any, FrozenSet[str]]] = {}
-        # Filled by determine_allocation_lifetime; targets read it through symbol_scopes.defined_at,
-        # which falls back to symbols_defined_at for anything built after the pass ran.
-        self.symbol_scopes: Dict = {}
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: Dict[int, bool] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
-        # SDFG -> (struct type names, constant dtypes) for its Python tasklets; see cpp.tasklet_unparse_facts.
-        self.tasklet_unparse_cache: Dict[SDFG, Tuple[Dict[str, None], Dict[str, Any]]] = {}
+        # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
+        self._symbol_resolver = SymbolResolver()
+        self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -137,10 +134,6 @@ class DaCeCodeGenerator(object):
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> Dict[str, dtypes.typeclass]:
-        """Symbols visible at ``node``, for queries that run while the SDFG is no longer being modified."""
-        return state.symbols_defined_at(node)
-
     def free_symbols(self, obj: Any) -> FrozenSet[str]:
         k = id(obj)
         cached = self.fsyms.get(k)
@@ -155,6 +148,32 @@ class DaCeCodeGenerator(object):
         # back to `fsyms = fsyms | ...`, which creates a new object).
         result = frozenset(result)
         self.fsyms[k] = (obj, result)
+        return result
+
+    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns the symbols available to a node, as ``SDFGState.symbols_defined_at``. The part of the result that
+        depends only on the state (the SDFG symbols and those defined along the control flow leading to the state)
+        is computed once per state, since the SDFG does not change while its code is generated.
+
+        :param state: The state containing the node.
+        :param node: The node.
+        :return: A dictionary mapping symbol names to their types, which the caller may modify.
+        """
+        return self._symbol_resolver.defined_at(state, node)
+
+    def struct_types(self, sdfg: SDFG) -> Dict[str, dtypes.struct]:
+        """
+        Returns the struct types of the data containers of an SDFG by name, computed once per SDFG during code
+        generation.
+
+        :param sdfg: The SDFG.
+        :return: A dictionary mapping struct type names to the struct types.
+        """
+        result = self._struct_types.get(sdfg)
+        if result is None:
+            from dace.codegen.targets.cpp import StructInitializer  # Avoid circular import
+            result = self._struct_types[sdfg] = StructInitializer.struct_types(sdfg)
         return result
 
     ##################################################################
@@ -848,7 +867,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
         reachability = analysis_results[StateReachability.__name__]
         alloc_scopes = analysis_results[AllocationScopes.__name__]
-        self.symbol_scopes = analysis_results[SymbolScopes.__name__]
         instances = analysis_results[AccessInstances.__name__]
         access_instances = instances['access_instances']
         code_instances = instances['code_instances']
@@ -954,7 +972,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # common denominator), or in the SDFG if used in multiple states
                 curscope: Union[nodes.EntryNode, SDFGState] = None
                 curstate: SDFGState = None
-                multistate = False
 
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 multistate = name in alloc_scopes['meta_symbols'][sdfg.cfg_id]
@@ -1395,29 +1412,34 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
-        gotos = re.findall(r'goto (.*?);', generated_code)
-        goto_ctr = collections.Counter(gotos)
-        clean_code = ''
+        # NOTE: The lines are collected in a list and joined once, since repeatedly appending to (and truncating) one
+        # string copies the code generated so far for every line.
+        goto_ctr = collections.Counter(re.findall(r'goto (.*?);', generated_code))
+        empty_statement = re.compile(r'^\s*;\s*')
+        label_line = re.compile(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$')
+        clean_lines = []
         last_line = ''
         for line in generated_code.split('\n'):
             # Empty line
             if not line.strip():
                 continue
             # Empty line with semicolon
-            if re.match(r'^\s*;\s*', line):
+            if empty_statement.match(line):
                 continue
             # Label that might be unused
-            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            label = label_line.findall(line)
             if len(label) > 0:
-                if label[0] not in gotos:
+                if label[0] not in goto_ctr:
                     last_line = ''
                     continue
                 if f'goto {label[0]};' in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
-                    clean_code = clean_code[:-len(last_line) - 1]
+                    # ``last_line`` is non-empty only if it is the last line kept
+                    clean_lines.pop()
                     last_line = ''
                     continue
-            clean_code += line + '\n'
+            clean_lines.append(line)
             last_line = line
+        clean_code = ''.join(line + '\n' for line in clean_lines)
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)

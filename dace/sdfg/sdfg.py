@@ -11,6 +11,7 @@ import json
 from hashlib import md5, sha256
 import pathlib
 import random
+import re
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
@@ -524,8 +525,15 @@ class InterstateEdge(object):
             return {}
 
         if sdfg is not None:
-            alltypes = copy.copy(symbols)
-            alltypes.update({k: v.dtype for k, v in sdfg.arrays.items()})
+            arrays = sdfg.arrays
+            if all(isinstance(v, str) for v in self.assignments.values()):
+                # Type inference only looks up the identifiers of an expression, so only the data containers named
+                # in the assignments are needed (layered over the symbols, without copying either)
+                names = set(re.findall(r'[A-Za-z_]\w*', ' '.join(self.assignments.values())))
+                alltypes = collections.ChainMap({k: arrays[k].dtype for k in names if k in arrays}, symbols)
+            else:
+                alltypes = copy.copy(symbols)
+                alltypes.update({k: v.dtype for k, v in arrays.items()})
         else:
             alltypes = symbols
 
@@ -1669,7 +1677,7 @@ class SDFG(ControlFlowRegion):
                 for state in self.all_states():
                     for node in state.nodes():
                         if isinstance(node, nd.EntryNode):
-                            scope_syms |= node.new_symbol_names(state)
+                            scope_syms |= node.new_symbol_names(self, state)
                 res_free |= extents - scope_syms
             res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before

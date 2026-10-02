@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The symbol-scope and allocation-scope passes must not change a single byte of generated code.
+"""The cached symbol resolver and the allocation-scope pass must not change a single byte of generated code.
 
 Both are pure lookup tables replacing scans, so the specification is exact equivalence. Comparing
 the emitted C++ is stronger than comparing the tables: it also covers the allocation decisions
 (which state declares a transient, which scope allocates it), which is what the allocation tables
 feed and where an ordering mistake would show up.
 
-The baseline is produced by monkeypatching the tables to empty, which makes ``defined_at`` fall
-back to ``symbols_defined_at`` and forces the pre-pass code path.
+The baseline is produced by monkeypatching the frame's ``symbols_defined_at`` to the uncached
+``SDFGState.symbols_defined_at``, which forces the per-node code path.
 """
 
 import dace
@@ -24,22 +24,21 @@ def generated(sdfg: dace.SDFG) -> str:
 
 
 def assert_codegen_unchanged(build):
-    """Generate with the passes live, then with the symbol table forced empty; compare."""
+    """Generate with the cached resolver live, then with the uncached query; compare."""
     import dace.codegen.targets.framecode as framecode
 
     with_passes = generated(build())
 
-    original = framecode.DaCeCodeGenerator.determine_allocation_lifetime
+    original = framecode.DaCeCodeGenerator.symbols_defined_at
 
-    def no_symbol_table(self, top_sdfg):
-        original(self, top_sdfg)
-        self.symbol_scopes = {}  # force defined_at down its symbols_defined_at fallback
+    def uncached(self, state, node):
+        return state.symbols_defined_at(node)
 
-    framecode.DaCeCodeGenerator.determine_allocation_lifetime = no_symbol_table
+    framecode.DaCeCodeGenerator.symbols_defined_at = uncached
     try:
         fallback = generated(build())
     finally:
-        framecode.DaCeCodeGenerator.determine_allocation_lifetime = original
+        framecode.DaCeCodeGenerator.symbols_defined_at = original
 
     assert with_passes == fallback, 'generated code differs between the pass and the fallback path'
     return with_passes
