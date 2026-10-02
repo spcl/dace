@@ -3,10 +3,12 @@ import functools
 import json
 from typing import List
 
+import sympy
+
 import dace
 from dace import dtypes
 from dace import data
-from dace import config
+from dace import config, symbolic
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
@@ -161,6 +163,24 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
+    token = symbolic.NONNEGATIVE_SYMBOLS.set(frozenset())
+    try:
+        return generate_code_objects(sdfg, validate)
+    finally:
+        symbolic.NONNEGATIVE_SYMBOLS.reset(token)
+
+
+def map_symbols(sdfg: SDFG) -> frozenset:
+    """ Names of the map parameters of ``sdfg`` and of the symbols that are the extent of a map range. """
+    names = set()
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            names.update(node.map.params)
+            names.update(str(end + 1) for _, end, _ in node.map.range.ranges if isinstance(end + 1, sympy.Symbol))
+    return frozenset(names)
+
+
+def generate_code_objects(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness
@@ -220,6 +240,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    symbolic.NONNEGATIVE_SYMBOLS.set(map_symbols(sdfg))
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 

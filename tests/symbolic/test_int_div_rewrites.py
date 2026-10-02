@@ -71,7 +71,7 @@ def test_ceiling_of_an_integer_prints_as_its_argument():
     assert isinstance(stored, sympy.ceiling)
     assert stored.args[0].is_integer
 
-    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
+    assert symstr(stored, cpp_mode=True) == '(py_floor(N, 2))'
 
 
 @pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])

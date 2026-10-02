@@ -383,6 +383,35 @@ def test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_fl
     assert symbolic.CMod(k, m) == symbolic.PyMod(k, m)
 
 
+@dace.program
+def periodic_read(A: dace.int64[N], B: dace.int64[N]):
+    for i in dace.map[0:N]:
+        B[i] = A[(i + 1) % N]
+
+
+@dace.program
+def shifted_read(A: dace.int64[N], B: dace.int64[1], s: dace.int64):
+    B[0] = A[(s + 1) % N]
+
+
+def test_a_map_parameter_and_the_extent_of_its_range_keep_cs_percent():
+    sdfg = periodic_read.to_sdfg()
+    sdfg.name = 'periodic_read'
+
+    assert 'py_mod(' not in sdfg.generate_code()[0].clean_code
+    a = np.arange(8, dtype=np.int64)
+    b = np.zeros(8, dtype=np.int64)
+    sdfg(A=a, B=b, N=8)
+    assert np.array_equal(b, np.roll(a, -1))
+
+
+def test_a_free_symbol_is_not_assumed_nonnegative():
+    sdfg = shifted_read.to_sdfg()
+    sdfg.name = 'shifted_read'
+
+    assert 'py_mod(' in sdfg.generate_code()[0].clean_code
+
+
 def test_the_modulo_functions_have_one_implementation_per_rounding():
     assert symbolic.FtnMod is symbolic.CMod
     assert symbolic.FtnModulo is symbolic.PyMod
@@ -424,3 +453,5 @@ if __name__ == '__main__':
     test_a_provably_nonnegative_pair_prints_as_the_c_operator()
     test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_floored_one()
     test_the_modulo_functions_have_one_implementation_per_rounding()
+    test_a_map_parameter_and_the_extent_of_its_range_keep_cs_percent()
+    test_a_free_symbol_is_not_assumed_nonnegative()

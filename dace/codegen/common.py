@@ -38,8 +38,8 @@ def find_outgoing_edges(node, dfg):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _sym2cpp(s, arrayexprs):
-    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True), c_operators=True)
+def _sym2cpp(s, arrayexprs, nonnegative):
+    return cppunparse.pyexpr2cpp(symbolic.symstr_assuming(s, arrayexprs, True, nonnegative), c_operators=True)
 
 
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
@@ -52,7 +52,7 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     :return: C++-compilable expression or list thereof.
     """
     if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
+        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs), symbolic.NONNEGATIVE_SYMBOLS.get())
     return [sym2cpp(d, arrayexprs) for d in s]
 
 

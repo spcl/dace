@@ -336,10 +336,9 @@ class CPPUnparser:
     def _AugAssign(self, t):
         self.fill()
         self.dispatch(t.target)
-        if t.op.__class__.__name__ in ("FloorDiv",
-                                       "Mod") and not (t.op.__class__.__name__ == "Mod" and self.c_operators):
+        if self._is_floored(t.op):
             self.write(" = ")
-            self._modulo_call("PyFloor" if t.op.__class__.__name__ == "FloorDiv" else "PyMod", t.target, t.value)
+            self._modulo_call(self.floored_functions[type(t.op)], t.target, t.value)
         # Operations that require a function call
         elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
@@ -867,9 +866,8 @@ class CPPUnparser:
     funcops = {"MatMult": (",", "dace::gemm")}
 
     def _BinOp(self, t):
-        # Python's ``%`` and ``//`` floor. A symbolic expression has chosen between C's operators and the helpers
-        if t.op.__class__.__name__ == "FloorDiv" or (t.op.__class__.__name__ == "Mod" and not self.c_operators):
-            self._modulo_call("PyFloor" if t.op.__class__.__name__ == "FloorDiv" else "PyMod", t.left, t.right)
+        if self._is_floored(t.op):
+            self._modulo_call(self.floored_functions[type(t.op)], t.left, t.right)
         # Operations that require a function call
         elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
@@ -996,12 +994,20 @@ class CPPUnparser:
     }
 
     modulo_calls = {"PyMod": "py_mod", "CMod": "cpp_mod", "PyFloor": "py_floor"}
+    floored_functions = {ast.Mod: "PyMod", ast.FloorDiv: "PyFloor"}
 
-    def _is_unsigned_or_literal(self, node: ast.AST) -> bool:
-        """ Whether ``node`` is an integer that is provably nonnegative: a literal or a variable of unsigned type. """
+    def _is_floored(self, op: ast.operator) -> bool:
+        """ Python's ``%`` and ``//`` floor, except in a symbolic expression, which has chosen its operators. """
+        return isinstance(op, ast.FloorDiv) or (isinstance(op, ast.Mod) and not self.c_operators)
+
+    def _is_nonnegative_integer(self, node: ast.AST) -> bool:
+        """ Whether ``node`` is an integer that is provably nonnegative: a literal, a variable of unsigned type, or a
+            symbol that code generation assumes nonnegative. """
         if isinstance(node, ast.Constant):
             return isinstance(node.value, int) and not isinstance(node.value, bool) and node.value >= 0
         if isinstance(node, ast.Name):
+            if node.id in dace.symbolic.NONNEGATIVE_SYMBOLS.get():
+                return True
             ctype = self.defined_symbols.get(node.id)
             if ctype is None and self.locals is not None:
                 ctype = self.locals.get_name_type_associations().get(node.id)
@@ -1010,7 +1016,7 @@ class CPPUnparser:
 
     def _modulo_call(self, function: str, left: ast.AST, right: ast.AST):
         """ ``function`` is ``PyMod``, ``CMod`` or ``PyFloor``: C's operators are used where they agree. """
-        if function != "CMod" and self._is_unsigned_or_literal(left) and self._is_unsigned_or_literal(right):
+        if function != "CMod" and self._is_nonnegative_integer(left) and self._is_nonnegative_integer(right):
             self.write("(")
             self.dispatch(left)
             self.write(" % " if function == "PyMod" else " / ")
