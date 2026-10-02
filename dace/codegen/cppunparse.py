@@ -1001,13 +1001,10 @@ class CPPUnparser:
         return isinstance(op, ast.FloorDiv) or (isinstance(op, ast.Mod) and not self.c_operators)
 
     def _is_nonnegative_integer(self, node: ast.AST) -> bool:
-        """ Whether ``node`` is an integer that is provably nonnegative: a literal, a variable of unsigned type, or a
-            symbol that code generation assumes nonnegative. """
+        """ Whether ``node`` is an integer that is provably nonnegative: a literal or a variable of unsigned type. """
         if isinstance(node, ast.Constant):
             return isinstance(node.value, int) and not isinstance(node.value, bool) and node.value >= 0
         if isinstance(node, ast.Name):
-            if node.id in dace.symbolic.NONNEGATIVE_SYMBOLS.get():
-                return True
             ctype = self.defined_symbols.get(node.id)
             if ctype is None and self.locals is not None:
                 ctype = self.locals.get_name_type_associations().get(node.id)

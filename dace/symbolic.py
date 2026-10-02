@@ -2,7 +2,6 @@
 import ast
 import contextlib
 from collections import Counter
-from contextvars import ContextVar
 from functools import lru_cache, cache
 import sympy
 import threading
@@ -2471,22 +2470,9 @@ def simplify(expr: SymbolicType) -> SymbolicType:
     return sympy.simplify(expr)
 
 
-# Names of the symbols that code generation assumes nonnegative: map parameters and the symbols of map ranges, which
-# start at zero and are not empty
-NONNEGATIVE_SYMBOLS: ContextVar[FrozenSet[str]] = ContextVar('nonnegative_symbols', default=frozenset())
-
-
-def provably_nonnegative(expr) -> bool:
-    if expr.is_nonnegative:
-        return True
-    if isinstance(expr, sympy.Symbol):
-        return expr.name in NONNEGATIVE_SYMBOLS.get()
-    return isinstance(expr, (sympy.Add, sympy.Mul)) and all(provably_nonnegative(arg) for arg in expr.args)
-
-
 def nonnegative_integers(*operands) -> bool:
     """ Whether C's ``%`` and ``/`` on ``operands`` agree with the floored ones, which is so on nonnegative integers. """
-    return all(operand.is_integer and provably_nonnegative(operand) for operand in operands)
+    return all(operand.is_integer and operand.is_nonnegative for operand in operands)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
@@ -2658,6 +2644,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
 
 
+@lru_cache(maxsize=16384, typed=True)
 def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
@@ -2670,14 +2657,8 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
 
-    return symstr_assuming(sym, arrayexprs, cpp_mode, NONNEGATIVE_SYMBOLS.get())
-
-
-@lru_cache(maxsize=16384, typed=True)
-def symstr_assuming(sym, arrayexprs: Optional[FrozenSet[str]], cpp_mode: bool, nonnegative: FrozenSet[str]) -> str:
-    """ ``symstr``, keyed by the symbols assumed nonnegative, which decide how ``%`` and ``//`` print. """
     if isinstance(sym, SymExpr):
-        return symstr_assuming(sym.expr, arrayexprs, cpp_mode, nonnegative)
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
 
     # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
     # the first two and booleans are not ``Number``s, so the generic path below would
