@@ -106,3 +106,9 @@ def test_monolithic_strategy_rejects_cpu_only_program():
     sdfg = add_cpu.to_sdfg()  # CPU only, no GPU transformations.
     with pytest.raises(ValueError, match="monolithic single-stream mode requires every"):
         GPUStreamPipeline(scheduling_strategy=AutoSingleStreamGPUScheduler(monolithic=True)).apply_pass(sdfg, {})
+
+
+if __name__ == '__main__':
+    test_monolithic_strategy_rejects_cpu_only_program()
+    test_monolithic_jacobi_2d_two_syncs_and_correctness()
+    test_monolithic_heat_3d_two_syncs_and_correctness()

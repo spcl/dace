@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU_Events instrumentation reads a node's stream off the ``gpu_streams[i]`` edge the experimental
-codegen wires it to; that memlet parses into a single-point ``Range``, which ``int()`` cannot take."""
+"""``GPU_Events`` instrumentation reads a node's stream from ``Node.gpu_stream_id`` (a map exit takes its entry's)."""
 import re
 import warnings
 
@@ -17,7 +16,7 @@ def axpy(a: dace.float64, x: dace.float64[N], y: dace.float64[N]):
 
 
 def instrumented_code() -> str:
-    """axpy, GPU-transformed and specialized, every state instrumented with GPU_Events."""
+    """axpy on the GPU with every state instrumented."""
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         sdfg = axpy.to_sdfg(simplify=True)

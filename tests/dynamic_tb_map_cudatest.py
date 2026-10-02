@@ -370,10 +370,10 @@ def test_dynamic_default_schedule():
 
 
 if __name__ == '__main__':
+    test_dynamic_nested_map()
     test_dynamic_map()
     test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
     test_dynamic_multidim_map()
-    # test_dynamic_nested_map()
     test_dynamic_default_schedule()

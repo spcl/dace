@@ -242,5 +242,8 @@ def test_loop_body_alternating_host_parallel_has_one_sync_and_matches_numpy():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_three_state_cpu_gpu_cpu_chain_has_one_sync_and_matches_numpy()
+    test_mixed_class_single_state_has_one_sync_and_matches_numpy()
+    test_two_independent_parallel_writers_one_host_reader_has_one_sync_and_matches_numpy()
+    test_parallel_output_consumed_by_host_loop_has_one_sync_and_matches_numpy()
+    test_loop_body_alternating_host_parallel_has_one_sync_and_matches_numpy()

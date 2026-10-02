@@ -192,7 +192,7 @@ def test_block_thread_specialization():
     assert np.allclose(a, ref)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()

@@ -1817,12 +1817,6 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
-def view_edge_with_memlet(state: SDFGState, view: nd.AccessNode) -> Optional[MultiConnectorEdge[mm.Memlet]]:
-    """The edge binding ``view`` if it carries a memlet; ``None`` for an orphaned view without one."""
-    e = get_view_edge(state, view)
-    return e if e is not None and e.data else None
-
-
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
@@ -1837,8 +1831,8 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     """
     if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
-        e = view_edge_with_memlet(state, node)
-        if e is not None:
+        e = get_view_edge(state, node)
+        if e.data:
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
             free_symbols = set()
@@ -2561,13 +2555,6 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
                                   include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
 
 
-def map_scope_used_symbols(map_entry: nd.MapEntry, parent_state: SDFGState, include_range_symbols: bool) -> Set[str]:
-    """Symbols used inside a map scope; the map's own range symbols only with ``include_range_symbols``,
-    as they are iteration/offset-calculation symbols."""
-    used_symbols = map_entry.used_symbols_within_scope(parent_state=parent_state)
-    return used_symbols if include_range_symbols else used_symbols - map_entry.free_symbols
-
-
 def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry,
                                         nd.NestedSDFG], constant_syms_only: bool, parent_state: Union[SDFGState, None],
                            include_symbols_for_offset_calculations: bool) -> Set[str]:
@@ -2618,7 +2605,8 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         else:
             return offset_symbols | used_symbols
     elif isinstance(scope, nd.MapEntry):
-        return offset_symbols | map_scope_used_symbols(scope, parent_state, include_symbols_for_offset_calculations)
+        used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
+        return offset_symbols | used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 

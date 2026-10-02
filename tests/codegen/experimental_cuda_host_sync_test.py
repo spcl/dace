@@ -1,15 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Host synchronization of device-to-host copies in the experimental CUDA codegen.
+"""Host synchronization of device-to-host copies: the first host read of the destination blocks on the copy's stream.
 
-A ``cudaMemcpyAsync`` into host memory only completes on its stream, so the first host read of the
-destination has to block on that stream. The trisolv shape is the motivating case: scalars copied
-back from the device and then handed to a kernel wrapper, which packs them into the launch argument
-list by value on the host.
-
-Host-to-device copies get no synchronization: the consumer runs on the same stream, which orders it
-after the copy without involving the host.
-
-Codegen-only: no GPU and no nvcc required.
+The trisolv shape: scalars copied back and handed to a kernel wrapper, which packs them by value on the host.
+Host-to-device copies need none: their consumer runs on the same stream. Codegen only.
 """
 import re
 
@@ -18,10 +11,7 @@ from dace import dtypes
 
 
 def _generated_code(sdfg: dace.SDFG) -> str:
-    """The host frame file, where copies, synchronizations and kernel launches are all emitted.
-
-    The tests read code positions, so mixing in the device file would compare offsets across files.
-    """
+    """The host frame file, where copies, synchronizations and launches are emitted, so positions compare."""
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         frame = [code for code in sdfg.generate_code() if code.title == 'Frame']
     assert len(frame) == 1, 'expected exactly one frame code object'

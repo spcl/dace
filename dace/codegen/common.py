@@ -237,8 +237,10 @@ def gpu_thread_id_type() -> dtypes.typeclass:
     return tidtype
 
 
-def gpu_map_index_types(sdfg: SDFG, state: 'sd.SDFGState',
-                        map_entry: 'sd.nodes.MapEntry') -> Dict[str, dtypes.typeclass]:
+def gpu_map_index_types(sdfg: SDFG,
+                        state: 'sd.SDFGState',
+                        map_entry: 'sd.nodes.MapEntry',
+                        defined: Optional[Dict[str, dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
     """
     Returns the type to declare each parameter of a GPU map with.
 
@@ -249,10 +251,11 @@ def gpu_map_index_types(sdfg: SDFG, state: 'sd.SDFGState',
     :param sdfg: The SDFG that contains the map.
     :param state: The state that contains the map.
     :param map_entry: The entry node of the map.
+    :param defined: The symbols defined at the map, if the caller has them (code generation asks its frame).
     :return: A dictionary mapping each map parameter to its type.
     """
     tidtype = gpu_thread_id_type()
-    inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry))
+    inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry) if defined is None else defined)
     result = {}
     for param in map_entry.map.params:
         dtype = inferred.get(param)

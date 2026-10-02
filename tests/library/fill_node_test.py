@@ -573,3 +573,39 @@ def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     code = _generated_code(sdfg)
     assert 'MemsetAsync' in code
     assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
+
+
+if __name__ == '__main__':
+    test_fill_pure_1d_cpu()
+    test_fill_pure_3d_cpu()
+    test_fill_cuda_frame_includes_no_cuda_runtime()
+    test_fill_auto_routes_non_contiguous_to_pure_cpu()
+    test_fill_cpu_rejects_non_contiguous_subset()
+    test_fill_register_outside_kernel_routes_to_cpu_tasklet()
+    test_fill_register_inside_kernel_routes_to_sequential()
+    test_fill_single_gpu_shared_inside_kernel_expands_clean()
+    test_fill_tasklet_rejects_gpu_storage_from_host_scope()
+    test_fill_pure_strided_map_matches_array()
+    test_fill_below_threshold_emits_a_single_call()
+    test_fill_at_threshold_emits_omp_parallel_for()
+    test_fill_symbolic_size_emits_omp_parallel_for()
+    for value in [0.0, 1.0, -1.0, 0.5, 2.0]:
+        for dtype, label in (param.values for param in NARROW_FLOATS):
+            test_fill_narrow_float_writes_the_value(dtype, label, value)
+    for value in [0.0, 1.0]:
+        for dtype, label in (param.values for param in NARROW_FLOATS):
+            test_fill_narrow_float_host_lowering_is_one_call(dtype, label, value)
+    for dtype, label in (param.values for param in NARROW_FLOATS):
+        test_fill_narrow_float_gpu_routing_follows_the_byte_pattern(dtype, label)
+    test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit()
+    test_fill_dynamic_value_cpu_64bit_routes_to_pure()
+    test_fill_dynamic_value_cpu_runs_and_writes_value()
+    test_fill_dynamic_value_rejects_multi_element_subset()
+    test_fill_dynamic_value_rejects_dtype_mismatch()
+    test_fill_pure_1d_gpu()
+    test_fill_pure_3d_gpu()
+    test_fill_cuda_1d_gpu()
+    test_fill_cuda_3d_gpu()
+    test_fill_cuda_rejects_cpu_storage()
+    test_fill_cuda_rejects_non_contiguous_subset()
+    test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit()

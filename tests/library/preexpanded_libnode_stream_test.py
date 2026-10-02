@@ -99,3 +99,10 @@ def test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet():
             t == dace.dtypes.gpuStream_t
             for t in tasklet.in_connectors.values()), (f"Pre-expanded runtime tasklet '{tasklet.label}' must carry a "
                                                        f"gpuStream_t in-connector after the pipeline runs.")
+
+
+if __name__ == '__main__':
+    test_pipeline_wires_connector_for_pre_expanded_runtime_tasklet()
+    test_naive_strategy_wires_stream_connector_on_pre_expanded_tasklet()
+    test_naive_strategy_emits_state_end_sync_for_pre_expanded_tasklets()
+    test_monolithic_strategy_accepts_pre_expanded_sdfg()

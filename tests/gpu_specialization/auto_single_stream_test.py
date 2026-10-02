@@ -502,5 +502,17 @@ def test_synchronize_on_exit_as_strategy_argument():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_default_strategy_is_auto_single_stream()
+    test_pure_cpu_program_no_streams()
+    test_mixed_program_fallback_to_naive_emits_warning()
+    test_sync_count_independent_of_kernel_count()
+    test_gpu_resident_sink_synced_by_default()
+    test_gpu_resident_sink_exit_sync_dropped_when_opted_out()
+    test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag()
+    test_synchronize_on_exit_as_strategy_argument()
+    test_pure_gpu_jacobi_2d_one_stream_sync_at_exit()
+    test_chain_of_gpu_kernels_one_sync_at_exit()
+    test_e2e_cpu_init_feeds_gpu_kernel_via_split()
+    test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu()
+    test_multikernel_stencil_pipeline_one_sync_at_exit()
+    test_host_visible_output_always_synced_even_when_opted_out()

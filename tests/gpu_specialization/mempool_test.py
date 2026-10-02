@@ -63,3 +63,7 @@ def test_mempool_runs_correctly_and_emits_expected_calls():
                                          f"(one per pooled array), got {malloc_async}.")
     assert free_async >= len(pooled), (f"Expected >= {len(pooled)} cudaFreeAsync calls "
                                        f"(one per pooled array), got {free_async}.")
+
+
+if __name__ == '__main__':
+    test_mempool_runs_correctly_and_emits_expected_calls()

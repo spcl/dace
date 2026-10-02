@@ -86,5 +86,11 @@ def test_naive_assign_streams_callable_directly():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_pipeline_default_strategy_is_auto()
+    test_pipeline_accepts_explicit_strategy_instance()
+    test_pipeline_rejects_non_strategy_argument()
+    test_pipeline_accepts_user_defined_strategy()
+    test_abstract_assign_streams_raises()
+    test_abstract_apply_pass_also_raises()
+    test_apply_pass_rejects_non_root_sdfg()
+    test_naive_assign_streams_callable_directly()

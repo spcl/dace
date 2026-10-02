@@ -65,7 +65,6 @@ build_cscs_gh200:
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
     - uv pip install --group testing .
     - export DACE_cache=unique
-    - echo "DACE_compiler_cuda_implementation=${DACE_compiler_cuda_implementation}"
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"

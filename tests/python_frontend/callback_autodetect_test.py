@@ -359,6 +359,25 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
+def test_gpu_callback_without_stream_warns():
+    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn.
+    @dace_inhibitor
+    def cb_no_stream(arr):
+        arr *= 2
+
+    @dace.program
+    def gpucallback(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        cb_no_stream(tmp)
+        A[:] = tmp
+
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = gpucallback.to_sdfg()
+    with pytest.warns(UserWarning, match="not stream-aware"):
+        sdfg.generate_code()
+
+
 def stream_unaware_callback_code(nested: bool, simplify: Optional[bool]) -> list:
     """Generated code of a program handing a GPU array to a callback that ignores the stream."""
 
@@ -390,26 +409,6 @@ def stream_unaware_callback_code(nested: bool, simplify: Optional[bool]) -> list
     assert nested == any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
     with pytest.warns(UserWarning, match="not stream-aware"):
         return sdfg.generate_code()
-
-
-@pytest.mark.old_gpu_codegen_only
-@pytest.mark.parametrize('simplify', [None, False, True])
-def test_gpu_callback_without_stream_warns(simplify):
-    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn,
-    # and every component touching its data must be moved off the async streams onto the null stream.
-    # Without simplification the feeding and draining copies sit in states of their own, so the pin
-    # has to reach across states -- `simplify` is pinned here rather than left to the config so that
-    # both shapes are covered on every CI axis.
-    for obj in stream_unaware_callback_code(nested=False, simplify=simplify):
-        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
-
-
-@pytest.mark.old_gpu_codegen_only
-def test_gpu_callback_in_nested_sdfg_without_stream_warns():
-    # Same as above, but the callback sits in a nested SDFG where the array goes by its connector
-    # name: the pin has to follow the data out of the nested SDFG to reach the copies around it.
-    for obj in stream_unaware_callback_code(nested=True, simplify=False):
-        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
 
 
 def device_sync_follows_callback(code: list) -> bool:
@@ -1199,17 +1198,16 @@ if __name__ == '__main__':
     test_automatic_callback_inference_2()
     test_automatic_callback_method()
     test_callback_from_module()
+    # test_callback_tasklet()  # skipped by pytest
     test_view_callback()
-    # test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()
     test_callback_samename()
-    test_gpu_callback()
-    test_gpu_callback_without_stream_warns(None)
-    test_gpu_callback_without_stream_warns(False)
-    test_gpu_callback_without_stream_warns(True)
-    test_gpu_callback_in_nested_sdfg_without_stream_warns()
+    test_gpu_callback_without_stream_warns()
+    for simplify in [None, False, True]:
+        test_gpu_callback_without_stream_is_fenced(simplify)
+    test_gpu_callback_in_nested_sdfg_without_stream_is_fenced()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()
@@ -1224,10 +1222,10 @@ if __name__ == '__main__':
     test_callback_kwargs()
     test_same_callback_kwargs()
     test_builtin_callback_kwargs()
-    test_callback_literal_list(False)
-    test_callback_literal_list(True)
-    test_callback_literal_dict(False)
-    test_callback_literal_dict(True)
+    for as_kwarg in [False, True]:
+        test_callback_literal_list(as_kwarg)
+    for as_kwarg in [False, True]:
+        test_callback_literal_dict(as_kwarg)
     test_unused_callback()
     test_callback_with_nested_calls()
     test_string_callback()
@@ -1238,8 +1236,9 @@ if __name__ == '__main__':
     test_custom_generator_with_break()
     test_disallowed_callback_in_condition()
     test_disallowed_callback_slice()
-    # test_matplotlib_with_compute()
+    # test_matplotlib_with_compute()  # skipped by pytest
     test_callback_with_arraylike_closure_object()
     test_callback_with_arraylike_object()
     test_callback_with_arraylike_object_typehints()
     test_nested_callback_with_nested_arraylike_object()
+    test_gpu_callback()

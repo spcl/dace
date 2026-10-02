@@ -1,21 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests that the ``compiler.cuda.implementation`` config selects the active GPU
-code generator at build time.
-
-Both ``CUDACodeGen`` (legacy) and ``ExperimentalCUDACodeGen`` register under
-distinct names, and code generation instantiates only the configured one. The
-selection is read per ``generate_code`` call, so flipping the config switches the
-active codegen within the same process (only code generation is exercised, so no
-GPU is required).
-"""
+"""``compiler.cuda.implementation`` selects the GPU code generator, read at every ``generate_code`` call."""
 import dace
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cuda import CUDACodeGen
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
 
 
-def _build_gpu_sdfg():
-    """Build a small SDFG with a single ``GPU_Device``-scheduled map."""
+def build_gpu_sdfg():
     sdfg = dace.SDFG('gpu_codegen_impl_selection')
     sdfg.add_array('A', (16, ), dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('B', (16, ), dace.float64, storage=dace.StorageType.GPU_Global)
@@ -30,8 +21,7 @@ def _build_gpu_sdfg():
     return sdfg
 
 
-def _gpu_codegen_classes(sdfg):
-    """Return the set of GPU TargetCodeGenerator classes that emitted code."""
+def gpu_codegen_classes(sdfg):
     return {
         code_object.target
         for code_object in sdfg.generate_code() if code_object.target.target_name in ('cuda', 'experimental_cuda')
@@ -39,28 +29,22 @@ def _gpu_codegen_classes(sdfg):
 
 
 def test_both_gpu_codegens_are_registered():
-    """Both CUDA code generators are registered simultaneously."""
     registered = {v['name'] for v in TargetCodeGenerator.extensions().values()}
     assert 'cuda' in registered
     assert 'experimental_cuda' in registered
 
 
 def test_config_selects_active_gpu_codegen_at_runtime():
-    """The configured implementation drives which GPU codegen is triggered, and
-    the choice tracks the config when it is changed within a single process."""
-    # Legacy selected -> only the legacy codegen is triggered.
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
-        used = _gpu_codegen_classes(_build_gpu_sdfg())
+        used = gpu_codegen_classes(build_gpu_sdfg())
     assert used == {CUDACodeGen}
 
-    # Switch to experimental -> only the experimental codegen is triggered.
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        used = _gpu_codegen_classes(_build_gpu_sdfg())
+        used = gpu_codegen_classes(build_gpu_sdfg())
     assert used == {ExperimentalCUDACodeGen}
 
-    # Switch back to legacy -> the legacy codegen is triggered again.
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
-        used = _gpu_codegen_classes(_build_gpu_sdfg())
+        used = gpu_codegen_classes(build_gpu_sdfg())
     assert used == {CUDACodeGen}
 
 

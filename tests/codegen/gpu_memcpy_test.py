@@ -433,6 +433,13 @@ def test_gpu_strided_2D_copy():
 
 
 if __name__ == '__main__':
+    for c_order in [True, False]:
+        test_2d_gpu_copy(c_order)
+    for dst_row in [True, False]:
+        for src_row in [True, False]:
+            test_1d_gpu_copy(src_row, dst_row)
+    for c_order in [True, False]:
+        test_pseudo_1d_copy_test(c_order)
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
     test_gpu_1d_copy()
