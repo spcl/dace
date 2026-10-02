@@ -42,22 +42,6 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
                                          dtypes.AllocationLifetime.SDFG)
 
 
-def restrict_qualifier(desc: data.Data, ctype: str) -> str:
-    """ ``__restrict__ `` for a pointer no other name in the same scope reaches, otherwise ``''``.
-
-        ``may_alias`` marks a descriptor deliberately reachable through a second pointer -- the
-        persistent-BFS frontiers are swapped between iterations -- so qualifying it promises the
-        compiler something the SDFG denies. An opaque handle is not a pointer type to qualify:
-        ``MPI_Comm`` is a struct pointer under OpenMPI but an int under MPICH, where the qualifier
-        does not compile. A ctype that already carries the qualifier must not get a second one.
-    """
-    if '__restrict__' in ctype or isinstance(desc.dtype, dtypes.opaque):
-        return ''
-    if isinstance(desc, data.Array) and desc.may_alias:
-        return ''
-    return '__restrict__ '
-
-
 def _use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
@@ -542,6 +526,7 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage == dtypes.StorageType.Register and not on_stack)):
 
             if nodedesc.storage == dtypes.StorageType.Register:
+
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on the heap instead of '
@@ -1381,16 +1366,14 @@ class CPUCodeGen(TargetCodeGenerator):
                             # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
                             result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                         else:
-                            # Pointer reference.
-                            result += "{} {}{} = {};".format(ctypedef, restrict_qualifier(desc, ctypedef), local_name,
-                                                             expr)
+                            # Pointer reference
+                            result += "{} {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "{} {}{} = {};".format(memlet_type, restrict_qualifier(desc, memlet_type), local_name,
-                                                         expr)
+                        result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
@@ -1649,21 +1632,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                # A shared transient is declared at SDFG scope (in
-                # ``declared_arrays``) but its ``define_var`` runs in the
-                # allocating state's scope, which is popped before a
-                # pointer-write in a later state / nested control-flow region.
-                # Resolve via ``declared_arrays`` first -- mirroring the normal
-                # write path in ``process_out_memlets`` -- and only fall back to
-                # ``defined_vars`` so the SDFG-scope pointer still resolves.
-                try:
-                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
-                except KeyError:
-                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
-                restrict = restrict_qualifier(desc, cdtype.ctype)
-                callsite_stream.write(f'{cdtype.ctype} {restrict}{edge.src_conn} = {base_ptr};', cfg, state_id,
-                                      src_node)
+                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
