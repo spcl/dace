@@ -1,28 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end regression test that reconstructs the ``failed_validation.sdfg`` shape.
+"""The ICON ``__field_operator_pnabla`` shape: a ``metrics_entry`` conditional with a host timer, a state mixing
+host derefs with a ``GPU_Device`` map whose body holds a nested SDFG, and a ``metrics_exit`` conditional.
 
-The original ``failed_validation.sdfg`` (ICON ``__field_operator_pnabla``) has three
-top-level blocks:
-
-* ``metrics_entry`` -- a ``ConditionalBlock`` whose single branch wraps an ``SDFGState``
-  containing a host-side ``gt_start_timer`` Tasklet that writes the start time scalar.
-* ``stmt_0`` -- a single ``SDFGState`` holding host derefs of connectivity descriptors
-  (free Tasklets at the top level) alongside one or more ``GPU_Device`` maps; the kernel
-  body contains a ``NestedSDFG`` (``reduce_with_skip_values_*``).
-* ``metrics_exit`` -- a sibling ``ConditionalBlock`` with the matching ``gt_stop_timer``.
-
-Under the previous recursive ``insert_sync_tasklets`` walk, the pipeline reached into the
-NSDFG inside the ``GPU_Device`` map and spliced a sync state there, planting a
-``gpu_streams[0]`` memlet with no inner ``gpu_streams`` array. The validator fired
-``Node validation failed: 'gpu_streams'``. The root-only walk fix lifts the host deref out
-via :class:`SplitStateByGPUClass` and places the sync state cleanly between ``stmt_0`` and
-``metrics_exit`` at the root SDFG level.
-
-This test pins that behaviour end-to-end: build the structural skeleton via the SDFG API,
-run the default pipeline, assert sync placement, assert the SDFG validates.
+The sync state must sit at the root between the kernel state and ``metrics_exit``; a sync spliced into the nested
+SDFG would name a ``gpu_streams`` array it does not have. Asserts the placement and that the SDFG validates.
 """
 import dace
-import pytest
 
 from dace.codegen import common
 from dace.properties import CodeBlock
@@ -213,5 +196,4 @@ def test_failed_validation_shape_synced_at_root_and_validates():
 
 
 if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+    test_failed_validation_shape_synced_at_root_and_validates()

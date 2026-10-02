@@ -96,3 +96,6 @@ def test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeyp
 
 if __name__ == '__main__':
     test_a_device_copy_with_an_undecidable_competing_write_is_not_emitted_on_the_host()
+    test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_device()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeypatch)

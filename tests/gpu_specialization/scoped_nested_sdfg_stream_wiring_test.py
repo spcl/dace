@@ -1,13 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Regression test: the GPU stream reaches a NestedSDFG that sits INSIDE a host map scope.
-
-``samples/simple/spmv.py`` under the transformation tester produces exactly this shape -- a
-host ``Sequential``/``CPU_Multicore`` map nest whose body is a NestedSDFG holding the kernel.
-Stream propagation used to wire ``gpu_streams`` straight from a global AccessNode into that
-NestedSDFG, an edge crossing the map boundary without passing through the MapEntry. The graph
-then had no scope path to the MapExit, so ``SDFGState.scope_dict`` refused it with "Leftover
-nodes in queue" and codegen died inside its own preprocessing pipeline.
-"""
+"""The stream reaches a nested SDFG inside a host map (the ``spmv`` shape) through the map entry; an edge from a
+global access node past the entry would leave the graph without a scope path and ``scope_dict`` would refuse it."""
 import dace
 
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
@@ -16,7 +9,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (S
 
 
 def _kernel_in_a_host_map_scope() -> dace.SDFG:
-    """``map i (host) { nested SDFG { map j (GPU_Device) } }`` -- the spmv shape, minimised."""
+    """``map i (host) { nested SDFG { map j (GPU_Device) } }``."""
     inner = dace.SDFG('inner_kernel')
     inner.add_array('a_in', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner.add_array('b_out', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)

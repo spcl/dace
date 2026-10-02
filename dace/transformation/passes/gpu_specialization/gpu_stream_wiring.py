@@ -1,10 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU stream wiring pass: follow-up to a :class:`GPUStreamSchedulingStrategy` that reads the
-``Node.gpu_stream_id`` set by the strategy, allocates the root-scope ``gpu_streams`` transient,
-wires each consumer's stream connector to ``gpu_streams[<i>]``, and delegates sync-tasklet insertion.
-
-Gated by :func:`is_stream_wiring_applied` for idempotency across pipeline re-application; the
-scheduling pass stays idempotent via the per-node Property.
+"""Wires the streams a :class:`GPUStreamSchedulingStrategy` assigned: allocates ``gpu_streams``, connects each
+consumer to ``gpu_streams[i]`` and has the strategy insert its syncs. Applied once: see :func:`is_stream_wiring_applied`.
 """
 from typing import Any, Dict, Optional, Set, Type, Union
 
@@ -19,11 +15,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (i
 
 @transformation.explicit_cf_compatible
 class GPUStreamWiring(ppl.Pass):
-    """Allocate ``gpu_streams`` + wire connectors + insert sync tasklets.
-
-    Holds a strategy reference only for the strategy-specific :meth:`insert_sync_tasklets`;
-    allocation and connector wiring are strategy-agnostic.
-    """
+    """Allocate ``gpu_streams``, wire the connectors and insert the strategy's sync tasklets."""
 
     def __init__(self, strategy: GPUStreamSchedulingStrategy):
         if not isinstance(strategy, GPUStreamSchedulingStrategy):

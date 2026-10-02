@@ -25,3 +25,7 @@ def test_cpu_gpu_cpu_scalar_roundtrip():
     out = np.zeros(1, dtype=np.float32)
     sdfg(scal_in=np.float32(2), output=out)
     assert out[0] == 2.0
+
+
+if __name__ == '__main__':
+    test_cpu_gpu_cpu_scalar_roundtrip()

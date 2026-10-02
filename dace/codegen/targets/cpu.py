@@ -248,13 +248,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
-                # A GPU_Global scalar is a device pointer on the host side: allocate_array
-                # cudaMallocs it as ``T*`` and connector-type inference (infer_types) treats
-                # GPU_Global data as pointer-typed, so it must be registered as a pointer to
-                # match the allocation rather than as a value-typed CPU scalar. This branch is
-                # reachable on the legacy CUDA target, which shares this codegen but never runs
-                # PromoteGPUScalarsToArrays -- the pass that would otherwise widen such scalars
-                # to 1-element arrays before codegen.
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
@@ -400,15 +395,8 @@ class CPUCodeGen(TargetCodeGenerator):
                       decouple_array_interfaces: bool = False) -> None:
         """
         Allocates (creates pointer and refers to original) a view of an
-        existing array, scalar, or view. An orphaned view, bound by no edge, has nothing to refer to.
+        existing array, scalar, or view.
         """
-        if sdutils.get_view_edge(dfg, node) is not None:
-            self.allocate_bound_view(sdfg, cfg, dfg, state_id, node, global_stream, declaration_stream,
-                                     allocation_stream, decouple_array_interfaces)
-
-    def allocate_bound_view(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
-                            node: nodes.AccessNode, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                            allocation_stream: CodeIOStream, decouple_array_interfaces: bool) -> None:
 
         name = node.data
         nodedesc = node.desc(sdfg)
@@ -482,9 +470,6 @@ class CPUCodeGen(TargetCodeGenerator):
                         value = '&' + value
 
         if not declared:
-            # Keep the registered ctype consistent with the emitted declaration: a read-only view
-            # is declared as a pointer-to-const (see ``const_view`` above), so consumers that look
-            # it up must see the same qualifier.
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if const_view:
                 ctypedef = 'const ' + ctypedef
@@ -1519,6 +1504,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
+
             else:
                 if not memlet.dynamic:
                     if is_scalar:

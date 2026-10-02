@@ -95,6 +95,10 @@ class DaCeCodeGenerator(object):
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
+    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> Dict[str, dtypes.typeclass]:
+        """Symbols visible at ``node``, for queries that run while the SDFG is no longer being modified."""
+        return state.symbols_defined_at(node)
+
     def free_symbols(self, obj: Any):
         k = id(obj)
         if k in self.fsyms:

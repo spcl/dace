@@ -1,15 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Const-qualifier detection for nested-SDFG (device-function) parameters.
-
-A nested SDFG inside a ``GPU_Device`` map is emitted as a ``DACE_DFI`` device
-function. Its parameters must be ``const``-qualified exactly when the connector
-is read-only (an input that is never written), for both scalars *and* array
-references -- see :func:`dace.codegen.targets.cpp.emit_memlet_reference`.
-
-These tests build a minimal kernel (``GPU_Device`` map containing one nested
-SDFG) and assert the ``const`` qualifier of each device-function parameter.
-Codegen only -- no GPU / nvcc required.
-"""
+"""A nested SDFG in a ``GPU_Device`` map becomes a ``DACE_DFI`` device function whose scalar and array parameters
+are ``const`` exactly when the connector is read-only (:func:`dace.codegen.targets.cpp.emit_memlet_reference`).
+Codegen only."""
 import re
 
 import pytest
@@ -23,10 +15,7 @@ GPU_DEVICE = dtypes.ScheduleType.GPU_Device
 
 
 def _device_function_code(inner: dace.SDFG, in_conns, out_conns, wirings, impl='experimental') -> str:
-    """Build ``GPU_Device map -> inner`` and return the full generated code.
-
-    ``wirings``: list of ``(connector, outer_name, outer_shape, subset, is_input)``.
-    """
+    """The code of ``GPU_Device map -> inner``; ``wirings`` are ``(connector, outer_name, outer_shape, subset, is_input)``."""
     sdfg = dace.SDFG('outer_' + inner.name)
     declared = {}
     for _conn, oname, oshape, _sub, _isin in wirings:
@@ -43,8 +32,8 @@ def _device_function_code(inner: dace.SDFG, in_conns, out_conns, wirings, impl='
         else:
             state.add_memlet_path(nsdfg, exit_, access, src_conn=conn, memlet=dace.Memlet(data=oname, subset=sub))
 
-    dace.Config.set('compiler', 'cuda', 'implementation', value=impl)
-    return '\n'.join(o.code for o in sdfg.generate_code())
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value=impl):
+        return '\n'.join(o.code for o in sdfg.generate_code())
 
 
 def _device_function_signature(inner: dace.SDFG, in_conns, out_conns, wirings, impl='experimental') -> str:
@@ -199,12 +188,15 @@ def test_mutated_descriptors_written_view_taints_parent():
 
 
 if __name__ == '__main__':
-    for impl in ('experimental', 'legacy'):
+    for impl in ['experimental', 'legacy']:
         test_readonly_array_input_is_const(impl)
+    for impl in ['experimental', 'legacy']:
         test_written_array_output_is_not_const(impl)
+    for impl in ['experimental', 'legacy']:
         test_readonly_scalar_input_is_const(impl)
+    for impl in ['experimental', 'legacy']:
         test_inout_array_is_not_const(impl)
+    for impl in ['experimental', 'legacy']:
         test_readonly_viewed_input_is_const_and_view_is_const(impl)
     test_mutated_descriptors_readonly_view_does_not_taint_parent()
     test_mutated_descriptors_written_view_taints_parent()
-    print('ok')

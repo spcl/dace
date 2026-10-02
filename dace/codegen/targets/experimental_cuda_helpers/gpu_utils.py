@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Small shared helpers for the experimental CUDA codegen (block-size math, schedule checks)."""
-
+"""Helpers of the experimental CUDA codegen."""
 from typing import Iterator, Tuple
 
 from dace import Config
@@ -12,12 +11,7 @@ from dace.sdfg.state import SDFGState
 
 
 def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[Tuple[nodes.AccessNode, nodes.Node]]:
-    """Yield ``(access node, producer)`` per host value ``consumer`` reads that a GPU copy wrote.
-
-    A producer bound to a GPU stream writing host-visible memory is a device-to-host copy: its
-    completion is only ordered by the stream, so the host has to synchronize before reading the
-    destination. Host-to-device copies write GPU memory and are filtered out here.
-    """
+    """``(access node, producer)`` per host value ``consumer`` reads that a device-to-host copy wrote."""
     for edge in state.in_edges(consumer):
         if edge.data is None or edge.data.data is None:
             continue
@@ -33,7 +27,6 @@ def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[
 
 
 def generate_sync_debug_call() -> str:
-    """Return backend sync + error-check calls when ``compiler.cuda.syncdebug`` is set, else empty string."""
     if not Config.get_bool('compiler', 'cuda', 'syncdebug'):
         return ""
     backend: str = common.get_gpu_backend()
@@ -42,10 +35,7 @@ def generate_sync_debug_call() -> str:
 
 
 def assigned_stream_expr(node: nodes.Node) -> str:
-    """The expression of the GPU stream the stream pipeline assigned to ``node``.
-
-    :raises ValueError: If the node was never assigned a stream.
-    """
+    """The GPU stream expression of ``node``; raises ``ValueError`` if it has none."""
     if node.gpu_stream_id is None:
         raise ValueError(f"No GPU stream assigned to node {node}. Check whether the node is relevant for GPU "
                          "stream assignment and, if it is, why the GPU stream pipeline assigned none.")
@@ -53,7 +43,6 @@ def assigned_stream_expr(node: nodes.Node) -> str:
 
 
 def num_gpu_streams(sdfg: SDFG) -> int:
-    """The length of the ``gpu_streams`` array: the descriptor, not the largest stream id, which depends on
-    the graph shape and changes when the pipeline is re-applied."""
+    """The length of the ``gpu_streams`` array."""
     stream_array = get_gpu_stream_array_name()
     return int(sdfg.arrays[stream_array].shape[0]) if stream_array in sdfg.arrays else 0

@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Wrapper :class:`Pass` classes exposing ``experimental_cuda.preprocess`` steps as composable Pipeline
-members so codegen-preprocess ordering is declarative and testable."""
+"""The steps of the experimental CUDA preprocessing as pipeline passes."""
 import warnings
 from typing import Any, Dict, Optional
 
@@ -12,8 +11,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InferDefaultSchedulesAndStorages(ppl.Pass):
-    """:func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types` as a Pipeline Pass: the GPU
-    passes after it read final schedules and storages."""
+    """:func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types`: the GPU passes read final schedules."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
@@ -29,7 +27,7 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ExpandLibraryNodes(ppl.Pass):
-    """Recursive :meth:`SDFG.expand_library_nodes` as a Pipeline Pass."""
+    """Recursive :meth:`SDFG.expand_library_nodes`."""
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -41,7 +39,7 @@ class ExpandLibraryNodes(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
         from dace.sdfg import infer_types
         sdfg.expand_library_nodes(recursive=True)
-        # Expansion can spawn NSDFGs whose inner Maps carry ``ScheduleType.Default``; codegen rejects those.
+        # Expansions spawn nested SDFGs with ``Default``-scheduled maps, which codegen rejects.
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         return True
 
@@ -49,12 +47,10 @@ class ExpandLibraryNodes(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AddThreadBlockMaps(ppl.Pass):
-    """Tile every ``GPU_Device`` map lacking an inner ``GPU_ThreadBlock`` map (via
-    :class:`AddThreadBlockMap`) and infer the resulting ``(grid, block)`` dimensions.
+    """Tile every ``GPU_Device`` map without a ``GPU_ThreadBlock`` map and infer the ``(grid, block)`` dimensions.
 
-    Returns ``{'kernel_dimensions_map': ..., 'tb_inserted_kernels': set(MapEntry)}`` in
-    ``pipeline_results``. Tiled late on purpose: tiling first leaks the inner-map outer-loop
-    symbol into host-side ``cudaMalloc`` size expressions for kernel-hoisted transients.
+    Returns ``kernel_dimensions_map`` and ``tb_inserted_kernels``. Tiling comes late: earlier, the outer-loop symbol
+    would leak into the host-side allocation sizes of the arrays lifted out of the kernel.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -84,20 +80,14 @@ class AddThreadBlockMaps(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ReinferConnectorTypes(ppl.Pass):
-    """Clear and re-derive NestedSDFG connector types from their inner descriptors.
+    """Re-derive NestedSDFG connector types from their inner descriptors.
 
-    Earlier passes mutate descriptors (e.g. ``PromoteScalarOutputsToArrays`` widens a ``Scalar`` to a
-    length-1 ``Array``), leaving stale scalar-typed connectors that miscompile (``T name`` vs.
-    ``name[0]``). Re-inference makes them pointer-typed.
+    Passes such as ``PromoteScalarOutputsToArrays`` widen a ``Scalar`` to an ``Array``, leaving stale scalar-typed
+    connectors that miscompile.
     """
 
     def modifies(self) -> ppl.Modifies:
-        # ``Modifies`` has no ``Connectors`` flag; connectors live on the code nodes that carry
-        # them. ``infer_connector_types`` retypes ANY dataflow node's connectors -- map entries
-        # and exits included -- so this must be ``Nodes``, not just tasklets and nested SDFGs;
-        # under-declaring would stop a downstream ``should_reapply(Modifies.Scopes)`` from firing.
-        # ``Descriptors`` is kept as a conservative over-declaration (the pass only reads them,
-        # but over-declaring costs re-runs, never correctness).
+        # Connector inference retypes any node, map entries and exits included.
         return ppl.Modifies.Nodes | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -105,12 +95,7 @@ class ReinferConnectorTypes(ppl.Pass):
 
     @staticmethod
     def connector_types(sdfg: SDFG) -> Dict[Any, Any]:
-        """Snapshot every dataflow-node connector type, keyed by ``(node, direction, connector)``.
-
-        Re-inference is the only signal of change available -- neither
-        ``invalidate_array_connectors`` nor ``infer_connector_types`` reports what it touched --
-        so the pass diffs a before/after snapshot.
-        """
+        """Every connector type, keyed by ``(node, direction, connector)``; inference does not report its changes."""
         snapshot: Dict[Any, Any] = {}
         for node, _ in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.Node):
@@ -122,10 +107,7 @@ class ReinferConnectorTypes(ppl.Pass):
         return snapshot
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Re-derive NestedSDFG connector types from their inner descriptors.
-
-        :returns: Number of connectors whose type changed, or ``None`` if none did.
-        """
+        """Returns the number of connectors whose type changed, or ``None``."""
         from dace.sdfg import infer_types
         from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
         before = self.connector_types(sdfg)
@@ -134,10 +116,7 @@ class ReinferConnectorTypes(ppl.Pass):
             infer_types.infer_connector_types(nsdfg)
         after = self.connector_types(sdfg)
 
-        # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
-        # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``
-        # returns False -- so an ADDED connector would be silently counted as unchanged. Iterating
-        # ``after`` alone would likewise miss a REMOVED one.
+        # A sentinel, not ``None``: ``typeclass.__ne__(None)`` is False, so an added connector would not count.
         missing = object()
         changed = sum(1 for key in before.keys() | after.keys()
                       if before.get(key, missing) is not after.get(key, missing)
@@ -154,9 +133,8 @@ DEVICE_SYNC_TASKLET_LABEL = 'gpu_callback_device_synchronization'
 class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
     """Fence host callbacks that touch GPU memory without being stream-aware.
 
-    Such a callback issues its device work on a stream the SDFG does not know, so the asynchronous
-    work scheduled around it on ``gpu_streams`` is unordered against it. A device-wide synchronization
-    after the callback orders it against every stream. A callback naming the stream is left alone.
+    Such a callback issues device work on a stream the SDFG does not know, so a device-wide synchronization after it
+    orders it against every stream. A callback naming the stream is left alone.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -167,7 +145,6 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         from dace.codegen.targets.cuda import stream_unaware_gpu_callbacks  # Avoid import loop
-        # A callback fenced by an earlier run is already ordered.
         targets = [(state, node) for state, node, _ in stream_unaware_gpu_callbacks(sdfg)
                    if not any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))]
         backend = common.get_gpu_backend()

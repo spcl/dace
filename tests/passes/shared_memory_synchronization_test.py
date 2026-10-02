@@ -1,14 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPU-only regression tests for :class:`DefaultSharedMemorySync` shared-memory write detection."""
+"""Shared-memory write detection of :class:`DefaultSharedMemorySync`."""
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync, is_shared_memory_write
 
-import pytest
 
-
-def _loopregion_with_shared_write(name: str) -> dace.SDFG:
-    """SDFG with a single GPU_Shared write inside a LoopRegion body."""
+def loopregion_with_shared_write(name: str) -> dace.SDFG:
     sdfg = dace.SDFG(name)
     sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
     loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
@@ -21,18 +18,12 @@ def _loopregion_with_shared_write(name: str) -> dace.SDFG:
 
 
 def test_writes_to_smem_inside_loopregion_detects_write():
-    """A GPU_Shared write inside a LoopRegion is detected without raising.
-
-    Regression: ``writes_to_smem_inside_loopregion`` iterated ``(subnode, parent)`` but queried
-    ``in_edges`` on the outer LoopRegion node instead of the AccessNode, raising a KeyError exactly
-    in this case -- the race hazard the check exists to flag.
-    """
-    sdfg = _loopregion_with_shared_write("smem_loopregion")
+    """The in-edges queried are those of the write's own state, not of the enclosing loop region."""
+    sdfg = loopregion_with_shared_write("smem_loopregion")
     assert DefaultSharedMemorySync().writes_to_smem_inside_loopregion(sdfg) is True
 
 
 def test_writes_to_smem_inside_loopregion_absent():
-    """A GPU_Shared write that is NOT inside a LoopRegion returns False (and does not raise)."""
     sdfg = dace.SDFG("no_smem_loop")
     sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
     state = sdfg.add_state()
@@ -43,7 +34,6 @@ def test_writes_to_smem_inside_loopregion_absent():
 
 
 def test_is_shared_memory_write_predicate():
-    """``is_shared_memory_write`` is True only for a GPU_Shared AccessNode with a non-empty write edge."""
     sdfg = dace.SDFG("pred")
     sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
     sdfg.add_array("g", [1], dace.float64, dace.StorageType.GPU_Global, transient=True)
@@ -60,5 +50,7 @@ def test_is_shared_memory_write_predicate():
     assert is_shared_memory_write(t, state) is False  # not an AccessNode
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+if __name__ == '__main__':
+    test_writes_to_smem_inside_loopregion_detects_write()
+    test_writes_to_smem_inside_loopregion_absent()
+    test_is_shared_memory_write_predicate()

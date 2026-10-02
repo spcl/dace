@@ -72,3 +72,10 @@ def test_nested_shared_memory(size, depth, siblings, symbols):
     B = cp.zeros(n, dtype=np.float32)
     sdfg(A=A, B=B, **symbols)
     assert cp.array_equal(A * 6, B)
+
+
+if __name__ == '__main__':
+    for size, depth, siblings, symbols in [(64, 1, 1, {}), (64, 3, 1, {}), (64, 2, 2, {}), (M, 2, 2, {
+            'M': 64
+    }), (16384, 2, 1, {})]:
+        test_nested_shared_memory(size, depth, siblings, symbols)
