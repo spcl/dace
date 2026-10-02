@@ -88,9 +88,9 @@ def build_symbol_mask_ite_sdfg(name: str, isa: str):
     sdfg.add_array('o', WIDTHS, dace.float64)
     state = sdfg.add_state('main')
     ite = TileITE(name='sel_ite', widths=WIDTHS, kind_mask='Symbol', expr_mask='flag_sym')
-    ite.target_isa = isa
-    ite.implementation = select_tile_implementation(ite)
     state.add_node(ite)
+    ite.target_isa = isa
+    ite.implementation = select_tile_implementation(ite, state)
     t_an, e_an, o_an = state.add_access('t'), state.add_access('e'), state.add_access('o')
     state.add_edge(t_an, None, ite, '_t', dace.Memlet(f't[0:{WIDTHS[0]}]'))
     state.add_edge(e_an, None, ite, '_e', dace.Memlet(f'e[0:{WIDTHS[0]}]'))

@@ -116,28 +116,20 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     return "\n".join(lines)
 
 
-def tile_offset(widths: Sequence[int]) -> str:
-    """Return the row-major flat offset expression for a register tile.
+def tile_offset(widths: Sequence[int], lanes: Sequence[str] | None = None) -> str:
+    """The row-major flat offset of a register tile, ``__l0 * (W_1*W_2) + __l1 * W_2 + __l2`` for three dims.
 
-    For ``widths = (W_0, W_1, W_2)`` returns
-    ``__l0 * (W_1*W_2) + __l1 * W_2 + __l2``. Always row-major because
-    register-storage tile transients are contiguous by construction.
-
-    :param widths: Per-tile-dim widths, innermost-last.
-    :returns: The C++ offset expression.
+    Register tiles are contiguous by construction. ``lanes`` names the lane index of each dim, ``__l<d>`` by default.
     """
-    K = len(widths)
-    if K == 0:
+    names = lanes if lanes is not None else [f"__l{d}" for d in range(len(widths))]
+    if not widths:
         return "0"
     stride = 1
-    parts = []
-    for d in reversed(range(K)):
-        if stride == 1:
-            parts.append(f"__l{d}")
-        else:
-            parts.append(f"(__l{d} * {stride})")
-        stride *= widths[d]
-    return " + ".join(reversed(parts))
+    terms = []
+    for name, width in zip(reversed(names), reversed(widths), strict=True):
+        terms.append(name if stride == 1 else f"({name} * {stride})")
+        stride *= width
+    return " + ".join(reversed(terms))
 
 
 def lane_invariant_assign(out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int],
@@ -264,7 +256,7 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
         """Symbolic-safe extent equality."""
         try:
             return bool(dace.symbolic.simplify(a - b) == 0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return a == b
 
     idx_shape = tuple(idx_shape)

@@ -1,33 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileReduce`` — intra-tile reduction along one axis (or all axes).
-
-Collapses a K-dim register tile to a (K-1)-dim tile (single-axis
-reduction) or to a 1-element scalar (full reduction). Cross-tile
-accumulation is the caller's job (typically a WCR memlet on the
-output edge).
-
-``op`` ∈ ``{+, *, min, max}`` with identities ``0``, ``1``, ``+inf``,
-``-inf`` respectively.
-"""
-from typing import Optional, Tuple
-
+"""``TileReduce``: a reduction inside a tile, along one axis or over all of it."""
 import dace
 from dace import cpf_lowering, library, properties
 from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
 
-from .._isa_codegen import make_isa_expansions, make_reduce_tasklet
-from ..ops import REDUCE_OPS
-from ..lanes import nested_loops
+from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from ..expansions import ExpandTileIsa, ExpandTilePure
+from ..isa import require_k1
+from ..lanes import nested_loops, tile_offset
+from ..operands import connected_edges, edge_ctype, output_edge
+from ..ops import BINARY_OPS, REDUCE_OPS
+from .tile_op import TileOp
 
 
-def _identity_literal(op: str, ctype: str) -> str:
-    """Return the C++ literal for ``op``'s identity at type ``ctype``.
-
-    :param op: One of ``+``, ``*``, ``min``, ``max``.
-    :param ctype: C++ scalar type name (e.g. ``double``).
-    :returns: A C++ expression suitable as the initialiser.
-    """
+def identity_literal(op: str, ctype: str) -> str:
+    """The C++ identity of a reduction at ``ctype``."""
     if op == "+":
         return f"{ctype}(0)"
     if op == "*":
@@ -39,223 +26,178 @@ def _identity_literal(op: str, ctype: str) -> str:
     raise ValueError(f"unknown op {op!r}")
 
 
-def _combine_expr(op: str, acc: str, val: str, ctype: str) -> str:
-    """Return the C++ expression that combines ``acc`` and ``val`` per ``op``.
-
-    :param op: Reduction op.
-    :param acc: Accumulator variable.
-    :param val: New value variable.
-    :param ctype: The element type. A C rendering names it in ``std::min<T>``, the only
-                  ``std::min`` spelling the C dialect can type a helper by.
-    :returns: A C++ expression (no trailing semicolon).
-    """
+def combine_expr(op: str, acc: str, value: str, ctype: str) -> str:
+    """The C++ expression combining the accumulator and a value; ``ctype`` names ``std::min<T>`` for the C dialect."""
     if op == "+":
-        return f"{acc} + {val}"
+        return f"{acc} + {value}"
     if op == "*":
-        return f"{acc} * {val}"
+        return f"{acc} * {value}"
     if op in ("min", "max"):
         template = f"<{ctype}>" if cpf_lowering.standalone_c() else ""
-        return f"std::{op}{template}({acc}, {val})"
+        return f"std::{op}{template}({acc}, {value})"
     raise ValueError(f"unknown op {op!r}")
 
 
 @library.expansion
-class ExpandTileReducePure(ExpandTransformation):
-    """Correctness-only CPP tasklet — sequential per-lane reduction."""
+class ExpandTileReducePure(ExpandTilePure):
+    pass
 
-    environments = []
 
-    @staticmethod
-    def expansion(node: "TileReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a CPP tasklet that walks the input tile lane-by-lane
-        and accumulates into ``_dst``.
+@library.expansion
+class ExpandTileReduceScalar(ExpandTileIsa):
+    environments = [TileOpsScalar]
+    backend = "scalar"
 
-        For full reduction (``axis is None``) the output is a length-1
-        scalar. For single-axis reduction, the output is a (K-1)-dim
-        tile and each kept-dim slot is initialised then combined with
-        every lane that maps to it. Masked lanes contribute identity
-        (no-op via an ``if (_mask[k])`` gate).
 
-        :param node: The ``TileReduce`` lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A CPP tasklet replacing the lib node in place.
-        """
-        widths = list(node.widths)
-        K = len(widths)
-        op = node.op
-        src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
-        ctype = parent_sdfg.arrays[src_edge.data.data].dtype.ctype
-        init = _identity_literal(op, ctype)
-        # Row-major flat offset into the K-dim input tile (matches the
-        # tile transient's contiguous storage layout).
-        src_off_terms = []
-        stride = 1
-        for d in reversed(range(K)):
-            src_off_terms.append(f"__l{d}" if stride == 1 else f"(__l{d} * {stride})")
-            stride *= widths[d]
-        src_off = " + ".join(reversed(src_off_terms)) if K else "0"
-        combine_acc = _combine_expr(op, "__acc", f"_src[{src_off}]", ctype)
-        lane_gate = f"if (_mask[{src_off}]) " if node.has_mask else ""
+@library.expansion
+class ExpandTileReduceAVX512(ExpandTileIsa):
+    environments = [TileOpsAVX512]
+    backend = "avx512"
 
-        if node.axis is None:
-            out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_dst")
-            scalar_dst = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
-            writeback = "_dst = __acc;" if scalar_dst else "_dst[0] = __acc;"
-            body = f"{lane_gate}__acc = {combine_acc};"
-            code = (f"{ctype} __acc = {init};\n"
-                    f"{nested_loops(widths, body)}\n"
-                    f"{writeback}")
-        else:
-            ax = node.axis
-            if not (0 <= ax < K):
-                raise ValueError(f"TileReduce: axis {ax} out of range for K={K}")
-            # Kept-dims flat offset.
-            # The reduce loop iterates over ALL widths with ``nested_loops``,
-            # so its loop variables are ``__l0..__l{K-1}`` matching the
-            # original tile-dim indices. ``reduce_kept_off`` uses those.
-            kept_widths = [(d, w) for d, w in enumerate(widths) if d != ax]
-            reduce_kept_terms = []
-            kept_stride = 1
-            for d, w in reversed(kept_widths):
-                reduce_kept_terms.append(f"__l{d}" if kept_stride == 1 else f"(__l{d} * {kept_stride})")
-                kept_stride *= w
-            reduce_kept_off = " + ".join(reversed(reduce_kept_terms)) if kept_widths else "0"
-            # The init loop is wrapped separately by ``nested_loops`` over
-            # ``init_widths = [w for _, w in kept_widths]``, which renumbers
-            # the loop variables sequentially as ``__l0..__l{Kept-1}`` — the
-            # original dim indices don't survive. ``init_kept_off`` must use
-            # the sequential names; reaching for ``__l{d}`` with the original
-            # index would name an undeclared variable (e.g. ``__l1`` when
-            # the only loop is ``__l0``).
-            init_kept_terms = []
-            kept_stride = 1
-            for new_idx, w in reversed(list(enumerate(w for _, w in kept_widths))):
-                init_kept_terms.append(f"__l{new_idx}" if kept_stride == 1 else f"(__l{new_idx} * {kept_stride})")
-                kept_stride *= w
-            init_kept_off = " + ".join(reversed(init_kept_terms)) if kept_widths else "0"
-            init_body = f"_dst[{init_kept_off}] = {init};"
-            combine_dst = _combine_expr(op, f"_dst[{reduce_kept_off}]", f"_src[{src_off}]", ctype)
-            reduce_body = f"{lane_gate}_dst[{reduce_kept_off}] = {combine_dst};"
-            init_widths = [w for _, w in kept_widths]
-            code = (f"{nested_loops(init_widths, init_body)}\n"
-                    f"{nested_loops(widths, reduce_body)}")
-        inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
-        return nodes.Tasklet(
-            label=f"{node.label}_pure",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"_dst": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
+
+@library.expansion
+class ExpandTileReduceAVX2(ExpandTileIsa):
+    environments = [TileOpsAVX2]
+    backend = "avx2"
+
+
+@library.expansion
+class ExpandTileReduceNeon(ExpandTileIsa):
+    environments = [TileOpsNeon]
+    backend = "neon"
+
+
+@library.expansion
+class ExpandTileReduceSVE(ExpandTileIsa):
+    environments = [TileOpsSVE]
+    backend = "sve"
+
+
+@library.expansion
+class ExpandTileReduceCUDA(ExpandTileIsa):
+    environments = [TileOpsCUDA]
+    backend = "cuda"
 
 
 @library.node
-class TileReduce(nodes.LibraryNode):
-    """Reduce a K-dim register tile along ``axis`` (or fully to a scalar).
+class TileReduce(TileOp):
+    """Reduces the tile ``_src`` along ``axis``, or fully to one element when ``axis`` is ``None``.
 
-    Connectors:
+    The result ``_dst`` has the shape of the kept dims, or is one element. With ``has_mask`` the lanes where ``_mask``
+    is false contribute the identity of ``op``. Accumulating across tiles is the caller's job, typically a WCR memlet
+    on the output edge.
 
-    * ``_src`` — the tile transient to reduce (``widths``-shaped).
-    * ``_mask`` (optional) — tile-shaped boolean mask; inactive lanes
-      contribute identity.
-    * ``_dst`` — the reduced output. For ``axis is None`` this is a
-      length-1 scalar; for single-axis reduction it has the kept-dim
-      shape.
+    Only the unmasked full reduction of a K=1 tile has a header lowering. Each backend header implements it its own
+    way: AVX-512 collapses with ``_mm512_reduce_<op>``, the other CPU backends with a balanced tree over the lanes, and
+    CUDA folds ``half2`` pairs.
     """
 
-    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
-    # device, so device auto-selection must not overwrite it.
-    auto_select_implementation = False
     implementations = {
         "pure": ExpandTileReducePure,
-        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve / cuda): a call into
-        # dace/tile_ops/<backend>.h::tile_reduce -- each header is self-contained (AVX-512
-        # one-shot ``_mm512_reduce_*``, a portable balanced tree on the other CPU ISAs, a
-        # half2 pairwise fold on CUDA). Built by the shared factory; the selector routes a
-        # masked / single-axis / K>=2 reduce (which the intrinsic cannot express) to ``pure``.
-        **make_isa_expansions("Reduce", make_reduce_tasklet, globals()),
+        "scalar": ExpandTileReduceScalar,
+        "avx512": ExpandTileReduceAVX512,
+        "avx2": ExpandTileReduceAVX2,
+        "neon": ExpandTileReduceNeon,
+        "sve": ExpandTileReduceSVE,
+        "cuda": ExpandTileReduceCUDA,
     }
     default_implementation = "pure"
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
-        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
-    )
-
-    widths = properties.ListProperty(
-        element_type=int,
-        default=[],
-        desc="Per-tile-dim widths, innermost-last.",
-    )
     op = properties.Property(
         dtype=str,
         allow_none=False,
         default="+",
-        desc="Reduction op (one of: + * min max).",
+        desc="The reduction: '+', '*', 'min' or 'max'.",
     )
     axis = properties.Property(
         dtype=int,
         allow_none=True,
         default=None,
-        desc="Single tile-dim to reduce along; ``None`` ⇒ full reduction to scalar.",
+        desc="The tile dim to reduce along; ``None`` reduces the whole tile to one element.",
     )
     has_mask = properties.Property(
         dtype=bool,
         allow_none=False,
         default=False,
-        desc="When True, the ``_mask`` input connector is required.",
+        desc="Whether the ``_mask`` input connector gates the lanes.",
     )
 
     def __init__(self,
                  name: str,
-                 widths: Tuple[int, ...],
+                 widths: tuple[int, ...],
                  op: str = "+",
-                 axis: Optional[int] = None,
+                 axis: int | None = None,
                  has_mask: bool = False,
-                 location: Optional[str] = None):
-        """Construct a ``TileReduce`` node.
-
-        :param name: Node label.
-        :param widths: Per-tile-dim widths, innermost-last (length 1..3).
-        :param op: One of ``+``, ``*``, ``min``, ``max``.
-        :param axis: Single dim index to reduce along; ``None`` ⇒ full
-            reduction.
-        :param has_mask: When True, declare the ``_mask`` input.
-        :param location: Optional DaCe node location override.
-        :raises ValueError: On invalid ``op``, ``widths`` length, or
-            out-of-range ``axis``.
-        """
+                 location: str | None = None):
         if op not in REDUCE_OPS:
             raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {REDUCE_OPS}")
-        if not (1 <= len(widths) <= 3):
+        if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileReduce: widths must have length in {{1, 2, 3}}, got {widths!r}")
-        if axis is not None and not (0 <= axis < len(widths)):
+        if axis is not None and not 0 <= axis < len(widths):
             raise ValueError(f"TileReduce: axis {axis} out of range for K={len(widths)}")
-        inputs = {"_src"} | ({"_mask"} if has_mask else set())
-        super().__init__(name, location=location, inputs=inputs, outputs={"_dst"})
+        inputs = ["_src", "_mask"] if has_mask else ["_src"]
+        super().__init__(name, location=location, inputs=dict.fromkeys(inputs), outputs={"_dst"})
         self.widths = list(widths)
         self.op = op
         self.axis = axis
         self.has_mask = has_mask
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Check connectors.
-
-        :param sdfg: SDFG that owns ``state``.
-        :param state: State that owns ``self``.
-        :raises ValueError: If a required connector is unconnected.
-        """
-        in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
-        out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if "_src" not in in_e:
+        in_edges = connected_edges(state, self)
+        out_conns = {edge.src_conn for edge in state.out_edges(self)}
+        if "_src" not in in_edges:
             raise ValueError(f"{self.label}: required input '_src' not connected")
-        if "_dst" not in out_e:
+        if "_dst" not in out_conns:
             raise ValueError(f"{self.label}: required output '_dst' not connected")
-        if self.has_mask and "_mask" not in in_e:
+        if self.has_mask and "_mask" not in in_edges:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
+
+    def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
+        return self.axis is None and not self.has_mask and len(self.widths) == 1
+
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        widths = list(self.widths)
+        ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
+        identity = identity_literal(self.op, ctype)
+        source_offset = tile_offset(widths)
+        # The mask gates each lane's contribution: an inactive lane adds nothing.
+        gate = f"if (_mask[{source_offset}]) " if self.has_mask else ""
+        if self.axis is None:
+            out_edge = output_edge(state, self, "_dst")
+            scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
+            writeback = "_dst = __acc;" if scalar_destination else "_dst[0] = __acc;"
+            body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{source_offset}]', ctype)};"
+            code = f"{ctype} __acc = {identity};\n{nested_loops(widths, body)}\n{writeback}"
+        else:
+            kept = [dim for dim in range(len(widths)) if dim != self.axis]
+            kept_widths = [widths[dim] for dim in kept]
+            # The reduction loops over all dims under their own lane names, the init loop over the kept dims alone,
+            # which renumbers its lane names from ``__l0``.
+            reduce_offset = tile_offset(kept_widths, [f"__l{dim}" for dim in kept])
+            init_offset = tile_offset(kept_widths)
+            combined = combine_expr(self.op, f"_dst[{reduce_offset}]", f"_src[{source_offset}]", ctype)
+            code = (f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};')}\n"
+                    f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};')}")
+        return nodes.Tasklet(
+            label=f"{self.label}_pure",
+            inputs=dict.fromkeys(["_src", "_mask"] if self.has_mask else ["_src"]),
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
+
+    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+        vlen = require_k1(self)
+        ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
+        # A one-element output is bound by value, so it is assigned bare; a pointer target is dereferenced.
+        out_edge = output_edge(state, self, "_dst")
+        scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
+        destination = "_dst" if scalar_destination else "_dst[0]"
+        code = f"{destination} = dace::tileops::tile_reduce<{ctype}, {vlen}, '{BINARY_OPS[self.op].isa_code}'>(_src);"
+        return nodes.Tasklet(
+            label=f"{self.label}_{backend}",
+            inputs={"_src": None},
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )

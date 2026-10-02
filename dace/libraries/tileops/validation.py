@@ -141,7 +141,7 @@ def strides_match_packed(shape: Sequence[int | sympy.Basic], strides: Sequence[i
                 diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(dace.symbolic.equalize_symbol(diff)))
             if diff != 0:
                 return False
-        except Exception:  # noqa: BLE001 -- conservative refusal on un-comparable expressions.
+        except Exception:
             return False
         expected = expected * shape[d]
     return True
@@ -177,7 +177,7 @@ def validate_packed_layout(node_label: str, conn_name: str, desc: dace.data.Data
                                           f"supported (section 2.3).")
         except NotImplementedError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
             raise NotImplementedError(f"{node_label}: {conn_name!r} stride {strides[0]} could not be "
                                       f"verified against the packed-layout invariant (section 2.3).")
         return

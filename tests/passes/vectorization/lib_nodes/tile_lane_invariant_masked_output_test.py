@@ -14,6 +14,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileUnop
+from dace.libraries.tileops.dispatch import select_tile_implementation
 
 
 def masked_sdfg(name: str, node, widths, implementation: str) -> dace.SDFG:
@@ -22,11 +23,17 @@ def masked_sdfg(name: str, node, widths, implementation: str) -> dace.SDFG:
     sdfg.add_array('F', [1], dace.float64)
     sdfg.add_array('M', widths, dace.bool_)
     state = sdfg.add_state('main', is_start_block=True)
-    node.implementation = implementation
     state.add_node(node)
     full = ', '.join(f'0:{w}' for w in widths)
     state.add_edge(state.add_read('M'), None, node, '_mask', dace.Memlet(f'M[{full}]'))
     state.add_edge(node, '_c', state.add_write('F'), None, dace.Memlet('F[0]'))
+    # ``scalar`` is the target ISA the vectorizer selects the implementation for; a one-element output has no header
+    # lowering, so the selection is the pure loop too.
+    if implementation == 'pure':
+        node.implementation = 'pure'
+    else:
+        node.target_isa = implementation.upper()
+        node.implementation = select_tile_implementation(node, state)
     sdfg.expand_library_nodes()
     sdfg.validate()
     return sdfg

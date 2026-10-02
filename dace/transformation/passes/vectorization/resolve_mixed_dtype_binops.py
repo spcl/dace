@@ -436,7 +436,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
     Running this earlier (inside ``ResolveMixedDtypeBinops.resolve_ite``, before tile conversion)
     would be unsafe: a literal arm destined to become a ``TileITE`` Symbol arm has its raw Python
     text read by TWO different renderers that disagree on its language -- the pure expansion's
-    ``pyexpr2cpp`` (Python source) and the CUDA/ISA expansion's ``_isa_codegen.make_ite_tasklet``
+    ``pyexpr2cpp`` (Python source) and the CUDA/ISA expansion's ``TileITE.isa_tasklet``
     (embeds the text as-is, already-C++) -- so casting it here would double-cast one of the two
     and corrupt the other.
     """

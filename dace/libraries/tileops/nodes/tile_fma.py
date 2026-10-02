@@ -1,341 +1,158 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileFMA`` fused multiply-add on K-dim register tiles (``_o = _a * _b + _c``).
-
-The lib node consumes three operands ``_a`` / ``_b`` / ``_c`` and writes ``_o``
-(mirroring :class:`TileITE`'s output connector). Each operand carries a ``kind``
-flag -- ``Tile`` (a tile-shape array via a connector), ``Scalar`` (a length-1 /
-:class:`dace.data.Scalar` broadcast via a connector) or ``Symbol`` (a free-symbol
-expression embedded inline in the tasklet body). At least one operand must be
-``Tile``; an all-Symbol / all-Scalar triple is loop-invariant and belongs outside
-the tile path.
-
-The op is the FUSED multiply-add with a SINGLE rounding: the pure expansion emits
-``std::fma((a), (b), (c))`` (NOT ``a*b + c``) and every ISA backend lowers to the
-native fused FMA (``_mm*_fmadd`` / ``vfmaq`` / ``svmla`` / ``__hfma2`` / the
-scalar ``std::fma``), so the pure and ISA lowerings agree bit-for-bit. The caller
-opts into FMA's single-rounded result over a separate ``*`` then ``+``.
-
-The pure expansion returns a CPP tasklet whose body is a single ``for``-loop over
-the flattened tile (correctness-only).
-"""
-from typing import Final, Optional, Tuple
+"""``TileFMA``: a fused multiply-add on K-dim register tiles."""
+from typing import Final
 
 import numpy as np
 
 import dace
 from dace import library, properties
-from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
 
-from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from .. import _isa_codegen
-from ..lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
-from ..operands import scalar_operand_ref
-from ..validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
+from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from ..expansions import ExpandTileIsa, ExpandTilePure
+from ..isa import IsaCall
+from ..kinds import TILE
+from ..operands import (LaneOperands, Operand, check_operands, edge_ctype, elementwise_tasklet,
+                        has_lane_invariant_output, input_connectors, operands_share_output_type, output_edge,
+                        validate_elementwise)
+from .tile_op import TileOp
 
-#: C++ spellings of every registered dtype narrower than ``float``; these operands take the
-#: ``double``-widened FMA spelling, everything else calls ``std::fma`` on its own type. Read off the
-#: dtype registry rather than listed by hand: the hand list this replaced predated the fp8 pair and
-#: left ``dace::float8_e4m3fn`` / ``dace::float8_e5m2`` in the un-widened branch, though both CUDA
-#: fp8 types carry the same multi-implicit-conversion surface as ``__half`` that widening dodges.
-#: ``bool_`` is EXCLUDED on purpose although it is one byte -- a widened bool would read
-#: ``bool(std::fma(...))``, the numeric-to-bool truncation the ``cast`` guard below refuses to
-#: emit. A bare ``bytes < 4`` test puts ``bool_`` back in; do not "simplify" this predicate.
-NARROW_OPERAND_CTYPES: Final[frozenset[str]] = frozenset(tc.ctype for tc in dace.dtypes.TYPECLASS_TO_STRING
-                                                         if tc.bytes < dace.float32.bytes and tc.type is not np.bool_)
+#: The registered dtypes narrower than ``float``, which take the ``double``-widened spelling of the fma; every other
+#: operand type calls ``std::fma`` as it is. Read off the dtype registry, which includes the fp8 types, whose CUDA
+#: classes convert implicitly to several types like ``__half``. ``bool`` is excluded though it is one byte: a widened
+#: bool would read ``bool(std::fma(...))``, a truncating conversion to bool.
+NARROW_OPERAND_CTYPES: Final[frozenset[str]] = frozenset(
+    dtype.ctype for dtype in dace.dtypes.TYPECLASS_TO_STRING
+    if dtype.bytes < dace.float32.bytes and dtype.type is not np.bool_)
 
 
 @library.expansion
-class ExpandTileFMAPure(ExpandTransformation):
-    """Correctness-only CPP tasklet lowering of ``TileFMA`` (fused ``a*b + c``)."""
+class ExpandTileFMAPure(ExpandTilePure):
+    pass
 
-    environments = []
 
-    @staticmethod
-    def expansion(node: "TileFMA", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a single CPP tasklet that walks the flattened tile.
+@library.expansion
+class ExpandTileFMAScalar(ExpandTileIsa):
+    environments = [TileOpsScalar]
+    backend = "scalar"
 
-        :param node: The ``TileFMA`` lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A CPP tasklet replacing the lib node in place.
-        """
-        node.validate(parent_sdfg, parent_state)
-        widths = list(node.widths)
-        off = tile_offset(widths)
-        in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
 
-        out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
-                                            if e.src_conn == "_o").data.data].dtype.ctype
+@library.expansion
+class ExpandTileFMAAVX512(ExpandTileIsa):
+    environments = [TileOpsAVX512]
+    backend = "avx512"
 
-        # The dtype the VALUE operands share (a ``SYMBOL`` / ``SCALAR`` operand
-        # is cast to this). Prefer a data operand's descriptor dtype; else a
-        # symbol's own declared dtype; else fall back to ``out_dtype``. Mirrors
-        # ``ExpandTileBinopPure._operand_dtype``.
-        def _operand_dtype() -> str:
-            for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b"), (node.kind_c, "_c")):
-                if k in (TILE, SCALAR) and c in in_e:
-                    return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
-            for expr in (node.expr_a, node.expr_b, node.expr_c):
-                if not expr:
-                    continue
-                try:
-                    for s in dace.symbolic.symlist(dace.symbolic.pystr_to_symbolic(expr)):
-                        if str(s) in parent_sdfg.symbols:
-                            return parent_sdfg.symbols[str(s)].ctype
-                except Exception:  # noqa: BLE001
-                    pass
-            return out_dtype
 
-        operand_dtype = _operand_dtype()
-        # No ``(bool)X`` is ever emitted: the cast only resolves type-strict overloads, and casting a
-        # value to bool truncates it (twin guard + full rationale on ``tile_binop.py``'s ``cast``).
-        cast = "" if operand_dtype == dace.bool_.ctype else f"({operand_dtype})"
-        narrow_operand = operand_dtype in NARROW_OPERAND_CTYPES
+@library.expansion
+class ExpandTileFMAAVX2(ExpandTileIsa):
+    environments = [TileOpsAVX2]
+    backend = "avx2"
 
-        def _effective_ctype(kind: str, conn: str) -> str:
-            """The C++ type ``conn`` is actually emitted as (post any cast)."""
-            if kind == SYMBOL:
-                return operand_dtype
-            if kind == TILE:
-                return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
-            desc = parent_sdfg.arrays[in_e[conn].data.data]
-            _, broadcast = scalar_operand_ref(desc, conn, widths, off)
-            return operand_dtype if broadcast else desc.dtype.ctype
 
-        ctypes_by_conn = {
-            "_a": _effective_ctype(node.kind_a, "_a"),
-            "_b": _effective_ctype(node.kind_b, "_b"),
-            "_c": _effective_ctype(node.kind_c, "_c"),
-        }
+@library.expansion
+class ExpandTileFMANeon(ExpandTileIsa):
+    environments = [TileOpsNeon]
+    backend = "neon"
 
-        def _meets_ctype(this_conn: str) -> str:
-            """``dace::float16`` if every OTHER operand is also float16 (native
-            half arithmetic stays safe), else a non-float16 placeholder --
-            :func:`half_disambiguated` only cares about the binary distinction.
-            """
-            others = [c for k, c in ctypes_by_conn.items() if k != this_conn]
-            return dace.float16.ctype if all(c == dace.float16.ctype for c in others) else operand_dtype + "?mixed"
 
-        def _operand_ref(kind: str, conn: str, expr: str | None) -> str:
-            """Return the per-lane C++ reference for one FMA operand.
+@library.expansion
+class ExpandTileFMASVE(ExpandTileIsa):
+    environments = [TileOpsSVE]
+    backend = "sve"
 
-            A ``SYMBOL`` / broadcast ``SCALAR`` operand is cast to
-            ``operand_dtype`` so ``std::fma`` resolves all three operands at one
-            type; a per-lane Tile read (or a tile-shape Scalar widened upstream)
-            keeps the tile dtype uncast -- UNLESS it is ``dace::float16``
-            meeting a differently-typed sibling operand, in which case
-            :func:`half_disambiguated` routes it through one explicit,
-            lossless ``(float)`` hop (``__half`` -- what ``dace::float16`` is
-            on GPU -- exposes several simultaneously implicit conversions, so
-            a bare half handed to ``std::fma`` with mixed-type siblings is a
-            compile-time ambiguity, not a truncation risk).
-            """
-            if kind == SYMBOL:
-                return f"{cast}({pyexpr2cpp(expr)})"
-            if kind == TILE:
-                src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
-                return half_disambiguated(f"{conn}[{off}]", src, _meets_ctype(conn))
-            # Scalar operand: descriptor-aware (a tile-shape Array widened upstream
-            # is read per lane ``conn[off]``; a by-value Scalar / length-1 Array is
-            # broadcast and cast to ``operand_dtype``).
-            desc = parent_sdfg.arrays[in_e[conn].data.data]
-            ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
-            if broadcast:
-                return f"{cast}({ref})"
-            return half_disambiguated(ref, desc.dtype.ctype, _meets_ctype(conn))
 
-        a_ref = _operand_ref(node.kind_a, "_a", node.expr_a)
-        b_ref = _operand_ref(node.kind_b, "_b", node.expr_b)
-        c_ref = _operand_ref(node.kind_c, "_c", node.expr_c)
-        # Fused single-rounding multiply-add (NOT ``a*b + c``): keeps the pure path
-        # bit-for-bit with every ISA backend's native FMA.
-        #
-        # Sub-fp32 goes through ``double``. ``std::fma`` has no half overload: on the device it is an
-        # AMBIGUOUS-OVERLOAD compile error (float vs long double), and on the host it resolves to an
-        # out-of-line ``fmaf`` call. Widening keeps the SINGLE rounding this path promises -- a half
-        # product is exact in double, so the only rounding is the cast back -- which two chained half
-        # ops would not, and which is what makes the pure result match a native ``__hfma``.
-        if narrow_operand:
-            rhs_expr = f"{operand_dtype}(std::fma(double({a_ref}), double({b_ref}), double({c_ref})))"
-        else:
-            rhs_expr = f"std::fma({a_ref}, {b_ref}, {c_ref})"
-        # Output-kind dispatch (design 6.2): all inputs non-Tile and an ``_o`` memlet moving
-        # one element -> a single assignment (no lane loop); otherwise the K-fold loop.
-        out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
-        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
-                         and edge_moves_one_element(out_edge))
-        if out_is_scalar:
-            # No lane loop: a one-element output is a by-value local (``T _o;``) assigned once.
-            mask_elements = in_e["_mask"].data.subset.num_elements() if node.has_mask else None
-            code = lane_invariant_assign("_o", rhs_expr, out_dtype, widths, mask_elements)
-        else:
-            if node.has_mask:
-                body = f"_o[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
-            else:
-                body = f"_o[{off}] = {rhs_expr};"
-            code = nested_loops(widths, body)
-        inputs = set()
-        if node.kind_a in (TILE, SCALAR):
-            inputs.add("_a")
-        if node.kind_b in (TILE, SCALAR):
-            inputs.add("_b")
-        if node.kind_c in (TILE, SCALAR):
-            inputs.add("_c")
-        if node.has_mask:
-            inputs.add("_mask")
-        return nodes.Tasklet(
-            label=f"{node.label}_pure",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"_o": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
+@library.expansion
+class ExpandTileFMACUDA(ExpandTileIsa):
+    environments = [TileOpsCUDA]
+    backend = "cuda"
 
 
 @library.node
-class TileFMA(nodes.LibraryNode):
-    """Fused multiply-add ``_o = _a * _b + _c`` on K-dim register tiles.
+class TileFMA(TileOp):
+    """``_o = _a * _b + _c`` over a tile, rounded once.
 
-    Each operand has a ``kind``: ``Tile`` (read via the ``_a`` / ``_b`` / ``_c``
-    connector from a tile-shape array), ``Scalar`` (a length-1 /
-    :class:`dace.data.Scalar` broadcast via its connector) or ``Symbol`` (a
-    free-symbol expression embedded inline in the tasklet body). At least one
-    operand must be ``Tile``. With ``has_mask=True``, an additional ``_mask``
-    input gates the write per lane.
-
-    The op is the FUSED multiply-add with a SINGLE rounding (``std::fma`` /
-    native FMA), so the pure and every ISA lowering agree bit-for-bit.
-
-    :cvar implementations: Per-target expansions; ``"pure"`` is the flattened
-        CPP-loop correctness fallback.
-    :cvar default_implementation: ``"pure"``.
+    Every lowering is the fused multiply-add (``std::fma``, ``_mm*_fmadd``, ``vfmaq``, ``svmla``, ``__hfma2``), not a
+    multiply followed by an add, so they agree bit for bit. Each operand has a kind (see
+    :mod:`dace.libraries.tileops.kinds`), and at least one is a ``Tile``. With ``has_mask`` the lanes where ``_mask``
+    is false are zero.
     """
 
-    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
-    # device, so device auto-selection must not overwrite it.
-    auto_select_implementation = False
     implementations = {
         "pure": ExpandTileFMAPure,
-        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve / cuda): a call
-        # into dace/tile_ops/<backend>.h -- the backend's env pulls in the matching
-        # header. Built by the shared factory (selector routes K>=2 to ``pure``).
-        **_isa_codegen.make_isa_expansions("Fma", _isa_codegen.make_fma_tasklet, globals()),
+        "scalar": ExpandTileFMAScalar,
+        "avx512": ExpandTileFMAAVX512,
+        "avx2": ExpandTileFMAAVX2,
+        "neon": ExpandTileFMANeon,
+        "sve": ExpandTileFMASVE,
+        "cuda": ExpandTileFMACUDA,
     }
     default_implementation = "pure"
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
-        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
-    )
-    widths = properties.ListProperty(
-        element_type=int,
-        default=[],
-        desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
-    )
     has_mask = properties.Property(
         dtype=bool,
         allow_none=False,
         default=False,
-        desc="When True, the ``_mask`` input connector is required.",
+        desc="Whether the ``_mask`` input connector gates the lanes.",
     )
     kind_a = properties.Property(
         dtype=str,
         allow_none=False,
         default=TILE,
-        desc="Operand kind for the multiplicand ``a``: 'Tile', 'Scalar' or 'Symbol'.",
+        desc="How the multiplicand is read: 'Tile', 'Scalar' or 'Symbol'.",
     )
     kind_b = properties.Property(
         dtype=str,
         allow_none=False,
         default=TILE,
-        desc="Operand kind for the multiplier ``b``: 'Tile', 'Scalar' or 'Symbol'.",
+        desc="How the multiplier is read: 'Tile', 'Scalar' or 'Symbol'.",
     )
     kind_c = properties.Property(
         dtype=str,
         allow_none=False,
         default=TILE,
-        desc="Operand kind for the addend ``c``: 'Tile', 'Scalar' or 'Symbol'.",
+        desc="How the addend is read: 'Tile', 'Scalar' or 'Symbol'.",
     )
     expr_a = properties.Property(
         dtype=str,
         allow_none=True,
         default=None,
-        desc="Symbolic expression embedded inline when kind_a == 'Symbol'; ignored otherwise.",
+        desc="The expression of the multiplicand when it is a 'Symbol'.",
     )
     expr_b = properties.Property(
         dtype=str,
         allow_none=True,
         default=None,
-        desc="Symbolic expression embedded inline when kind_b == 'Symbol'; ignored otherwise.",
+        desc="The expression of the multiplier when it is a 'Symbol'.",
     )
     expr_c = properties.Property(
         dtype=str,
         allow_none=True,
         default=None,
-        desc="Symbolic expression embedded inline when kind_c == 'Symbol'; ignored otherwise.",
+        desc="The expression of the addend when it is a 'Symbol'.",
     )
 
     def __init__(self,
                  name: str,
-                 widths: Tuple[int, ...],
+                 widths: tuple[int, ...],
                  has_mask: bool = False,
                  kind_a: str = TILE,
                  kind_b: str = TILE,
                  kind_c: str = TILE,
-                 expr_a: Optional[str] = None,
-                 expr_b: Optional[str] = None,
-                 expr_c: Optional[str] = None,
-                 location: Optional[str] = None):
-        """Construct a ``TileFMA`` node.
-
-        :param name: Node label.
-        :param widths: Per-dim tile widths, innermost-last.
-        :param has_mask: When True, declare the ``_mask`` input connector.
-        :param kind_a: ``"Tile"`` (default -- read via ``_a`` connector),
-            ``"Scalar"`` (length-1 / ``dace.data.Scalar`` via ``_a``, broadcast)
-            or ``"Symbol"`` (embed ``expr_a`` inline).
-        :param kind_b: ``"Tile"``, ``"Scalar"`` or ``"Symbol"``.
-        :param kind_c: ``"Tile"``, ``"Scalar"`` or ``"Symbol"``.
-        :param expr_a: Required when ``kind_a == "Symbol"``.
-        :param expr_b: Required when ``kind_b == "Symbol"``.
-        :param expr_c: Required when ``kind_c == "Symbol"``.
-        :param location: Optional DaCe node location override.
-        :raises ValueError: On invalid ``widths`` length, kind, missing
-            expression for a symbol kind, or a no-Tile-operand triple (at least
-            one operand must be a tile).
-        """
-        if not (1 <= len(widths) <= 3):
+                 expr_a: str | None = None,
+                 expr_b: str | None = None,
+                 expr_c: str | None = None,
+                 location: str | None = None):
+        if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileFMA: widths must have length in {{1, 2, 3}}, got {widths!r}")
-        for label, kind in (("kind_a", kind_a), ("kind_b", kind_b), ("kind_c", kind_c)):
-            if kind not in VALID_KINDS:
-                raise ValueError(f"TileFMA: {label} must be one of {VALID_KINDS}, got {kind!r}")
-        if kind_a == SYMBOL and not expr_a:
-            raise ValueError("TileFMA: kind_a='Symbol' requires expr_a")
-        if kind_b == SYMBOL and not expr_b:
-            raise ValueError("TileFMA: kind_b='Symbol' requires expr_b")
-        if kind_c == SYMBOL and not expr_c:
-            raise ValueError("TileFMA: kind_c='Symbol' requires expr_c")
+        operands = [Operand("_a", kind_a, expr_a), Operand("_b", kind_b, expr_b), Operand("_c", kind_c, expr_c)]
+        check_operands("TileFMA", operands)
         if TILE not in (kind_a, kind_b, kind_c):
             raise ValueError("TileFMA: at least one operand must be a Tile "
                              f"(got kind_a={kind_a!r}, kind_b={kind_b!r}, kind_c={kind_c!r})")
-
-        inputs = set()
-        if kind_a in (TILE, SCALAR):
-            inputs.add("_a")
-        if kind_b in (TILE, SCALAR):
-            inputs.add("_b")
-        if kind_c in (TILE, SCALAR):
-            inputs.add("_c")
-        if has_mask:
-            inputs.add("_mask")
-        super().__init__(name, location=location, inputs=inputs, outputs={"_o"})
+        super().__init__(name,
+                         location=location,
+                         inputs=dict.fromkeys(input_connectors(operands, has_mask)),
+                         outputs={"_o"})
         self.widths = list(widths)
         self.has_mask = has_mask
         self.kind_a = kind_a
@@ -345,43 +162,45 @@ class TileFMA(nodes.LibraryNode):
         self.expr_b = expr_b
         self.expr_c = expr_c
 
+    def operands(self) -> list[Operand]:
+        return [
+            Operand("_a", self.kind_a, self.expr_a),
+            Operand("_b", self.kind_b, self.expr_b),
+            Operand("_c", self.kind_c, self.expr_c)
+        ]
+
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Validate connector counts + output-kind rule at expansion time.
+        validate_elementwise(self, state, sdfg, self.operands(), "_o", self.has_mask)
 
-        Output-kind rule (design section 6.2): any Tile input -> ``_o`` must be
-        tile-shape (``Array(shape=widths)``).
+    def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
+        operands = self.operands()
+        return (not has_lane_invariant_output(operands, output_edge(state, self, "_o"))
+                and operands_share_output_type(self, state, sdfg, operands, "_o"))
 
-        :param sdfg: SDFG that owns ``state``.
-        :param state: State that owns ``self``.
-        :raises ValueError: If a required connector is unconnected.
-        :raises NotImplementedError: If a Tile operand dtype cannot be promoted to
-            the output dtype (narrowing) or the output-kind rule is violated.
-        """
-        in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
-        out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if "_o" not in out_e:
-            raise ValueError(f"{self.label}: required output '_o' not connected")
-        if self.has_mask and "_mask" not in in_e:
-            raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        o_arr = sdfg.arrays[out_e["_o"].data.data]
-        # Output-kind rule (design 6.2): when any input is Tile, ``_o`` must be tile-shape.
-        any_tile_input = TILE in (self.kind_a, self.kind_b, self.kind_c)
-        if any_tile_input and not (is_tile_shape(o_arr, tuple(self.widths))
-                                   or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
-            raise NotImplementedError(f"{self.label}: output-kind rule violated -- a Tile input is present but "
-                                      f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design "
-                                      f"section 6.2: any Tile input -> Tile output.")
-        for label, kind in (("_a", self.kind_a), ("_b", self.kind_b), ("_c", self.kind_c)):
-            if kind in (TILE, SCALAR):
-                if label not in in_e:
-                    raise ValueError(f"{self.label}: kind={kind!r} but {label!r} not connected")
-                # Each Tile operand is promoted to the output dtype before the op
-                # (the expansion casts on lowering). Widening (int -> float/double,
-                # int -> wider int, float -> double) is allowed; a narrowing
-                # conversion (e.g. double -> int) raises.
-                if kind == TILE:
-                    src = sdfg.arrays[in_e[label].data.data].dtype
-                    if not promotion_ok(src, o_arr.dtype):
-                        raise NotImplementedError(
-                            f"{self.label}: Tile operand {label!r} dtype {src} cannot be promoted to output "
-                            f"dtype {o_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        self.validate(sdfg, state)
+        operands = self.operands()
+        out_ctype = edge_ctype(sdfg, output_edge(state, self, "_o"))
+        lanes = LaneOperands.of(self, state, sdfg, operands, out_ctype)
+        a, b, c = (lanes.reference(operand, [other for other in operands if other is not operand])
+                   for operand in operands)
+        if lanes.shared in NARROW_OPERAND_CTYPES:
+            # ``std::fma`` has no half overload: on the device the overload is ambiguous and on the host it is an
+            # out-of-line ``fmaf``. A half product is exact in double, so widening keeps the single rounding that two
+            # chained half ops would lose, and matches a native ``__hfma``.
+            rhs = f"{lanes.shared}(std::fma(double({a}), double({b}), double({c})))"
+        else:
+            rhs = f"std::fma({a}, {b}, {c})"
+        return elementwise_tasklet(self, state, operands, "_o", rhs, out_ctype, lanes.in_edges)
+
+    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+        self.validate(sdfg, state)
+        operands = self.operands()
+        call = IsaCall.of(self, state, sdfg, "_o")
+        (a_broadcast, a_pointer), (b_broadcast, b_pointer), (c_broadcast, c_pointer) = (call.operand(operand)
+                                                                                        for operand in operands)
+        masked = "true" if self.has_mask else "false"
+        mask_argument = "_mask" if self.has_mask else "nullptr"
+        text = (f"dace::tileops::tile_fma<{call.ctype}, {call.vlen}, {a_broadcast}, {b_broadcast}, {c_broadcast}, "
+                f"{masked}>(_o, {a_pointer}, {b_pointer}, {c_pointer}, {mask_argument});")
+        return call.tasklet(self, backend, operands, "_o", text, self.has_mask)

@@ -62,9 +62,8 @@ def test_k1_scatter_matches_reference():
     """K=1 ``B[idx[i]] = A[i]`` (scatter) -- bit-equal to the unvectorised reference.
 
     Exercises the symmetric scatter path through the walker (TileStore with
-    ``gather_dims`` lowering via :class:`ExpandTileStorePure` because
-    ``make_store_tasklet`` now delegates to pure when ``gather_dims`` is set,
-    mirroring the gather load fix in commit 4ad424945).
+    ``gather_dims`` lowering through the pure expansion, because a store with
+    ``gather_dims`` has no header lowering).
     """
     n = 8
     rng = np.random.default_rng(seed=n)

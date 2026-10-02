@@ -37,14 +37,14 @@ def test_guard_is_anded_into_the_mask():
     assert _mask_line(node) == '_o[__l0] = (((i) + __l0) < (N)) && (((i) + __l0) < (mid));'
 
 
-def test_guarded_mask_pins_the_pure_expansion():
-    """The ISA backends build the mask from the bounds alone, so they would silently DROP the
-    guard and run every lane. A guarded node must pin ``pure``, which is the only expansion that
-    emits the extra conjunct."""
+def test_a_guarded_mask_lowers_pure():
+    """The ISA backends build the mask from the bounds alone, so they would silently DROP the guard and run every
+    lane. A guarded node has no header lowering, which leaves the pure expansion, the only one that emits the extra
+    conjunct. An unguarded node keeps the header lowering."""
     guarded = TileMaskGen('mg', widths=(8, ), iter_vars=('i', ), global_ubs=('N', ), guard_predicate=GUARD)
-    assert guarded.implementation == 'pure'
-    # An unguarded node keeps whatever the orchestrator picks (ISA dispatch stays available).
-    assert TileMaskGen('mg2', widths=(8, ), iter_vars=('i', ), global_ubs=('N', )).implementation is None
+    unguarded = TileMaskGen('mg2', widths=(8, ), iter_vars=('i', ), global_ubs=('N', ))
+    assert not guarded.can_lower_to_isa(None, None)
+    assert unguarded.can_lower_to_isa(None, None)
 
 
 def test_guard_composes_with_multi_dim_bounds():

@@ -59,30 +59,42 @@ def test_cuda_header_has_half2_intrinsics():
     assert "float" in src
 
 
+def wired_binop(op, widths):
+    """A ``TileBinop`` of two fp16 tiles in a state, with the arrays its selection reads the dtypes of."""
+    from dace.libraries.tileops.nodes.tile_binop import TileBinop
+    sdfg = dace.SDFG("cuda_selection_binop")
+    state = sdfg.add_state()
+    node = TileBinop("t", op=op, widths=widths)
+    state.add_node(node)
+    for name in "abc":
+        sdfg.add_array(name, widths, dace.float16, storage=dace.StorageType.Register, transient=True)
+    subset = ", ".join(f"0:{w}" for w in widths)
+    state.add_edge(state.add_access("a"), None, node, "_a", dace.Memlet(f"a[{subset}]"))
+    state.add_edge(state.add_access("b"), None, node, "_b", dace.Memlet(f"b[{subset}]"))
+    state.add_edge(node, "_c", state.add_access("c"), None, dace.Memlet(f"c[{subset}]"))
+    node.target_isa = "CUDA"
+    return node, state
+
+
 @pytest.mark.parametrize("op", ["+", "-", "*", "/"])
 def test_binop_selects_cuda_for_fp16_tile(op):
-    from dace.libraries.tileops.nodes.tile_binop import TileBinop
-    n = TileBinop("t", op=op, widths=(2, ))
-    n.target_isa = "CUDA"
-    assert dispatch.select_tile_implementation(n) == "cuda"
+    node, state = wired_binop(op, (2, ))
+    assert dispatch.select_tile_implementation(node, state) == "cuda"
 
 
 def test_kge2_tile_falls_back_to_pure_under_cuda():
     # K>=2 always lowers to 'pure' regardless of ISA.
-    from dace.libraries.tileops.nodes.tile_binop import TileBinop
-    n = TileBinop("t", op="+", widths=(2, 2))
-    n.target_isa = "CUDA"
-    assert dispatch.select_tile_implementation(n) == "pure"
+    node, state = wired_binop("+", (2, 2))
+    assert dispatch.select_tile_implementation(node, state) == "pure"
 
 
 def test_reduce_selects_cuda_for_full_k1_tile():
     # A full (axis=None), unmasked, K=1 TileReduce lowers to the cuda ``tile_reduce``
     # intrinsic (composed half2 fold for fp16, per-lane fold otherwise).
-    from dace.libraries.tileops.nodes.tile_reduce import TileReduce
-    n = TileReduce("t", op="+", widths=(2, ))
+    sdfg, st, n = _reduce_sdfg(dace.float16, 2)
     n.target_isa = "CUDA"
     assert "cuda" in n.implementations
-    assert dispatch.select_tile_implementation(n) == "cuda"
+    assert dispatch.select_tile_implementation(n, st) == "cuda"
 
 
 def test_reduce_kge2_falls_back_to_pure_under_cuda():
@@ -90,8 +102,10 @@ def test_reduce_kge2_falls_back_to_pure_under_cuda():
     # cuda ``tile_reduce`` intrinsic is a K==1 horizontal fold.
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
     n = TileReduce("t", op="+", widths=(2, 2))
+    st = dace.SDFG("cuda_selection_reduce").add_state()
+    st.add_node(n)
     n.target_isa = "CUDA"
-    assert dispatch.select_tile_implementation(n) == "pure"
+    assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):
@@ -128,14 +142,12 @@ def test_reduce_cuda_emits_intrinsic_for_full_k1():
     assert "tile_reduce<float, 8, 'M'>" in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
 
 
-def test_reduce_cuda_falls_back_to_pure_for_masked_and_axis():
+def test_reduce_cuda_selects_pure_for_masked_and_axis():
     # The tile_reduce intrinsic takes no mask and only does a full reduction, so a
-    # masked reduce or a single-axis reduce delegates to the pure per-lane expansion.
-    from dace.libraries.tileops.nodes.tile_reduce import ExpandTileReduceCUDA
-    sdfg, st, n = _reduce_sdfg(dace.float16, 4, "+", mask=True)
-    assert "tile_reduce" not in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
-    sdfg, st, n = _reduce_sdfg(dace.float32, 4, "+", axis=1)
-    assert "tile_reduce" not in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
+    # masked reduce or a single-axis reduce lowers to the pure per-lane loop.
+    for sdfg, st, n in (_reduce_sdfg(dace.float16, 4, "+", mask=True), _reduce_sdfg(dace.float32, 4, "+", axis=1)):
+        n.target_isa = "CUDA"
+        assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def test_cuda_requires_even_width():

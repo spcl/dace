@@ -380,7 +380,7 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
       * the vectorized (tiled) interior converts the blend to a ``TileITE`` lib node, whose
         Symbol arm is cast to the output dtype INLINE at expansion -- unaffected by this fix,
         checked here as ``expr_t == '0.0'``: still the bare literal, still exempt (its own
-        expansion casts it, see ``tile_ite.ExpandTileITEPure._ref``);
+        expansion casts it, see ``TileITE.pure_tasklet``);
       * the non-divisible extent's scalar remainder (1022 @ W=2) leaves an ``ITE(...)`` tasklet
         that never becomes a ``TileITE`` -- codegen's generic Python-tasklet translation has no
         casting logic of its own, so a leftover bare literal reaches nvcc as

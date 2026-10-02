@@ -29,11 +29,6 @@ CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
 #: The host ISAs in the order ``AUTO`` prefers them.
 ISA_PREFERENCE = ("AVX512", "AVX2", "ARM_SVE", "ARM_NEON")
 
-#: Ops with no per-ISA op code. They lower to a per-lane ``std::<fn>`` call in the pure loop, which the compiler's
-#: vector-math library captures. (``sin``, ``cos``, ``exp``, ``log``, ``sqrt`` and ``tanh`` have op codes.)
-PURE_ONLY_MATH_OPS = frozenset(
-    {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "ipow", "**"})
-
 
 @functools.lru_cache(maxsize=1, typed=True)
 def cpu_flags() -> frozenset[str]:
@@ -71,10 +66,8 @@ def detect_host_isa() -> str:
     return next((isa for isa in ISA_PREFERENCE if isa in supported), "SCALAR")
 
 
-def has_complex_operand(node: nodes.LibraryNode, parent_state: dace.SDFGState | None) -> bool:
-    """Whether any connected operand or output of the tile op is complex; an unknown context answers ``False``."""
-    if parent_state is None:
-        return False
+def has_complex_operand(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
+    """Whether any connected operand or output of the tile op is complex."""
     sdfg = parent_state.sdfg
     for edge in (*parent_state.in_edges(node), *parent_state.out_edges(node)):
         if edge.data is None or edge.data.data is None:
@@ -85,31 +78,30 @@ def has_complex_operand(node: nodes.LibraryNode, parent_state: dace.SDFGState | 
     return False
 
 
-def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState | None = None) -> str:
+def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
     """The implementation of ``node`` for the target ISA it carries.
 
-    K>=2 and the ops without an op code lower to ``pure``. So does a complex operand on a CPU ISA: a packed multiply
-    has no SIMD form, so the scalar loop over ``std::complex`` is the correct lowering everywhere (CUDA carries
-    complex natively and keeps its path). Anything else takes the implementation of its ISA, falling back to ``pure``
-    where the node defines none.
+    A tile of more than one dim lowers ``pure``, and so does every node the backend headers cannot express
+    (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.can_lower_to_isa`) and a node with a complex operand on a CPU
+    ISA: a packed multiply has no SIMD form, so the scalar loop over ``std::complex`` is the correct lowering
+    everywhere. CUDA carries complex natively and keeps its path. The rest take the implementation of their ISA.
 
     :param node: The tile library node (carries ``widths`` and ``target_isa``).
-    :param parent_state: The state holding ``node``, to read the operand dtypes from.
+    :param parent_state: The state holding ``node``.
     :returns: A name in ``node.implementations``.
     :raises ValueError: If the target ISA is a host ISA the host cannot execute.
     """
-    if len(node.widths) != 1:
-        return "pure"
-    if getattr(node, "op", None) in PURE_ONLY_MATH_OPS:
-        return "pure"
-    target_isa = getattr(node, "target_isa", "SCALAR")
+    target_isa = node.target_isa
     if target_isa == "AUTO":
         target_isa = detect_host_isa()
+    implementation = ISA_TO_IMPL.get(target_isa)
+    if len(node.widths) != 1 or implementation not in node.implementations:
+        return "pure"
+    if (target_isa != "CUDA"
+            and has_complex_operand(node, parent_state)) or not node.can_lower_to_isa(parent_state, parent_state.sdfg):
+        return "pure"
     if target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
         raise ValueError(f"tile-op target_isa={target_isa!r} is not executable on this host "
                          f"(supported: {sorted(host_supported_isas())}). Vectorization enforces "
                          f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA.")
-    if target_isa != "CUDA" and has_complex_operand(node, parent_state):
-        return "pure"
-    implementation = ISA_TO_IMPL.get(target_isa, "pure")
-    return implementation if implementation in node.implementations else "pure"
+    return implementation

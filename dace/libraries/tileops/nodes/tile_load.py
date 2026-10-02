@@ -6,7 +6,6 @@ nested index space using the source array's strides (which DaCe
 codegen passes via ``__<arr>_strides`` from the surrounding scope).
 """
 from collections.abc import Sequence
-from typing import List, Optional, Tuple
 
 import sympy
 
@@ -14,16 +13,20 @@ import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import graph, nodes
-from dace.transformation.transformation import ExpandTransformation
 
 from ..kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from .. import _isa_codegen
+from ..alignment import align_template_arg, k1_array_stride
+from ..environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from ..expansions import ExpandTileIsa, ExpandTilePure
+from ..isa import require_k1
+from ..operands import connected_edges, edge_ctype, output_edge
+from .tile_op import TileOp
 from ..lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
 from ..operands import scalar_operand_ref
 from ..validation import validate_mask_descriptor_lock, validate_packed_layout
 
 
-def _enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> List[str]:
+def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list[str]:
     """All map iter-var names enclosing ``node``, across nested-SDFG levels.
 
     The tile body is nested one (or more) levels below the tile map
@@ -37,7 +40,7 @@ def _enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> Lis
     :returns: Map param names from innermost to outermost (names as they appear
         in the SDFG; identity-preserved by the body-nesting pass).
     """
-    params: List[str] = []
+    params: list[str] = []
     cur_state = parent_state
     cur_node = node
     while cur_state is not None:
@@ -53,9 +56,9 @@ def _enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> Lis
     return params
 
 
-def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
-                            src_edge: graph.MultiConnectorEdge[dace.Memlet], dims: List[int],
-                            replicate: Sequence[int | sympy.Basic]) -> List[str]:
+def phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
+                           src_edge: graph.MultiConnectorEdge[dace.Memlet], dims: list[int],
+                           replicate: Sequence[int | sympy.Basic]) -> list[str]:
     """Per-tile-dim per-lane source offset for non-dividing REPLICATE dims.
 
     For a REPLICATE dim whose factor ``D`` does not (provably) divide the tile
@@ -90,7 +93,7 @@ def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
     K = len(widths)
     exprs = [""] * K
     # Collect enclosing map params -- the replicate dim's iter-var is one of them.
-    map_params = _enclosing_map_params(parent_state, node)
+    map_params = enclosing_map_params(parent_state, node)
     for d in range(K):
         Dfac = replicate[d] if d < len(replicate) else 1
         try:
@@ -123,144 +126,48 @@ def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
 
 
 @library.expansion
-class ExpandTileLoadPure(ExpandTransformation):
-    """Correctness-only CPP tasklet copying the tile region into ``_dst``."""
+class ExpandTileLoadPure(ExpandTilePure):
+    pass
 
-    environments = []
 
-    @staticmethod
-    def expansion(node: "TileLoad", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a CPP tasklet that copies the tile region into the
-        destination tile, optionally gated by ``_mask``.
+@library.expansion
+class ExpandTileLoadScalar(ExpandTileIsa):
+    environments = [TileOpsScalar]
+    backend = "scalar"
 
-        Source offsets use the source array's per-dim strides (read
-        from the connector descriptor at expansion time) scaled by an
-        optional :attr:`dim_strides` coefficient (defaulting to 1).
 
-        Three source kinds (mirrors :class:`TileStore`):
+@library.expansion
+class ExpandTileLoadAVX512(ExpandTileIsa):
+    environments = [TileOpsAVX512]
+    backend = "avx512"
 
-        * ``src_kind="Tile"`` (default): ``_src`` is a tile-shape transient
-          / strided view; standard per-lane indexed read.
-        * ``src_kind="Scalar"``: ``_src`` is a volume-1 source passed by value;
-          every lane reads the bare ``_src`` (broadcast).
-        * ``src_kind="Symbol"``: no ``_src`` connector; every lane writes
-          the cast of :attr:`src_expr` (broadcast literal / symbolic).
 
-        :param node: The ``TileLoad`` lib node being expanded.
-        :param parent_state: State that owns the lib node.
-        :param parent_sdfg: SDFG that owns ``parent_state``.
-        :returns: A CPP tasklet replacing the lib node in place.
-        """
-        from dace.symbolic import symstr
-        widths = list(node.widths)
-        K = len(widths)
-        dst_off = tile_offset(widths)
-        dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
-                                            if e.src_conn == "_dst").data.data].dtype.ctype
-        if node.src_kind == SYMBOL:
-            src_ref = f"({dst_dtype})({pyexpr2cpp(node.src_expr)})"
-        elif node.src_kind == SCALAR:
-            # A volume-1 source (a true ``dace.data.Scalar``, a length-1 Array,
-            # or a single-element access) is passed by value (``T _src``) and
-            # referenced bare; a tile-shape source widened upstream is a pointer
-            # read per lane (``_src[off]``). ``[0]`` is a memlet concern, never a
-            # tasklet-body one (a by-value connector is not a pointer).
-            src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
-            desc = parent_sdfg.arrays[src_edge.data.data]
-            ref, broadcast = scalar_operand_ref(desc, "_src", widths, dst_off)
-            src_ref = f"({dst_dtype})({ref})" if broadcast else ref
-        else:
-            src_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == "_src")
-            src_arr = parent_sdfg.arrays[src_edge.data.data]
-            ndim = len(src_arr.strides)
-            # Step along the array dim each tile dim maps to (``src_dims``);
-            # default to the last K dims in order (a plain row-major tile).
-            dims = list(node.src_dims) if node.src_dims else list(range(ndim - K, ndim))
-            coeff = list(node.dim_strides) if node.dim_strides else [1] * K
-            replicate = list(node.replicate_factor_per_dim) if node.replicate_factor_per_dim else [1] * K
-            gather_set = set(node.gather_dims)
-            if not gather_set:
-                # Structured path: per-tile-dim affine contributions only.
-                src_strides_tile = [symstr(src_arr.strides[d]) for d in dims]
-                # Non-dividing REPLICATE (``W % D != 0`` or symbolic ``D``) gets a
-                # phase-aware per-lane offset; dividing dims keep the contiguous
-                # ``__l/D`` box (empty entry).
-                lane_exprs = _phase_aware_lane_exprs(node, parent_state, src_edge, dims, replicate)
-                src_off = offset_via_strides(coeff, src_strides_tile, replicate, lane_exprs)
-            else:
-                # Source-dim addressing (design section 9.2 / 9.3): per SOURCE dim k in range(ndim),
-                # if k in gather_dims contribute `_idx_<k>[<flat lane>] * src.strides[k]`; otherwise,
-                # if k is the tile-mapped source dim for some tile dim d (via src_dims), contribute
-                # the affine `coeff[d] * src.strides[k] * (__l<d> / replicate[d])`; remaining source
-                # dims fall outside the tile's reach -- their per-iteration index lives in the outer
-                # `_src` memlet subset offset (the lib node addresses through ``_src[<offset>]`` and
-                # the codegen-supplied base pointer carries everything not contributed here).
-                gather_idx_ref = {}
-                for k in node.gather_dims:
-                    conn = f"_idx_{k}"
-                    edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == conn)
-                    idx_shape = tuple(parent_sdfg.arrays[edge.data.data].shape)
-                    deps_d = resolve_gather_deps(idx_shape, widths)
-                    if deps_d is None:
-                        raise ValueError(f"{node.label}: cannot resolve deps for '{conn}' shape "
-                                         f"{idx_shape} against widths {tuple(widths)}")
-                    gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
-                src_to_tile = {dims[d]: d for d in range(K)}
-                parts = []
-                for k in range(ndim):
-                    s = symstr(src_arr.strides[k])
-                    if k in gather_set:
-                        parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
-                    elif k in src_to_tile:
-                        d = src_to_tile[k]
-                        lane = f"__l{d}"
-                        # Replicate factor: the box ``__l/D`` is correct only when
-                        # ``D`` divides ``W`` (phase-0). A non-dividing / symbolic
-                        # factor mixed with a gather dim would need the phase-aware
-                        # offset the structured path emits, but the gather branch's
-                        # base addressing differs -- refuse loudly rather than emit
-                        # the phase-0-only box (no silent miscompile).
-                        try:
-                            Di = int(replicate[d])
-                            if Di > 1 and (int(widths[d]) % Di) != 0:
-                                raise NotImplementedError(
-                                    f"{node.label}: non-dividing REPLICATE factor {Di} on tile dim {d} "
-                                    f"(width {widths[d]}) mixed with a gather access is not supported "
-                                    f"(phase-aware replicate-with-remainder is only wired on the "
-                                    f"structured load path).")
-                            emit_div = Di > 1
-                        except (TypeError, ValueError):
-                            raise NotImplementedError(
-                                f"{node.label}: symbolic REPLICATE factor {replicate[d]!r} on tile dim {d} "
-                                f"mixed with a gather access is not supported (cannot prove it divides "
-                                f"width {widths[d]}; phase-aware replicate-with-remainder is only wired "
-                                f"on the structured load path).")
-                        if emit_div:
-                            lane = f"({lane} / {replicate[d]})"
-                        parts.append(f"({coeff[d]} * ({s}) * {lane})")
-                    # else: source dim k has no per-lane contribution; outer base pointer covers it.
-                src_off = " + ".join(parts) if parts else "0"
-            src_ref = f"_src[{src_off}]"
-        if node.has_mask:
-            body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
-        else:
-            body = f"_dst[{dst_off}] = {src_ref};"
-        code = nested_loops(widths, body)
-        inputs = (set() if node.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if node.has_mask else set())
-        inputs |= {f"_idx_{d}" for d in node.gather_dims}
-        tasklet = nodes.Tasklet(
-            label=f"{node.label}_pure",
-            inputs={c: None
-                    for c in inputs},
-            outputs={"_dst": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
-        return tasklet
+@library.expansion
+class ExpandTileLoadAVX2(ExpandTileIsa):
+    environments = [TileOpsAVX2]
+    backend = "avx2"
+
+
+@library.expansion
+class ExpandTileLoadNeon(ExpandTileIsa):
+    environments = [TileOpsNeon]
+    backend = "neon"
+
+
+@library.expansion
+class ExpandTileLoadSVE(ExpandTileIsa):
+    environments = [TileOpsSVE]
+    backend = "sve"
+
+
+@library.expansion
+class ExpandTileLoadCUDA(ExpandTileIsa):
+    environments = [TileOpsCUDA]
+    backend = "cuda"
 
 
 @library.node
-class TileLoad(nodes.LibraryNode):
+class TileLoad(TileOp):
     """Load a K-dim tile out of a global array.
 
     ``_src`` carries the full memlet of the source array; the in-edge's
@@ -270,33 +177,17 @@ class TileLoad(nodes.LibraryNode):
     (contiguous).
     """
 
-    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
-    # device, so device auto-selection must not overwrite it.
-    auto_select_implementation = False
     implementations = {
         "pure": ExpandTileLoadPure,
-        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
-        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
-        # matching header. Built by the shared factory (selector routes K>=2 to
-        # ``pure``).
-        **_isa_codegen.make_isa_expansions("Load", _isa_codegen.make_load_tasklet, globals()),
+        "scalar": ExpandTileLoadScalar,
+        "avx512": ExpandTileLoadAVX512,
+        "avx2": ExpandTileLoadAVX2,
+        "neon": ExpandTileLoadNeon,
+        "sve": ExpandTileLoadSVE,
+        "cuda": ExpandTileLoadCUDA,
     }
     default_implementation = "pure"
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUDA); K>=2 is pure. "
-        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
-    )
-
-    widths = properties.ListProperty(
-        element_type=int,
-        default=[],
-        desc="Per-dim tile widths, innermost-last.",
-    )
     dim_strides = properties.ListProperty(
         # ``pystr_to_symbolic`` accepts both int and symbolic (e.g. ``ssym``)
         # values, so ``a[i * ssym]`` AFFINE patterns can preserve the symbolic
@@ -367,15 +258,15 @@ class TileLoad(nodes.LibraryNode):
 
     def __init__(self,
                  name: str,
-                 widths: Tuple[int, ...],
-                 dim_strides: Optional[Tuple[int, ...]] = None,
-                 src_dims: Optional[Tuple[int, ...]] = None,
+                 widths: tuple[int, ...],
+                 dim_strides: tuple[int, ...] | None = None,
+                 src_dims: tuple[int, ...] | None = None,
                  has_mask: bool = False,
                  src_kind: str = TILE,
-                 src_expr: Optional[str] = None,
-                 replicate_factor_per_dim: Optional[Tuple[int, ...]] = None,
-                 gather_dims: Optional[Tuple[int, ...]] = None,
-                 location: Optional[str] = None):
+                 src_expr: str | None = None,
+                 replicate_factor_per_dim: tuple[int, ...] | None = None,
+                 gather_dims: tuple[int, ...] | None = None,
+                 location: str | None = None):
         """Construct a ``TileLoad`` node.
 
         :param name: Node label.
@@ -418,7 +309,7 @@ class TileLoad(nodes.LibraryNode):
                 # (a non-dividing static ``k``, or a symbolic divisor that can't
                 # be proven to divide) it emits the phase-aware per-lane offset
                 # ``(c*iter + c0 + c*__l)/k - (c*iter + c0)/k`` instead (see
-                # :func:`_phase_aware_lane_exprs`). Both are correct.
+                # :func:`phase_aware_lane_exprs`). Both are correct.
                 try:
                     k_int = int(k)
                 except (TypeError, ValueError):
@@ -493,3 +384,174 @@ class TileLoad(nodes.LibraryNode):
             if desc.dtype not in GATHER_INDEX_DTYPES:
                 raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
                                  f"{GATHER_INDEX_DTYPES} (design section 10.4)")
+
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        from dace.symbolic import symstr
+        widths = list(self.widths)
+        K = len(widths)
+        dst_off = tile_offset(widths)
+        dst_dtype = sdfg.arrays[next(e for e in state.out_edges(self) if e.src_conn == "_dst").data.data].dtype.ctype
+        if self.src_kind == SYMBOL:
+            src_ref = f"({dst_dtype})({pyexpr2cpp(self.src_expr)})"
+        elif self.src_kind == SCALAR:
+            # A volume-1 source (a true ``dace.data.Scalar``, a length-1 Array,
+            # or a single-element access) is passed by value (``T _src``) and
+            # referenced bare; a tile-shape source widened upstream is a pointer
+            # read per lane (``_src[off]``). ``[0]`` is a memlet concern, never a
+            # tasklet-body one (a by-value connector is not a pointer).
+            src_edge = next(e for e in state.in_edges(self) if e.dst_conn == "_src")
+            desc = sdfg.arrays[src_edge.data.data]
+            ref, broadcast = scalar_operand_ref(desc, "_src", widths, dst_off)
+            src_ref = f"({dst_dtype})({ref})" if broadcast else ref
+        else:
+            src_edge = next(e for e in state.in_edges(self) if e.dst_conn == "_src")
+            src_arr = sdfg.arrays[src_edge.data.data]
+            ndim = len(src_arr.strides)
+            # Step along the array dim each tile dim maps to (``src_dims``);
+            # default to the last K dims in order (a plain row-major tile).
+            dims = list(self.src_dims) if self.src_dims else list(range(ndim - K, ndim))
+            coeff = list(self.dim_strides) if self.dim_strides else [1] * K
+            replicate = list(self.replicate_factor_per_dim) if self.replicate_factor_per_dim else [1] * K
+            gather_set = set(self.gather_dims)
+            if not gather_set:
+                # Structured path: per-tile-dim affine contributions only.
+                src_strides_tile = [symstr(src_arr.strides[d]) for d in dims]
+                # Non-dividing REPLICATE (``W % D != 0`` or symbolic ``D``) gets a
+                # phase-aware per-lane offset; dividing dims keep the contiguous
+                # ``__l/D`` box (empty entry).
+                lane_exprs = phase_aware_lane_exprs(self, state, src_edge, dims, replicate)
+                src_off = offset_via_strides(coeff, src_strides_tile, replicate, lane_exprs)
+            else:
+                # Source-dim addressing (design section 9.2 / 9.3): per SOURCE dim k in range(ndim),
+                # if k in gather_dims contribute `_idx_<k>[<flat lane>] * src.strides[k]`; otherwise,
+                # if k is the tile-mapped source dim for some tile dim d (via src_dims), contribute
+                # the affine `coeff[d] * src.strides[k] * (__l<d> / replicate[d])`; remaining source
+                # dims fall outside the tile's reach -- their per-iteration index lives in the outer
+                # `_src` memlet subset offset (the lib node addresses through ``_src[<offset>]`` and
+                # the codegen-supplied base pointer carries everything not contributed here).
+                gather_idx_ref = {}
+                for k in self.gather_dims:
+                    conn = f"_idx_{k}"
+                    edge = next(e for e in state.in_edges(self) if e.dst_conn == conn)
+                    idx_shape = tuple(sdfg.arrays[edge.data.data].shape)
+                    deps_d = resolve_gather_deps(idx_shape, widths)
+                    if deps_d is None:
+                        raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
+                                         f"{idx_shape} against widths {tuple(widths)}")
+                    gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
+                src_to_tile = {dims[d]: d for d in range(K)}
+                parts = []
+                for k in range(ndim):
+                    s = symstr(src_arr.strides[k])
+                    if k in gather_set:
+                        parts.append(f"(({gather_idx_ref[k]}) * ({s}))")
+                    elif k in src_to_tile:
+                        d = src_to_tile[k]
+                        lane = f"__l{d}"
+                        # Replicate factor: the box ``__l/D`` is correct only when
+                        # ``D`` divides ``W`` (phase-0). A non-dividing / symbolic
+                        # factor mixed with a gather dim would need the phase-aware
+                        # offset the structured path emits, but the gather branch's
+                        # base addressing differs -- refuse loudly rather than emit
+                        # the phase-0-only box (no silent miscompile).
+                        try:
+                            Di = int(replicate[d])
+                            if Di > 1 and (int(widths[d]) % Di) != 0:
+                                raise NotImplementedError(
+                                    f"{self.label}: non-dividing REPLICATE factor {Di} on tile dim {d} "
+                                    f"(width {widths[d]}) mixed with a gather access is not supported "
+                                    f"(phase-aware replicate-with-remainder is only wired on the "
+                                    f"structured load path).")
+                            emit_div = Di > 1
+                        except (TypeError, ValueError):
+                            raise NotImplementedError(
+                                f"{self.label}: symbolic REPLICATE factor {replicate[d]!r} on tile dim {d} "
+                                f"mixed with a gather access is not supported (cannot prove it divides "
+                                f"width {widths[d]}; phase-aware replicate-with-remainder is only wired "
+                                f"on the structured load path).")
+                        if emit_div:
+                            lane = f"({lane} / {replicate[d]})"
+                        parts.append(f"({coeff[d]} * ({s}) * {lane})")
+                    # else: source dim k has no per-lane contribution; outer base pointer covers it.
+                src_off = " + ".join(parts) if parts else "0"
+            src_ref = f"_src[{src_off}]"
+        if self.has_mask:
+            body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
+        else:
+            body = f"_dst[{dst_off}] = {src_ref};"
+        code = nested_loops(widths, body)
+        inputs = (set() if self.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if self.has_mask else set())
+        inputs |= {f"_idx_{d}" for d in self.gather_dims}
+        tasklet = nodes.Tasklet(
+            label=f"{self.label}_pure",
+            inputs=dict.fromkeys(inputs),
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
+        return tasklet
+
+    def replicated(self) -> bool:
+        """Whether lanes may share a source element, which the linear header loads cannot express.
+
+        A symbolic factor counts: it cannot be shown to be 1.
+        """
+        for factor in self.replicate_factor_per_dim or []:
+            try:
+                if int(factor) > 1:
+                    return True
+            except (TypeError, ValueError):
+                return True
+        return False
+
+    def is_unit_stride_gather(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
+        """Whether this is the gather ``a[idx[i]]`` the ``tile_gather`` header call covers.
+
+        K=1, one gather dim on a 1-D source of unit stride, an index tile of one lane dim, and no replication. The
+        source offset of lane ``l`` is then exactly ``_idx_0[l]``.
+        """
+        if len(self.widths) != 1 or len(self.gather_dims) != 1 or self.replicated() or int(self.gather_dims[0]) != 0:
+            return False
+        in_edges = connected_edges(state, self)
+        source = sdfg.arrays[in_edges["_src"].data.data]
+        if len(source.shape) != 1 or not bool(dace.symbolic.simplify(source.strides[0] == 1)):
+            return False
+        index_edge = in_edges.get("_idx_0")
+        if index_edge is None:
+            return False
+        try:
+            index_shape = tuple(int(extent) for extent in sdfg.arrays[index_edge.data.data].shape)
+        except (TypeError, ValueError):
+            return False
+        return index_shape == (int(self.widths[0]), )
+
+    def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
+        # A broadcast source has no ``_src`` tile for the header to stream, and a replicated one has no per-lane
+        # divisor in it. A gather lowers only in its unit-stride form.
+        return (self.src_kind == TILE and not self.replicated()
+                and (not self.gather_dims or self.is_unit_stride_gather(state, sdfg)))
+
+    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+        in_edges = connected_edges(state, self)
+        vlen = require_k1(self)
+        destination_ctype = edge_ctype(sdfg, output_edge(state, self, "_dst"))
+        masked = "true" if self.has_mask else "false"
+        mask_argument = "_mask" if self.has_mask else "nullptr"
+        inputs = ["_src", "_mask"] if self.has_mask else ["_src"]
+        if self.gather_dims:
+            index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
+            inputs.append("_idx_0")
+            code = (f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
+                    f"(_dst, _src, _idx_0, {mask_argument});")
+        else:
+            stride = k1_array_stride(self, sdfg, in_edges["_src"], self.src_dims)
+            align = align_template_arg(self, state, sdfg, in_edges["_src"], backend, vlen, allow_shift=True)
+            code = (f"dace::tileops::tile_load<{destination_ctype}, {vlen}, {masked}{align}>"
+                    f"(_dst, _src, {mask_argument}, {stride});")
+        return nodes.Tasklet(
+            label=f"{self.label}_{backend}",
+            inputs=dict.fromkeys(inputs),
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
