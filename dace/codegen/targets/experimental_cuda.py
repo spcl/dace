@@ -376,6 +376,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     edge: Tuple[nodes.Node, str, nodes.Node, str,
                                 Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        # One container handed on through the scope exits with a single subset moves nothing; the
+        # CPU copy would take the exit's slice as the source and the whole container as the target.
+        if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
+                and src_node.data == dst_node.data
+                and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))):
+            return
         # All CPU<->GPU and GPU<->GPU AccessNode->AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
         # ``InsertExplicitCopies`` during ``preprocess()`` and
