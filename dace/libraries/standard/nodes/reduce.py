@@ -10,6 +10,7 @@ import dace.serialize
 import dace.library
 from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
 from dace.sdfg import graph
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
@@ -886,21 +887,16 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         #return reduce_node.expand(state)
 
 
-def storage_behind_views(state: SDFGState, node, declared: dtypes.StorageType) -> dtypes.StorageType:
-    """Where a reduce operand's bytes live, asked of the container rather than of an alias.
-
-    A view owns no storage, so what its descriptor declares is whatever it was built with and is
-    right only where some other pass has since matched it to the container it aliases. Reading it
-    directly makes this expansion decide on that second-hand answer: a view of a ``GPU_Global``
-    array still declaring ``Default`` sends a reduction that belongs on the device down the Pure
-    fallback, and the nested operands are then built for the wrong side.
+def storage_behind_views(state: SDFGState, node: dace.nodes.Node, declared: dtypes.StorageType) -> dtypes.StorageType:
     """
-    from dace.sdfg import nodes as nd  # Avoid import loop
-    from dace.sdfg.utils import get_last_view_node
+    Returns the storage of the container ``node`` ultimately views, or ``declared`` if it is not a view.
 
-    if not isinstance(node, nd.AccessNode):
+    A view owns no storage, so its descriptor only declares whatever it was built with, which need not match the
+    container it aliases.
+    """
+    if not isinstance(node, dace.nodes.AccessNode):
         return declared
-    viewed = get_last_view_node(state, node)
+    viewed = sdutil.get_last_view_node(state, node)
     if viewed is None:
         return declared
     return state.sdfg.arrays[viewed.data].storage
@@ -935,7 +931,6 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
         in_type = raw_input_data.dtype
 
-        # Through the alias rather than off it -- see ``storage_behind_views``.
         in_storage = storage_behind_views(state, inedge.src, raw_input_data.storage)
         out_storage = storage_behind_views(state, outedge.dst, raw_output_data.storage)
 
@@ -973,14 +968,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        # Built rather than cloned, the way ``_out`` below is. A clone carries the caller's
-        # descriptor CLASS, so a reduce reading an ``ArrayView`` -- lenet's second one reads a view of
-        # the maxpool input -- gives the nested SDFG a ``_in`` that is a view of nothing: inside, it
-        # is a plain buffer reached through a connector and read by several edges, which validation
-        # refuses ("Ambiguous or invalid edge to/from a View access node"). Building it also keeps
-        # ``offset`` at the rank of the shape, which a cloned-then-reshaped descriptor loses.
+        # Built rather than cloned: a clone would carry an ArrayView's class into the nested SDFG, and keep its
+        # offset at the rank of the original shape.
         nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=in_storage)
-
         nsdfg.add_array('_out',
                         schedule.out_shape,
                         raw_output_data.dtype,
