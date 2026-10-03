@@ -2775,6 +2775,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             loop_cond_expr = '%s %s %s' % (loop_var, loop_cond, astutils.unparse(ast_ranges[0][1]))
+            self.drop_shape_versions_written_in(node)
             loop_region = self._add_loop_region(loop_cond_expr,
                                                 label=f'for_{node.lineno}',
                                                 loop_var=loop_var,
@@ -2904,6 +2905,7 @@ class ProgramVisitor(ExtNodeVisitor):
             add_symbol(self.sdfg, astr, self.declared_symbol_dtype(atom))
 
     def visit_While(self, node: ast.While):
+        self.drop_shape_versions_written_in(node)
         # Get loop condition expression and create the necessary states for it.
         loop_cond, _, test_region = self._visit_test(node.test)
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
@@ -6206,10 +6208,15 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
+    def drop_shape_versions_written_in(self, loop: Union[ast.For, ast.While]):
+        """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
+        does not see: a shape in the body ahead of the write must read the scalar again."""
+        for name in {n.id for n in ast.walk(loop) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}:
+            self.shape_promotions.pop(self.variables.get(name, name), None)
+
     def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
         """Whether the current region is ``defining_region`` or nested in it within the same SDFG. Loops in between do
-        not matter for a shape symbol: a write to its scalar drops it, so it holds the version every later read of an
-        unwritten scalar sees."""
+        not matter for a shape symbol: a write to its scalar drops it, and so does entering a loop that writes it."""
         region = self.cfg_target
         while region is not defining_region:
             if region is None or isinstance(region, SDFG):
@@ -6244,14 +6251,19 @@ class ProgramVisitor(ExtNodeVisitor):
         desc = self.sdfg.arrays[scalar]
         # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
         # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
-        if (fresh or key == scalar) and scalar in self.shape_promotions:
+        # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
+        # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
+        version = fresh or key == scalar or self.variables.get(key) == scalar
+        if version and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
             if self.nested_in_region(region):
+                if fresh:
+                    self.globals[str(version_sym)] = version_sym
                 return version_sym
-        sym = None if fresh else self.indirections.get(key)
+        sym = None if version else self.indirections.get(key)
         if sym is None:
             base = f'__sym_{scalar}'
-            if fresh:
+            if version:
                 # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
                 # reuses; a later index on the same scalar would otherwise re-bind the extent.
                 reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
@@ -6263,15 +6275,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 except FileExistsError:
                     pass  # A cached promotion may re-add an existing symbol.
             sym = dace.symbol(name, dtype=desc.dtype)
-            if not fresh:
+            if not version:
                 self.indirections[key] = sym
-            else:
+            elif fresh:
                 # Shape symbols must resolve inside nested scopes, which look up free symbols in
                 # ``globals``. Subscript promotions must stay out: they shadow names there.
                 self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-        if fresh:
-            self.shape_promotions[scalar] = (sym, self.cfg_target)
+        if version:
+            # A call region runs once, in sequence, so its symbol holds for the rest of the caller's region.
+            region = self.cfg_target
+            while isinstance(region, FunctionCallRegion):
+                region = region.parent_graph
+            self.shape_promotions[scalar] = (sym, region)
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
