@@ -1343,10 +1343,21 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         dst = out_edge.dst
         if feeds_a_store(out_edge):
             return dst
-        if not isinstance(dst, AccessNode):
-            return None
-        stores = [e.dst for e in inner_state.out_edges(dst) if feeds_a_store(e)]
-        return stores[0] if len(stores) == 1 else None
+        # Through plain tile copies (``stage -> tile_out -> store``): each moves every lane unchanged and is the only
+        # reader of a transient it alone writes, so gating the store gates what the copies carry.
+        while isinstance(dst, AccessNode):
+            stores = [e.dst for e in inner_state.out_edges(dst) if feeds_a_store(e)]
+            if stores:
+                return stores[0] if len(stores) == 1 else None
+            out_edges = inner_state.out_edges(dst)
+            if len(out_edges) != 1 or not isinstance(out_edges[0].dst, AccessNode):
+                return None
+            nxt = out_edges[0].dst
+            if (not inner_state.sdfg.arrays[nxt.data].transient or inner_state.in_degree(nxt) != 1
+                    or out_edges[0].data.wcr is not None):
+                return None
+            dst = nxt
+        return None
 
     def _resolve_cond_tile(self, inner_state: SDFGState, cond_edge):
         # Resolve the masked-write condition to a ``widths``-shaped bool tile AccessNode.
