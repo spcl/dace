@@ -64,8 +64,7 @@ def _one_source_copied_into_two_arrays_sdfg() -> dace.SDFG:
 
 
 def _generate_code(sdfg: dace.SDFG):
-    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'), \
-            dace.config.set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         return sdfg.generate_code()
 
 

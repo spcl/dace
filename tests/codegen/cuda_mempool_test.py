@@ -8,7 +8,9 @@ import pytest
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:
     """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
-    return len(re.findall(rf'{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)', code))
+    return len(
+        re.findall(rf'{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)',
+                   code))
 
 
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)

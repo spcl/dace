@@ -255,9 +255,9 @@ def test_nothing_still_names_the_deleted_temporary():
     than here."""
     sdfg = heat3d_after_loop_to_map_and_fusion()
     before = arrays(sdfg)
-    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
     gone = before - arrays(sdfg)
-    assert len(gone) == 2
+    assert len(gone) == 3
     named = {e.data.data for state in sdfg.states() for e in state.edges()}
     named |= {node.data for state in sdfg.states() for node in state.data_nodes()}
     assert not (named & gone), named & gone
@@ -363,9 +363,9 @@ def heat3d_after_loop_to_map_and_fusion() -> dace.SDFG:
 def test_heat3d_after_loop_to_map_and_fusion_drops_transients():
     sdfg = heat3d_after_loop_to_map_and_fusion()
     before = arrays(sdfg)
-    # Guard against a vacuous test: fusion must actually have stranded the two temporaries.
-    assert len(before) == 3, before
-    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+    # Guard against a vacuous test: fusion must actually have stranded the three temporaries.
+    assert len(before) == 4, before
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
     assert len(arrays(sdfg)) == 1
     sdfg.validate()
 
@@ -381,7 +381,7 @@ def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
     for apply_pass in (False, True):
         sdfg = heat3d_after_loop_to_map_and_fusion()
         if apply_pass:
-            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
         sdfg.name = 'heat3d_remat' if apply_pass else 'heat3d_fused_ref'
         a, b = base_a.copy(), base_b.copy()
         sdfg.compile()(TSTEPS=tsteps, A=a, B=b, N=size)

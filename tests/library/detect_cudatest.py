@@ -6,6 +6,7 @@ against the host expansions on the same input, so a divergence is a device bug a
 disagreement about what the answer is.
 """
 import pathlib
+from dace.codegen import common
 import shutil
 import subprocess
 
@@ -151,7 +152,8 @@ def test_scatter_conflict_check_cuda_leaves_the_index_on_the_device():
     sdfg = make_conflict_sdfg('CUDA', 256)
     code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
     assert 'dace::detect_collision_device' in code
-    assert 'cudaMemcpyDeviceToHost' not in code.split('__dace_scatter_conflict')[-1].split('}')[0]
+    assert f'{common.get_gpu_backend()}MemcpyDeviceToHost' not in code.split('__dace_scatter_conflict')[-1].split(
+        '}')[0]
 
 
 @pytest.mark.gpu
