@@ -37,7 +37,7 @@ def _add_metrics_timer_block(sdfg: dace.SDFG, label: str, *, start: bool) -> Con
             'gt_start_timer',
             {},
             {'time': None},
-            ('cudaDeviceSynchronize();\n'
+            (f'{common.get_gpu_backend()}DeviceSynchronize();\n'
              'auto now = std::chrono::high_resolution_clock::now();\n'
              'time = std::chrono::duration_cast<std::chrono::nanoseconds>(\n'
              '    now.time_since_epoch()).count();\n'),
@@ -51,7 +51,7 @@ def _add_metrics_timer_block(sdfg: dace.SDFG, label: str, *, start: bool) -> Con
             'gt_stop_timer',
             {'time_start': None},
             {'time_total': None},
-            ('cudaDeviceSynchronize();\n'
+            (f'{common.get_gpu_backend()}DeviceSynchronize();\n'
              'auto now = std::chrono::high_resolution_clock::now();\n'
              'auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(\n'
              '    now.time_since_epoch()).count();\n'
