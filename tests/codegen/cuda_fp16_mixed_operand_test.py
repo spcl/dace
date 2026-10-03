@@ -61,12 +61,8 @@ def _probe_sdfg(name: str, body: str) -> dace.SDFG:
     outputs = {conn: dtype for conn, dtype in OUTPUTS.items() if conn in body}
     for conn, dtype in {**INPUTS, **outputs}.items():
         sdfg.add_array(conn.upper(), [1], dtype, storage=dtypes.StorageType.GPU_Global)
-    map_entry, map_exit = state.add_map(
-        "probe", {"k": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device
-    )
-    tasklet = state.add_tasklet(
-        "probe", set(INPUTS), set(outputs), body + ";", language=dtypes.Language.CPP
-    )
+    map_entry, map_exit = state.add_map("probe", {"k": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet("probe", set(INPUTS), set(outputs), body + ";", language=dtypes.Language.CPP)
     for conn, dtype in INPUTS.items():
         tasklet.in_connectors[conn] = dtype
         state.add_memlet_path(
@@ -122,9 +118,7 @@ MIXED_EXPRESSIONS = {
 }
 
 
-@pytest.mark.parametrize(
-    "name,body", MIXED_EXPRESSIONS.items(), ids=MIXED_EXPRESSIONS.keys()
-)
+@pytest.mark.parametrize("name,body", MIXED_EXPRESSIONS.items(), ids=MIXED_EXPRESSIONS.keys())
 def test_mixed_half_expression_compiles(name, body):
     error = _compile(name, body)
     assert error is None, f"`{body}` failed to compile:\n{error}"
