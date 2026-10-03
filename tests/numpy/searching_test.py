@@ -80,9 +80,23 @@ def test_numpy_where_cast_stays_a_tasklet():
     assert np.allclose(where_mixed(A, B, C), np.where(C, A, B))
 
 
+def test_numpy_where_with_a_condition_wider_than_the_operands():
+    """ The condition broadcasts the result past both operands: (N, 1) and (N, 1) against an (N, 4) condition. """
+
+    @dace.program
+    def where_wide_condition(A: dace.float64[N, 1], B: dace.float64[N, 1], C: dace.bool_[N, 4]):
+        return np.where(C, A, B)
+
+    A = np.random.randn(N, 1)
+    B = np.random.randn(N, 1)
+    C = np.random.rand(N, 4) > 0.5
+    assert np.allclose(where_wide_condition(A, B, C), np.where(C, A, B))
+
+
 if __name__ == "__main__":
     test_numpy_where()
     test_numpy_select()
     test_numpy_where_uses_the_merge_library_node()
     test_numpy_where_partial_broadcast()
     test_numpy_where_cast_stays_a_tasklet()
+    test_numpy_where_with_a_condition_wider_than_the_operands()

@@ -1,16 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``Broadcast`` library node: Fortran ``SPREAD`` and NumPy ``broadcast_to``."""
-import dace
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
+from dace import SDFG, SDFGState, library, memlet as mm, nodes, properties
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
 
 
-@dace.library.expansion
+@library.expansion
 class ExpandBroadcastPure(ExpandTransformation):
     """One map writing each output element from the source element it broadcasts from."""
 
@@ -23,8 +19,8 @@ class ExpandBroadcastPure(ExpandTransformation):
                                        '_dst_v = _src_v')
 
 
-@dace.library.node
-class Broadcast(dace.sdfg.nodes.LibraryNode):
+@library.node
+class Broadcast(nodes.LibraryNode):
     """Replicate a source array across the destination's shape.
 
     * ``dim`` an integer: Fortran ``SPREAD``, the 1-based axis of the destination the source lacks.
@@ -35,11 +31,11 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
     implementations = {"pure": ExpandBroadcastPure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(dtype=int,
-                                   default=1,
-                                   allow_none=True,
-                                   desc="Fortran 1-based axis position of the new replicated dimension, or "
-                                   "None for a right-aligned NumPy broadcast.")
+    dim = properties.Property(dtype=int,
+                              default=1,
+                              allow_none=True,
+                              desc="Fortran 1-based axis position of the new replicated dimension, or "
+                              "None for a right-aligned NumPy broadcast.")
 
     def __init__(self, name, *, dim=1, **kwargs):
         super().__init__(name, inputs={"_src"}, outputs={"_dst"}, **kwargs)
