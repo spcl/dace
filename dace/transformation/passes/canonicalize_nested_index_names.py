@@ -50,6 +50,9 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
         return names
 
     def _unique(self, base: str, used: Set[str]) -> str:
+        # ``__return_<i>`` names tuple return values, so a renamed ``__return`` must leave that prefix
+        if base.startswith('__return'):
+            base = base.lstrip('_')
         i = 0
         while True:
             cand = '%s_v%d' % (base, i)

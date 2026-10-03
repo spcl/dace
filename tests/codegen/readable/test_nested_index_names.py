@@ -56,11 +56,11 @@ def _nested_sdfg(name, shape, strides):
     return nsdfg
 
 
-def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A"):
-    """Parent A[N,N] element-wise map, plus a no_inline nested SDFG whose connector ``inner_name`` is a
-    view of A with the given (shape, strides). Returns the top SDFG."""
+def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A", outer_name="A"):
+    """Parent ``outer_name[N,N]`` element-wise map, plus a no_inline nested SDFG whose connector ``inner_name``
+    is a view of it with the given (shape, strides). Returns the top SDFG."""
     sdfg = dace.SDFG("nested_view")
-    sdfg.add_array("A", [N, N], dace.float64)
+    sdfg.add_array(outer_name, [N, N], dace.float64)
 
     nsdfg = dace.SDFG("inner")
     nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides)
@@ -74,17 +74,17 @@ def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A"):
 
     st = sdfg.add_state("main")
     # parent element-wise access -> outer A_idx (strides N,1)
-    pr, pw = st.add_access("A"), st.add_access("A")
+    pr, pw = st.add_access(outer_name), st.add_access(outer_name)
     pme, pmx = st.add_map("pm", dict(i="0:N", j="0:N"))
     ptk = st.add_tasklet("pt", {"x"}, {"o"}, "o = x * 2.0")
-    st.add_memlet_path(pr, pme, ptk, dst_conn="x", memlet=dace.Memlet("A[i,j]"))
-    st.add_memlet_path(ptk, pmx, pw, src_conn="o", memlet=dace.Memlet("A[i,j]"))
-    # nested SDFG bound to a 2x2 sub-block of A
-    ar, aw = st.add_access("A"), st.add_access("A")
+    st.add_memlet_path(pr, pme, ptk, dst_conn="x", memlet=dace.Memlet(f"{outer_name}[i,j]"))
+    st.add_memlet_path(ptk, pmx, pw, src_conn="o", memlet=dace.Memlet(f"{outer_name}[i,j]"))
+    # nested SDFG bound to a 2x2 sub-block of the parent array
+    ar, aw = st.add_access(outer_name), st.add_access(outer_name)
     nn = st.add_nested_sdfg(nsdfg, {inner_name}, {inner_name}, symbol_mapping={"N": N})
     nn.no_inline = True
-    st.add_edge(ar, None, nn, inner_name, dace.Memlet("A[0:2, 0:2]"))
-    st.add_edge(nn, inner_name, aw, None, dace.Memlet("A[0:2, 0:2]"))
+    st.add_edge(ar, None, nn, inner_name, dace.Memlet(f"{outer_name}[0:2, 0:2]"))
+    st.add_edge(nn, inner_name, aw, None, dace.Memlet(f"{outer_name}[0:2, 0:2]"))
     sdfg.validate()
     return sdfg
 
@@ -362,6 +362,15 @@ def test_synthetic_view_helpers_have_distinct_bodies(require_experimental):
     assert len(set(a_helpers.values())) == 2, "the two A-derived helpers must have distinct bodies"
 
 
+def test_renamed_return_value_leaves_the_tuple_return_prefix():
+    """A nested ``__return`` renamed to ``__return_v0`` reads as a misnumbered tuple return and fails validation."""
+    sdfg = _nested_view_sdfg([2, 2], [2, 1], inner_name="__return", outer_name="__return")
+    assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    nested = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    assert not any(name.startswith("__return") for name in nested.arrays), sorted(nested.arrays)
+
+
 if __name__ == "__main__":
     test_full_subset_same_name_not_renamed()
     test_identical_signature_kept()
@@ -377,6 +386,7 @@ if __name__ == "__main__":
     test_new_name_avoids_existing_parent_name()
     test_three_level_nesting_all_renamed_uniquely()
     test_scalar_connector_not_renamed()
+    test_renamed_return_value_leaves_the_tuple_return_prefix()
     for k in ("trisolv", "lu", "ludcmp"):
         test_uninlined_kernel_no_duplicate_idx(k)
     print("ok")
