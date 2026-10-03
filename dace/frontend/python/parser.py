@@ -466,6 +466,19 @@ class DaceProgram(pycommon.SDFGConvertible):
             }))
         return result
 
+    def _specialized_key(self, cachekey: cached_program.ProgramCacheKey, sdfg: SDFG, sdfg_args: Dict[str, Any],
+                         argtypes: Dict[str, Data], specified: Set[str],
+                         constant_args: Dict[str, Any]) -> cached_program.ProgramCacheKey:
+        """ The key of the program auto-optimized for the values ``sdfg_args`` gives the free symbols of ``sdfg``. """
+        values = {s: sdfg_args[s] for s in map(str, sdfg.free_symbols) if s in sdfg_args}
+        if not values:
+            return cachekey
+        return self._cache.make_key(argtypes, specified, self.closure_array_keys,
+                                    self.closure_constant_keys | values.keys(), {
+                                        **constant_args,
+                                        **values
+                                    })
+
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe
             program. """
@@ -484,6 +497,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Cache key
         cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
                                         constant_args)
+        # Auto-optimization specializes the SDFG for the symbol values of the call, so its compiled program is keyed
+        # by them as well, under the parsed SDFG it was optimized from
+        autoopt = self.recreate_sdfg and (Config.get_bool('optimizer', 'autooptimize') or self.autoopt)
 
         if self._cache.has(cachekey):
             entry = self._cache.get(cachekey)
@@ -491,6 +507,12 @@ class DaceProgram(pycommon.SDFGConvertible):
             if entry.compiled_sdfg is not None:
                 kwargs.update(arg_mapping)
                 return entry.compiled_sdfg(**self._create_sdfg_args(entry.sdfg, args, kwargs))
+            if autoopt:
+                sdfg_args = self._create_sdfg_args(entry.sdfg, args, {**kwargs, **arg_mapping})
+                speckey = self._specialized_key(cachekey, entry.sdfg, sdfg_args, argtypes, specified, constant_args)
+                compiled = self._cache.get(speckey).compiled_sdfg if self._cache.has(speckey) else None
+                if compiled is not None:
+                    return compiled(**sdfg_args)
 
         # Clear cache to enforce deletion and closure of compiled program
         # self._cache.pop()
@@ -502,18 +524,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         kwargs.update(arg_mapping)
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
-        # Auto-optimization turns THIS call's symbol values into constants, so the artifact it
-        # produces is only valid for them. The cache key carries argument types, not values, so an
-        # entry made from such an SDFG would be handed back for every later value.
-        specialized = False
-
-        if self.recreate_sdfg:
-            # Invoke auto-optimization as necessary
-            if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
-                constants = set(sdfg.constants_prop.keys())
-                sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
-                specialized = bool(sdfg.constants_prop.keys() - constants)
-                sdfg.simplify()
+        if autoopt:
+            # The parsed SDFG stays cached unspecialized: a later call with other symbol values, or a program nesting
+            # this one, must not find an SDFG with this call's values baked in. Parsing updates the closure keys.
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                            constant_args)
+            self._cache.add(cachekey, copy.deepcopy(sdfg), None)
+            cachekey = self._specialized_key(cachekey, sdfg, sdfg_args, argtypes, specified, constant_args)
+            sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
+            sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
             if self.distributed_compilation and mpi4py:
@@ -524,10 +543,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                 binaryobj = sdfg.compile(validate=self.validate)
 
             # Recreate key and add to cache
-            if not specialized:
+            if not autoopt:
                 cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys,
                                                 self.closure_constant_keys, constant_args)
-                self._cache.add(cachekey, sdfg, binaryobj)
+            self._cache.add(cachekey, sdfg, binaryobj)
 
             # Call SDFG
             result = binaryobj(**sdfg_args)
