@@ -368,7 +368,24 @@ def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
     assert np.allclose(out, 3.0), out
 
 
+def test_a_slice_bounded_by_a_size_shares_its_extent():
+    """``psi[:, :my_n]`` reads the same symbol ``np.zeros((N, my_n))`` was sized by, so the copy's extents match."""
+
+    @dace.program
+    def slice_by_size(nib: dace.int64[1], psi: dace.float64[N, N], out: dace.float64[N]):
+        my_n = int(nib[0])
+        tg = np.zeros((N, my_n), dtype=np.float64)
+        tg[:, :] = psi[:, :my_n]
+        out[:] = np.sum(tg, axis=1)
+
+    psi = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros(5)
+    slice_by_size(np.array([3], dtype=np.int64), psi, out)
+    assert np.allclose(out, psi[:, :3].sum(axis=1)), out
+
+
 if __name__ == '__main__':
+    test_a_slice_bounded_by_a_size_shares_its_extent()
     test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_two_arrays_from_one_size_share_their_extent()
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)

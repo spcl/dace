@@ -6242,7 +6242,9 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
-        if fresh and scalar in self.shape_promotions:
+        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
+        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
+        if (fresh or key == scalar) and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
             if self.nested_in_region(region):
                 return version_sym
