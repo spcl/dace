@@ -305,6 +305,24 @@ def test_three_level_nesting_all_renamed_uniquely():
     assert per_sdfg == [{"A"}, {"A_v0"}, {"A_v1"}]
 
 
+def test_a_nested_return_is_not_renamed_into_the_return_namespace():
+    """A nested SDFG's ``__return`` collides with the parent's by name; its fresh name must stay out of the
+    ``__return_<i>`` namespace, which validation reads as a tuple of program return values."""
+    sdfg = dace.SDFG("return_top")
+    sdfg.add_array("__return", [N, N], dace.float64)
+    st = sdfg.add_state("m")
+    nn = st.add_nested_sdfg(_nested_sdfg("__return", [2, 2], [2, 1]), {"__return"}, {"__return"},
+                            symbol_mapping={"N": N})
+    nn.no_inline = True
+    st.add_edge(st.add_access("__return"), None, nn, "__return", dace.Memlet("__return[0:2,0:2]"))
+    st.add_edge(nn, "__return", st.add_access("__return"), None, dace.Memlet("__return[0:2,0:2]"))
+    sdfg.validate()
+    assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    inner = [s for s in sdfg.all_sdfgs_recursive() if s is not sdfg][0]
+    assert set(inner.arrays) == {"nested__return_v0"}
+
+
 def test_scalar_connector_not_renamed():
     """A Scalar connector has no ``<name>_idx`` helper (no strides), so it can never collide and must be
     left alone even if it shares a name with a parent array."""
@@ -376,6 +394,7 @@ if __name__ == "__main__":
     test_inout_connector_renamed_on_both_sides()
     test_new_name_avoids_existing_parent_name()
     test_three_level_nesting_all_renamed_uniquely()
+    test_a_nested_return_is_not_renamed_into_the_return_namespace()
     test_scalar_connector_not_renamed()
     for k in ("trisolv", "lu", "ludcmp"):
         test_uninlined_kernel_no_duplicate_idx(k)
