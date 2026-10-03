@@ -1039,6 +1039,8 @@ def from_schedule_tree(
     result.constants_prop = copy.deepcopy(stree.constants)
     result.symbols = copy.deepcopy(stree.symbols)
 
+    zeroed = set(stree.zero_initialized)
+
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)
 
@@ -1052,6 +1054,12 @@ def from_schedule_tree(
             for edge in state.edges():
                 edge.data.try_initialize(nested_sdfg, state, edge)
     propagation.propagate_memlets_sdfg(result)
+
+    # Zero-initialized containers: code generation zeroes an array where it allocates it, at one of its access nodes
+    if zeroed:
+        for node, _ in result.all_nodes_recursive():
+            if isinstance(node, nodes.AccessNode) and node.data in zeroed:
+                node.setzero = True
 
     return result
 
