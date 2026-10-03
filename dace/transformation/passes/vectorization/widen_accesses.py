@@ -290,7 +290,7 @@ class WidenAccesses(ppl.Pass):
         iv = next((sym for sym in as_expr(beg).free_symbols if str(sym) == iter_var), None)
         if iv is None:
             return None
-        step = dace.symbolic.simplify(beg.subs(iv, iv + 1) - beg)
+        step = dace.symbolic.simplify(beg.subs(iv, as_expr(iv) + 1) - beg)
         if any(str(sym) == iter_var for sym in as_expr(step).free_symbols) or as_expr(step).is_negative:
             return None
         return step

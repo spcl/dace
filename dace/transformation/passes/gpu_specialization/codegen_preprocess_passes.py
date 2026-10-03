@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from dace import SDFG, Memlet, dtypes, nodes, properties
 from dace.codegen import common
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.optionals import required
 
 
 @properties.make_properties
@@ -21,7 +22,7 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         from dace.sdfg import infer_types
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
 
 
 @properties.make_properties
@@ -40,7 +41,7 @@ class ExpandLibraryNodes(ppl.Pass):
         from dace.sdfg import infer_types
         sdfg.expand_library_nodes(recursive=True)
         # Expansions spawn nested SDFGs with ``Default``-scheduled maps, which codegen rejects.
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
         return True
 
 

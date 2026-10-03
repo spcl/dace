@@ -65,7 +65,7 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
                 for expr in rng:
                     if not isinstance(expr, sympy.Basic) or sym not in expr.free_symbols:
                         continue
-                    coeff = as_expr(expr).coeff(sym, 1)
+                    coeff = as_expr(expr).coeff(as_expr(sym), 1)
                     # Affine iff removing the linear term leaves the parameter behind entirely.
                     if sym in required(coeff).free_symbols or sym in as_expr(
                             symbolic.simplify(expr - coeff * sym)).free_symbols:

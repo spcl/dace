@@ -38,6 +38,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype`` (exact-width types).
 INDEX_CTYPES = {'int64': 'int64_t', 'int32': 'int32_t'}
@@ -214,8 +215,8 @@ def flat_offset(indices: List, desc: dt.Data):
     """Flat element offset ``index . strides + offset . strides``, as the ``<array>_idx`` helper computes."""
     strides = [symbolic.pystr_to_symbolic(str(s)) for s in desc.strides]
     offset = [symbolic.pystr_to_symbolic(str(o)) for o in desc.offset]
-    flat = sum(symbolic.pystr_to_symbolic(indices[i]) * strides[i] for i in range(len(strides)))
-    return flat + sum(offset[i] * strides[i] for i in range(len(strides)))
+    flat = sum(as_expr(symbolic.pystr_to_symbolic(indices[i])) * as_expr(strides[i]) for i in range(len(strides)))
+    return flat + sum(as_expr(offset[i]) * as_expr(strides[i]) for i in range(len(strides)))
 
 
 def parenthesized_ptr(expr: str) -> str:
@@ -480,7 +481,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if key in accesses:
                 continue
             flat = symbolic.pystr_to_symbolic(flat_offset(idx_tuple, desc))
-            per_iter = symbolic.pystr_to_symbolic(flat.subs(loop_sym, loop_sym + skip_sym) - flat).simplify()
+            per_iter = symbolic.pystr_to_symbolic(
+                as_expr(flat.subs(loop_sym,
+                                  as_expr(loop_sym) + as_expr(skip_sym))) - as_expr(flat)).simplify()
             if loop_sym in per_iter.free_symbols:
                 return {}
             ptrname = self.ptr(name, desc, sdfg)
@@ -992,9 +995,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         table = self._eager_alloc_scopes
         if table is None:
             table = {}
-            for alloc_scope, entries in self._frame.to_allocate.items():
+            for alloc_scope, entries in required(self._frame).to_allocate.items():
                 for tsdfg, _, alloc_node, _, _, _ in entries:
-                    table.setdefault((id(tsdfg), alloc_node.data), []).append(alloc_scope)
+                    table.setdefault((id(tsdfg), required(alloc_node).data), []).append(alloc_scope)
             self._eager_alloc_scopes = table
         found = table.get((id(sdfg), name))
         if found is None or len(found) != 1:

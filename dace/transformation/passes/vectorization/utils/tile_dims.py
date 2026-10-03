@@ -175,7 +175,7 @@ def _structured_coeff_in(b_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | Non
         function (e.g. ``2`` for ``int_floor(2*i, 2)``), else ``None``.
     """
     # membership, subs and the coeff walk below all go through identity; equalize first
-    b_sym, var_sym = equalize_symbols_across(b_sym, var_sym)
+    b_sym, var_sym = equalize_symbols_across(as_expr(b_sym), var_sym)
     if var_sym not in b_sym.free_symbols:
         return None
     subtrees = [s for s in _structured_subtrees(b_sym) if var_sym in s.free_symbols]

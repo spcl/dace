@@ -359,12 +359,12 @@ class BreakAntiDependence(ppl.Pass):
             # ``simplify`` never introduces a free symbol that was not already there,
             # so an ``isym`` the raw (already term-collected) difference has dropped
             # stays dropped -- test that first and only simplify when it has not.
-            wb_minus_i = wb - isym
+            wb_minus_i = wb - as_expr(isym)
             if isym not in as_expr(wb_minus_i).free_symbols or isym not in as_expr(
                     symbolic.simplify(wb_minus_i)).free_symbols:
                 alpha = 1
             else:
-                wb_plus_i = wb + isym
+                wb_plus_i = wb + as_expr(isym)
                 if isym not in as_expr(wb_plus_i).free_symbols or isym not in as_expr(
                         symbolic.simplify(wb_plus_i)).free_symbols:
                     alpha = -1

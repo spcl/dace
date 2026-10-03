@@ -70,6 +70,7 @@ from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, Sta
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Stand-ins for the two slice indices while a body state's value expression is resolved:
 #: the row inside the ``C[0:i, j]`` scatter, and the column inside the ``C[i, 0:N]`` finalize.
@@ -97,7 +98,7 @@ def _is_point(axis: Tuple[object, object, object], p: object) -> bool:
 def _is_lower_tri(axis: Tuple[object, object, object], p: object) -> bool:
     """Axis is the half-open triangular range ``0:p`` (``begin 0``, ``end p-1``)."""
     b, e, s = axis
-    return equals(b, 0) and equals(e, symbolic.pystr_to_symbolic(str(p)) - 1) and equals(s, 1)
+    return equals(b, 0) and equals(e, as_expr(symbolic.pystr_to_symbolic(str(p))) - 1) and equals(s, 1)
 
 
 def _is_scalar_point(subset: subsets.Subset) -> bool:
@@ -568,8 +569,8 @@ def col_slice(subset: Optional[subsets.Subset], rows: object, col: object) -> bo
         return False
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
     return (equals(rb, 0) and equals(re_,
-                                     symbolic.pystr_to_symbolic(str(rows)) - 1) and equals(rs, 1) and equals(cb, col)
-            and equals(ce, col) and equals(cs, 1))
+                                     as_expr(symbolic.pystr_to_symbolic(str(rows))) - 1) and equals(rs, 1)
+            and equals(cb, col) and equals(ce, col) and equals(cs, 1))
 
 
 def row_slice(subset: Optional[subsets.Subset], row: object, cols: object) -> bool:
@@ -579,7 +580,7 @@ def row_slice(subset: Optional[subsets.Subset], row: object, cols: object) -> bo
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
     return (equals(rb, row) and equals(re_, row) and equals(rs, 1) and equals(cb, 0)
             and equals(ce,
-                       symbolic.pystr_to_symbolic(str(cols)) - 1) and equals(cs, 1))
+                       as_expr(symbolic.pystr_to_symbolic(str(cols))) - 1) and equals(cs, 1))
 
 
 def point_of(subset: Optional[subsets.Subset], index: object) -> bool:

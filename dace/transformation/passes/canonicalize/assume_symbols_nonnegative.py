@@ -265,7 +265,7 @@ def collect_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
       assumption here, so only genuine no-fallback preconditions reach the trap.
     """
     free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
-    assumptions: List = [symbolic.pystr_to_symbolic(s) >= 0 for s in _signed_integer_free_symbols(sdfg)]
+    assumptions: List = [as_expr(symbolic.pystr_to_symbolic(s)) >= 0 for s in _signed_integer_free_symbols(sdfg)]
     for relation in tracked_assumptions(sdfg):
         if all(s.name in free for s in as_expr(relation).free_symbols) and relation not in assumptions:
             assumptions.append(relation)

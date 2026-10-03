@@ -183,7 +183,7 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
     """
     expr = symbolic.simplify(expr)
     if expr.is_number:
-        return bool(expr >= 0)
+        return bool(as_expr(expr) >= 0)
     positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
     return as_expr(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
 
@@ -620,11 +620,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             parent.remove_edge(e)
         parent.remove_node(cb)
         for e in in_edges:
-            parent.add_edge(e.src, ct_state, e.data)
+            parent.add_edge(required(e).src, ct_state, required(e).data)
         parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
         parent.add_edge(ce_state, am_state, dace.InterstateEdge())
         for e in out_edges:
-            parent.add_edge(am_state, e.dst, e.data)
+            parent.add_edge(am_state, required(e).dst, required(e).data)
 
         # ITE tasklets. Non-writing arm contributes pre-cb value (reads original ``arr``,
         # intact because writing arm targets its private temp). Resolve cond once so the

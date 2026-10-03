@@ -20,6 +20,7 @@ from dace.transformation.layout.line_graph import KernelState
 from dace.transformation.layout.nest_eval import MAX_PERMUTE_NDIM, evaluate_nest
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Illustrative CPU parameters; shared so both providers price relayouts identically.
 EXAMPLE_CPU = LogGP(L=95e-9,
@@ -139,8 +140,10 @@ def model_costs(sdfg: SDFG,
                 entry = nest_entries(state)[0]
                 counts = count_loop_nest(state, entry, line_bytes=p.line_bytes, sector_bytes=p.sector_bytes)
                 own = counts.arrays[array]
-                messages = float(dace.symbolic.evaluate(own.messages_per_iter * counts.total_iters, subs))
-                moved = float(dace.symbolic.evaluate(own.bytes_moved_per_iter * counts.total_iters, subs))
+                messages = float(
+                    dace.symbolic.evaluate(as_expr(own.messages_per_iter) * as_expr(counts.total_iters), subs))
+                moved = float(
+                    dace.symbolic.evaluate(as_expr(own.bytes_moved_per_iter) * as_expr(counts.total_iters), subs))
                 concurrency = exposed_concurrency(state, entry, p, n_cores)
                 node_cost[key] = float(nest_memory_time(p, moved, messages, concurrency))
     entry_needed, last_write = liveness_facts(sdfg, kernels, arrays)

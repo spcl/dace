@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import sympy
 
 from dace import symbolic
+from dace.sdfg.narrowing import as_expr
 
 
 def _sym(x):
@@ -145,9 +146,9 @@ class Pad:
         p = self._coarsest_pos(m)
         old = m.digits[p]
         digits = list(m.digits)
-        digits[p] = Digit(self.dim, old.stride, old.extent + _sym(self.amount))
+        digits[p] = Digit(self.dim, old.stride, old.extent + as_expr(_sym(self.amount)))
         sizes = dict(m.dim_sizes)
-        sizes[self.dim] = _sym(sizes.get(self.dim, 0)) + _sym(self.amount)
+        sizes[self.dim] = as_expr(_sym(sizes.get(self.dim, 0))) + as_expr(_sym(self.amount))
         return replace(m, dim_sizes=sizes, digits=tuple(digits))
 
     def inverse(self) -> 'Pad':
@@ -223,7 +224,7 @@ def _fuse_pair(a, b):
             return []
         return [fused]
     if isinstance(a, Pad) and isinstance(b, Pad) and a.dim == b.dim:
-        total = _sym(a.amount) + _sym(b.amount)
+        total = as_expr(_sym(a.amount)) + as_expr(_sym(b.amount))
         if total == 0:
             return []
         return [Pad(a.dim, total)]

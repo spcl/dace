@@ -55,6 +55,7 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
     SequentializeUnprofitableParallelScopes)
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
+from dace.optionals import required
 
 
 def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = True) -> SDFG:
@@ -76,7 +77,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     # ``Sequential``. Resolve them first so the cost model below rules on the schedules that will
     # actually be emitted, and so this stage's output states its verdicts outright instead of
     # leaving half of them implicit in a codegen rule.
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
 
     CalibrateCpuThresholds().apply_pass(sdfg, {})
     if break_anti_dependence:

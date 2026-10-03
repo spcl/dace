@@ -547,8 +547,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         # Poly-based affine helpers return None for non-affine / degree>1 / relational.
         # Only |coeff| == 1 maps to a single-symbol binop; others need a multiply too.
-        coeff = _affine_coeff_for(expr, a_conn)
-        offset = _affine_offset_for(expr, a_conn)
+        coeff = _affine_coeff_for(as_expr(expr), a_conn)
+        offset = _affine_offset_for(as_expr(expr), a_conn)
         if coeff is None or offset is None:
             return None
         if coeff == 1:

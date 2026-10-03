@@ -277,7 +277,7 @@ class LoopStridePermutation(ppl.Pass):
             return False
 
         osym = pystr_to_symbolic(ovar)
-        c = required(as_expr(i0)).coeff(osym, 1)
+        c = required(as_expr(i0)).coeff(as_expr(osym), 1)
         d = dace.symbolic.simplify(i0 - required(c) * osym)
         if osym in as_expr(d).free_symbols or not required(c).is_integer or not required(c).is_positive:
             return False
@@ -340,7 +340,7 @@ class LoopStridePermutation(ppl.Pass):
                     continue
                 for rng, stride in zip(subset.ndrange(), desc.strides):
                     try:
-                        is_unit = bool(dace.symbolic.simplify(pystr_to_symbolic(stride) - 1) == 0)
+                        is_unit = bool(dace.symbolic.simplify(as_expr(pystr_to_symbolic(stride)) - 1) == 0)
                     except Exception:  # noqa: BLE001
                         is_unit = False
                     if not is_unit:
@@ -350,7 +350,7 @@ class LoopStridePermutation(ppl.Pass):
                     for v in loop_vars:
                         if v not in free:
                             continue
-                        coeff = as_expr(index_expr).coeff(pystr_to_symbolic(v), 1)
+                        coeff = as_expr(index_expr).coeff(as_expr(pystr_to_symbolic(v)), 1)
                         if sympy.Abs(coeff) == 1:
                             result.add(v)
         return result

@@ -328,7 +328,7 @@ class ChunkAntiDependence(ppl.Pass):
         # tasklet supplies once the program is running -- a persistent buffer is allocated in
         # ``__dace_init``, where that symbol does not yet exist and the C++ does not compile. The
         # seam is a couple of dozen elements, so allocating it per call costs nothing.
-        buf, desc = sdfg.add_transient(f'{arr}_antidep_seam', [threads + 1],
+        buf, desc = sdfg.add_transient(f'{arr}_antidep_seam', [as_expr(threads) + 1],
                                        sdfg.arrays[snap].dtype,
                                        storage=sdfg.arrays[snap].storage,
                                        lifetime=dtypes.AllocationLifetime.State,
@@ -350,7 +350,7 @@ class ChunkAntiDependence(ppl.Pass):
         me.map.range = subsets.Range([(lo + 1, hi, 1)])
         self._tile(state, sdfg, me, chunk)
         inner_lo, inner_hi, _ = me.map.range[0]
-        me.map.range = subsets.Range([(_exact(inner_lo), _exact(inner_hi) - 1, 1)])
+        me.map.range = subsets.Range([(_exact(inner_lo), as_expr(_exact(inner_hi)) - 1, 1)])
         for n in state.data_nodes():
             if n.data == snap:
                 n.data = arr

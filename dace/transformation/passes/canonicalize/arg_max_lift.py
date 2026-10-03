@@ -691,9 +691,9 @@ class ArgMaxLift(ppl.Pass):
             op=op,
             loop=loop,
             parent=loop.parent_graph,
-            carrier_name=carrier_name,
+            carrier_name=required(carrier_name),
             carrier_kind=carrier_kind,
-            carrier_subset=carrier_subset,
+            carrier_subset=required(carrier_subset),
             input_array=input_array,
             iter_start=start,
             iter_end=end,
@@ -821,7 +821,7 @@ class ArgMaxLift(ppl.Pass):
                         outer_loop=outer_loop,
                         inner_loop=inner_loop,
                         parent=outer_loop.parent_graph,
-                        carrier_name=carrier_name,
+                        carrier_name=required(carrier_name),
                         x_idx_name=x_idx_name,
                         y_idx_name=y_idx_name,
                         input_array=array,
@@ -1166,7 +1166,7 @@ class ArgMaxLift(ppl.Pass):
         except Exception:  # pragma: no cover -- defensive parse guard
             return None
         # membership and .coeff both go through identity; equalize before either
-        idx, lv = symbolic.equalize_symbols_across(idx, lv)
+        idx, lv = symbolic.equalize_symbols_across(as_expr(idx), as_expr(lv))
         if lv not in idx.free_symbols:
             return None
         # Linear-in-``lv`` decomposition: idx == base + coeff*lv with neither
@@ -1927,7 +1927,7 @@ class ArgMaxLift(ppl.Pass):
             # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
             # unresolved. The iteration count is known here exactly.
             in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
-            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=m.transform)
+            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=required(m.transform))
         argmax_state.add_node(node)
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))

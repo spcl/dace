@@ -43,6 +43,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
+from dace.sdfg.narrowing import as_expr
 
 #: Per-SDFG context: data name -> states referencing an AccessNode for it. A merge deletes a
 #: whole body state, which changes this, so it is rebuilt once per sweep rather than cached
@@ -93,7 +94,8 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         # The two expressions come from different sources (two memlets, a subset against a reparsed
         # bound), so a shared name can carry two symbol instances with different dtypes. Subtraction
         # goes through identity, not name, and would leave ``i - i`` uncancelled.
-        pa, pb = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
+        pa, pb = symbolic.equalize_symbols_across(as_expr(symbolic.pystr_to_symbolic(a)),
+                                                  as_expr(symbolic.pystr_to_symbolic(b)))
         diff = symbolic.simplify(pa - pb)
         if diff == 0:
             return True
@@ -215,7 +217,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             if start is None or end is None:
                 return False
         # Adjacency: first's exclusive end (last value + 1) == second's start.
-        first_end_excl = symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(first)) + 1)
+        first_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(first))) + 1)
         second_start = loop_analysis.get_init_assignment(second)
         if not _symbolically_equal(first_end_excl, second_start):
             return False
@@ -296,7 +298,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         :param link: The ``first -> second`` sequencing edge (removed with ``second``).
         """
         var = first.loop_variable
-        new_end_excl = symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(second)) + 1)
+        new_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(second))) + 1)
         first.loop_condition = dace.properties.CodeBlock(f"{var} < ({symbolic.symstr(new_end_excl)})")
 
         out_edges = list(cfg.out_edges(second))

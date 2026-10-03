@@ -80,7 +80,9 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
     found: Optional[Tuple[int, int]] = None
     for axis, (begin, end, step) in enumerate(subset.ndrange()):
         begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
-        if symbolic.simplify(end - begin) != 0 or symbolic.simplify(symbolic.pystr_to_symbolic(step) - 1) != 0:
+        if symbolic.simplify(as_expr(end) -
+                             as_expr(begin)) != 0 or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(step)) -
+                                                                       1) != 0:
             return None
         ivar = symbol_named(begin, loop_var)
         if ivar is None:

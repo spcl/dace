@@ -53,7 +53,7 @@ from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_map_entry
+from dace.sdfg.narrowing import as_expr, as_map_entry
 
 
 def full_range(desc: dace.data.Data) -> Range:
@@ -111,7 +111,7 @@ def is_identity_tasklet(tasklet: nodes.Tasklet, params: List[str]) -> bool:
         return False
     p0 = symbolic.pystr_to_symbolic(params[0], simplify=False)
     p1 = symbolic.pystr_to_symbolic(params[1], simplify=False)
-    diff = left - right
+    diff = as_expr(left) - as_expr(right)
     # ``p == q`` (offset 0) is the true identity; ``p == q - k`` (k != 0) is a
     # shifted diagonal (numpy.eye's k argument) and must be refused.
     return symbolic.simplify(diff - (p0 - p1)) == 0 or symbolic.simplify(diff - (p1 - p0)) == 0

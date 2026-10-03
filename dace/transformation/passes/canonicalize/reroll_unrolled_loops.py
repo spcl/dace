@@ -74,7 +74,7 @@ def _offset_of_index(index_expr: str, loop_var: str) -> Optional[int]:
         return None
     if loop_var not in (str(s) for s in expr.free_symbols):
         return None
-    return _const_int(expr - symbolic.pystr_to_symbolic(loop_var))
+    return _const_int(as_expr(expr) - as_expr(symbolic.pystr_to_symbolic(loop_var)))
 
 
 def _index_offset(subset: Subset, loop_var: str) -> Optional[int]:
@@ -992,7 +992,7 @@ class RerollUnrolledLoops(ppl.Pass):
         loop_end = symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(loop))
         init = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(loop))
         step = symbolic.pystr_to_symbolic(loop_analysis.get_loop_stride(loop))
-        last_i = init + step * symbolic.int_floor(loop_end - init, step)
+        last_i = init + step * symbolic.int_floor(as_expr(loop_end) - as_expr(init), step)
         new_excl = last_i + m * g
         loop.update_statement = dace.properties.CodeBlock(f"{loop_var} = {loop_var} + {g}")
         loop.loop_condition = dace.properties.CodeBlock(f"{loop_var} < ({symbolic.symstr(new_excl)})")

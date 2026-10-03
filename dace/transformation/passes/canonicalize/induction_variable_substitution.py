@@ -717,7 +717,8 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             for e in br.edges():
                 for lhs, rhs in (e.data.assignments or {}).items():
                     try:
-                        delta = symbolic.simplify(symbolic.pystr_to_symbolic(rhs) - symbolic.pystr_to_symbolic(lhs))
+                        delta = symbolic.simplify(
+                            as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs)))
                     except Exception:
                         continue
                     if as_expr(delta).is_number:
@@ -1017,7 +1018,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             staged = staged_iedge_rhs(rhs, e.src, sdfg)
             rhs_expr = symbolic.pystr_to_symbolic(rhs) if staged is None else staged
             lhs_sym = symbolic.pystr_to_symbolic(lhs)
-            diff = symbolic.simplify(rhs_expr - lhs_sym)
+            diff = symbolic.simplify(rhs_expr - as_expr(lhs_sym))
         except Exception:
             # ``rhs`` may be a comparison (``StrictGreaterThan`` etc.) or
             # other non-arithmetic expression on which ``-`` raises
@@ -1090,7 +1091,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             return False
 
     # 3. Closed form: with the increment stripped, ``sym`` is ``sym_init``.
-    post_iedge_expr = symbolic.simplify(sym_sym + body_offset * step)
+    post_iedge_expr = symbolic.simplify(as_expr(sym_sym) + body_offset * step)
 
     # 4. Clear the IV iedge first so the substitution does not rewrite it onto itself.
     iv_edge.data.assignments = {}
@@ -1100,7 +1101,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     # 5. Materialize ``sym + trip_count * step`` for later readers (and the next outer iteration) on
     #    the iedge into a spliced ``iv_post`` state; existing exit edges are rerouted from it.
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    post_loop_expr = symbolic.simplify(sym_sym + trip_count * step)
+    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + trip_count * step)
     post_loop_value = symbolic.symstr(post_loop_expr)
 
     # Two-level counter (s126): if the lone unconditional exit edge only assigns ``sym``, compose

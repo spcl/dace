@@ -342,7 +342,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         chains = [gpu_levels(state, node) for node, state in accesses]
         deepest = max(chains, key=len)
         for chain in chains:
-            if [entry for entry, _ in required(chain)] != [entry for entry, _ in deepest[:len(chain)]]:
+            if [entry for entry, _ in required(chain)] != [entry for entry, _ in required(deepest[:len(chain)])]:
                 raise NotImplementedError(f"Cannot lift '{name}': it is accessed under sibling GPU maps")
         return deepest
 

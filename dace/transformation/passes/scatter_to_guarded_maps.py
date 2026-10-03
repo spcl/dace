@@ -487,8 +487,8 @@ def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
 
     j = symbolic.pystr_to_symbolic(loop_var)
     dim_expr = symbolic.pystr_to_symbolic(astutils.unparse(dim_nodes[dim]))
-    coeff = as_expr(dim_expr).coeff(j, 1)
-    const = as_expr(dim_expr).coeff(j, 0)
+    coeff = as_expr(dim_expr).coeff(as_expr(j), 1)
+    const = as_expr(dim_expr).coeff(as_expr(j), 0)
     if symbolic.simplify(dim_expr - (required(coeff) * j + const)) != 0:
         return None  # not affine in the loop variable
 
@@ -637,7 +637,8 @@ def point_index_expressions(subset) -> Optional[List[str]]:
     """Per-dimension index of a subset addressing exactly one element, or ``None`` if it spans."""
     exprs: List[str] = []
     for rb, re_, _ in subset.ndrange():
-        if symbolic.simplify(symbolic.pystr_to_symbolic(str(rb)) - symbolic.pystr_to_symbolic(str(re_))) != 0:
+        if symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(str(rb))) - as_expr(symbolic.pystr_to_symbolic(str(re_)))) != 0:
             return None
         exprs.append(str(rb))
     return exprs

@@ -715,7 +715,7 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
     if expr is None:
         return False
     try:
-        return symbolic.simplify(expr - pystr_to_symbolic(conns[0]) - pystr_to_symbolic(conns[1])) == 0
+        return symbolic.simplify(expr - pystr_to_symbolic(conns[0]) - as_expr(pystr_to_symbolic(conns[1]))) == 0
     except (TypeError, ValueError):
         return False
 
@@ -854,7 +854,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
 
     if any(n not in visited and not (entry is None and n is write_node) for n in body):
         return None  # the body computes something the lifted node would drop
-    coeff, leaves = _flatten(term)
+    coeff, leaves = _flatten(required(term))
     return _BodyValue(out_array, out_idx, coeff, leaves, accumulates, write_node)
 
 

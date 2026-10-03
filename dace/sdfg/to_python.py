@@ -1488,7 +1488,7 @@ def _values_equal(a, b) -> bool:
         return False
     try:
         if isinstance(a, sympy.Basic) or isinstance(b, sympy.Basic):
-            return symbolic.simplify(sympy.sympify(a) - sympy.sympify(b)) == 0
+            return symbolic.simplify(as_expr(sympy.sympify(a)) - as_expr(sympy.sympify(b))) == 0
     except Exception:
         pass
     try:

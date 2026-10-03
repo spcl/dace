@@ -9,6 +9,7 @@ import sympy as sp
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 from dace.transformation.layout.cost_model.loggp import (LogGP, bandwidth_delay_product, nest_memory_time, regime)
+from dace.sdfg.narrowing import as_expr
 
 # LOCAL (free-for-now) storage: registers + GPU shared memory.
 LOCAL_STORAGE: FrozenSet[dace.dtypes.StorageType] = frozenset(
@@ -79,24 +80,25 @@ class LoopNestLogP:
 
     def total_time_bandwidth(self) -> sp.Basic:
         """Bandwidth term alone: total_bytes * G; binds at saturation."""
-        return self.total_bytes() * self.p.G
+        return as_expr(self.total_bytes()) * self.p.G
 
     def total_time_latency(self) -> sp.Basic:
         """Latency term alone: total_messages * L / concurrency (Little's Law)."""
-        return self.total_messages() * self.p.L / self.concurrency
+        return as_expr(self.total_messages()) * self.p.L / self.concurrency
 
     def latency_per_iter(self) -> sp.Basic:
         """Latency per iteration at C=1: full L per message, global arrays only."""
-        return sp.Add(*[a.messages_per_iter * self.p.L for a in self._globals()]) if self._globals() else sp.Integer(0)
+        return sp.Add(*[as_expr(a.messages_per_iter) * self.p.L
+                        for a in self._globals()]) if self._globals() else sp.Integer(0)
 
     def bandwidth_per_iter(self) -> sp.Basic:
         """Bandwidth term per iteration: the bytes that cross the channels times the per-byte gap."""
-        return sp.Add(*[a.bytes_moved_per_iter * self.p.G
+        return sp.Add(*[as_expr(a.bytes_moved_per_iter) * self.p.G
                         for a in self._globals()]) if self._globals() else sp.Integer(0)
 
     def time_per_iter(self) -> sp.Basic:
         """Serialised per-iteration cost L*messages + G*bytes; diagnostic ceiling, not a predictor."""
-        return self.latency_per_iter() + self.bandwidth_per_iter()
+        return as_expr(self.latency_per_iter()) + as_expr(self.bandwidth_per_iter())
 
     def total_messages(self) -> sp.Basic:
         """Total latency events: new blocks touched at REQUEST (line) granularity, whole nest."""
@@ -112,7 +114,7 @@ class LoopNestLogP:
 
     def total_time_serialized(self) -> sp.Basic:
         """Zero-overlap upper bound L*M + G*B; ratio to total_time is the credited overlap."""
-        return self.time_per_iter() * self.total_iters
+        return as_expr(self.time_per_iter()) * as_expr(self.total_iters)
 
 
 def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> List[Dict[str, dace.subsets.Range]]:
@@ -218,7 +220,7 @@ def count_loop_nest(state: dace.SDFGState,
     for nest in loop_ranges:
         for begin, end, step in nest.values():
             total_iters *= dace.symbolic.int_floor(
-                dace.symbolic.pystr_to_symbolic(end) - dace.symbolic.pystr_to_symbolic(begin),
+                as_expr(dace.symbolic.pystr_to_symbolic(end)) - as_expr(dace.symbolic.pystr_to_symbolic(begin)),
                 dace.symbolic.pystr_to_symbolic(step)) + 1
 
     dynamic = dynamic_memlet_arrays(state, map_entry)
@@ -255,12 +257,12 @@ def count_loop_nest(state: dace.SDFGState,
             if messages is None:
                 raise ValueError(f"array {name!r}: blocks_touched cannot reduce its access subset "
                                  f"{subset}; refusing to silently drop its cost from the nest")
-            messages = messages * line_span
+            messages = as_expr(messages) * line_span
             if sector_elems == line_elems and sector_span == line_span:
                 sectors = messages
             else:
                 sectors = average_blocks_touched(state, loop_ranges, {name: subset}, sector_elems)[name]
-                sectors = sectors * sector_span
+                sectors = as_expr(sectors) * sector_span
         # written block moves twice (fetch + writeback); messages stay 1x (writeback posted, no reply).
         # Unconditional: only a non-temporal store avoids the fetch, and `sectors` carries a 1/N edge term
         # whose sign sympy cannot resolve, so coverage is not derivable here (cf. relayout.block_traffic).
@@ -292,8 +294,8 @@ def sign_of(expr: sp.Basic) -> str:
 
 def dominance_verdict(a: NestCounts, b: NestCounts, subs: Dict = None) -> str:
     """TIER-0 dominance-lemma comparison: "first"|"second"|"tie"|"undecided" (undecided if counts disagree or sign unknown)."""
-    dm = a.messages() - b.messages()
-    db = a.bytes_moved() - b.bytes_moved()
+    dm = as_expr(a.messages()) - as_expr(b.messages())
+    db = as_expr(a.bytes_moved()) - as_expr(b.bytes_moved())
     if subs:
         dm, db = dm.subs(subs), db.subs(subs)
     sm, sb = sign_of(dm), sign_of(db)

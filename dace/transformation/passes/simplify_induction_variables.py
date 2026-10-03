@@ -94,7 +94,7 @@ def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
     try:
         lhs_sym = symbolic.pystr_to_symbolic(name)
         rhs_sym = symbolic.pystr_to_symbolic(rhs)
-        unsimplified = rhs_sym - lhs_sym
+        unsimplified = as_expr(rhs_sym) - as_expr(lhs_sym)
         # A rhs that never names the counter leaves it in the difference, and simplify keeps value.
         if (name not in {str(s) for s in rhs_sym.free_symbols} and name in {str(s) for s in unsimplified.free_symbols}):
             return None
@@ -170,7 +170,7 @@ def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, 
 
         # The symbol inside the loop now represents the value on entry, so the
         # closed form is ``entry_sym + body_offset * step``.
-        closed = symbolic.symstr(symbolic.simplify(symbolic.pystr_to_symbolic(name) + body_offset * step))
+        closed = symbolic.symstr(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(name)) + body_offset * step))
         edge.data.assignments.pop(name, None)
         loop.replace_dict({name: closed}, replace_keys=False)
 
@@ -211,7 +211,7 @@ def _fold_nested_carried_symbols(loop: LoopRegion, nested_carries: Dict[str, Tup
         # The symbol's value at the start of this loop is a derived IV: substitute
         # its closed form inside the loop body. The symbol still names the pre-loop
         # value; constant propagation downstream folds the initializer (e.g. ``k = -1``).
-        closed = symbolic.symstr(symbolic.simplify(symbolic.pystr_to_symbolic(name) + norm_iter * per_iter))
+        closed = symbolic.symstr(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(name)) + norm_iter * per_iter))
         loop.replace_dict({name: closed}, replace_keys=False)
         nested_carries.pop(name, None)
         applied += 1

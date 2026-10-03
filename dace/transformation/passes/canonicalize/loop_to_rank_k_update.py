@@ -29,6 +29,7 @@ from dace.transformation.passes.canonicalize.rank_k_match import (RankKMatch, be
                                                                   resolve_accumulate, root_sdfg_of, single_body_state,
                                                                   sink_node, square_output_ok)
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.optionals import required
 
 # Stand-in for the triangular slice index while the body expression is resolved.
 SLICE_INDEX = sympy.Symbol("__rk_j")
@@ -142,7 +143,7 @@ class LoopToRankKUpdate(ppl.Pass):
                           alpha=next(iter(roles["coeffs"])),
                           beta=beta,
                           uplo=uplo,
-                          trans=roles["trans"],
+                          trans=required(roles["trans"]),
                           n=nest.n,
                           k=nest.k)
 

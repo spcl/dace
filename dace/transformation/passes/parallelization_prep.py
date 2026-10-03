@@ -667,7 +667,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if offset is None:
                     continue
                 try:
-                    x = symbolic.pystr_to_symbolic(ast.unparse(other)) + offset
+                    x = as_expr(symbolic.pystr_to_symbolic(ast.unparse(other))) + offset
                 except Exception:
                     continue
                 if symbolic.free_symbol_like(x, ivar_sym) is None and x not in values:
@@ -760,14 +760,15 @@ class BestEffortLoopPeeling(ppl.Pass):
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
             w = _as_symbolic(wb)
             r = _as_symbolic(rb)
-            if not _is_zero(_as_symbolic(we) - w) or not _is_zero(_as_symbolic(re_) - r):
+            if not _is_zero(as_expr(_as_symbolic(we)) -
+                            as_expr(w)) or not _is_zero(as_expr(_as_symbolic(re_)) - as_expr(r)):
                 return ()  # a multi-element range in this dim is not a clean point access
             # Each side's OWN spelling of the loop variable: a differently-assumed instance is a
             # different sympy symbol, against which ``coeff`` silently answers 0.
             iw = symbolic.free_symbol_like(w, ivar)
             ir = symbolic.free_symbol_like(r, ivar)
             if iw is None and ir is None:
-                if not _is_zero(w - r):
+                if not _is_zero(as_expr(w) - as_expr(r)):
                     return ()  # loop-invariant dimension that does not match -> never aliases
                 continue
             if iw is None:
@@ -854,9 +855,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
             w = _as_symbolic(wb)
             r = _as_symbolic(rb)
-            if not _is_zero(_as_symbolic(we) - w):
+            if not _is_zero(as_expr(_as_symbolic(we)) - as_expr(w)):
                 return None  # multi-element write range in this dim -> not a clean point
-            if not _is_zero(_as_symbolic(re_) - r):
+            if not _is_zero(as_expr(_as_symbolic(re_)) - as_expr(r)):
                 return None  # multi-element read range in this dim
             iv = symbolic.free_symbol_like(w, ivar)
             if iv is not None:
@@ -870,7 +871,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if sol is not None and not _is_zero(xi - sol):
                     return None  # inconsistent solution across dimensions
                 sol = xi
-            elif not _is_zero(w - r):
+            elif not _is_zero(as_expr(w) - as_expr(r)):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
@@ -1463,14 +1464,14 @@ class BestEffortLoopPeeling(ppl.Pass):
         # C's ``%`` agrees with the floored band only where the argument is nonnegative.
         first_band = 0 if isinstance(mod, symbolic.CMod) else -(self.peel_limit + 1)
         for t in range(first_band, self.peel_limit + 2):
-            lo_relied = self._nonneg_assuming_large_modulus(lo - t * m, m, offsets)
+            lo_relied = self._nonneg_assuming_large_modulus(lo - t * as_expr(m), m, offsets)
             if lo_relied is None:
                 continue
-            hi_relied = self._nonneg_assuming_large_modulus(m - 1 - (hi - t * m), m, offsets)
+            hi_relied = self._nonneg_assuming_large_modulus(as_expr(m) - 1 - (hi - t * as_expr(m)), m, offsets)
             if hi_relied is None:
                 continue
             relations = frozenset(sympy.StrictLessThan(o, m) for o in (lo_relied | hi_relied))
-            return arg - t * m, relations
+            return arg - t * as_expr(m), relations
         return None
 
     def _loop_own_ranges(self, loop: LoopRegion) -> Dict[Any, Any]:
@@ -1567,7 +1568,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             if not (required(a).is_number and _is_zero(required(a) * a - 1)):
                 continue  # |a| != 1: the crossing is not an exact integer in general
             for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
-                x = symbolic.pystr_to_symbolic(str(symbolic.simplify((t * m - b) / a)))  # emit spelling
+                x = symbolic.pystr_to_symbolic(str(symbolic.simplify((t * as_expr(m) - b) / a)))  # emit spelling
                 if symbolic.free_symbol_like(x, ivar) is not None:
                     continue
                 # Drop x at/left of the start (empty/no-op before-segment) or right of

@@ -468,7 +468,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             if isinstance(dst, dace.nodes.NestedSDFG):
                 dst.add_in_connector(required(_get_in_conn_name(dst)), force=True)
             else:
-                dst.add_in_connector(_get_in_conn_name(dst))
+                required(dst).add_in_connector(_get_in_conn_name(dst))
             src = parent_scope
 
         # Connect final edge to the NestedSDFG

@@ -97,7 +97,8 @@ class LoopToSymmetrize(ppl.Pass):
         if inner_init is None:
             return False
         try:
-            offset = symbolic.simplify(symbolic.pystr_to_symbolic(inner_init) - symbolic.pystr_to_symbolic(outer_var))
+            offset = symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(inner_init)) - as_expr(symbolic.pystr_to_symbolic(outer_var)))
         except Exception:
             return False
         col_offset = _const_nonneg_int(offset)
@@ -123,8 +124,8 @@ class LoopToSymmetrize(ppl.Pass):
         source_upper = (read_order == [outer_var, inner_var])
 
         row_lo = str(loop_analysis.get_init_assignment(outer))
-        row_hi = str(symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer)) + 1))
-        col_hi = str(symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner)) + 1))
+        row_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer))) + 1))
+        col_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner))) + 1))
 
         self._replace(cfg, outer, array, desc, row_lo, row_hi, col_offset, col_hi, source_upper)
         return True

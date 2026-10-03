@@ -1155,7 +1155,7 @@ class VectorizeMultiDim(ppl.Pipeline):
             if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Default
                     and is_devicelevel_gpu(state.sdfg, state, node)):
                 node.map.schedule = dace.ScheduleType.Sequential
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
 
     def _finalize_lifted_library_nodes(self, sdfg: dace.SDFG) -> None:
         # Select native BLAS implementations for any NON-tile library node lifted during prep (``Einsum`` -> GEMM/GEMV,
@@ -1176,7 +1176,7 @@ class VectorizeMultiDim(ppl.Pipeline):
             self._gpu_place_reductions(sdfg)
         set_fast_implementations(sdfg, device)
         infer_types.infer_connector_types(sdfg)
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
 
     def _gpu_place_reductions(self, sdfg: dace.SDFG) -> None:
         # GPU-place every lifted top-level ``Reduce`` so ``GPUAuto`` / cub applies.

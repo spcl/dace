@@ -203,7 +203,7 @@ def _direct_symbols(expr: sympy.Expr) -> set[str]:
         return set()
     result: set[str] = set()
     for arg in args:
-        result |= _direct_symbols(arg)
+        result |= _direct_symbols(as_expr(arg))
     return result
 
 
@@ -752,7 +752,7 @@ def _gather_subscripts(expr: sympy.Expr) -> list[symbolic.Subscript]:
     args = expr.args if isinstance(expr, sympy.Basic) else ()
     if args:
         for arg in args:
-            result.extend(_gather_subscripts(arg))
+            result.extend(_gather_subscripts(as_expr(arg)))
     return result
 
 
@@ -844,8 +844,8 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
     # Dividend must be affine in ``var_name`` (regular replication -- ``int_floor(idx[i], 2)`` is
     # data-dependent → GATHER, not REPLICATE).
     # The contracted-box load is exact only for ``int_floor(var + c0, k)`` with ``c0 % k == 0``.
-    coeff = _affine_coeff_for(dividend, var_name)
-    offset = _affine_offset_for(dividend, var_name)
+    coeff = _affine_coeff_for(as_expr(dividend), var_name)
+    offset = _affine_offset_for(as_expr(dividend), var_name)
     if fname not in ("int_floor", "__int_floor") or coeff != 1 or offset is None or sympy.Mod(offset, k) != 0:
         return None
     return k
@@ -872,7 +872,7 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> int | None:
         return None
     if N <= 1:
         return None
-    if _affine_coeff_for(dividend, var_name) is None:
+    if _affine_coeff_for(as_expr(dividend), var_name) is None:
         return None
     return N
 

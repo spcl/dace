@@ -35,7 +35,7 @@ class SplitDimensions(ppl.Pass):
                 return dace.symbolic.pystr_to_symbolic(f"int_ceil({dim_expr}, {factor})")
         elif isinstance(dim_expr, dace.symbolic.SymExpr):
             # mirrors the Symbol branch above
-            divisible = simplify(dim_expr.expr % factor) == 0
+            divisible = simplify(as_expr(dim_expr.expr) % factor) == 0
             if divisible:
                 return dace.symbolic.SymExpr(f"int_floor({dim_expr}, {factor})")
             else:

@@ -27,6 +27,7 @@ from dace import dtypes, properties, transformation
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.optionals import required
 
 
 @properties.make_properties
@@ -99,12 +100,12 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
             graph.remove_edge(in_edge)
         graph.remove_edge(consumer_edge)
         for inner_edge in list(graph.out_edges_by_connector(second_map_entry, out_conn)):
-            graph.add_edge(access, None, inner_edge.dst, inner_edge.dst_conn, copy.deepcopy(inner_edge.data))
+            graph.add_edge(access, required(None), inner_edge.dst, inner_edge.dst_conn, copy.deepcopy(inner_edge.data))
             graph.remove_edge(inner_edge)
         second_map_entry.remove_in_connector(in_conn)
         second_map_entry.remove_out_connector(out_conn)
         # A node with no data input needs an explicit scope edge to stay inside the Map.
-        graph.add_edge(second_map_entry, None, tasklet, None, dace.Memlet())
+        graph.add_edge(second_map_entry, required(None), tasklet, None, dace.Memlet())
 
 
 __all__ = ['DistributeTaskletIntoMap']

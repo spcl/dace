@@ -39,7 +39,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_map_entry
+from dace.sdfg.narrowing import as_expr, as_map_entry
 from dace.optionals import required
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
@@ -223,7 +223,9 @@ def source_access(state: SDFGState, entry: nodes.MapEntry, out_conn: str) -> Opt
 def equals(a: object, b: object) -> bool:
     """Symbolic equality of two scalar expressions."""
     try:
-        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(a)) - symbolic.pystr_to_symbolic(str(b))) == 0)
+        return bool(
+            symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(str(a))) - as_expr(symbolic.pystr_to_symbolic(str(b)))) == 0)
     except Exception:
         return False
 
@@ -231,7 +233,7 @@ def equals(a: object, b: object) -> bool:
 def expressions_equal(actual: sympy.Basic, expected: sympy.Basic) -> bool:
     """Whether two resolved value expressions are symbolically identical."""
     try:
-        return bool(symbolic.simplify(sympy.expand(actual - expected)) == 0)
+        return bool(symbolic.simplify(sympy.expand(as_expr(actual) - as_expr(expected))) == 0)
     except Exception:
         return False
 
@@ -257,7 +259,7 @@ def loop_extent(loop: LoopRegion) -> Optional[object]:
     end = loop_analysis.get_loop_end(loop)
     if init is None or end is None or not equals(init, 0):
         return None
-    return symbolic.simplify(symbolic.pystr_to_symbolic(str(end)) + 1)
+    return symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(end))) + 1)
 
 
 def single_body_state(region: ControlFlowRegion) -> Optional[SDFGState]:
@@ -382,7 +384,7 @@ def triangle_of(subset: subsets.Subset, row: str, n: symbolic.SymbolicType) -> O
     row_sym = symbolic.pystr_to_symbolic(row)
     if equals(cb, 0) and equals(ce, row_sym):
         return "L"
-    if equals(cb, row_sym) and equals(ce, symbolic.pystr_to_symbolic(str(n)) - 1):
+    if equals(cb, row_sym) and equals(ce, as_expr(symbolic.pystr_to_symbolic(str(n))) - 1):
         return "U"
     return None
 

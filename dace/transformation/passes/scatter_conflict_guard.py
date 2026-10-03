@@ -179,8 +179,8 @@ def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
     if len(ndrange) != 1:
         return False
     begin, stop, _ = ndrange[0]
-    if (symbolic.simplify(symbolic.pystr_to_symbolic(str(begin)) - loop_var) != 0
-            or symbolic.simplify(symbolic.pystr_to_symbolic(str(stop)) - loop_var) != 0):
+    if (symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(begin))) - as_expr(loop_var)) != 0
+            or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(stop))) - as_expr(loop_var)) != 0):
         return False
 
     # Stored value must be an affine function of the loop variable with a non-zero integer
@@ -213,8 +213,8 @@ def value_is_injective_affine(value_expr: str, loop_var: str) -> bool:
     """
     j = symbolic.pystr_to_symbolic(str(loop_var))
     expr = symbolic.pystr_to_symbolic(str(value_expr))
-    lead = as_expr(expr).coeff(j, 1)
-    const = as_expr(expr).coeff(j, 0)
+    lead = as_expr(expr).coeff(as_expr(j), 1)
+    const = as_expr(expr).coeff(as_expr(j), 0)
     if symbolic.simplify(expr - (required(lead) * j + const)) != 0:  # non-affine in loop_var
         return False
     return bool(required(lead).is_Integer) and lead != 0

@@ -306,7 +306,7 @@ class LoopToStreamCompaction(ppl.Pass):
         """Stale-snapshot guard: an earlier rewrite in this sweep may have detached a whole nest."""
         cur: Optional[AbstractControlFlowRegion] = region
         while cur is not sdfg:
-            parent = cur.parent_graph
+            parent = required(cur).parent_graph
             if parent is None or cur not in parent.nodes():
                 return False
             cur = parent
@@ -445,7 +445,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 expr = symbolic.pystr_to_symbolic(rhs)
                 sym = symbolic.pystr_to_symbolic(name)
                 # membership and the subtraction both go through identity, so equalize first
-                expr, sym = symbolic.equalize_symbols_across(expr, sym)
+                expr, sym = symbolic.equalize_symbols_across(as_expr(expr), as_expr(sym))
                 if sym not in expr.free_symbols:
                     continue
                 bumps.append((name, symbolic.simplify(expr - sym), inside))

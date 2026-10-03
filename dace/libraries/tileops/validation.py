@@ -7,7 +7,7 @@ import sympy
 
 import dace
 from dace.sdfg import graph
-from dace.sdfg.narrowing import as_range
+from dace.sdfg.narrowing import as_expr, as_range
 
 
 def is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
@@ -139,7 +139,7 @@ def strides_match_packed(shape: Sequence[int | sympy.Basic], strides: Sequence[i
             # INSTANCES (different dtype/assumptions) whose subtraction never cancels (channel_flow).
             diff = strides[d] - expected
             if isinstance(diff, sympy.Basic):
-                diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(dace.symbolic.equalize_symbol(diff)))
+                diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(dace.symbolic.equalize_symbol(as_expr(diff))))
             if diff != 0:
                 return False
         except Exception:

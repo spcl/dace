@@ -375,11 +375,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         new_in = []
         if has_in:
             subst_in = self._subst_range([(b, e, s) for (b, e, s) in in_subset], range_list)
-            new_in = self._overapprox_first_dimension(subst_in, in_data, sdfg)
+            new_in = self._overapprox_first_dimension(subst_in, required(in_data), sdfg)
             if new_in is None:
                 return None, None, None
 
-        if has_in and not self._reject_if_not_contiguous(new_in, in_data, sdfg, is_input=True):
+        if has_in and not self._reject_if_not_contiguous(new_in, required(in_data), sdfg, is_input=True):
             return None, None, None
         if out_data is not None and not self._reject_if_not_contiguous(new_out, out_data, sdfg, is_input=False):
             return None, None, None

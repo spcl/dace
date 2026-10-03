@@ -462,7 +462,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     expr = dace.symbolic.SymExpr(n.loop_condition.as_string)
                     if isinstance(expr, sympy.core.relational.Relational) and isinstance(expr, sympy.LessThan):
                         lhs, rhs = expr.lhs, expr.rhs
-                        n.loop_condition = CodeBlock(symstr(sympy.StrictLessThan(lhs, rhs + 1)))
+                        n.loop_condition = CodeBlock(symstr(sympy.StrictLessThan(lhs, as_expr(rhs) + 1)))
 
                     # Simplify only the rhs do this by splitting the expression from "<" and ( with the number of opened ( from left
                     # Then simplify it and add back

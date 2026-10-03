@@ -1091,7 +1091,7 @@ def _other_indices_match_inner(other_indices: List[Any], inner_var: str) -> bool
         except Exception:
             return False
         try:
-            is_inner = bool(symbolic.simplify(e_sym - inner_sym) == 0)
+            is_inner = bool(symbolic.simplify(as_expr(e_sym) - as_expr(inner_sym)) == 0)
         except Exception:
             is_inner = False
         if is_inner:
@@ -2689,7 +2689,7 @@ def _stride_guard_is_statically_dischargeable(infos: List['_Scan']) -> bool:
         if info.iter_start is None or info.iter_end is None:
             return False
         span_end = symbolic.simplify(info.iter_end)  # inclusive last index
-        span_top = symbolic.simplify(symbolic.pystr_to_symbolic(info.iter_start) + s - 1)
+        span_top = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(info.iter_start)) + as_expr(s) - 1)
         if not loop_analysis._provably_le(span_end, span_top):
             return False
     return guarded
@@ -3041,7 +3041,7 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
                 return None, None, None, 0
             # Try forward (coef +1): off = lo - loop_var.
             try:
-                off_pos = symbolic.simplify(lo_sym - loop_var_sym)
+                off_pos = symbolic.simplify(as_expr(lo_sym) - as_expr(loop_var_sym))
             except Exception:
                 off_pos = None
             if off_pos is not None and loop_var_sym not in as_expr(off_pos).free_symbols:
@@ -3432,7 +3432,7 @@ def _nested_axis_kinds(info: _Scan, inner_var: str):
     const_axes = []
     for axis_idx, expr in info.other_indices:
         try:
-            is_inner = bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(expr)) - inner_sym) == 0)
+            is_inner = bool(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(expr))) - as_expr(inner_sym)) == 0)
         except Exception:
             is_inner = False
         if is_inner:

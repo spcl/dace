@@ -110,7 +110,7 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
                 continue
             stride_val = sympy.Abs(pystr_to_symbolic(str(stride)))
             for vname, vsym in symbols_by_name.items():
-                coeff = as_expr(index_expr).coeff(vsym, 1)
+                coeff = as_expr(index_expr).coeff(as_expr(vsym), 1)
                 if coeff == 0:
                     continue
                 others = {s: 0 for name, s in symbols_by_name.items() if name != vname}
@@ -140,7 +140,7 @@ def stride_difference_sign(a, b) -> int:
     :class:`UndecidableStride`, which leaves the nest untouched -- the behaviour this pass had for
     every symbolic shape before.
     """
-    diff = symbolic.simplify(pystr_to_symbolic(str(a)) - pystr_to_symbolic(str(b)))
+    diff = symbolic.simplify(as_expr(pystr_to_symbolic(str(a))) - as_expr(pystr_to_symbolic(str(b))))
     if diff == 0:
         return 0
     if as_expr(diff).is_number:

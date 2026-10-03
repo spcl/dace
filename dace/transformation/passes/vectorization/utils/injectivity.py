@@ -10,6 +10,7 @@ import sympy
 
 from dace import data as dt
 from dace import subsets, symbolic
+from dace.sdfg.narrowing import as_expr
 
 
 def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) -> bool:
@@ -62,8 +63,8 @@ def equalized_range(write_subset: subsets.Range) -> subsets.Range:
     :param write_subset: the range to normalize.
     :returns: an equivalent range whose bounds are parsed sympy expressions over merged symbols.
     """
-    bounds = symbolic.equalize_symbols_across(*(symbolic.pystr_to_symbolic(str(bound)) for rng in write_subset.ranges
-                                                for bound in rng))
+    bounds = symbolic.equalize_symbols_across(*as_expr((symbolic.pystr_to_symbolic(str(bound))
+                                                        for rng in write_subset.ranges for bound in rng)))
     return subsets.Range([bounds[d:d + 3] for d in range(0, len(bounds), 3)])
 
 
