@@ -596,6 +596,29 @@ def test_folded_write_ordering_is_not_reanchored_into_a_cycle():
     assert np.array_equal(got, np.array([1, 1, 1, 1, 2, 2, 3, 3, 3, 3], dtype=np.float64))
 
 
+def test_a_folded_input_keeps_the_moved_tasklets_connectors():
+    """Two boundary edges carrying one scalar fold onto one nested connector. Dropping the duplicate outer
+    edge must leave the moved tasklet both of its inputs: its inner edges still use them, and a stripped
+    connector leaks its name as a free symbol of the nested SDFG."""
+    sdfg = dace.SDFG('folded_input_connectors')
+    sdfg.add_scalar('scale', dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_read('scale')
+    tasklet = state.add_tasklet('add', {'__in1', '__in2'}, {'__out'}, '__out = __in1 + __in2')
+    state.add_edge(read, None, tasklet, '__in1', dace.Memlet('scale[0]'))
+    state.add_edge(read, None, tasklet, '__in2', dace.Memlet('scale[0]'))
+    state.add_edge(tasklet, '__out', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    nest_state_subgraph(sdfg, state, StateSubgraphView(state, [tasklet]))
+
+    assert set(tasklet.in_connectors) == {'__in1', '__in2'}
+    sdfg.validate()
+    out = np.zeros(1)
+    sdfg(scale=1.5, out=out)
+    assert out[0] == 3.0
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -615,3 +638,4 @@ if __name__ == '__main__':
     test_boundary_carried_access_node_gets_no_second_interface()
     test_input_edge_on_the_whole_container_gets_no_inner_copy()
     test_folded_write_ordering_is_not_reanchored_into_a_cycle()
+    test_a_folded_input_keeps_the_moved_tasklets_connectors()

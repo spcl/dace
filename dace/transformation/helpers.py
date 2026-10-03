@@ -432,7 +432,17 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
     # ``edge`` is that hop. NOT ``kept``'s access node -- it may have other writers ordered after
     # ``path_end`` (CloudSC: a later map writes the same node), so anchoring there closes a cycle.
     anchor = nested_sdfg if path[-1] is edge else path[-1].src
+    # The inner endpoint has already moved into the nested state, where its own edges still use its connectors
+    # (a scope node's IN_/OUT_ pair included). Only the parent-side path is pruned; the moved node keeps them all.
+    inner = edge.dst if is_input else edge.src
+    kept_in, kept_out = dict(inner.in_connectors), dict(inner.out_connectors)
     utils.remove_edge_and_dangling_path(state, edge)
+    for name, dtype in kept_in.items():
+        if name not in inner.in_connectors:
+            inner.add_in_connector(name, dtype, force=True)
+    for name, dtype in kept_out.items():
+        if name not in inner.out_connectors:
+            inner.add_out_connector(name, dtype, force=True)
     if is_input:
         # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
         # constraint worth restating. A fresh Memlet per edge -- never the object the old edge carried.
