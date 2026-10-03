@@ -553,9 +553,9 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     import sympy
 
     rhs = rhs.strip()
-    rhs_sym_expr = as_expr(dace.symbolic.SymExpr(rhs)).evalf()
+    rhs_sym_expr = dace.symbolic.SymExpr(rhs).evalf()
     lhs = lhs.strip()
-    lhs_sym_expr = as_expr(dace.symbolic.SymExpr(lhs)).evalf()
+    lhs_sym_expr = dace.symbolic.SymExpr(lhs).evalf()
 
     in_connectors = dict()
     out_connectors = dict()
@@ -868,7 +868,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.narrowing import as_basic
 
 _TOKEN_SPLIT_RE = re.compile(r'[()\[\]\s,+\-*/%<>!=&|^~?:]+')
 

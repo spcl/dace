@@ -11,7 +11,7 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
