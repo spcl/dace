@@ -13,6 +13,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock, UnstructuredControlFlow
+from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -129,12 +130,17 @@ class ControlFlowRaising(ppl.Pass):
             # connect unnecessarily, thus preventing lifting.
             non_return_sinks = [s for s in region.sink_nodes() if not isinstance(s, ReturnBlock)]
             sinks = non_return_sinks if len(non_return_sinks) > 0 else region.sink_nodes()
+            if len(sinks) <= 1 and all(len(region.out_edges(block)) <= 1 for block in region.nodes()):
+                # Without branches there is nothing to lift, so the (costly) dominator analysis is skipped. The start
+                # block is still queried to fail on an ambiguous start block as the analysis would.
+                region.start_block
+                continue
             dummy_exit = None
             if len(sinks) > 1:
                 dummy_exit = region.add_state('__DACE_DUMMY')
                 for s in sinks:
                     region.add_edge(s, dummy_exit, InterstateEdge())
-            idom = nx.immediate_dominators(region.nx, region.start_block)
+            idom = sdutil.immediate_dominators(region.nx, region.start_block)
             alldoms = cfg_analysis.all_dominators(region, idom)
             branch_merges = cfg_analysis.branch_merges(region, idom, alldoms)
 
@@ -233,7 +239,7 @@ class ControlFlowRaising(ppl.Pass):
                 continue
 
             # Compute immediate dominators
-            idom: Dict[ControlFlowBlock, ControlFlowBlock] = nx.immediate_dominators(cfg.nx, cfg.start_block)
+            idom: Dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
             back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
 

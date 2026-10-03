@@ -19,7 +19,7 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     :param idom: Optional precomputed immediate dominators.
     :return: A dictionary keyed by control flow blocks, containing the dominance frontier for each control flow block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
     dom_frontiers = {block: set() for block in cfg.nodes()}
     for u in idom:
@@ -44,7 +44,7 @@ def all_dominators(
         cfg: ControlFlowRegion,
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or sdutil.immediate_dominators(cfg.nx, cfg.start_block)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
@@ -75,7 +75,7 @@ def all_postdominators(cfg: ControlFlowRegion,
         for s in sinks:
             cfg.add_edge(s, sink, InterstateEdge())
 
-    ipostdom = ipostdom or nx.immediate_dominators(cfg.nx.reverse(), sink)
+    ipostdom = ipostdom or sdutil.immediate_dominators(cfg.nx.reverse(), sink)
 
     # Create a dictionary of all postdominators of each node by using the transitive closure of the DAG induced by the
     # ipostdoms
@@ -311,10 +311,11 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
-    merges = branch_merges(cfg, idom)
+    idom = idom or sdutil.immediate_dominators(cfg.nx, cfg.start_block)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
+        # Branch merges are only needed to tell loops apart from branches
+        merges = branch_merges(cfg, idom, alldoms)
         loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
         # First, annotate loops
@@ -571,11 +572,16 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     """
     # Get parent states
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
-    ptree = block_parent_tree(cfg, loopexits, idom=idom)
-
-    # Annotate branches
-    merges = branch_merges(cfg, idom)
+    if all(len(cfg.out_edges(block)) <= 1 for block in cfg.nodes()):
+        # Without branches (and hence without loops), the traversal only follows single outgoing edges and never
+        # consults the parent tree, the branch merges, or the loop exits, so their (costly) analysis is skipped
+        ptree = {}
+        merges = {}
+    else:
+        idom = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
+        ptree = block_parent_tree(cfg, loopexits, idom=idom)
+        # Annotate branches
+        merges = branch_merges(cfg, idom)
 
     for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
         if isinstance(block, ControlFlowRegion):
