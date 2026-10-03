@@ -53,11 +53,15 @@ typedef void *pyobject;
 // are all floating-point or all integral. We reject the mixed case in Min/Max
 // because the integer argument truncates the floating-point result (C++14-safe
 // variadic recursion; no fold expression).
+// A half counts as floating-point: ``Min(h, 1e-20)`` compares in the common (wider) type.
+template <typename T>
+struct _dace_minmax_is_float
+    : std::integral_constant<bool, std::is_floating_point<T>::value || std::is_same<T, dace::float16>::value> {};
 template <typename... Ts>
 struct _dace_minmax_same_kind : std::true_type {};
 template <typename T0, typename T1, typename... Ts>
 struct _dace_minmax_same_kind<T0, T1, Ts...>
-    : std::integral_constant<bool, (std::is_floating_point<T0>::value == std::is_floating_point<T1>::value) &&
+    : std::integral_constant<bool, (_dace_minmax_is_float<T0>::value == _dace_minmax_is_float<T1>::value) &&
                                        _dace_minmax_same_kind<T1, Ts...>::value> {};
 
 // Sympy functions. The return type follows ``std::common_type`` (matching the
@@ -89,7 +93,9 @@ static DACE_HDFI auto Abs(T val) {
 template <typename T, typename U>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue,
                                                                       const U& iffalse) {
-  return condition ? iftrue : iffalse;
+  // Both arms in the result type: ``c ? h : 1.0`` with a half arm is ambiguous otherwise.
+  using R = typename std::common_type<T, U>::type;
+  return condition ? R(iftrue) : R(iffalse);
 }
 
 #endif  // __DACE_INTEROP_H
