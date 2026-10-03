@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A 2D array with a unit dim (``(N, 1)`` / ``(1, N)``) must transpose to the swapped shape; the
 frontend used to squeeze it and reject ``(N, 1).T`` as "not a matrix". An integer index, by
 contrast, squeezes its axis (``x[:, 1]`` is ``(N,)``) per numpy."""

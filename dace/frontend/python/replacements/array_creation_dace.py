@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains definitions of new data containers (arrays, locals, streams) as per DaCe's API, as well as several
 array creation functions for NumPy that reuse the same functionality.

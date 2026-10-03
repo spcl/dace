@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A size computed in the program can be used as an array shape.
 
 ``nt = Nt + 1; np.empty(nt)`` needs ``nt`` as a symbol, but it is a data descriptor. The size is
