@@ -47,6 +47,7 @@ If you use DaCe, cite us:
    setup/installation
    setup/config
    frontend/daceprograms
+   frontend/torch_dynamo
    sdfg/ir
    ide/vscode
    optimization/optimization

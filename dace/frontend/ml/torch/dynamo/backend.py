@@ -34,6 +34,14 @@ class DaceBackend:
 
     def __init__(self, **options):
         self.options = DaceBackendOptions(**options)
+        # Configuration defaults for options not given explicitly
+        from dace.config import Config
+        for key in ('simplify', 'onnx_fallback'):
+            if key not in options:
+                try:
+                    setattr(self.options, key, Config.get_bool('frontend', 'torch_dynamo', key))
+                except (KeyError, TypeError, ValueError):  # pragma: no cover - missing schema entry
+                    pass
         self._decomp_table: Optional[Dict] = None
         self.compile_count = 0  #: Number of SDFGs compiled by this backend (test oracle for compile-once behavior)
         self.last_sdfg = None  #: The most recently generated SDFG (before compilation)
