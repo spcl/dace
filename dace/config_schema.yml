@@ -659,6 +659,23 @@ required:
         title: Frontend
         description: Python frontend preferences
         required:
+            torch_dynamo:
+                type: dict
+                title: TorchDynamo frontend
+                description: Defaults for the PyTorch (torch.compile) frontend
+                required:
+                    simplify:
+                        type: bool
+                        title: Simplify generated SDFGs
+                        default: true
+                        description: Run SDFG simplification after converting the captured graph.
+                    onnx_fallback:
+                        type: bool
+                        title: ONNX library fallback
+                        default: true
+                        description: >
+                            Use dace.libraries.onnx expansions (if the onnx package is available) for
+                            operators without a native lowering.
             cache_size:
                 type: int
                 title: Program cache size
