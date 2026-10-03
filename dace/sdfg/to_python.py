@@ -284,10 +284,10 @@ class PythonEmitter:
                                           f"to_python._emit_descriptor_block with imperative API")
 
         self._emit_array_loop(arrays, var, "add_array", buf, _array_kwargs)
-        self._emit_descriptor_loop(scalars, var, "add_scalar", buf, _scalar_kwargs, takes_shape=False)
+        self._emit_descriptor_loop(scalars, var, "add_scalar", buf, _scalar_kwargs)
         self._emit_array_loop(views, var, "add_view", buf, _arrayview_kwargs)
         self._emit_array_loop(refs, var, "add_reference", buf, _arrayview_kwargs)
-        self._emit_descriptor_loop(streams, var, "add_stream", buf, _stream_kwargs, takes_shape=False)
+        self._emit_descriptor_loop(streams, var, "add_stream", buf, _stream_kwargs)
 
     def _emit_array_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn):
         """Emit grouped loops for ``var.add_X(name, shape, dtype, **kwargs)``.
@@ -322,8 +322,7 @@ class PythonEmitter:
             kw_args = "".join(f", {k}={v}" for k, v in kw.items())
             buf.line(f"    {var}.{method}(_name, {shape_str}, {dtype_str}{kw_args})")
 
-    def _emit_descriptor_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn,
-                              takes_shape: bool):
+    def _emit_descriptor_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn):
         """Emit grouped loops for ``var.add_X(name, dtype, **kwargs)`` (no shape)."""
         if not items:
             return

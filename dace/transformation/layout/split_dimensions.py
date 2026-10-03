@@ -21,7 +21,7 @@ class SplitDimensions(ppl.Pass):
         self._split_map = split_map
         self._verbose = verbose
 
-    def _split_dimension(sefl, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
+    def _split_dimension(self, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
                          factor: int):
         # outer block count: int_floor if evenly divisible else int_ceil; never `/` or `//`
         if isinstance(dim_expr, dace.symbolic.symbol):

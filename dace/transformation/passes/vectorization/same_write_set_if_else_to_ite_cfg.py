@@ -338,10 +338,7 @@ def _rhs_is_predicate(rhs: str) -> bool:
     return False
 
 
-def _symbol_has_external_consumer(sdfg: dace.SDFG,
-                                  sym_name: str,
-                                  defining_edge: Edge[InterstateEdge] | None,
-                                  skip_cb: ConditionalBlock | None = None) -> bool:
+def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, skip_cb: ConditionalBlock | None = None) -> bool:
     # Whether ``sym_name`` is consumed outside its own defining edge.
     from dace.sdfg.state import LoopRegion
     from dace.sdfg.state import ConditionalBlock
@@ -1054,7 +1051,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             return
         if sym in self._protected_symbols(sdfg):
             return
-        if _symbol_has_external_consumer(sdfg, sym, None, skip_cb=skip_cb):
+        if _symbol_has_external_consumer(sdfg, sym, skip_cb=skip_cb):
             return
         for e in edges:
             if e is not None and sym in (e.data.assignments or {}):

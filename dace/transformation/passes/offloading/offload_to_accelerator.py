@@ -1124,10 +1124,7 @@ class OffloadToAccelerator(ppl.Pass):
                 cpu_set.add(name)
         return gpu_set, cpu_set
 
-    def get_data_locations_of_state(self,
-                                    sdfg: SDFG,
-                                    state: SDFGState,
-                                    recursive_call=False) -> tuple[OrderedSet[str], OrderedSet[str]]:
+    def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState) -> tuple[OrderedSet[str], OrderedSet[str]]:
         # iterate through all toplevel nodes of this state
         #  - map entry -> give to get_data_locations_of_map, which handles all nodes inside scope
         #  - control flow (nested) -> recurse
