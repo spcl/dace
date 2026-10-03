@@ -8,7 +8,6 @@ from .state_fusion import StateFusion
 from .state_fusion_with_happens_before import StateFusionExtended
 from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,
                                 SymbolAliasPromotion, HoistState)
-from .gpu_transform_sdfg import GPUTransformSDFG
 from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAccess
 from .loop_unroll import LoopUnroll
 from .loop_overwrite_elimination import LoopOverwriteElimination

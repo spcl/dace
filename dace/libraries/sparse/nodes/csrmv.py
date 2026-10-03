@@ -443,10 +443,8 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
         # If buffers are not on the GPU, copy them
         if needs_copy:
             if node.beta != 0.0:
-                from dace.transformation.interstate import GPUTransformSDFG
-
                 nsdfg: dace.SDFG = ExpandCSRMVPure.expansion(node, state, sdfg)
-                nsdfg.apply_transformations(GPUTransformSDFG)
+                nsdfg.apply_gpu_transformations()
                 return nsdfg
 
             nsdfg = dace.SDFG('nested_spmv')
