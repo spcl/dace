@@ -2,6 +2,7 @@
 """ Exception classes and methods for validation of SDFGs. """
 
 import copy
+import functools
 import os
 import warnings
 from collections import defaultdict
@@ -92,7 +93,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
         ##########################################
         # Edge
         # Check inter-state edge for undefined symbols
-        undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
+        undef_syms = {s for s in edge.data.free_symbols if s not in symbols}
         if len(undef_syms) > 0:
             eid = region.edge_id(edge)
             raise InvalidSDFGInterstateEdgeError(
@@ -275,6 +276,33 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
 
+        # Test the return value.
+        tuple_return_args = {n for n in sdfg._arrays if n.startswith('__return_')}
+        if '__return' in sdfg._arrays and tuple_return_args:
+            raise InvalidSDFGError(
+                'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
+                'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
+        elif '__return' in sdfg._arrays:
+            tuple_return_args = {'__return'}
+        elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
+            raise InvalidSDFGError('Tuple return values are not consecutively named')
+        for ret_name_to_check in tuple_return_args:
+            ret_desc = sdfg._arrays[ret_name_to_check]
+            if ret_desc.transient:
+                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.')
+            if sdfg.parent is None:
+                # These are some top level specific test
+                if isinstance(ret_desc, dt.Scalar):
+                    # This is an implementation level constraint and is thus a separate error.
+                    #  In certain cases the frontend will promote it to a length 1 array.
+                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.')
+                if not isinstance(ret_desc, dt.Array):
+                    # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
+                    #  the return value and for that NumPy/CuPy is used.
+                    raise InvalidSDFGError(
+                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(desc).__name__}`'
+                    )
+
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
             if id(desc) in references:
@@ -282,14 +310,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Duplicate data descriptor object detected: "{name}". Please copy objects '
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
-
-            # Because of how the code generator works Scalars can not be return values.
-            #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
-            if (sdfg.parent is None and isinstance(desc, dt.Scalar) and name.startswith("__return")
-                    and not desc.transient):
-                raise InvalidSDFGError(
-                    f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
-                    None)
 
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
             if desc.transient:
@@ -365,6 +385,34 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
         return context.get('in_gpu', False)
 
     return True
+
+
+@functools.lru_cache(maxsize=16384)
+def _is_negative_index(index, offset) -> bool:
+    """
+    Returns True if an offset index is provably negative. Since the symbolic comparison is costly and the same
+    expressions reappear in many memlets, results are cached (the comparison only depends on the expressions, which
+    are integers or hashable symbolic expressions).
+
+    :param index: The (symbolic) index.
+    :param offset: The (symbolic) offset of the data container dimension.
+    :return: True if ``index + offset < 0`` is provably true.
+    """
+    return ((index + offset) < 0) == True
+
+
+@functools.lru_cache(maxsize=16384)
+def _is_out_of_bounds_index(index, offset, size) -> bool:
+    """
+    Returns True if an offset index is provably out of the upper bound of a data container dimension. Results are
+    cached as in ``_is_negative_index``.
+
+    :param index: The (symbolic) index.
+    :param offset: The (symbolic) offset of the data container dimension.
+    :param size: The (symbolic) size of the data container dimension.
+    :return: True if ``index + offset >= size`` is provably true.
+    """
+    return ((index + offset) >= size) == True
 
 
 def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.MultiConnectorEdge[Memlet]']):
@@ -595,7 +643,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
+                # Only names with a dot can refer to nested data (``arrays.keys()`` enumerates all of it)
+                if (conn in sdfg.constants_prop or conn in sdfg.symbols
+                        or (conn in sdfg.arrays.keys() if '.' in conn else conn in sdfg.arrays)):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
                             "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,
@@ -801,14 +851,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), sdfg, state_id, eid)
 
                 # Bounds
-                if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if any(_is_negative_index(minel, off) for minel, off in zip(e.data.subset.min_element(), arr.offset)):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
                     else:
                         raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
-                if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
+                if any(
+                        _is_out_of_bounds_index(maxel, off, s)
+                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
                     else:
@@ -825,13 +876,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
                 # Bounds
                 if any(
-                    ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
+                        _is_negative_index(minel, off)
+                        for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
                     else:
                         raise InvalidSDFGEdgeError("Memlet other_subset negative out-of-bounds", sdfg, state_id, eid)
-                if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
+                if any(
+                        _is_out_of_bounds_index(maxel, off, s)
+                        for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')
                     else:
