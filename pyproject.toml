@@ -89,6 +89,10 @@ fcfd = "dace.cli.fcdc:main"
 daceprof = "dace.cli.daceprof:main"
 dace-external-transformation-registry = "dace.cli.external_transformation_registry:main"
 
+# TorchDynamo discovers `torch.compile(backend='dace')` through this entry-point group
+[project.entry-points.torch_dynamo_backends]
+dace = "dace.frontend.ml.torch.dynamo.backend:dace_backend"
+
 [project.urls]
 Homepage = "https://github.com/spcl/dace"
 
