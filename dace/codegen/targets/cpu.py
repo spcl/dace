@@ -2281,6 +2281,28 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> Tuple[DefinedType, str]:
+        """ The defined type and C type of the container ``ptr`` names. An array sized by a symbol that is not free
+            is declared at SDFG scope but allocated where its size is known -- in a state that dominates its
+            accesses, whose scope ends before the accesses' states are generated -- so its declaration holds the
+            type. A View is looked up the same way: its view edge is not at hand here. """
+        dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+            str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc)))
+        if not ((dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr)):
+            return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+        var_type, ctypedef = self._dispatcher.declared_arrays.get(ptr)
+        # declared_arrays holds the host declaration, which carries no ``const``. A kernel argument that the launch
+        # declares ``const`` is registered with that qualifier in defined_vars; spelling it the host way would alias a
+        # ``const int*`` parameter as ``int*``, which does not compile (xsbench's index_grid on the canon GPU column).
+        if not ctypedef.startswith('const '):
+            try:
+                defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)[1]
+            except KeyError:
+                defined_ctype = ctypedef
+            if defined_ctype.startswith('const '):
+                ctypedef = defined_ctype
+        return var_type, ctypedef
+
     def memlet_definition(self,
                           sdfg: SDFG,
                           memlet: mmlt.Memlet,
@@ -2309,32 +2331,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
-            str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc)))
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
-        # declared_arrays holds the host declaration, which carries no ``const``. A kernel argument
-        # that the launch declares ``const`` is registered with that qualifier in defined_vars. Using
-        # the host spelling for a symbol-shaped array would alias a ``const int*`` parameter as ``int*``,
-        # which does not compile (xsbench's indirection into index_grid on the canon GPU column).
-        # Keep the qualifier the parameter has.
-        if types and not ctypedef.startswith('const '):
-            try:
-                _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)
-            except KeyError:
-                defined_ctype = ctypedef
-            if defined_ctype.startswith('const '):
-                ctypedef = defined_ctype
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
