@@ -794,6 +794,19 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         in_conn_edges = Counter(e.dst_conn for e in in_edges)
         out_conn_edges = Counter(e.src_conn for e in out_edges)
 
+        # An edge into or out of a connector the node does not declare: the connector name then leaks as a free
+        # symbol of the tasklet, and type inference has no entry for it
+        for conn in in_conn_edges:
+            if conn is not None and conn not in node.in_connectors:
+                raise InvalidSDFGNodeError("Edge into undeclared in-connector %s" % conn, sdfg, state_id, nid, cfg=cfg)
+        for conn in out_conn_edges:
+            if conn is not None and conn not in node.out_connectors:
+                raise InvalidSDFGNodeError("Edge out of undeclared out-connector %s" % conn,
+                                           sdfg,
+                                           state_id,
+                                           nid,
+                                           cfg=cfg)
+
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
             incoming_edges = in_conn_edges[conn]

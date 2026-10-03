@@ -490,22 +490,21 @@ def _build_sdfg_with_cb_only(sym_name: str):
     body = ControlFlowRegion("then_body", sdfg=sdfg)
     body.add_state("body_state", is_start_block=True)
     cb.add_branch(CodeBlock(sym_name), body)
-    defining = next(e for e in sdfg.edges() if sym_name in (e.data.assignments or {}))
-    return sdfg, cb, defining
+    return sdfg, cb
 
 
 def test_symbol_has_external_consumer_when_only_cb_uses_it():
     """Only consumer is the cb's own branch condition (which the pass is
     about to rewrite away). With ``skip_cb=cb`` the helper sees no
     external consumer."""
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is False
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is False
 
 
 def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
     """A second interstate edge after the cb assigns ``out_sym = flag``,
     that second use counts as external."""
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     sdfg.add_symbol("out_sym", dace.bool_)
     after = sdfg.add_state("after_cb")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
@@ -513,11 +512,11 @@ def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, after, dace.InterstateEdge(assignments={"out_sym": "flag"}))
     sdfg.add_edge(after, exit_state, dace.InterstateEdge())
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_sibling_cb_condition_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     sibling = ConditionalBlock("cb_sibling")
     sdfg.add_node(sibling)
     sibling.add_branch(CodeBlock("flag"), ControlFlowRegion("sib_body", sdfg=sdfg))
@@ -527,23 +526,23 @@ def test_symbol_has_external_consumer_when_sibling_cb_condition_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, sibling, dace.InterstateEdge())
     sdfg.add_edge(sibling, exit_state, dace.InterstateEdge())
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_tasklet_body_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
     exit_state.add_tasklet("uses_flag", set(), set(), "x = flag")
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
     for e in list(sdfg.out_edges(cb)):
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, exit_state, dace.InterstateEdge(condition=CodeBlock("flag")))
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_promote_gather_indices_rewrites_nested_subscript():
