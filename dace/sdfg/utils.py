@@ -1987,6 +1987,11 @@ def traverse_sdfg_with_defined_symbols(
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
 
+def immediate_dominators(graph: nx.DiGraph, start: ControlFlowBlock) -> CFBlockDictT:
+    """ Immediate dominators of all nodes reachable from ``start``, with ``start`` mapped to itself. """
+    return {start: start, **nx.immediate_dominators(graph, start)}
+
+
 def postdominators(
     cfg: ControlFlowRegion,
     return_alldoms: bool = False
@@ -2011,7 +2016,7 @@ def postdominators(
         return None
     else:
         sink = sink_nodes[0]
-    ipostdom: CFBlockDictT = nx.immediate_dominators(cfg._nx.reverse(), sink)
+    ipostdom: CFBlockDictT = immediate_dominators(cfg._nx.reverse(), sink)
 
     if return_alldoms:
         allpostdoms = cfg_analysis.all_dominators(cfg, ipostdom)
@@ -2354,7 +2359,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
                     added_sinks[cfg] = cfg.add_state()
                     for s in sinks:
                         cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
-                idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+                idom.update(immediate_dominators(cfg.nx, cfg.start_block))
         # Compute the transitive relationship of immediate dominators:
         # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
         #   parent control flow region.
@@ -2414,7 +2419,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
                 else:
                     sink = sink_nodes[0]
                     sinks_per_cfg[cfg] = sink
-                ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+                ipostdom.update(immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
