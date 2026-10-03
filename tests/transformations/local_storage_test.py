@@ -234,7 +234,8 @@ class LocalStorageTests(unittest.TestCase):
 
     def test_even(self):
         sdfg = arange.to_sdfg()
-        sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
+        self.assertEqual(applied, 2)
         self.assertTrue(np.array_equal(sdfg(N=16), np.arange(16, dtype=np.int32)))
 
     def test_uneven(self):
@@ -242,7 +243,8 @@ class LocalStorageTests(unittest.TestCase):
         # it's not filled over
         output = np.ones(20, np.int32)
         sdfg = arange.to_sdfg()
-        sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [5]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [5]}, {}])
+        self.assertEqual(applied, 2)
         dace.propagate_memlets_sdfg(sdfg)
         sdfg(N=16, __return=output)
         self.assertTrue(np.array_equal(output[:16], np.arange(16, dtype=np.int32)))

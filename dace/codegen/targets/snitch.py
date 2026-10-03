@@ -40,7 +40,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         ################################################################
         # Define some locals:
         # Can be used to call back to the frame-code generator
-        self.frame = frame_codegen
+        self._frame = frame_codegen
         # Can be used to dispatch other code generators for allocation/nodes
         self.dispatcher = frame_codegen.dispatcher
         # Mapping of ssr to ssr_config
@@ -73,14 +73,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         # initialization, and deinitialization (allocate_array)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_TCDM, self)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_SSR, self)
-
-    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
-        """
-        Returns the frame-code generator associated with this target.
-
-        :return: The frame-code generator.
-        """
-        return self.frame
 
     def state_dispatch_predicate(self, sdfg, state):
         for node in state.nodes():
@@ -1165,4 +1157,4 @@ class SnitchCodeGen(TargetCodeGenerator):
         :param ancestor: Scope ancestor level.
         :return: C-compatible name that can be used to access the data.
         """
-        return cpp.ptr(name, desc, sdfg, self.frame)
+        return cpp.ptr(name, desc, sdfg, self._frame)
