@@ -96,7 +96,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
         self.dissolve_map_scope(state, map_entry, map_exit)
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
-        state.sdfg.reset_cfg_list()
 
     def dissolve_map_scope(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> None:
         """Remove a map scope, reconnecting its contents to the scope's outer neighbors."""
