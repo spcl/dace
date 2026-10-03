@@ -37,14 +37,15 @@ class SymbolTable:
     HOP body is bound to the same DaCe symbol as in the enclosing graph.
     """
 
-    def __init__(self, dtype: dtypes.typeclass = dace.int64):
+    def __init__(self, dtype: dtypes.typeclass = dace.int64, names: Optional[Dict[str, str]] = None):
         self.dtype = dtype
         self.symbols: Dict[str, symbolic.symbol] = {}
+        self.names: Dict[str, str] = dict(names or {})  #: Dynamo symbol name -> DaCe symbol name
 
     def get(self, sym: Union[sympy.Symbol, str]) -> symbolic.symbol:
         name = sym.name if isinstance(sym, sympy.Symbol) else str(sym)
         if name not in self.symbols:
-            self.symbols[name] = symbolic.symbol(name, self.dtype, nonnegative=True)
+            self.symbols[name] = symbolic.symbol(self.names.get(name, name), self.dtype, nonnegative=True)
         return self.symbols[name]
 
     def to_dace(self, expr) -> SymExpr:
@@ -120,7 +121,7 @@ class SymbolTable:
 
     @property
     def symbol_types(self) -> Dict[str, dtypes.typeclass]:
-        return {name: sym.dtype for name, sym in self.symbols.items()}
+        return {sym.name: sym.dtype for sym in self.symbols.values()}
 
 
 def free_symbol_names(expr: SymExpr) -> set:

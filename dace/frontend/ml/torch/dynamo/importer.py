@@ -59,10 +59,22 @@ class GraphImporter:
         self.options = options
 
     # ------------------------------------------------------------------ entry points
-    def import_graph(self, gm: torch.fx.GraphModule, example_inputs: Sequence[Any], name: str) -> ImportResult:
+    def import_graph(self,
+                     gm: torch.fx.GraphModule,
+                     example_inputs: Sequence[Any],
+                     name: str,
+                     symbol_names: Optional[Dict[str, str]] = None) -> ImportResult:
+        """
+        Lowers an ATen graph into a schedule tree and converts it to an SDFG.
+
+        :param gm: The functionalized ATen graph (``node.meta['val']`` must be populated).
+        :param example_inputs: Fake or real example inputs in placeholder order.
+        :param name: Name of the SDFG.
+        :param symbol_names: Optional renaming of Dynamo shape symbols (``s77``) to user-facing DaCe symbol names.
+        """
         from . import ops  # noqa: F401 (registers lowerings)
 
-        symtab = SymbolTable()
+        symtab = SymbolTable(names=symbol_names)
         storage = _storage_for(example_inputs)
         ctx = LoweringContext(name, symtab, self.options, importer=self, storage=storage)
         self.gm = gm

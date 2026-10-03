@@ -10,7 +10,7 @@ symbols, so the compiled program is reused for every input shape and layout that
 
 .. note::
 
-    This frontend requires PyTorch (``pip install dace[ml]``). It is independent of the ONNX-based
+    This frontend requires PyTorch 2.13 or newer (``pip install dace[ml]``). It is independent of the ONNX-based
     :class:`~dace.frontend.ml.torch.module.DaceModule` and does not require ``onnx``.
 
 Usage
@@ -34,6 +34,28 @@ auto-optimization, decomposition overrides, saving the generated SDFGs) are keyw
 :func:`dace.frontend.ml.torch.dynamo.compile`; the backend instance used for a compiled object is available as
 ``compiled._dace_backend`` and exposes ``last_sdfg`` and ``compile_count``.
 
+Choosing what is symbolic
+-------------------------
+
+With ``dynamic=True`` alone, Dynamo decides which sizes become symbols: sizes that are equal in the first call share
+one symbol ("duck shaping"), sizes 0 and 1 are specialized, and the symbols are named ``s0``, ``s1``, .... The
+``dynamic_shapes`` argument gives this control to the user, in the vocabulary of ``torch.export``:
+
+.. code-block:: python
+
+    # Everything but the weights is symbolic: each dimension of each argument gets its own symbol (x_dim0, x_dim1, ...)
+    compiled = dace.ml.compile(model, dynamic_shapes='all')
+
+    # Named dimensions; strings or torch.export.Dim objects (whose bounds are honored)
+    batch = torch.export.Dim('batch', min=2)
+    compiled = dace.ml.compile(model, dynamic_shapes={'x': {0: batch, 1: 'seq'}, 'cache': {0: batch, 1: 'cache_len'}})
+
+The specification mirrors the arguments (a dict keyed by argument name or a tuple in positional order; nested lists
+and dicts of tensors are mirrored; an integer argument takes a single name). The names become the names of the DaCe
+symbols, which matters when the SDFG is used from a ``@dace.program`` or inspected. Dimensions of size 0 or 1 in the
+first call stay static under ``'all'`` (PyTorch specializes them and treats size-1 operands as broadcasting), and two
+dimensions only share a symbol if the program constrains them to be equal.
+
 How programs are lowered
 ------------------------
 
@@ -55,7 +77,8 @@ Limitations
 
 * Inference only for now; the backward graph produced by AOTAutograd runs eagerly.
 * Dynamo specializes sizes equal to 0 or 1 and unifies equal sizes on the first call ("duck shaping"); a later call
-  with a different pattern recompiles. Use ``torch._dynamo.mark_dynamic`` to avoid this where needed.
+  with a different pattern recompiles. ``dynamic_shapes`` (above) avoids the duck shaping; sizes 0 and 1 remain
+  special.
 * Data-dependent shapes (``nonzero``, ``.item()``) are not captured.
 * Operators without a native lowering raise an error naming the operator; ``extra_decompositions`` and
   ``native_ops`` can be used to steer the decomposition table.

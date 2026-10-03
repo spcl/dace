@@ -76,7 +76,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
+ml = ["onnx", "torch>=2.13", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
 

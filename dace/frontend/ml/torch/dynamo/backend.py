@@ -22,6 +22,10 @@ class DaceBackendOptions:
     save_sdfg: Optional[str] = None  #: Directory to save generated SDFGs into (for debugging)
     verbose: bool = False
     print_ops: bool = False  #: Print the post-decomposition operator histogram of each graph
+    #: Normalized ``dynamic_shapes`` specification (see :mod:`~dace.frontend.ml.torch.dynamo.shapes`); used to name
+    #: the DaCe symbols after the user's dimension names. Argument marking is done by :func:`~.interface.compile`.
+    dynamic_shapes: Any = None
+    signature: Any = None  #: ``inspect.Signature`` of the compiled callable (for mapping arguments to symbols)
 
 
 class DaceBackend:
@@ -47,6 +51,8 @@ class DaceBackend:
         self.last_sdfg = None  #: The most recently generated SDFG (before compilation)
         self.last_result = None  #: The most recent :class:`~dace.frontend.ml.torch.dynamo.importer.ImportResult`
         self._name_counter: Dict[str, int] = {}
+        self._symbol_names: Dict[str, str] = {}
+        self.symbol_names: Dict[str, str] = {}  #: Dynamo symbol -> DaCe symbol name of the most recent graph
 
     # Dynamo enters this context manager around tracing of frames compiled with this backend. The bytecode-level
     # control-flow capture (``cfg.goto_capture``) installs its translator patches here.
@@ -60,6 +66,10 @@ class DaceBackend:
 
     def __call__(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
         from torch._dynamo.backends.common import aot_autograd
+        from . import shapes
+        # The Dynamo-level graph knows which argument each placeholder came from; the AOT graphs below do not.
+        self._symbol_names = shapes.symbol_names_for_graph(gm, self.options.dynamic_shapes, self.options.signature)
+        self.symbol_names = dict(self._symbol_names)
         return aot_autograd(fw_compiler=self._compile_forward,
                             bw_compiler=self._compile_backward,
                             decompositions=self.decomposition_table)(gm, example_inputs)
@@ -80,7 +90,7 @@ class DaceBackend:
         if self.options.print_ops:
             _print_op_histogram(gm)
         importer = GraphImporter(self.options)
-        result = importer.import_graph(gm, example_inputs, self._graph_name(gm))
+        result = importer.import_graph(gm, example_inputs, self._graph_name(gm), symbol_names=self._symbol_names)
         sdfg = result.sdfg
         self.last_sdfg = sdfg
         self.last_result = result

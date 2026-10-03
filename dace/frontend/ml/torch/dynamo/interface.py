@@ -1,15 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """User-facing entry point: ``dace.ml.compile``."""
+import inspect
 from typing import Any, Callable, Optional
 
 import torch
 
 from .backend import DaceBackend
+from . import shapes
 
 
 def compile(model: Optional[Any] = None,
             *,
             dynamic: Optional[bool] = True,
+            dynamic_shapes: Any = None,
             fullgraph: bool = False,
             sdfg_name: Optional[str] = None,
             simplify: bool = True,
@@ -27,6 +30,18 @@ def compile(model: Optional[Any] = None,
     ``dynamic=True`` (the default) tensor sizes and strides become DaCe symbols, so the generated SDFG is compiled once
     and reused for all shapes that satisfy Dynamo's guards.
 
+    By default Dynamo decides which sizes share a symbol (sizes that are equal in the first call do) and specializes
+    sizes 0 and 1. ``dynamic_shapes`` overrides this::
+
+        # Every dimension of every argument is its own symbol (named x_dim0, x_dim1, ...); weights stay static
+        dace.ml.compile(model, dynamic_shapes='all')
+
+        # Named dimensions, in the vocabulary of torch.export (strings or torch.export.Dim objects)
+        batch = torch.export.Dim('batch', min=2)
+        dace.ml.compile(model, dynamic_shapes={'x': {0: batch, 1: 'seq'}, 'cache': {0: batch, 1: 'cache_len'}})
+
+    See :mod:`dace.frontend.ml.torch.dynamo.shapes` for the full specification format.
+
     Can be used as a decorator::
 
         @dace.ml.compile
@@ -35,6 +50,7 @@ def compile(model: Optional[Any] = None,
 
     :param model: The module or function to compile. If ``None``, returns a decorator.
     :param dynamic: Passed to ``torch.compile``. ``True`` traces with symbolic shapes up front.
+    :param dynamic_shapes: ``'all'`` or a per-argument specification of symbolic dimensions and their names.
     :param fullgraph: Passed to ``torch.compile``. If ``True``, graph breaks raise errors.
     :param sdfg_name: Base name for the generated SDFGs.
     :param simplify: Whether to simplify the generated SDFGs.
@@ -56,8 +72,14 @@ def compile(model: Optional[Any] = None,
                    verbose=verbose)
 
     def _compile(m):
-        backend = DaceBackend(**options)
+        target = m.forward if isinstance(m, torch.nn.Module) else m
+        signature = inspect.signature(target)
+        spec = shapes.normalize(dynamic_shapes, signature)
+        if spec is not None and dynamic is False:
+            raise ValueError('dynamic_shapes requires dynamic=True (or None)')
+        backend = DaceBackend(dynamic_shapes=spec, signature=signature, **options)
         compiled = torch.compile(m, backend=backend, dynamic=dynamic, fullgraph=fullgraph, **torch_compile_kwargs)
+        compiled = shapes.install_marking(compiled, m, spec)
         try:
             compiled._dace_backend = backend
         except AttributeError:  # pragma: no cover
