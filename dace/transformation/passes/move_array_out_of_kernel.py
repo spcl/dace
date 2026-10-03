@@ -7,6 +7,7 @@ import logging
 import numbers
 import re
 import warnings
+from collections import deque
 from dataclasses import dataclass
 
 import sympy
@@ -470,9 +471,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
         :raises RuntimeError: No candidate is connected to ``node``.
         """
         visited = OrderedSet([node])
-        queue = [node]
+        queue = deque([node])
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current in access_nodes:
                 return current
             for neighbor in state.neighbors(current):
