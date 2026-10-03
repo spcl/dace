@@ -1,9 +1,20 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 import numpy as np
 import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def test_prune_empty_else():
@@ -37,6 +48,7 @@ def test_prune_empty_else():
 
     assert res[conditional.cfg_id] == 1
     assert len(conditional.branches) == 1
+    assert_cfg_list_matches_reset(sdfg)
 
     N1 = 32
     N2 = 31

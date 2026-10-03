@@ -6,7 +6,8 @@ from dace import dtypes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -24,9 +25,9 @@ class ExpandBcastMPI(ExpandTransformation):
         elif dtype == dtypes.float64:
             mpi_dtype_str = "MPI_DOUBLE"
         elif dtype == dtypes.complex64:
-            mpi_dtype_str = "MPI_COMPLEX"
+            mpi_dtype_str = "MPI_C_FLOAT_COMPLEX"
         elif dtype == dtypes.complex128:
-            mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
+            mpi_dtype_str = "MPI_C_DOUBLE_COMPLEX"
         elif dtype == dtypes.int32:
             mpi_dtype_str = "MPI_INT"
         elif dtype == dtypes.int64:
@@ -43,11 +44,10 @@ class ExpandBcastMPI(ExpandTransformation):
             ref = "&"
 
         init = ""
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
-        elif node.fcomm:
+        comm = resolve_comm(node, parent_state)
+        if comm == "MPI_COMM_WORLD" and node.fcomm:
+            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
+            # connector fed from a ``Comm_f2c`` node, but kept for direct callers).
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
@@ -75,7 +75,7 @@ class Bcast(MPINode):
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
     def __init__(self, name, fcomm=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_inbuffer', '_root')), outputs={"_outbuffer"}, **kwargs)
         self.fcomm = fcomm
 
     def validate(self, sdfg, state):

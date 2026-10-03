@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
+from dace.libraries.linalg import TensorDot
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 
 
@@ -44,6 +46,45 @@ def test_tbmap_sequential():
     assert sdfg.arrays['tmp'].storage == dace.StorageType.GPU_Shared
 
 
+def ttgt_contraction_sdfg() -> dace.SDFG:
+    """A TTGT tensor contraction whose operands both need a transpose, storage not yet inferred."""
+
+    @dace.program
+    def contraction(A: dace.float32[3, 3, 3, 3], B: dace.float32[3, 3, 3, 3], C: dace.float32[3, 3, 3, 3]):
+        C[:] = np.tensordot(A, B, axes=([0, 3], [3, 1]))
+
+    sdfg = contraction.to_sdfg(simplify=True)
+    tensordot = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TensorDot))
+    tensordot.implementation = 'TTGT'
+    return sdfg
+
+
+def transposed_operand_storages(sdfg: dace.SDFG) -> list[dace.StorageType]:
+    expansion = next(nsdfg for nsdfg in sdfg.all_sdfgs_recursive() if nsdfg.parent_sdfg is sdfg)
+    return [expansion.arrays[name].storage for name in ('ttgt_left_transposed', 'ttgt_right_transposed')]
+
+
+def test_expansion_before_inference_leaves_accessed_transients_undecided():
+    sdfg = ttgt_contraction_sdfg()
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    assert transposed_operand_storages(sdfg) == [dace.StorageType.Default] * 2
+    sdfg.validate()
+
+
+def test_transposed_operands_of_an_early_expansion_live_on_the_heap():
+    sdfg = ttgt_contraction_sdfg()
+    sdfg.expand_library_nodes(recursive=False)
+
+    set_default_schedule_and_storage_types(sdfg, None)
+
+    assert transposed_operand_storages(sdfg) == [dace.StorageType.CPU_Heap] * 2
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_notbmap()
     test_tbmap_sequential()
+    test_expansion_before_inference_leaves_accessed_transients_undecided()
+    test_transposed_operands_of_an_early_expansion_live_on_the_heap()

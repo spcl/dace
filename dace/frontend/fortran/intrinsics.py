@@ -1067,14 +1067,14 @@ class MathFunctions(IntrinsicTransformation):
         # Thus, a REAL that is really DOUBLE will be double in the first argument.
         "LOG": MathTransformation("log", "FIRST_ARG"),
         "MOD": {
-            "INTEGER": MathTransformation("Mod", "INTEGER"),
-            "REAL": MathTransformation("Mod_float", "REAL"),
-            "DOUBLE": MathTransformation("Mod_float", "DOUBLE")
+            "INTEGER": MathTransformation("FtnMod", "INTEGER"),
+            "REAL": MathTransformation("FtnMod", "REAL"),
+            "DOUBLE": MathTransformation("FtnMod", "DOUBLE")
         },
         "MODULO": {
-            "INTEGER": MathTransformation("Modulo", "INTEGER"),
-            "REAL": MathTransformation("Modulo_float", "REAL"),
-            "DOUBLE": MathTransformation("Modulo_float", "DOUBLE")
+            "INTEGER": MathTransformation("FtnModulo", "INTEGER"),
+            "REAL": MathTransformation("FtnModulo", "REAL"),
+            "DOUBLE": MathTransformation("FtnModulo", "DOUBLE")
         },
         "FLOOR": {
             "REAL": MathTransformation("floor", "INTEGER"),

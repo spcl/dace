@@ -30,6 +30,7 @@ S = dace.StorageType
 # of 32 KiB
 KIB16 = 2048
 KIB32 = 4096
+KIB40 = 5120
 
 
 def _cuda_code(sdfg: dace.SDFG, backend: str = 'cuda', **config) -> str:
@@ -39,13 +40,7 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = 'cuda', **config) -> str:
         dace.config.Config.set('compiler', 'cuda', 'default_block_size', value='32,1,1')
         for key, value in config.items():
             dace.config.Config.set('compiler', 'cuda', key, value=value)
-        # The backend is cached for the whole process; clear it before and after, so that the backend set above reaches
-        # the code generator and does not leak into other tests
-        common.get_gpu_backend.cache_clear()
-        try:
-            return next(c for c in sdfg.generate_code() if c.name == f'{sdfg.name}_cuda').clean_code
-        finally:
-            common.get_gpu_backend.cache_clear()
+        return next(c for c in sdfg.generate_code() if c.name == f'{sdfg.name}_cuda').clean_code
 
 
 def _placement(sdfg: dace.SDFG, name: str) -> Optional[bool]:
@@ -76,11 +71,7 @@ def _generate(sdfg: dace.SDFG, backend: str = 'cuda', **config):
         dace.config.Config.set('compiler', 'cuda', 'backend', value=backend)
         for key, value in config.items():
             dace.config.Config.set('compiler', 'cuda', key, value=value)
-        common.get_gpu_backend.cache_clear()
-        try:
-            gpu_shared_memory.plan_gpu_shared_memory(sdfg)
-        finally:
-            common.get_gpu_backend.cache_clear()
+        gpu_shared_memory.plan_gpu_shared_memory(sdfg)
     return code, _shared_warnings(record)
 
 
@@ -106,6 +97,17 @@ def three_arrays(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_G
             s2[j] = s1[j] * 2
             s3[j] = s2[j] + 1
             B[i + j] = s3[j]
+
+
+@dace.program
+def two_large_arrays(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_Global):
+    for i in dace.map[0:N:32] @ dace.ScheduleType.GPU_Device:
+        s1 = dace.define_local([KIB40], dace.float64, storage=S.GPU_Shared)
+        s2 = dace.define_local([KIB40], dace.float64, storage=S.GPU_Shared)
+        for j in dace.map[0:32] @ dace.ScheduleType.GPU_ThreadBlock:
+            s1[j] = A[i + j]
+            s2[j] = s1[j] * 2
+            B[i + j] = s2[j] + 1
 
 
 @dace.program
@@ -335,7 +337,7 @@ def test_kernels_do_not_share_containers():
     sdfg = _two_kernel_sdfg(storage=S.GPU_Shared(dynamic=True))
     code, _ = _generate(sdfg)
     assert _placement(sdfg, 's') is True and _placement(sdfg, 's_0') is True
-    kernels = re.findall(r'__global__ void .*? (first|second)_\w+\((.*?)\) \{', code)
+    kernels = re.findall(r'__global__ void .*? \w*?(first|second)_\w+\((.*?)\) \{', code)
     assert len(kernels) == 2
     # Shared memory is not passed to either kernel, which would mean it was allocated outside of them
     assert all('__dace_dynsmem' not in args and ' s' not in args for _, args in kernels)
@@ -359,22 +361,21 @@ def test_dynamic_map_state_follows_the_warp_size(backend: str, warp_size: int):
     """The fine-grained scheduling state holds two arrays of ``WARP_SIZE`` squared indices per warp."""
     with dace.config.temporary_config():
         dace.config.Config.set('compiler', 'cuda', 'backend', value=backend)
-        common.get_gpu_backend.cache_clear()
-        try:
-            assert common.gpu_warp_size() == warp_size
-            assert gpu_shared_memory.dynamic_map_state_elements(True, 128) == 2 * (128 // warp_size) * warp_size**2
-            assert gpu_shared_memory.dynamic_map_state_elements(False, 128) == 4
-        finally:
-            common.get_gpu_backend.cache_clear()
+        assert common.gpu_warp_size() == warp_size
+        assert gpu_shared_memory.dynamic_map_state_elements(True, 128) == 2 * (128 // warp_size) * warp_size**2
+        assert gpu_shared_memory.dynamic_map_state_elements(False, 128) == 4
 
 
 def test_hip_limit():
-    """HIP allows 64 KiB of static shared memory, so two of the three containers are static and none is requested."""
+    """
+    HIP allows 64 KiB of static shared memory, so two of the three containers are static. The 96 KiB in total exceed
+    the limit, so the third is requested.
+    """
     sdfg = three_arrays.to_sdfg(simplify=False)
     code, shared_warnings = _generate(sdfg, backend='hip')
     assert len(shared_warnings) == 1
     assert _placement(sdfg, 's1') is False and _placement(sdfg, 's2') is False and _placement(sdfg, 's3') is True
-    assert 'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY' not in code
+    assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 32768\);', code)
     assert re.search(r'LaunchKernel\(.*, 32768, ', code)
 
 
@@ -385,6 +386,15 @@ def test_configured_limit():
     assert _placement(sdfg, 's1') is True and _placement(sdfg, 's2') is True
     # Beyond the configured limit, the 32 KiB of dynamic shared memory are requested
     assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 32768\);', code)
+
+
+def test_static_and_dynamic_beyond_the_limit_request_dynamic_shared_memory():
+    """40 KiB static and 40 KiB dynamic shared memory each fit the 48 KiB limit, but together they need the opt-in."""
+    sdfg = two_large_arrays.to_sdfg(simplify=False)
+    code, _ = _generate(sdfg)
+    assert _placement(sdfg, 's1') is False and _placement(sdfg, 's2') is True
+    assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 40960\);', code)
+    assert re.search(r'LaunchKernel\(.*, 40960, ', code)
 
 
 # End-to-end ###########################################################################################################
@@ -402,6 +412,12 @@ def _run(program, simplify: bool = False, size: int = 1024, **symbols) -> np.nda
 @pytest.mark.gpu
 def test_dynamic_shared_memory_beyond_the_default_limit():
     B = _run(three_arrays)
+    assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
+
+
+@pytest.mark.gpu
+def test_static_and_dynamic_beyond_the_limit():
+    B = _run(two_large_arrays)
     assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
 
 

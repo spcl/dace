@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 import dace
 import numpy as np
 import pytest
+import re
 import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
@@ -377,6 +378,57 @@ def test_gpu_callback_without_stream_warns():
         sdfg.generate_code()
 
 
+def stream_unaware_callback_code(nested: bool, simplify: Optional[bool]) -> list:
+    """Generated code of a program handing a GPU array to a callback that ignores the stream."""
+
+    @dace_inhibitor
+    def cb_no_stream(arr):
+        arr *= 2
+
+    @dace.program
+    def callee(buf: dace.float64[20]):
+        cb_no_stream(buf)
+
+    @dace.program
+    def gpucallback(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        cb_no_stream(tmp)
+        A[:] = tmp
+
+    @dace.program
+    def gpucallback_nested(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        for _ in range(2):
+            callee(tmp)
+        A[:] = tmp
+
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = (gpucallback_nested if nested else gpucallback).to_sdfg(simplify=simplify)
+    assert nested == any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
+    with pytest.warns(UserWarning, match="not stream-aware"):
+        return sdfg.generate_code()
+
+
+def device_sync_follows_callback(code: list) -> bool:
+    text = ''.join(obj.clean_code for obj in code)
+    call = re.search(r'\bcb_no_stream\(', text)
+    return call is not None and re.search(r'DeviceSynchronize\(\)', text[call.end():]) is not None
+
+
+@pytest.mark.new_gpu_codegen_only
+@pytest.mark.parametrize('simplify', [None, False, True])
+def test_gpu_callback_without_stream_is_fenced(simplify):
+    # The experimental codegen keeps its streams, so the callback is ordered by a device-wide sync after it.
+    assert device_sync_follows_callback(stream_unaware_callback_code(nested=False, simplify=simplify))
+
+
+@pytest.mark.new_gpu_codegen_only
+def test_gpu_callback_in_nested_sdfg_without_stream_is_fenced():
+    assert device_sync_follows_callback(stream_unaware_callback_code(nested=True, simplify=False))
+
+
 def test_bad_closure():
     """
     Testing functions that should not be in the closure (must be implemented as
@@ -460,7 +512,7 @@ def test_inout_same_name():
 
 
 def test_inhibit_state_fusion():
-    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    """ Tests that state fusion never merges states carrying side-effect callbacks. """
 
     @dace_inhibitor
     def add(a, b):
@@ -471,15 +523,12 @@ def test_inhibit_state_fusion():
         A[:] = add(B, C)
         D[:] = add(A, C)
 
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 5
-
-    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
-        with pytest.warns(match="Automatically creating callback"):
-            sdfg = calladd.to_sdfg(simplify=True)
-        assert sdfg.number_of_nodes() == 1
+    # A side-effect node pins state order regardless of the callback-fusion config.
+    for dont_fuse in (True, False):
+        with config.set_temporary('frontend', 'dont_fuse_callbacks', value=dont_fuse):
+            with pytest.warns(match="Automatically creating callback"):
+                sdfg = calladd.to_sdfg(simplify=True)
+            assert sdfg.number_of_nodes() == 5
 
 
 def test_two_callbacks():
@@ -1146,14 +1195,16 @@ if __name__ == '__main__':
     test_automatic_callback_inference_2()
     test_automatic_callback_method()
     test_callback_from_module()
+    # test_callback_tasklet()  # skipped by pytest
     test_view_callback()
-    # test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()
     test_callback_samename()
-    test_gpu_callback()
     test_gpu_callback_without_stream_warns()
+    for simplify in [None, False, True]:
+        test_gpu_callback_without_stream_is_fenced(simplify)
+    test_gpu_callback_in_nested_sdfg_without_stream_is_fenced()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()
@@ -1168,10 +1219,10 @@ if __name__ == '__main__':
     test_callback_kwargs()
     test_same_callback_kwargs()
     test_builtin_callback_kwargs()
-    test_callback_literal_list(False)
-    test_callback_literal_list(True)
-    test_callback_literal_dict(False)
-    test_callback_literal_dict(True)
+    for as_kwarg in [False, True]:
+        test_callback_literal_list(as_kwarg)
+    for as_kwarg in [False, True]:
+        test_callback_literal_dict(as_kwarg)
     test_unused_callback()
     test_callback_with_nested_calls()
     test_string_callback()
@@ -1182,8 +1233,9 @@ if __name__ == '__main__':
     test_custom_generator_with_break()
     test_disallowed_callback_in_condition()
     test_disallowed_callback_slice()
-    # test_matplotlib_with_compute()
+    # test_matplotlib_with_compute()  # skipped by pytest
     test_callback_with_arraylike_closure_object()
     test_callback_with_arraylike_object()
     test_callback_with_arraylike_object_typehints()
     test_nested_callback_with_nested_arraylike_object()
+    test_gpu_callback()

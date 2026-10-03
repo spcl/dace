@@ -10,7 +10,20 @@ import dace
 from dace.library import change_default
 from dace.libraries import blas
 
-MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
+MKL_AND_CUBLAS = [
+    pytest.param("cuBLAS",
+                 marks=[
+                     pytest.mark.gpu,
+                     pytest.mark.skipif(not blas.environments.cuBLAS.is_installed(),
+                                        reason='cuBLAS not installed on this machine')
+                 ]),
+    pytest.param("MKL",
+                 marks=[
+                     pytest.mark.mkl,
+                     pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(),
+                                        reason='Intel MKL not installed on this machine')
+                 ]),
+]
 
 
 def test_change_default():
@@ -36,6 +49,7 @@ def assert_used_environment(sdfg, impl):
 
 
 @pytest.mark.mkl
+@pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason='Intel MKL not installed on this machine')
 def test_gemm_fails_storage_mkl():
 
     with change_default(blas, "MKL"):
@@ -133,3 +147,58 @@ def test_4x4(impl):
 
         sdfg(A=A, B=B, C=C)
         assert np.allclose(A @ B, C)
+
+
+def test_einsum_coefficients_survive_a_json_round_trip_of_the_expanded_gemm():
+    """An einsum hands its SymPy ``alpha``/``beta`` to MatMul and Gemm, whose untyped properties saved them as
+    text: a reloaded SDFG (the CPF canonical cache) failed to expand with ``SympifyError: '1.0'``."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.libraries.blas.nodes.gemm import Gemm
+
+    n = 4
+    sdfg = dace.SDFG('einsum_coefficient_round_trip')
+    for name in ('a', 'b', 'c'):
+        sdfg.add_array(name, [n, n], dace.float64)
+    state = sdfg.add_state()
+    node = Einsum('einsum')
+    node.einsum_str = 'ij,jk->ik'
+    node.alpha = 2.0
+    node.beta = 0.0
+    node.add_in_connector('a')
+    node.add_in_connector('b')
+    node.add_out_connector('c')
+    state.add_node(node)
+    for name in ('a', 'b'):
+        state.add_edge(state.add_read(name), None, node, name, dace.Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, 'c', state.add_write('c'), None, dace.Memlet.from_array('c', sdfg.arrays['c']))
+    sdfg.expand_library_nodes(recursive=True, predicate=lambda lib: not isinstance(lib, Gemm))
+    assert any(isinstance(lib, Gemm) for lib, _ in sdfg.all_nodes_recursive())
+
+    loaded = dace.SDFG.from_json(sdfg.to_json())
+    loaded.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    a, b, c = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    loaded(a=a, b=b, c=c)
+    assert np.allclose(c, 2.0 * (a @ b)), c
+
+
+@pytest.mark.parametrize('subscripts, shapes', [
+    ('ij,kj->ikj', ((3, 5), (4, 5))),
+    ('jb,kb->jkb', ((3, 5), (4, 5))),
+])
+def test_a_batch_index_after_a_matrix_index_compiles_and_computes(subscripts, shapes):
+    """A batch index after a matrix index leaves no unit-stride matrix dimension, so the batched GEMM
+    lowering raised at compile ("sCM or sCN should be 1"): warpx_field_gather's lifted ``ij,kj->ikj``
+    outer product per particle."""
+    (m, n), (k, _) = shapes
+
+    @dace.program
+    def outer(a: dace.float64[m, n], b: dace.float64[k, n], c: dace.float64[m, k, n]):
+        c[:] = np.einsum(subscripts, a, b)
+
+    rng = np.random.default_rng(0)
+    a, b = rng.random(shapes[0]), rng.random(shapes[1])
+    c = np.zeros((m, k, n))
+    outer(a=a, b=b, c=c)
+    np.testing.assert_allclose(c, np.einsum(subscripts, a, b), rtol=1e-12)

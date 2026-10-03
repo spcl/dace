@@ -9,6 +9,7 @@ import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 # Create a wrapper module that handles the position embeddings internally
@@ -41,7 +42,9 @@ class LlamaDecoderLayerWrapper(nn.Module):
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_llama_decoder_backward():
+@pytest.mark.parametrize("device", DEVICES)
+def test_llama_decoder_backward(device):
+    dev = torch_device(device)
     # Create configuration
     config = LlamaConfig(
         hidden_size=512,
@@ -63,19 +66,20 @@ def test_llama_decoder_backward():
     seq_length = 128
 
     # Create input tensors
-    hidden_states = torch.randn(batch_size, seq_length, config.hidden_size)
-    attention_mask = torch.ones(batch_size, 1, seq_length, seq_length)
-    position_ids = torch.arange(seq_length).unsqueeze(0).expand(batch_size, seq_length)
+    hidden_states = torch.randn(batch_size, seq_length, config.hidden_size, device=dev)
+    attention_mask = torch.ones(batch_size, 1, seq_length, seq_length, device=dev)
+    position_ids = torch.arange(seq_length, device=dev).unsqueeze(0).expand(batch_size, seq_length)
 
     # Create wrapped model
-    wrapped_model = LlamaDecoderLayerWrapper(decoder_layer, config)
+    wrapped_model = LlamaDecoderLayerWrapper(decoder_layer, config).to(dev)
 
     # Avoid the simplify pass since it takes too long for this model
     dace_model = DaceModule(
         wrapped_model,
-        sdfg_name="test_llama_decoder_backward",
+        sdfg_name=f"test_llama_decoder_backward_{device}",
         onnx_simplify=True,
         backward=True,
+        cuda=is_gpu(device),
     )
 
     hidden_states_pt, attention_mask_pt, position_ids_pt = (torch.clone(hidden_states), torch.clone(attention_mask),
@@ -88,7 +92,8 @@ def test_llama_decoder_backward():
     hidden_states_dace.requires_grad = True
 
     wrapped_model(hidden_states_pt, attention_mask_pt, position_ids_pt).sum().backward()
-    dace_model(hidden_states_dace, attention_mask_dace, position_ids_dace).sum().backward()
+    with experimental_cuda():
+        dace_model(hidden_states_dace, attention_mask_dace, position_ids_dace).sum().backward()
 
     # Check gradients of the parameters
     for (name, dace_param), (pt_name, pt_param) in zip(wrapped_model.named_parameters(), dace_model.named_parameters()):
@@ -100,4 +105,4 @@ def test_llama_decoder_backward():
 
 
 if __name__ == "__main__":
-    test_llama_decoder_backward()
+    test_llama_decoder_backward(device="cpu")

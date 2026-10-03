@@ -18,6 +18,56 @@ if TYPE_CHECKING:
     from dace.data import Data
 
 
+def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: 'Data') -> bool:
+    """Whether ``arg`` is the sole occupant of the buffer it reports as its base, laid out the way
+    ``argtype`` declares.
+
+    Reporting a base is not the same thing as being a view DaCe cannot analyze. numpy 2.4 rebuilds
+    a pickled array on top of a shared buffer, so every array that crossed a process boundary --
+    every argument to a test's isolated child, for one -- reports one while covering that buffer
+    whole, in the declared stride pattern, exactly as an owning array would. A sub-array or a
+    transpose fails one of the two: it is smaller than what it looks into, or its strides are not
+    the descriptor's.
+
+    Conservative on anything it cannot settle -- a symbolic stride, a base with no buffer to size
+    -- so the ownership test keeps its answer wherever the layout is not concrete.
+    """
+    try:
+        # ``memoryview``, not ``.nbytes``: the base is an ndarray on numpy 2.4 and a bytes object
+        # on 2.2, and only the buffer protocol sizes both.
+        if arg.nbytes != memoryview(arg.base).nbytes:
+            return False
+        return all(int(declared) == stride // arg.itemsize for declared, stride in zip(argtype.strides, arg.strides))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
+    """Whether ``arg`` is packed in the other memory order than the packed order ``argtype`` declares.
+
+    The call hands the SDFG only the data pointer, and the SDFG walks it with the DESCRIPTOR's
+    strides. A Fortran-ordered array bound to a C-strided descriptor is therefore read transposed,
+    and ``np.asfortranarray`` or ``np.copy`` of a transposed view both own their buffer, so the view
+    check does not see them. Only the two packed orders are compared: the array flags and the
+    descriptor's cached packed strides settle that without evaluating a symbol.
+    """
+    if arg.ndim != len(argtype.shape):
+        return False
+    # A C array of shape (5, n) bound to a Fortran-strided (n, 5) descriptor is the same memory, the
+    # usual Fortran-interop spelling: only an array of the descriptor's own shape is read transposed.
+    # A concrete extent that differs says the caller already transposed the shape.
+    if any(not symbolic.issymbolic(declared) and int(declared) != extent
+           for extent, declared in zip(arg.shape, argtype.shape)):
+        return False
+    only_fortran = arg.flags.f_contiguous and not arg.flags.c_contiguous
+    only_c = arg.flags.c_contiguous and not arg.flags.f_contiguous
+    if only_fortran:
+        return argtype.is_packed_c_strides() and not argtype.is_packed_fortran_strides()
+    if only_c:
+        return argtype.is_packed_fortran_strides() and not argtype.is_packed_c_strides()
+    return False
+
+
 def make_ctypes_argument(arg: Any,
                          argtype: 'Data',
                          name: Optional[str] = None,
@@ -80,8 +130,18 @@ def make_ctypes_argument(arg: Any,
         if (isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype):
             pass
         else:
+            # Warn and reinterpret-cast.  Auto-casting here is unsafe
+            # for intent(inout) / intent(out) args because the cast
+            # would allocate a fresh buffer that the SDFG writes into,
+            # losing the caller's writeback semantics.  ``ctypes_interop``
+            # cannot see Fortran intents at this layer.  Callers are
+            # expected to match the declared dtype (e.g. ``np.bool_``
+            # for ``bool *`` args).  HLFIR Fortran callers go through
+            # the bindings wrapper which does the cast at a layer that
+            # knows intent and does proper copy-in/copy-out.
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
-    elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
+    elif (is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments
+          and not _owns_its_buffer_through_a_proxy(arg, argtype)):
         raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
                         'programs is not allowed in order to retain analyzability. '
                         'Please make a copy with "numpy.copy(...)". If you know what '
@@ -111,6 +171,13 @@ def make_ctypes_argument(arg: Any,
         else:
             warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {argtype.dtype.type}')
             result = argtype.dtype.type(arg)
+
+    if is_dtArray and is_ndarray and contradicts_packed_order(arg, argtype):
+        order = 'Fortran' if arg.flags.f_contiguous else 'C'
+        raise TypeError(f'Passing a {order}-ordered array to argument "{a}", whose descriptor declares the '
+                        f'other memory order (strides {tuple(argtype.strides)}): the SDFG would read it '
+                        'with the wrong strides. Convert it with "numpy.ascontiguousarray(...)" or '
+                        '"numpy.asfortranarray(...)" to match the descriptor.')
 
     # Call a wrapper function to make NumPy arrays from pointers.
     if isinstance(argtype.dtype, dtypes.callback):

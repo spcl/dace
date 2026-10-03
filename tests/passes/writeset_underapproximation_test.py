@@ -518,7 +518,10 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (str(write_set) == "0:M, 0:N - 2")
+    # The loop runs j = 2 .. N-1, so columns 0 and 1 are never written. The old expectation
+    # "0:M, 0:N - 2" had the right extent at the wrong origin, which is not an underapproximation
+    # of this write at all -- it claims two columns nobody touches.
+    assert (str(write_set) == "0:M, 2:N")
 
 
 def test_map_in_nested_sdfg_in_map():

@@ -240,6 +240,91 @@ def test_augassign_to_compiletime_scalar():
         obj.method()
 
 
+def test_scalar_assignment_copies():
+
+    @dace.program
+    def plain(out: dace.float64[2]):
+        a = 1.0
+        b = a
+        b += 1.0
+        out[0] = a
+        out[1] = b
+
+    sdfg = plain.to_sdfg(simplify=False)
+    assert 'a' in sdfg.arrays and 'b' in sdfg.arrays
+    assert sdfg.arrays['a'] is not sdfg.arrays['b']
+
+    out = np.zeros((2, ), dtype=np.float64)
+    plain(out=out)
+    assert np.allclose(out, [1.0, 2.0])
+
+
+def test_scalar_chained_assignment_copies():
+
+    @dace.program
+    def chained(a: dace.float64[8], out: dace.float64[1]):
+        tmp = 0.0
+        s0 = tmp
+        s1 = tmp
+        for i in range(4):
+            s0 += a[2 * i]
+            s1 += a[2 * i + 1]
+        out[0] = s0 + s1
+
+    sdfg = chained.to_sdfg(simplify=False)
+    assert {'tmp', 's0', 's1'}.issubset(sdfg.arrays.keys())
+
+    a = np.arange(1.0, 9.0)
+    out = np.zeros((1, ), dtype=np.float64)
+    chained(a=a, out=out)
+    assert np.allclose(out[0], a.sum())
+
+
+def test_scalar_assignment_branch_dispatch():
+
+    @dace.program
+    def branches(out: dace.float64[6]):
+        rp0 = 10.0
+        rp1 = 20.0
+        rp2 = 30.0
+        for idir in range(3):
+            if idir == 0:
+                pc = rp0
+            elif idir == 1:
+                pc = rp1
+            else:
+                pc = rp2
+            out[idir] = pc
+        out[3] = rp0
+        out[4] = rp1
+        out[5] = rp2
+
+    sdfg = branches.to_sdfg(simplify=False)
+    assert {'rp0', 'rp1', 'rp2', 'pc'}.issubset(sdfg.arrays.keys())
+
+    out = np.zeros((6, ), dtype=np.float64)
+    branches(out=out)
+    assert np.allclose(out, [10.0, 20.0, 30.0, 10.0, 20.0, 30.0])
+
+
+def test_array_assignment_aliases():
+
+    @dace.program
+    def aliasing(out: dace.float64[4]):
+        a = np.zeros((4, ), dtype=np.float64)
+        b = a
+        b[0] = 1.0
+        out[:] = a
+
+    sdfg = aliasing.to_sdfg(simplify=False)
+    # Both names share a single container, as they do in NumPy
+    assert len([n for n, desc in sdfg.arrays.items() if desc.transient]) == 1
+
+    out = np.ones((4, ), dtype=np.float64)
+    aliasing(out=out)
+    assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
+
+
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
@@ -261,3 +346,8 @@ if __name__ == "__main__":
 
     test_assign_to_compiletime_scalar()
     test_augassign_to_compiletime_scalar()
+
+    test_scalar_assignment_copies()
+    test_scalar_chained_assignment_copies()
+    test_scalar_assignment_branch_dispatch()
+    test_array_assignment_aliases()

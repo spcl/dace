@@ -85,6 +85,14 @@ def test_mimo():
                 C2 = node
                 break
     if C1 is not None and C2 is not None:
+        # Ordering edges that touch the C node being merged become cyclic once
+        # both C instances collapse to one (e.g. C -> B -> map24 -> C). Drop
+        # these connector-less edges; the data dependencies still sequence the
+        # maps that read and write C correctly.
+        for edge in list(sdfg.nodes()[0].edges()):
+            if edge.src_conn is None and edge.dst_conn is None:
+                if edge.src in (C1, C2) or edge.dst in (C1, C2):
+                    sdfg.nodes()[0].remove_edge(edge)
         dace.sdfg.utils.change_edge_dest(sdfg.nodes()[0], C2, C1)
         dace.sdfg.utils.change_edge_src(sdfg.nodes()[0], C2, C1)
         sdfg.nodes()[0].remove_node(C2)

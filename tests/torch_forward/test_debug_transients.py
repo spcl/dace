@@ -5,11 +5,11 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch
 from torch import nn
 
-import dace
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
-@dace.ml.module(debug_transients=True, sdfg_name="test_debug_transients")
 class Module(nn.Module):
 
     def forward(self, x):
@@ -18,12 +18,19 @@ class Module(nn.Module):
 
 
 @pytest.mark.torch
-def test_debug_transients():
+@pytest.mark.parametrize("device", DEVICES)
+def test_debug_transients(device):
 
-    module = Module()
+    dev = torch_device(device)
 
-    x = torch.rand(5, 5)
-    outputs = module(x)
+    module = DaceModule(Module(),
+                        debug_transients=True,
+                        sdfg_name=f"test_debug_transients_{device}",
+                        cuda=is_gpu(device))
+
+    x = torch.rand(5, 5).to(dev)
+    with experimental_cuda():
+        outputs = module(x)
     output, y, y2 = outputs
 
     torch_tensors_close("output", (x + 3) * 5, output)
@@ -32,4 +39,4 @@ def test_debug_transients():
 
 
 if __name__ == "__main__":
-    test_debug_transients()
+    test_debug_transients(device="cpu")

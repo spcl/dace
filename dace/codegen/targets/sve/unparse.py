@@ -462,12 +462,15 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Call does not involve any vectors (to our knowledge)
             # Replace default modules (e.g., math) with dace::math::
             attr_name = astutils.rname(t)
-            module_name = attr_name[:attr_name.rfind(".")]
-            func_name = attr_name[attr_name.rfind(".") + 1:]
-            if module_name not in dtypes._ALLOWED_MODULES:
-                raise NotImplementedError(f'Module {module_name} is not implemented')
-            cpp_mod_name = dtypes._ALLOWED_MODULES[module_name]
-            name = cpp_mod_name + func_name
+            if attr_name in self.modulo_calls:
+                name = self.modulo_calls[attr_name]
+            else:
+                module_name = attr_name[:attr_name.rfind(".")]
+                func_name = attr_name[attr_name.rfind(".") + 1:]
+                if module_name not in dtypes._ALLOWED_MODULES:
+                    raise NotImplementedError(f'Module {module_name} is not implemented')
+                cpp_mod_name = dtypes._ALLOWED_MODULES[module_name]
+                name = cpp_mod_name + func_name
 
             self.write(name)
             self.write('(')

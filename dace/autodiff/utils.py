@@ -5,10 +5,11 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import astunparse
 import sympy as sp
+from dace.ordered import OrderedSet
 
 # DaCe imports
 import dace
@@ -136,7 +137,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
 
     nsdfg = dace.SDFG(forward_node.label + "_backward_expansion")
 
-    def _get_fwd_descriptor(name):
+    def get_fwd_descriptor(name):
         """Returns the descriptor and whether it is an input"""
         if name in forward_node.out_connectors:
             return forward_out_desc_with_name(forward_node, context, name), False
@@ -148,13 +149,13 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
     outputs_to_connect_from_forward = []
 
     result = BackwardResult.empty()
-    inputs = set()
-    outputs = set()
+    inputs: OrderedSet[str] = OrderedSet()
+    outputs: OrderedSet[str] = OrderedSet()
 
     for name in required_descriptors:
         if name.endswith("_grad"):
             # hook this up as a gradient
-            desc, is_input = _get_fwd_descriptor(name[:-5])
+            desc, is_input = get_fwd_descriptor(name[:-5])
             if is_input:
                 result.required_grad_names[name[:-5]] = name
             else:
@@ -165,7 +166,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
             else:
                 inputs.add(name)
         else:
-            desc, is_input = _get_fwd_descriptor(name)
+            desc, is_input = get_fwd_descriptor(name)
             if not is_input:
                 outputs_to_connect_from_forward.append(name)
             inputs.add(name)
@@ -185,7 +186,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
 
 
 def backward_program_for_node(program, context: BackwardContext,
-                              forward_node: nd.Node) -> Tuple[nd.Node, BackwardResult]:
+                              forward_node: nd.Node) -> tuple[nd.Node, BackwardResult]:
     """ Expand a function to the backward function for a node.
 
         The dtypes for the arguments will be extracted by matching the parameter names to edges.
@@ -379,7 +380,7 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
         raise AutoDiffException("Unsupported data descriptor {}".format(arr))
 
 
-def extract_indices(expression: str) -> Dict[str, List[str]]:
+def extract_indices(expression: str) -> dict[str, list[str]]:
     """Extracts indexed array names and their indices from a given string expression.
 
     This function uses regular expressions to find patterns like "array[i, j, k]"
@@ -409,6 +410,52 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
     return index_map
 
 
+def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> sp.Idx:
+    """Index label for an ``IndexedBase`` access, over a DaCe symbol.
+
+    An ``Idx`` label must be integral, so a non-integer declaration cannot supply it and the
+    default integer dtype stands in.
+    """
+    sym = connector_symbol(name, dtype)
+    return sp.Idx(sym if sym.is_integer else connector_symbol(name))
+
+
+def replace_bare_symbols(expr: sp.Expr, known: dict[str, sp.Expr]) -> sp.Expr:
+    """Replace every bare sympy Symbol in ``expr`` with the DaCe symbol of the same name.
+
+    The boundary guarantee for this module: no expression leaves it carrying a symbol that would
+    compare unequal to the SDFG's own. SymPy can still introduce one from inside the executed code.
+    """
+    replacements = {}
+    for sym in expr.free_symbols:
+        if type(sym) is not sp.Symbol:
+            continue
+        declared = known.get(sym.name)
+        replacements[sym] = declared if isinstance(declared, symbolic.symbol) else connector_symbol(sym.name)
+    return expr.xreplace(replacements) if replacements else expr
+
+
+def resolve_differentiation_target(expr: sp.Expr, name: str, indices: list[str] | None) -> sp.Expr:
+    """Find, inside ``expr``, the symbol or indexed access that stands for connector ``name``.
+
+    ``expr.diff(...)`` has to see the very instance the expression was built around; a re-minted
+    equivalent differentiates to zero (or to a KroneckerDelta). A connector absent from ``expr``
+    falls back to a fresh instance, where zero is the right derivative anyway.
+    """
+    if indices is None:
+        # sorted() only to keep the fallback deterministic; at most one symbol carries a given name.
+        candidates = sorted((s for s in expr.free_symbols if str(s) == name), key=str)
+        return candidates[0] if candidates else connector_symbol(name)
+
+    wanted = tuple(indices)
+    candidates = sorted(
+        (a for a in expr.atoms(sp.Indexed) if str(a.base) == name and tuple(str(i) for i in a.indices) == wanted),
+        key=str)
+    if candidates:
+        return candidates[0]
+    return sp.IndexedBase(name)[tuple(index_symbol(index) for index in indices)]
+
+
 def code_to_exprs(code: str, tasklet: nd.Tasklet,
                   symbols: Dict[str, dtypes.typeclass]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
@@ -420,8 +467,16 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
         :return: map from outputs to symbolic expressions, and the map of indexed objects to indices
     """
 
-    inputs: List[str] = list(tasklet.in_connectors)
-    outputs: List[str] = list(tasklet.out_connectors)
+    inputs: list[str] = list(tasklet.in_connectors)
+    outputs: list[str] = list(tasklet.out_connectors)
+
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: dict[str, sp.Expr] = {}
+
+    # Symbols reach the generated source through this table instead of being minted inside it from a
+    # bare name: minting here is the only place that still knows their dtypes.
+    symbol_table: Dict[str, sp.Expr] = {}
 
     # Symbols reach the generated source through this table instead of being minted inside it from a
     # bare name: minting here is the only place that still knows their dtypes.
@@ -532,12 +587,50 @@ def invert_map_connector(conn: str) -> str:
         raise AutoDiffException("Could not parse map connector '{}'".format(conn))
 
 
+def carries_gradient(edge: dgraph.MultiConnectorEdge) -> bool:
+    """Whether a reverse traversal of the dataflow may follow ``edge``.
+
+    A non-empty memlet moves a value and always may. An empty memlet is an ordering edge and moves
+    nothing, so it carries no gradient -- except for the one shape DaCe gives no alternative: the
+    edge that ties a node without data inputs (or outputs) to its enclosing scope. Dropping those
+    would leave a map body without its entry. Every other ordering edge must be left alone;
+    following one drags unrelated dataflow -- an already generated backward pass, for instance --
+    into the differentiated subgraph.
+    """
+    return (not edge.data.is_empty() or isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.ExitNode))
+
+
+def reverse_bfs_gradient_nodes(state: dstate.StateSubgraphView, sources: list[nd.Node]) -> OrderedSet[nd.Node]:
+    """Collect the endpoints of every edge a reverse BFS from ``sources`` reaches along gradients.
+
+    :param state: The state (or subgraph view) to traverse.
+    :param sources: The nodes to start from.
+    :return: The endpoints of the traversed edges, in BFS order.
+    """
+    reached: OrderedSet[nd.Node] = OrderedSet()
+    visited: OrderedSet[nd.Node] = OrderedSet()
+    queue = collections.deque(sources)
+    while queue:
+        node = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+        for edge in state.in_edges(node):
+            if not carries_gradient(edge):
+                continue
+            reached.add(edge.src)
+            reached.add(edge.dst)
+            if edge.src not in visited:
+                queue.append(edge.src)
+    return reached
+
+
 def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView) -> bool:
     path_src = subgraph.memlet_path(edge)[0].src
     return path_src in subgraph.nodes()
 
 
-def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
+def get_read_only_arrays(sdfg: SDFG) -> set[str]:
     """Get the arrays that are only read in SDFG.
 
     This function identifies arrays that are never written to (only have outgoing
@@ -556,7 +649,7 @@ def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
     return read_only_arrays
 
 
-def get_state_topological_order(graph) -> List[SDFGState]:
+def get_state_topological_order(graph) -> list[SDFGState]:
     """
     Returns the SDFG states in topological order.
     """
@@ -658,7 +751,7 @@ def analyze_loop_change(code: str, loop_variable: str) -> str:
 
 
 def get_map_nest_information(
-        edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
+        edges_list: list[dstate.MultiConnectorEdge]) -> tuple[list, list[str], list, dict[str, tuple]]:
     """
         """
     # First, get the shape of the new array
@@ -691,7 +784,7 @@ def get_map_nest_information(
 
 
 def get_all_path_edges(state: SDFGState, source: nd.Node,
-                       starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
+                       starting_edge: dgraph.MultiConnectorEdge) -> list[dgraph.MultiConnectorEdge]:
     """
     We will start from the target node and go back until we reach the destination.
     Starting edge should be an in node
@@ -715,7 +808,7 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
     raise AutoDiffException("Can't easily find path. Upgrade function.")
 
 
-def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
+def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> tuple[str, str, str]:
     """
         Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
         The else statement could be None in case there is only an if statement. The current supported formats are the following:
@@ -852,7 +945,7 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
                     f" on edge {edge} has type {edge_type}")
 
 
-def state_within_loop(forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
+def state_within_loop(forward_state: SDFGState) -> tuple[bool, LoopRegion]:
     """
     Check if this state will be executed several times within a loop.
     We check if any of the parents of this state is a loop region.
@@ -873,7 +966,7 @@ class SympyCleaner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
+def extract_loop_region_info(loop: LoopRegion) -> tuple[str, str]:
     """
         Use regular expression matching to extract the start and end of the loop region.
         We only treat regular for-loops with incrementation and decrementation updates.

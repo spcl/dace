@@ -8,9 +8,11 @@ from dace import Memlet, SDFG, SDFGState
 from dace.frontend.python import astutils
 
 import itertools
+import math
 from numbers import Number, Integral
 from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
 
+import ml_dtypes
 import numpy as np
 import sympy as sp
 
@@ -89,6 +91,20 @@ def simple_call(pv: 'ProgramVisitor',
             external_edges=True)
 
     return outname
+
+
+def step_state(pv: 'ProgramVisitor', state: SDFGState) -> SDFGState:
+    """The state that the next step of a lowering built from several maps has to be emitted into.
+
+    Two maps dropped into one state carry no ordering between them, so a step reading what the
+    previous step wrote gets a second, unconnected access node for that transient. Nothing then
+    stops map fusion from joining the two maps and leaving the read pointed at a transient the
+    fused map has not written yet. A state boundary is the dependency; simplification fuses the
+    states back together once it has linked the access nodes.
+    """
+    if pv is None:
+        return state
+    return pv._add_state(f'{state.label}_step')
 
 
 ########################################################################
@@ -215,7 +231,10 @@ def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype_class).resolution)
+        # ml_dtypes' finfo, not numpy's: bfloat16 and the two fp8 types are registered
+        # outside numpy's float hierarchy, so np.finfo raises "not inexact" on them. It
+        # answers for every numpy float and complex type identically.
+        return nptype(ml_dtypes.finfo(nptype_class).resolution)
 
 
 def np_result_type(nptypes):
@@ -229,11 +248,44 @@ def np_result_type(nptypes):
     return dtypes.dtype_to_typeclass(restype.type)
 
 
+#: The namespace :func:`sym_type` evaluates a representative value in. ``astutils.unparse`` renders
+#: sympy's singletons through the math module -- ``zoo`` comes out as ``math.nan`` -- and the eval
+#: below used to be given no globals at all, so those names resolved against whatever this module
+#: happened to import. ``h = 1.0 / (N - 1)`` refused with "name 'math' is not defined" for exactly
+#: that reason, in a frontend that has no business needing the caller to import math.
+SYM_TYPE_NAMESPACE = {'math': math, 'np': np, 'numpy': np, 'nan': math.nan, 'inf': math.inf}
+
+
+def representative_value(expr: sp.Basic):
+    """``expr`` evaluated at one representative point, for the sole purpose of reading its TYPE.
+
+    TWO points are tried, because the first is degenerate for an ordinary expression: the integer
+    representative is 1, so every ``N - 1`` denominator is zero and sympy folds the whole expression
+    to ``zoo``. A grid spacing ``1.0 / (N - 1)`` is not an error, and the type it infers should come
+    from the arithmetic rather than from a division by zero, so the second point moves the integers
+    off 1. The first point is kept where it evaluates, since it is the one the rest of the frontend
+    has always agreed with. The degeneracy shows up two ways and both are handled: a float division
+    folds to ``zoo``, while an integer one (``N // (N - 1)``) raises out of sympy's substitution
+    before there is any value to inspect.
+    """
+    points = (0, 1)
+    for offset in points:
+        substitutions = [(s, representative_num(s.dtype) + offset) for s in expr.free_symbols]
+        try:
+            value = eval(astutils.unparse(expr.subs(substitutions)), dict(SYM_TYPE_NAMESPACE))
+        except ZeroDivisionError:
+            if offset == points[-1]:
+                raise
+            continue
+        if not isinstance(value, float) or math.isfinite(value):
+            return value
+    return value
+
+
 def sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
-    representative_value = expr.subs([(s, representative_num(s.dtype)) for s in expr.free_symbols])
-    pyval = eval(astutils.unparse(representative_value))
+    pyval = representative_value(expr)
     # Overflow check
     if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or pyval < np.iinfo(np.int64).min):
         nptype = np.int64

@@ -66,6 +66,5 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
             region.parent_graph.remove_node(region)
 
         if removed_branches > 0:
-            region.reset_cfg_list()
             return removed_branches
         return None

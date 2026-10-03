@@ -2,7 +2,7 @@
 """ Loop detection transformation """
 
 import sympy as sp
-import networkx as nx
+from dace import graphlib as nx
 from typing import AnyStr, Iterable, Optional, Tuple, List, Set
 
 from dace import sdfg as sd, symbolic

@@ -4,6 +4,7 @@ from dace.config import Config
 import dace.library
 import ctypes.util
 import warnings
+from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUARD
 
 
 @dace.library.environment
@@ -22,29 +23,26 @@ class IntelMKLScaLAPACKMPICH:
     cmake_libraries = []
     cmake_files = []
 
-    headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
+    headers = ["mpi.h", "cstdio", "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/blacs_grid.h"]
     state_fields = [
-        "MKL_INT __mkl_scalapack_context;", "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
-        "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
-        "MKL_INT __mkl_scalapack_myprow = 0, __mkl_scalapack_mypcol = 0;",
-        "MKL_INT __mkl_int_zero = 0, __mkl_int_one = 1, __mkl_int_negone = -1;",
-        "bool __mkl_scalapack_grid_init = false;"
+        "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;", "MKL_INT __mkl_int_zero = 0, __mkl_int_one = 1;",
+        "std::vector<DaceBlacsGrid<MKL_INT>> __mkl_scalapack_grids;"
     ]
     init_code = """
+    """ + MPI_THREAD_LEVEL_GUARD + """
     blacs_pinfo(&__state->__mkl_scalapack_rank, &__state->__mkl_scalapack_size);
-    blacs_get(&__state->__mkl_int_negone, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context);
-    if (!__state->__mkl_scalapack_grid_init) {{\n
-        __state->__mkl_scalapack_prows = Py;\n
-        __state->__mkl_scalapack_pcols = Px;\n
-        blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n
-        blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n
-        __state->__mkl_scalapack_grid_init = true;\n
-    }}\n
     """
     finalize_code = """
-    if (__state->__mkl_scalapack_grid_init) {{
-        blacs_gridexit(&__state->__mkl_scalapack_context);
-    }}
+    // blacs_gridexit frees the grid communicator; illegal once MPI is finalized.
+    int __mkl_scalapack_mpi_finalized = 0;
+    MPI_Finalized(&__mkl_scalapack_mpi_finalized);
+    if (!__mkl_scalapack_mpi_finalized) {
+        for (const auto& __grid : __state->__mkl_scalapack_grids) {
+            MKL_INT __ctxt = __grid.context;
+            blacs_gridexit(&__ctxt);
+        }
+    }
+    __state->__mkl_scalapack_grids.clear();
     // blacs_exit(&__state->__mkl_int_zero);
     """
     dependencies = []

@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``FillLibraryNode`` implementation to a concrete one.
 
-    ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, a GPU
-    destination whose constant value is not byte-splat, a dynamic value wider than 32 bits, or a
-    contiguous CPU fill that is not provably sub-threshold. ``'CUDA'``: host-issued byte-splat fill
-    of GPU memory, or a dynamic value of at most 32 bits. ``'CPU'``: a single ``memset``/
-    ``std::fill_n``. ``'tasklet'``: a single element.
+    ``'pure'``: device scope (no ``gpuMemsetAsync`` from a kernel), non-contiguous subsets, a GPU
+    destination whose value is not a byte-splat constant (any dynamic value), a dynamic value wider
+    than 32 bits, or a contiguous CPU fill that is not provably sub-threshold. ``'CUDA'``: host-issued
+    byte-splat fill of GPU memory. ``'CPU'``: a single ``memset``/``std::fill_n``. ``'tasklet'``: a
+    single element.
 
     :param node: The fill library node being expanded.
     :param parent_state: The state containing ``node``.
@@ -45,8 +45,9 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
         # GPU; route it to the parallel map-based fill.
         if out.dtype.bytes > 4:
             return 'pure'
+        # gpuMemsetAsync writes ONE byte over the range, so a runtime value fills by kernel
         if out.storage == dace.dtypes.StorageType.GPU_Global:
-            return 'CUDA'
+            return 'pure'
         # Contiguous CPU/Default/Register destination with a dynamic <=32-bit value.
         allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
         if out.storage in allowed and not (is_parallel_cpu_transfer_size(out_subset.num_elements())
@@ -55,7 +56,7 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
         return 'pure'
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:
-        # cudaMemsetAsync writes ONE byte over the range; dace links only the CUDA runtime API, and
+        # gpuMemsetAsync writes ONE byte over the range; dace links only the CUDA runtime API, and
         # the 32-bit setter (cuMemsetD32Async) is driver-API. A non-byte-splat value fills by kernel.
         return 'CUDA' if byte_pattern(node.value, out.dtype) is not None else 'pure'
 

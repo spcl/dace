@@ -4,7 +4,8 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
+from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
@@ -21,10 +22,7 @@ class ExpandReduceMPI(ExpandTransformation):
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Reduce root must be an integer!")
 
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
+        comm = resolve_comm(node, parent_state)
 
         code = ""
         if in_place:
@@ -60,7 +58,7 @@ class Reduce(MPINode):
     op = dace.properties.Property(dtype=str, default='MPI_SUM')
 
     def __init__(self, name, op='MPI_SUM', *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(('_inbuffer', '_root')), outputs={"_outbuffer"}, **kwargs)
         self.op = op
 
     def validate(self, sdfg, state):

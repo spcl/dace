@@ -14,8 +14,12 @@ def test_global_sizes():
             A[i] = 2
 
     sdfg = tester.to_sdfg()
-    # Since N is not used anywhere, it should not be listed in the arguments
-    assert 'N' not in sdfg.arglist()
+    # N describes a non-transient shape, so it is part of the interface and stays in the signature
+    # even though no code here reads it. Deriving the signature from code use instead made it move
+    # under optimization: a pass that eliminated the last use of an extent symbol dropped it, and a
+    # later pass that reintroduced one brought it back, so a caller holding the earlier signature
+    # could not call the later graph.
+    assert 'N' in sdfg.arglist()
 
     a = np.random.rand(20)
     sdfg(a, N=20)

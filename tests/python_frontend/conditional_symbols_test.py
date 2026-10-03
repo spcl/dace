@@ -123,6 +123,24 @@ def test_none_comparison_in_if_condition():
     assert 'NoneSymbol' not in sdfg.arglist()
 
 
+@dace.program
+def size_of_a_scalar_sized_slice(a: dace.float64[20], out: dace.float64[20]):
+    na = int(a[0])
+    off = a[:na - 1]
+    if off.size:
+        out[0] = 1.0
+
+
+def test_a_branch_on_the_size_of_a_scalar_sized_slice_is_not_an_undefined_variable():
+    """``off.size`` reads the promoted ``__sym_na``, which the SDFG already defines: registering the
+    condition's symbols must skip what the SDFG knows before calling a name undefined (ls3df_scf)."""
+    a = np.arange(20, dtype=np.float64)
+    a[0] = 5
+    out = np.zeros(20)
+    size_of_a_scalar_sized_slice(a=a, out=out)
+    assert out[0] == 1.0
+
+
 if __name__ == '__main__':
     test_symbol_only_in_if_condition()
     test_symbol_only_in_if_condition_dtype()

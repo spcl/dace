@@ -1,6 +1,12 @@
-import nbformat
 import pytest
-from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
+
+# nbconvert (which brings nbformat) is an optional test extra in setup.py, so importing it at module
+# scope makes COLLECTION fail wherever it is not installed -- one uninstalled extra then breaks a
+# whole-tree `pytest tests/` run. Skip this module instead.
+nbformat = pytest.importorskip('nbformat')
+preprocessors = pytest.importorskip('nbconvert.preprocessors')
+ExecutePreprocessor = preprocessors.ExecutePreprocessor
+CellExecutionError = preprocessors.CellExecutionError
 
 BASE_PATH = "tutorials/"
 NOTEBOOK_PATHS = [

@@ -1,24 +1,26 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import collections.abc
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from functools import lru_cache
 
 import sympy
 
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
+                             ControlFlowRegion, LoopRegion, ReturnBlock)
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
+from dace import SDFG, SDFGState, dtypes, properties, InterstateEdge, Memlet, data as dt, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import align_memlet
-from typing import Dict, Iterable, Iterator, List, Set, Tuple, Any, Optional, Union
-from networkx.algorithms import shortest_paths as nxsp
-from ordered_set import OrderedSet
+from typing import Dict, FrozenSet, Iterable, List, Set, Tuple, Any, Optional, Union
+from dace import graphlib as nx
+from dace import graphlib as nxsp
+from dace.ordered import OrderedSet
 
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, reachability
 
 WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
                                 Set[Union[Tuple[SDFGState, nd.AccessNode], Tuple[ControlFlowBlock, InterstateEdge]]]]]
@@ -44,24 +46,50 @@ class StateReachability(ppl.Pass):
     def depends_on(self):
         return [ControlFlowBlockReachability]
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, OrderedSet[SDFGState]]]:
         """
-        :return: A dictionary mapping each state to its other reachable states. The reachable states are a read-only
-                 set view, which is computed on demand.
+        :return: A dictionary mapping each state to its other reachable states.
         """
         # Ensure control flow block reachability is run if not run within a pipeline.
         if pipeline_res is None or not ControlFlowBlockReachability.__name__ in pipeline_res:
             cf_block_reach_dict = ControlFlowBlockReachability().apply_pass(top_sdfg, {})
         else:
             cf_block_reach_dict = pipeline_res[ControlFlowBlockReachability.__name__]
-        reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
+        reachable: Dict[int, Dict[SDFGState, OrderedSet[SDFGState]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[SDFGState, Set[SDFGState]] = defaultdict(OrderedSet)
+            result: Dict[SDFGState, OrderedSet[SDFGState]] = defaultdict(OrderedSet)
             for state in sdfg.states():
-                block_reach: ReachableBlocks = cf_block_reach_dict[state.parent_graph.cfg_id][state]
-                result[state] = ReachableBlocks(block_reach.index, state, states_only=True)
+                states = reachability.states_only(cf_block_reach_dict[state.parent_graph.cfg_id][state])
+                if states is not None:
+                    result[state] = states
             reachable[sdfg.cfg_id] = result
         return reachable
+
+
+@lru_cache(maxsize=4096, typed=True)
+def names_read_by_text(text: str) -> FrozenSet[str]:
+    """``symbolic.free_symbols_and_functions(text) | symbolic.arrays(text)``, parsed once per distinct text.
+
+    The access-set analysis asks this of every loop bound and branch condition on every run, and the same few
+    strings recur across runs and across cloned loops. Names only, so no sympy object is cached."""
+    return frozenset(symbolic.free_symbols_and_functions(text) | symbolic.arrays(text))
+
+
+class StatePositions:
+    """``(state.parent_graph.cfg_id, state.block_id)`` answered from index maps built once per region."""
+    __slots__ = ('sdfg', 'regions')
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.sdfg = sdfg
+        self.regions: Dict[ControlFlowRegion, Tuple[int, Dict[ControlFlowBlock, int]]] = {}
+
+    def key(self, state: ControlFlowBlock) -> Tuple[int, int]:
+        parent = state.parent_graph
+        known = self.regions.get(parent)
+        if known is None:
+            known = (parent.cfg_id, {block: index for index, block in enumerate(parent.nodes())})
+            self.regions[parent] = known
+        return known[0], known[1][state]
 
 
 @properties.make_properties
@@ -69,6 +97,9 @@ class StateReachability(ppl.Pass):
 class ControlFlowBlockReachability(ppl.Pass):
     """
     Evaluates control flow block reachability (which control flow block can be executed after each control flow block)
+
+    Each reach set is a :class:`~dace.transformation.passes.analysis.reachability.ReachSet`: ``in`` and ``len`` are
+    answered from a bitset, and the items are laid out in their insertion order only when first iterated.
     """
 
     CATEGORY: str = 'Analysis'
@@ -86,308 +117,35 @@ class ControlFlowBlockReachability(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]]:
         """
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
-                 control flow blocks. The reachable blocks are a read-only set view (see :class:`ReachableBlocks`),
-                 which answers membership queries without materializing the set.
+                 control flow blocks.
         """
         top_sdfg.reset_cfg_list()
-        index = BlockReachabilityIndex(top_sdfg)
+        blocks = reachability.BlockReachability(top_sdfg)
+        # ``cfg_id`` is a scan of the list just rebuilt; index it once instead of once per block.
+        cfg_ids = {id(cfg): cfg_id for cfg_id, cfg in enumerate(top_sdfg.cfg_list)}
+
+        single_level_reachable: Dict[int, Dict[ControlFlowBlock,
+                                               OrderedSet[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            for n, reach in blocks.single_level[cfg].items():
+                single_level_reachable[cfg_ids[id(cfg)]][n] = reach
 
         if self.contain_to_single_level:
-            single_level_reachable: Dict[int, Dict[ControlFlowBlock,
-                                                   Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
-            for cfg in top_sdfg.all_control_flow_regions(recursive=True):
-                for block in cfg.nx.nodes():
-                    single_level_reachable[cfg.cfg_id][block] = ReachableBlocks(index, block, single_level=True)
             return single_level_reachable
 
-        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = {}
+        reachable: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             for cfg in sdfg.all_control_flow_regions():
-                result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(OrderedSet)
+                result: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
                 for block in cfg.nodes():
-                    result[block] = ReachableBlocks(index, block)
-                reachable[cfg.cfg_id] = result
+                    single = single_level_reachable[cfg_ids[id(block.parent_graph)]][block]
+                    if single or block.parent_graph is not sdfg:
+                        result[block] = blocks.full_set(block, single, sdfg)
+                reachable[cfg_ids[id(cfg)]] = result
         return reachable
-
-
-class BlockReachabilityIndex:
-    """
-    A snapshot of the control flow block hierarchy of an SDFG (and all nested SDFGs), with the transitive closure of
-    each control flow region's edges stored as one bitset per block.
-
-    A block ``b`` reaches a block ``t`` if, for ``b`` or any of its ancestor regions ``x`` (up to the SDFG), ``x``
-    reaches ``t`` or an ancestor of ``t`` through the edges of ``x``'s parent region, or if ``x``'s parent region is a
-    loop that contains ``t`` (any point in a loop may reach any other point in it again, including the loop itself).
-    Branches of a conditional block do not reach each other. In single-level mode, only the parent region of ``b`` is
-    considered, and a block in a loop reaches the loop's direct children (but not their contents). The index takes memory linear in the number of blocks
-    (plus a quadratic number of bits per region), whereas materializing the reachable sets takes memory quadratic in
-    the number of blocks for deeply nested control flow.
-    """
-
-    def __init__(self, top_sdfg: SDFG) -> None:
-        #: The region every indexed block is a direct child of.
-        self.parent: Dict[ControlFlowBlock, AbstractControlFlowRegion] = {}
-        #: The direct child blocks of every region.
-        self.children: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
-        #: Per region, the position of each block in the region's graph and the reachability bitset of each position.
-        self._position: Dict[AbstractControlFlowRegion, Dict[ControlFlowBlock, int]] = {}
-        self._nodes: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
-        self._reach: Dict[AbstractControlFlowRegion, List[int]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            for cfg in sdfg.all_control_flow_regions():
-                children = list(cfg.nodes())
-                self.children[cfg] = children
-                for block in children:
-                    self.parent[block] = cfg
-                graph = cfg.nx
-                nodes = list(graph.nodes())
-                position = {n: i for i, n in enumerate(nodes)}
-                self._nodes[cfg] = nodes
-                self._position[cfg] = position
-                succ = [[position[d] for d in graph.successors(n)] for n in nodes]
-                self._reach[cfg] = _transitive_closure_bitsets(succ)
-
-    def reaches_in_region(self, region: AbstractControlFlowRegion, src: ControlFlowBlock,
-                          dst: ControlFlowBlock) -> bool:
-        """ Whether ``dst`` can execute after ``src`` through the edges of ``region``, both direct children of it. """
-        position = self._position[region]
-        i, j = position.get(src), position.get(dst)
-        if i is None or j is None:
-            return False
-        return bool((self._reach[region][i] >> j) & 1)
-
-    def reachable_in_region(self, region: AbstractControlFlowRegion, src: ControlFlowBlock) -> List[ControlFlowBlock]:
-        """ The direct children of ``region`` that can execute after ``src`` through the edges of ``region``. """
-        i = self._position[region].get(src)
-        if i is None:
-            return []
-        nodes = self._nodes[region]
-        bits = self._reach[region][i]
-        result = []
-        while bits:
-            low = bits & -bits
-            result.append(nodes[low.bit_length() - 1])
-            bits ^= low
-        return result
-
-    def descendants(self, region: ControlFlowBlock) -> Iterator[ControlFlowBlock]:
-        """ All blocks nested in ``region`` (not crossing into nested SDFGs), parents before their children. """
-        stack = [iter(self.children.get(region, ()))]
-        while stack:
-            block = next(stack[-1], None)
-            if block is None:
-                stack.pop()
-                continue
-            yield block
-            if block in self.children:
-                stack.append(iter(self.children[block]))
-
-    def reaches(self, src: ControlFlowBlock, dst: Any, single_level: bool = False) -> bool:
-        """ Whether ``dst`` can execute after ``src`` (see the class documentation for the definition). """
-        # Map each region enclosing ``dst`` (within its SDFG) to the child of that region containing ``dst``.
-        dst_in: Dict[AbstractControlFlowRegion, ControlFlowBlock] = {}
-        block = dst
-        while True:
-            region = self.parent.get(block)
-            if region is None:
-                break
-            dst_in[region] = block
-            if isinstance(region, SDFG):
-                break
-            block = region
-
-        block = src
-        while True:
-            region = self.parent.get(block)
-            if region is None:
-                return False
-            target = dst_in.get(region)
-            if target is not None and self.reaches_in_region(region, block, target):
-                return True
-            if isinstance(region, LoopRegion):
-                if single_level:
-                    # Within one level, a loop's blocks reach its other direct children (but not their contents).
-                    return target is dst and block in self._position[region]
-                if dst is region or region in dst_in:
-                    return True
-            if single_level or isinstance(region, SDFG):
-                return False
-            block = region
-
-    def reachable(self, src: ControlFlowBlock, single_level: bool = False) -> Iterator[ControlFlowBlock]:
-        """ Iterates over the blocks that can execute after ``src``, without duplicates. """
-        seen: Set[ControlFlowBlock] = set()
-        block = src
-        while True:
-            region = self.parent.get(block)
-            if region is None:
-                return
-            for reached in self.reachable_in_region(region, block):
-                if reached not in seen:
-                    seen.add(reached)
-                    yield reached
-                    for nested in self.descendants(reached):
-                        if nested not in seen:
-                            seen.add(nested)
-                            yield nested
-            if isinstance(region, LoopRegion) and single_level:
-                if block in self._position[region]:
-                    for child in self.children[region]:
-                        if child not in seen:
-                            seen.add(child)
-                            yield child
-                return
-            if single_level or isinstance(region, SDFG):
-                return
-            if isinstance(region, LoopRegion):
-                for nested in self.descendants(region):
-                    if nested not in seen:
-                        seen.add(nested)
-                        yield nested
-                if region not in seen:
-                    seen.add(region)
-                    yield region
-            block = region
-
-
-class ReachableBlocks(collections.abc.Set):
-    """
-    A read-only set view of the control flow blocks (or only the states) that can execute after a given block, backed
-    by a :class:`BlockReachabilityIndex`. Membership tests take time proportional to the nesting depth; iterating
-    computes the set on demand.
-    """
-
-    __slots__ = ('index', 'block', 'states_only', 'single_level')
-
-    def __init__(self,
-                 index: BlockReachabilityIndex,
-                 block: ControlFlowBlock,
-                 states_only: bool = False,
-                 single_level: bool = False) -> None:
-        self.index = index
-        self.block = block
-        self.states_only = states_only
-        self.single_level = single_level
-
-    def __contains__(self, item: Any) -> bool:
-        if self.states_only and not isinstance(item, SDFGState):
-            return False
-        try:
-            return self.index.reaches(self.block, item, self.single_level)
-        except TypeError:  # Unhashable item
-            return False
-
-    def __iter__(self) -> Iterator[ControlFlowBlock]:
-        for reached in self.index.reachable(self.block, self.single_level):
-            if not self.states_only or isinstance(reached, SDFGState):
-                yield reached
-
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    def __bool__(self) -> bool:
-        return next(iter(self), None) is not None
-
-    def __repr__(self) -> str:
-        return f'{type(self).__name__}({list(self)!r})'
-
-    @classmethod
-    def _from_iterable(cls, it: Iterable[ControlFlowBlock]) -> OrderedSet:
-        return OrderedSet(it)
-
-    # Named methods of (ordered) sets, returning new ordered sets.
-    def copy(self) -> OrderedSet:
-        return OrderedSet(self)
-
-    def union(self, *others: Iterable) -> OrderedSet:
-        return OrderedSet(self).union(*others)
-
-    def intersection(self, *others: Iterable) -> OrderedSet:
-        return OrderedSet(self).intersection(*others)
-
-    def difference(self, *others: Iterable) -> OrderedSet:
-        return OrderedSet(self).difference(*others)
-
-    def issubset(self, other: Iterable) -> bool:
-        return self <= (other if isinstance(other, collections.abc.Set) else set(other))
-
-    def issuperset(self, other: Iterable) -> bool:
-        return all(o in self for o in other)
-
-
-def _transitive_closure_bitsets(succ: List[List[int]]) -> List[int]:
-    """
-    Computes, for every node of a graph given as successor lists, the bitset of nodes reachable from it by a path of
-    at least one edge (a node reaches itself only through a cycle). Uses Tarjan's algorithm, which emits strongly
-    connected components in reverse topological order, so each component's successors are complete when it is
-    visited.
-    """
-    n = len(succ)
-    index = [-1] * n
-    low = [0] * n
-    on_stack = [False] * n
-    component = [-1] * n
-    stack: List[int] = []
-    # Per component (in the order Tarjan's algorithm emits them): the nodes reachable from its members, and the same
-    # plus the members themselves (what a predecessor reaches through the component).
-    comp_reach: List[int] = []
-    comp_through: List[int] = []
-    counter = 0
-    for root in range(n):
-        if index[root] != -1:
-            continue
-        index[root] = low[root] = counter
-        counter += 1
-        stack.append(root)
-        on_stack[root] = True
-        work = [(root, 0)]
-        while work:
-            v, i = work[-1]
-            if i < len(succ[v]):
-                work[-1] = (v, i + 1)
-                w = succ[v][i]
-                if index[w] == -1:
-                    index[w] = low[w] = counter
-                    counter += 1
-                    stack.append(w)
-                    on_stack[w] = True
-                    work.append((w, 0))
-                elif on_stack[w] and index[w] < low[v]:
-                    low[v] = index[w]
-                continue
-            work.pop()
-            if work and low[v] < low[work[-1][0]]:
-                low[work[-1][0]] = low[v]
-            if low[v] != index[v]:
-                continue
-            # ``v`` is the root of a strongly connected component: pop it and compute its reachability.
-            c = len(comp_reach)
-            members = 0
-            while True:
-                w = stack.pop()
-                on_stack[w] = False
-                component[w] = c
-                members |= 1 << w
-                if w == v:
-                    break
-            reach = 0
-            cyclic = members != (1 << v)
-            m = members
-            while m:
-                low_bit = m & -m
-                for w in succ[low_bit.bit_length() - 1]:
-                    d = component[w]
-                    if d == c:
-                        cyclic = True  # Self-loop or edge within the component
-                    else:
-                        reach |= comp_through[d]
-                m ^= low_bit
-            comp_through.append(reach | members)
-            comp_reach.append(reach | members if cyclic else reach)
-    return [comp_reach[component[i]] for i in range(n)]
 
 
 @properties.make_properties
@@ -420,6 +178,40 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
         return result
 
 
+def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
+    """Whether ``anode`` is the destination of a conflict-resolved write.
+
+    A WCR edge accumulates INTO its destination, so the destination's prior value is read even with no
+    outgoing edge. Degree alone would call such a node write-only and let liveness drop a live accumulator.
+    A ``Reduce`` with no identity is the same write before expansion: it folds into the output's value.
+    The resolution can also sit inside a ``NestedSDFG`` the write comes out of -- LoopToMap outlines a
+    reduction loop's body, leaving ``CR: Sum`` on the inner edge and none on the MapExit path.
+    """
+    from dace.libraries.standard.nodes.reduce import Reduce
+    for edge in state.in_edges(anode):
+        if edge.data is not None and edge.data.wcr is not None:
+            return True
+        if isinstance(edge.src, Reduce) and edge.src.identity is None:
+            return True
+        if isinstance(edge.src, (nd.ExitNode, nd.NestedSDFG)) and any(
+                resolved_at_leaf(leaf) for leaf in state.memlet_tree(edge).leaves()):
+            return True
+    return False
+
+
+def resolved_at_leaf(leaf: Edge[Memlet]) -> bool:
+    """Whether the innermost edge of a write's memlet path resolves conflicts, on itself or in the NestedSDFG it leaves."""
+    if leaf.data.wcr is not None:
+        return True
+    return isinstance(leaf.src, nd.NestedSDFG) and accumulates_into(leaf.src.sdfg, leaf.src_conn)
+
+
+def accumulates_into(sdfg: SDFG, name: str) -> bool:
+    """Whether some write to ``name`` anywhere in ``sdfg`` is conflict-resolved (see :func:`has_wcr_in_edge`)."""
+    return any(node.data == name and has_wcr_in_edge(state, node) for state in sdfg.all_states()
+               for node in state.data_nodes())
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AccessSets(ppl.Pass):
@@ -439,15 +231,59 @@ class AccessSets(ppl.Pass):
     def _get_loop_region_readset(self, loop: LoopRegion, arrays: OrderedSet[str]) -> OrderedSet[str]:
         readset = set()
         exprs = {loop.loop_condition.as_string}
-        update_stmt = loop_analysis.get_update_assignment(loop)
-        init_stmt = loop_analysis.get_init_assignment(loop)
-        if update_stmt:
-            exprs.add(update_stmt)
-        if init_stmt:
-            exprs.add(init_stmt)
+        # Texts, not parsed expressions: ``names_read_by_text`` is a cache keyed on its argument.
+        update_text = loop_analysis.assignment_text(loop.update_statement, loop.loop_variable)
+        init_text = loop_analysis.assignment_text(loop.init_statement, loop.loop_variable)
+        if update_text:
+            exprs.add(update_text)
+        if init_text:
+            exprs.add(init_text)
         for expr in exprs:
-            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
+            readset |= set(names_read_by_text(expr)) & arrays
         return readset
+
+    def _state_sets(self, state: SDFGState) -> Tuple[OrderedSet[str], OrderedSet[str]]:
+        readset, writeset = OrderedSet(), OrderedSet()
+        for anode in state.data_nodes():
+            # Ordering edges transfer nothing: neither read nor written. Must match
+            # ``FindAccessNodes``.
+            if any(not e.data.is_empty() for e in state.in_edges(anode)):
+                writeset.add(anode.data)
+                if has_wcr_in_edge(state, anode):
+                    readset.add(anode.data)
+            if any(not e.data.is_empty() for e in state.out_edges(anode)):
+                readset.add(anode.data)
+        return readset, writeset
+
+    def _collect_sets(
+        self, region: AbstractControlFlowRegion, arrays: OrderedSet[str],
+        result: Dict[ControlFlowBlock, Tuple[OrderedSet[str],
+                                             OrderedSet[str]]]) -> Tuple[OrderedSet[str], OrderedSet[str]]:
+        """Fill ``result`` for every block under ``region``; return ``region``'s own data-node sets.
+
+        Rolled up from the children rather than re-walking ``all_states()`` per level: that walk is
+        exactly the children's states in ``nodes()`` order, so same set, same order, one visit per
+        state instead of 1+D. A region's own extras land on the stored set only after the rollup.
+        """
+        raw_read, raw_write = OrderedSet(), OrderedSet()
+        for block in region.nodes():
+            if isinstance(block, SDFGState):
+                readset, writeset = self._state_sets(block)
+            elif isinstance(block, AbstractControlFlowRegion):
+                readset, writeset = self._collect_sets(block, arrays, result)
+            else:
+                readset, writeset = OrderedSet(), OrderedSet()
+            raw_read |= readset
+            raw_write |= writeset
+
+            if isinstance(block, LoopRegion):
+                readset |= self._get_loop_region_readset(block, arrays)
+            elif isinstance(block, ConditionalBlock):
+                for cond, _ in block.branches:
+                    if cond is not None:
+                        readset |= set(names_read_by_text(cond.as_string)) & arrays
+            result[block] = (readset, writeset)
+        return raw_read, raw_write
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]]:
         """
@@ -456,30 +292,11 @@ class AccessSets(ppl.Pass):
         result: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             arrays: OrderedSet[str] = OrderedSet(sdfg.arrays.keys())
+            # Key order is load-bearing (it reaches ``ScalarFission`` through the shadow-scope
+            # passes) and the fill below is depth-first, so claim the keys in the old order first.
             for block in sdfg.all_control_flow_blocks():
-                readset, writeset = OrderedSet(), OrderedSet()
-                if isinstance(block, SDFGState):
-                    for anode in block.data_nodes():
-                        if block.in_degree(anode) > 0:
-                            writeset.add(anode.data)
-                        if block.out_degree(anode) > 0:
-                            readset.add(anode.data)
-                elif isinstance(block, AbstractControlFlowRegion):
-                    for state in block.all_states():
-                        for anode in state.data_nodes():
-                            if state.in_degree(anode) > 0:
-                                writeset.add(anode.data)
-                            if state.out_degree(anode) > 0:
-                                readset.add(anode.data)
-                    if isinstance(block, LoopRegion):
-                        readset |= self._get_loop_region_readset(block, arrays)
-                    elif isinstance(block, ConditionalBlock):
-                        for cond, _ in block.branches:
-                            if cond is not None:
-                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
-                                            | symbolic.arrays(cond.as_string)) & arrays
-
-                result[block] = (readset, writeset)
+                result[block] = (OrderedSet(), OrderedSet())
+            self._collect_sets(sdfg, arrays, result)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
@@ -526,6 +343,23 @@ class FindAccessStates(ppl.Pass):
                 for access in fsyms:
                     result[access].update((e.src, e.dst))
 
+            # Data referenced in a control-flow-region condition/meta codeblock
+            # (a loop bound/condition/update, a branch or while condition) is read
+            # every time the region is entered even without an AccessNode, so it is
+            # live throughout the region. Record it in every state the region
+            # governs -- otherwise a consumer (dead-data elimination, allocation
+            # scoping) treats a data-dependent loop bound as unused and drops it,
+            # leaving a dangling reference in the condition. Interstate-edge reads
+            # are handled above; this closes the codeblock gap (mirrors the
+            # condition scan in :class:`FindSingleUseData`).
+            for cfr in sdfg.all_control_flow_regions():
+                cond_data = cfr.used_symbols(all_symbols=True, with_contents=False) & anames
+                if not cond_data:
+                    continue
+                region_states = set(cfr.all_states())
+                for access in cond_data:
+                    result[access].update(region_states)
+
             top_result[sdfg.cfg_id] = result
         return top_result
 
@@ -553,8 +387,11 @@ class FindSingleUseData(ppl.Pass):
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # If anything was modified, reapply
-        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.CFG
+        # OR, not AND: these are distinct flag bits, so ``AccessNodes & CFG`` is ``Nothing`` and the
+        # whole expression was constantly False -- a Pipeline never recomputed this analysis, and
+        # every consumer reading it through ``pipeline_results`` got the graph as it looked when the
+        # analysis first ran. Either kind of change can add or remove a use.
+        return bool(modified & (ppl.Modifies.AccessNodes | ppl.Modifies.CFG))
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, OrderedSet[str]]:
         """
@@ -730,7 +567,12 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                         other_accesses = result[sym][iedges[0]]
                         coarsen = False
                         for a_state_or_edge in other_accesses:
-                            if isinstance(a_state_or_edge, SDFGState):
+                            # A read location is a block or an interstate edge -- the same union
+                            # ``_find_dominating_write`` dispatches on. Testing SDFGState alone sent
+                            # every OTHER block kind (a LoopRegion reading a symbol in its bounds, a
+                            # ConditionalBlock reading it in a guard) down the edge branch, where it
+                            # has no ``.src``: an AttributeError on any explicit-control-flow graph.
+                            if isinstance(a_state_or_edge, ControlFlowBlock):
                                 if a_state_or_edge in reach:
                                     coarsen = True
                                     break
@@ -747,6 +589,343 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
             del result[sym][write]
 
         return result
+
+
+def enclosing_blocks(block: ControlFlowBlock) -> Iterable[ControlFlowBlock]:
+    """``block`` and every control flow region enclosing it, innermost first, stopping at the SDFG.
+
+    The SDFG itself is deliberately excluded: it encloses every block, so including it would make
+    any "is this inside a dominator?" test trivially true.
+
+    :param block: The block to walk up from.
+    :returns: The chain of blocks, ``block`` first.
+    """
+    while block is not None and not isinstance(block, SDFG):
+        yield block
+        block = block.parent_graph
+
+
+def dominated_through_region(block: ControlFlowBlock, other: ControlFlowBlock,
+                             dominators: Set[ControlFlowBlock]) -> bool:
+    """Whether ``block``, or a region enclosing it but NOT enclosing ``other``, is in ``dominators``.
+
+    ``dominators`` (the transitive closure built in :func:`ScalarWriteShadowScopes.apply_pass`) relates
+    blocks across nesting levels, but it lists a dominating REGION without listing the states inside
+    it. A write reported from inside such a region -- which :func:`must_write_state` only ever does
+    when the region must-writes -- therefore has to be recognised through its enclosing chain.
+
+    The chain is cut at the first block that also encloses ``other``: a common ancestor is in
+    ``dominators`` for every one of its own blocks (``apply_pass`` adds the containing region
+    unconditionally), so following the chain past it would report any two siblings as dominating
+    each other.
+
+    :param block: The block whose domination of ``other`` is in question.
+    :param other: The dominated block.
+    :param dominators: The transitive dominator set of ``other``.
+    :returns: ``True`` if domination is established.
+    """
+    # The plain membership test first, so this is a strict SUPERSET of what the coarsening asked
+    # before regions could be reported: it can only ever merge more, and merging more is safe.
+    if block in dominators:
+        return True
+    common = {id(b) for b in enclosing_blocks(other)}
+    for candidate in enclosing_blocks(block):
+        if id(candidate) in common:
+            return False
+        if candidate in dominators:
+            return True
+    return False
+
+
+#: Dominator trees :class:`StateFlow` keeps, one per source state.
+DOMINANCE_MEMO = 64
+
+
+class StateFlow:
+    """State-level control flow of one SDFG, flattened across regions, for kill-aware reachability.
+
+    Every block gets an entry and an exit node, a loop also a latch (its back edge and its exit), so a
+    path is a sequence of executed states. Break, continue and return follow their real edges.
+    """
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.succ: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
+        self.states: Dict[int, SDFGState] = {}
+        #: Node numbers and numbered successor / predecessor lists, built on the first query.
+        self.index: Dict[Tuple[str, int], int] = {}
+        self.succ_ids: List[List[int]] = []
+        self.pred_ids: List[List[int]] = []
+        #: Per source state id, its dominator tree as DFS entry / exit times (see :meth:`dominator_tree`).
+        self.dominance: Dict[int, Tuple[List[int], List[int]]] = {}
+        self.add_region(sdfg)
+
+    def link(self, src: Tuple[str, ControlFlowBlock], dst: Tuple[str, ControlFlowBlock]) -> None:
+        self.succ[(src[0], id(src[1]))].append((dst[0], id(dst[1])))
+
+    def add_region(self, region: ControlFlowRegion) -> None:
+        if region.number_of_nodes() == 0:
+            self.link(('in', region), ('out', region))
+        else:
+            self.link(('in', region), ('in', region.start_block))
+        exit_node = ('latch', region) if isinstance(region, LoopRegion) else ('out', region)
+        if isinstance(region, LoopRegion):
+            self.link(('in', region), ('out', region))
+            self.link(('latch', region), ('in', region.start_block))
+            self.link(('latch', region), ('out', region))
+        for edge in region.edges():
+            self.link(('out', edge.src), ('in', edge.dst))
+        for block in region.nodes():
+            if region.out_degree(block) == 0:
+                self.link(('out', block), exit_node)
+            self.add_block(block)
+
+    def add_block(self, block: ControlFlowBlock) -> None:
+        if isinstance(block, SDFGState):
+            self.states[id(block)] = block
+            self.link(('in', block), ('out', block))
+        elif isinstance(block, ConditionalBlock):
+            for condition, branch in block.branches:
+                self.link(('in', block), ('in', branch))
+                self.link(('out', branch), ('out', block))
+                self.add_region(branch)
+            if all(condition is not None for condition, _ in block.branches):
+                self.link(('in', block), ('out', block))
+        elif isinstance(block, (BreakBlock, ContinueBlock)):
+            loop = block.parent_graph
+            while loop is not None and not isinstance(loop, LoopRegion):
+                loop = loop.parent_graph
+            if loop is not None:
+                self.link(('in', block), ('out', loop) if isinstance(block, BreakBlock) else ('latch', loop))
+        elif isinstance(block, ControlFlowRegion):
+            self.add_region(block)
+
+    def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
+        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``.
+
+        A path from the exit of ``src`` to the entry of ``dst`` avoids the entry of ``kill`` exactly when that
+        entry does not dominate ``dst``'s in the flow rooted at ``src``'s exit, so every kill asked about one
+        source is answered from that source's dominator tree instead of one search per (source, kill) pair.
+        ``kill``'s own entry counts as reached."""
+        index = self.numbered()
+        root, target = index.get(('out', id(src))), index.get(('in', id(dst)))
+        if root is None or target is None:
+            return False
+        entry, leave = self.dominator_tree(root)
+        if entry[target] < 0:
+            return False
+        blocked = index.get(('in', id(kill)))
+        if blocked is None or blocked == target or entry[blocked] < 0:
+            return True
+        return not (entry[blocked] <= entry[target] and leave[target] <= leave[blocked])
+
+    def numbered(self) -> Dict[Tuple[str, int], int]:
+        if not self.index:
+            for node, targets in list(self.succ.items()):
+                for key in (node, *targets):
+                    if key not in self.index:
+                        self.index[key] = len(self.index)
+            self.succ_ids = [[] for _ in self.index]
+            self.pred_ids = [[] for _ in self.index]
+            for node, targets in self.succ.items():
+                number = self.index[node]
+                for key in targets:
+                    self.succ_ids[number].append(self.index[key])
+                    self.pred_ids[self.index[key]].append(number)
+        return self.index
+
+    def dominator_tree(self, root: int) -> Tuple[List[int], List[int]]:
+        """DFS entry and exit times of the dominator tree rooted at ``root`` (``-1``: unreachable).
+
+        Iterative Cooper-Harvey-Kennedy over a reverse postorder; ``a`` dominates ``b`` iff ``b``'s interval
+        nests in ``a``'s. Kept for the last :data:`DOMINANCE_MEMO` roots: a caller asks about one write's
+        state for every other write of the container, and returns to it for the next container."""
+        known = self.dominance.get(root)
+        if known is not None:
+            return known
+        succ, pred = self.succ_ids, self.pred_ids
+        size = len(succ)
+        post = [-1] * size
+        order: List[int] = []
+        seen = bytearray(size)
+        seen[root] = 1
+        stack = [(root, iter(succ[root]))]
+        while stack:
+            node, children = stack[-1]
+            for child in children:
+                if not seen[child]:
+                    seen[child] = 1
+                    stack.append((child, iter(succ[child])))
+                    break
+            else:
+                stack.pop()
+                post[node] = len(order)
+                order.append(node)
+        idom = [-1] * size
+        idom[root] = root
+        rpo = order[-2::-1]
+        changed = True
+        while changed:
+            changed = False
+            for node in rpo:
+                new = -1
+                for parent in pred[node]:
+                    if idom[parent] < 0:
+                        continue
+                    if new < 0:
+                        new = parent
+                        continue
+                    a, b = parent, new
+                    while a != b:
+                        while post[a] < post[b]:
+                            a = idom[a]
+                        while post[b] < post[a]:
+                            b = idom[b]
+                    new = a
+                if idom[node] != new:
+                    idom[node] = new
+                    changed = True
+        children_of: List[List[int]] = [[] for _ in range(size)]
+        for node in rpo:
+            children_of[idom[node]].append(node)
+        entry, leave = [-1] * size, [-1] * size
+        clock = 0
+        entry[root] = clock
+        walk = [(root, iter(children_of[root]))]
+        while walk:
+            node, children = walk[-1]
+            child = next(children, None)
+            if child is None:
+                walk.pop()
+                clock += 1
+                leave[node] = clock
+            else:
+                clock += 1
+                entry[child] = clock
+                walk.append((child, iter(children_of[child])))
+        if len(self.dominance) >= DOMINANCE_MEMO:
+            del self.dominance[next(iter(self.dominance))]
+        self.dominance[root] = (entry, leave)
+        return entry, leave
+
+
+def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:
+    """Whether ``region`` contains a ``break`` / ``continue`` / ``return`` block.
+
+    Such a block leaves ``region`` -- or the current iteration of the loop containing it -- from
+    the middle, along an edge that the region's own graph does not carry. A write that dominates
+    every SINK of that graph can therefore still be skipped, so region-level must-def reasoning
+    (:func:`must_write_state`) does not hold. Refusing the whole region is cruder than modelling
+    the diverted edges, and costs only a break/continue that is bound to a loop NESTED inside
+    ``region`` and hence could not escape it anyway.
+
+    :param region: The region to scan.
+    :returns: ``True`` if any early exit is present anywhere inside.
+    """
+    return any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks())
+
+
+def dominator_chain(idom: Dict[ControlFlowBlock, ControlFlowBlock], block: ControlFlowBlock) -> List[ControlFlowBlock]:
+    """``block`` followed by its immediate dominators up to the graph entry, closest first.
+
+    :param idom: The immediate-dominator map of the graph ``block`` lives in.
+    :param block: The block to walk up from.
+    :returns: The dominator chain, ``block`` itself first.
+    """
+    chain: List[ControlFlowBlock] = []
+    seen: Set[int] = set()
+    current = block
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        parent = idom.get(current)
+        current = parent if parent is not current else None
+    return chain
+
+
+def region_must_write_state(desc: str, region: AbstractControlFlowRegion, access_sets: Dict[ControlFlowBlock,
+                                                                                            Tuple[Set[str], Set[str]]],
+                            idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+                            cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]) -> Optional[SDFGState]:
+    """The region case of :func:`must_write_state`, refusing anything it cannot prove.
+
+    :param desc: The data container name.
+    :param region: The candidate region.
+    :param access_sets: Per-block ``(read, write)`` sets from :class:`AccessSets`.
+    :param idom_dict: Per-region immediate dominators.
+    :param cache: The memo threaded through :func:`must_write_state`.
+    :returns: The state holding a must-def write, or ``None`` if none is proven.
+    """
+    # A ConditionalBlock. Even an exhaustive if/else in which EVERY branch writes has no single
+    # write node to name, and the result dict keys a scope on exactly one (state, node) pair --
+    # reporting one branch's node would let the consumer rename that branch's write and leave its
+    # sibling behind. The must-def premise can hold here; the result shape cannot carry it.
+    if isinstance(region, ConditionalBlock):
+        return None
+    # Nothing inside writes it at all. Cheap, and it is what keeps this off the hot path.
+    if desc not in access_sets[region][1]:
+        return None
+    # A break / continue / return can skip a write that dominates every sink of the graph.
+    if diverting_exit_inside(region):
+        return None
+    # A loop that may run zero times defines nothing after itself. ``range(N)`` with a free ``N``
+    # is zero-trip for ``N == 0``, and the nonnegative-symbol assumption gives ``N >= 0``, not
+    # ``N >= 1``, so the common case is correctly refused.
+    if isinstance(region, LoopRegion) and not loop_analysis.loop_provably_at_least_one_iteration(region):
+        return None
+
+    # Every path through the region ends in one of its sinks, so a block that must-write and
+    # dominates ALL of them is executed on every path. Walk the first sink's dominator chain and
+    # take the closest such block -- the 'last' write, matching the intra-state choice elsewhere.
+    # A write nested under a further conditional dominates no sink and is thereby refused.
+    sinks = [b for b in region.nodes() if region.out_degree(b) == 0]
+    if not sinks:
+        return None
+    chains = [dominator_chain(idom_dict[region], sink) for sink in sinks]
+    common = set(chains[0]).intersection(*(set(c) for c in chains[1:]))
+    for candidate in chains[0]:
+        if candidate in common:
+            state = must_write_state(desc, candidate, access_sets, idom_dict, cache)
+            if state is not None:
+                return state
+    return None
+
+
+def must_write_state(desc: str, block: ControlFlowBlock, access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
+                     idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+                     cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]) -> Optional[SDFGState]:
+    """A state inside ``block`` that writes ``desc`` on EVERY path through ``block``, if one exists.
+
+    This is what makes a control flow REGION usable as a dominating write. Dominance alone says
+    "``block`` runs before the read"; combined with a must-def inside ``block`` it says "the read
+    sees a write from ``block``", which is the premise the whole write-scope result stands on. See
+    :func:`region_must_write_state` for what is refused, and note that ``None`` -- "not proven" --
+    is always the safe answer.
+
+    :param desc: The data container name.
+    :param block: The candidate block.
+    :param access_sets: Per-block ``(read, write)`` sets from :class:`AccessSets`.
+    :param idom_dict: Per-region immediate dominators.
+    :param cache: Memo shared across one pass invocation, keyed by ``(desc, block)``. The block
+        itself, not its ``id()``: the memo then holds a reference, so an address cannot be recycled
+        by a later allocation and alias a stale entry.
+    :returns: The state holding a must-def write, or ``None`` if none is proven.
+    """
+    key = (desc, block)
+    if key in cache:
+        return cache[key]
+    # Seed pessimistically so a (malformed) cyclic region nesting cannot recurse forever.
+    cache[key] = None
+
+    if isinstance(block, SDFGState):
+        # A state executes all of its nodes, so any write access node in it is a must-def.
+        result = block if desc in access_sets[block][1] else None
+    elif isinstance(block, AbstractControlFlowRegion):
+        result = region_must_write_state(desc, block, access_sets, idom_dict, cache)
+    else:
+        result = None  # Break / continue / return blocks hold no dataflow.
+
+    cache[key] = result
+    return result
 
 
 @properties.make_properties
@@ -769,15 +948,56 @@ class ScalarWriteShadowScopes(ppl.Pass):
     def depends_on(self):
         return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
-    def _find_dominating_write(self,
-                               desc: str,
-                               block: ControlFlowBlock,
-                               read: Union[nd.AccessNode, InterstateEdge],
-                               access_nodes: Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode],
-                                                                   OrderedSet[nd.AccessNode]]],
-                               idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
-                               access_sets: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]],
-                               no_self_shadowing: bool = False) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
+    def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
+        """The containers of ``sdfg`` whose write scopes this analysis reports.
+
+        Shadowing is decided here by graph dominance alone -- no memlet subset is ever inspected
+        (see :func:`_find_dominating_write`). That is exact for a scalar, where any write writes
+        all of the container, so "dominating write" and "must-def of the whole container" are the
+        same statement. The scalar pass therefore reports every container and leaves the
+        size-1 restriction to its consumer. :class:`ArrayWriteShadowScopes` overrides this hook
+        because for a larger container the two statements come apart.
+
+        :param sdfg: The SDFG being analyzed.
+        :returns: The names of the data containers to compute write scopes for.
+        """
+        return list(sdfg.arrays.keys())
+
+    @staticmethod
+    def _reach_memo(state: SDFGState, desc: str, cache: Optional[Dict[Tuple[int, str], Dict[nd.AccessNode,
+                                                                                            Set[nd.Node]]]]) -> Dict:
+        """The descendant memo for the write nodes of ``desc`` in ``state``.
+
+        Safe: an analysis pass, and ``cache`` spans one SDFG of one ``apply_pass``, over which no
+        node or edge moves.
+        """
+        return {} if cache is None else cache.setdefault((id(state), desc), {})
+
+    @staticmethod
+    def _reaches(state: SDFGState, src: nd.Node, dst: nd.Node, memo: Dict) -> bool:
+        """``dst`` is reachable from ``src``, answered from ``memo`` and filled on demand.
+
+        One BFS per source instead of one per (source, target) pair. ``nx.descendants`` omits the
+        node itself, which is what ``has_path`` answered here anyway -- every call site compares two
+        DISTINCT nodes.
+        """
+        reach = memo.get(src)
+        if reach is None:
+            reach = memo[src] = nx.descendants(state._nx, src)
+        return dst in reach
+
+    def _find_dominating_write(
+        self,
+        desc: str,
+        block: ControlFlowBlock,
+        read: Union[nd.AccessNode, InterstateEdge],
+        access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]],
+        idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
+        no_self_shadowing: bool = False,
+        must_write_cache: Optional[Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]] = None,
+        reach_cache: Optional[Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]]] = None
+    ) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
         if isinstance(read, nd.AccessNode):
             state: SDFGState = block
             # If the read is also a write, it shadows itself.
@@ -788,10 +1008,10 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Find a dominating write within the same state.
             # TODO: Can this be done more efficiently?
             closest_candidate = None
-            write_nodes = access_nodes[desc][state][1]
-            for cand in write_nodes:
-                if cand != read and nxsp.has_path(state._nx, cand, read):
-                    if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
+            memo = self._reach_memo(state, desc, reach_cache)
+            for cand in access_nodes[desc][state][1]:
+                if cand != read and self._reaches(state, cand, read, memo):
+                    if closest_candidate is None or self._reaches(state, closest_candidate, cand, memo):
                         closest_candidate = cand
             if closest_candidate is not None:
                 return (state, closest_candidate)
@@ -799,23 +1019,32 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Attempt to find a shadowing write in the current state.
             # TODO: Can this be done more efficiently?
             closest_candidate = None
-            write_nodes = access_nodes[desc][block][1]
-            for cand in write_nodes:
-                if closest_candidate is None or nxsp.has_path(block._nx, closest_candidate, cand):
+            memo = self._reach_memo(block, desc, reach_cache)
+            for cand in access_nodes[desc][block][1]:
+                if closest_candidate is None or self._reaches(block, closest_candidate, cand, memo):
                     closest_candidate = cand
             if closest_candidate is not None:
                 return (block, closest_candidate)
 
         # Find the dominating write state if the current block is not the dominating write state.
+        # A candidate is any block strictly dominating the read at its own nesting level. A state
+        # qualifies when it writes ``desc``; a control flow REGION qualifies when it writes ``desc``
+        # on every path through it (``must_write_state``) -- without that, a canonicalized SDFG
+        # whose top level is a sequence of LoopRegions has no candidate at all and every access of
+        # a container falls into the undominated (``None``) scope, the producing write included.
+        if must_write_cache is None:
+            must_write_cache = {}
         write_state = None
         pivot_block = block
         region = block.parent_graph
         while region is not None and write_state is None:
-            nblock = idom_dict[region][pivot_block] if idom_dict[region][pivot_block] != block else None
+            idom = idom_dict[region]
+            # Compare against ``pivot_block``, not ``block``: above the first level ``pivot_block``
+            # is the region CONTAINING the read, and a write inside it need not precede the read.
+            nblock = idom[pivot_block] if idom[pivot_block] != pivot_block else None
             while nblock is not None and write_state is None:
-                if isinstance(nblock, SDFGState) and desc in access_sets[nblock][1]:
-                    write_state = nblock
-                nblock = idom_dict[region][nblock] if idom_dict[region][nblock] != nblock else None
+                write_state = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
+                nblock = idom[nblock] if idom[nblock] != nblock else None
             # No dominating write found in the current control flow graph, check one further up.
             if write_state is None:
                 pivot_block = region
@@ -824,16 +1053,45 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # Find a dominating write in the write state, i.e., the 'last' write to the data container.
         if write_state is not None:
             closest_candidate = None
+            memo = self._reach_memo(write_state, desc, reach_cache)
             for cand in access_nodes[desc][write_state][1]:
                 if write_state.out_degree(cand) == 0:
                     closest_candidate = cand
                     break
-                elif closest_candidate is None or nxsp.has_path(write_state._nx, closest_candidate, cand):
+                elif closest_candidate is None or self._reaches(write_state, closest_candidate, cand, memo):
                     closest_candidate = cand
             if closest_candidate is not None:
                 return (write_state, closest_candidate)
 
         return None
+
+    def _sees_value_of(self, desc: str, flow: StateFlow, write_state: ControlFlowBlock,
+                       other_write: Optional[Tuple[ControlFlowBlock, nd.AccessNode]], access: Tuple[ControlFlowBlock,
+                                                                                                    Any],
+                       reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]]) -> bool:
+        """Whether ``access``, in the scope of ``other_write``, can observe the value written in ``write_state``.
+
+        Reachability alone is too coarse inside an enclosing loop: its back edge reaches everything, so
+        two sibling loops that each write a temporary before reading it looked like one carried chain.
+        A value only arrives along a path that does not run ``other_write`` first. Anything this cannot
+        decide at state granularity, or an undominated scope with no write to kill it, keeps the old
+        answer: merge.
+        """
+        if other_write is None:
+            return True
+        kill_state, kill_node = other_write
+        access_state, access_node = access
+        if not all(isinstance(b, SDFGState) for b in (write_state, kill_state, access_state)):
+            return True
+        if write_state is kill_state:
+            return True
+        if not flow.reaches_avoiding(write_state, access_state, kill_state):
+            return False
+        if access_state is not kill_state:
+            return True
+        if not isinstance(access_node, nd.AccessNode) or access_node is kill_node:
+            return False
+        return not self._reaches(kill_state, kill_node, access_node, self._reach_memo(kill_state, desc, reach_cache))
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[int, WriteScopeDict]:
         """
@@ -873,24 +1131,69 @@ class ScalarWriteShadowScopes(ppl.Pass):
             block_reach: Dict[ControlFlowBlock,
                               OrderedSet[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
+            # One memo per SDFG: ``must_write_state`` is asked the same (container, block) question
+            # once per read on the idom chain, and its region case walks a whole subtree.
+            must_write_cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]] = {}
+            # Same span, same argument: nothing below mutates the graph.
+            reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]] = {}
+            # Built on the first merge candidate: most SDFGs never need it.
+            flow: Optional[StateFlow] = None
+
+            # ``(cfg_id, block_id)`` of a state, from per-region index maps: both properties are linear scans.
+            state_positions = StatePositions(sdfg)
+
             anames = sdfg.arrays.keys()
-            for desc in sdfg.arrays:
-                desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())
+            # Interstate reads indexed by container in ONE walk of ``access_sets``, which spans the
+            # whole SDFG tree and was re-walked (and re-parsed) once per candidate. Appended in that
+            # same order, so each list is a subsequence of what the per-candidate scan visited.
+            iedge_reads: Dict[str, List[Tuple[ControlFlowBlock, Edge[InterstateEdge]]]] = defaultdict(list)
+            for block, accesses in access_sets.items():
+                # Foreign blocks are skipped: ``idom_dict`` covers only this SDFG, and a clone of it
+                # declares the same array names (see the ``desc_states_with_nodes`` note below).
+                if block.sdfg is not sdfg or not accesses[0]:
+                    continue
+                for oedge in block.parent_graph.out_edges(block):
+                    for name in oedge.data.free_symbols & anames:
+                        if name in accesses[0]:
+                            iedge_reads[name].append((block, oedge))
+
+            for desc in self.shadow_candidates(sdfg):
+                # Restrict to states this SDFG owns. With cloned NestedSDFGs after loop
+                # fission, cfg_id collisions can make ``FindAccessNodes[sdfg.cfg_id]`` surface
+                # states owned by a *different* clone, whose regions are absent from this
+                # SDFG's ``idom_dict`` -- ``_find_dominating_write`` then walks up into a
+                # missing region and raises ``KeyError``. Mirrors the foreign-block guard on
+                # the interstate-edge loop below (``if block.sdfg is not sdfg``).
+                # Ordered, not a set: ``SDFGState`` has no ``__hash__``, so a set iterates by id()
+                # -- an order that varies run to run (it tracks allocation history, so it shifts
+                # with whatever ran earlier in the process). That order becomes the key insertion
+                # order of ``result[desc]``, which ScalarFission consumes to allocate new
+                # descriptors, so it decides ``find_new_name`` suffixes. Membership is never
+                # tested here, so a list costs nothing.
+                desc_states_with_nodes = sorted((s for s in access_nodes[desc].keys() if s.sdfg is sdfg),
+                                                key=state_positions.key)
                 for state in desc_states_with_nodes:
                     for read_node in access_nodes[desc][state][0]:
-                        write = self._find_dominating_write(desc, state, read_node, access_nodes, idom_dict,
-                                                            access_sets)
+                        write = self._find_dominating_write(desc,
+                                                            state,
+                                                            read_node,
+                                                            access_nodes,
+                                                            idom_dict,
+                                                            access_sets,
+                                                            must_write_cache=must_write_cache,
+                                                            reach_cache=reach_cache)
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
-                for block, accesses in access_sets.items():
-                    if desc in accesses[0]:
-                        out_edges = block.parent_graph.out_edges(block)
-                        for oedge in out_edges:
-                            syms = oedge.data.free_symbols & anames
-                            if desc in syms:
-                                write = self._find_dominating_write(desc, block, oedge.data, access_nodes, idom_dict,
-                                                                    access_sets)
-                                result[desc][write].add((block, oedge.data))
+                for block, oedge in iedge_reads.get(desc, ()):
+                    write = self._find_dominating_write(desc,
+                                                        block,
+                                                        oedge.data,
+                                                        access_nodes,
+                                                        idom_dict,
+                                                        access_sets,
+                                                        must_write_cache=must_write_cache,
+                                                        reach_cache=reach_cache)
+                    result[desc][write].add((block, oedge.data))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
                 # dominating any reads and are thus not part of the results yet.
                 for state in desc_states_with_nodes:
@@ -902,11 +1205,15 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                                 access_nodes,
                                                                 idom_dict,
                                                                 access_sets,
-                                                                no_self_shadowing=True)
+                                                                no_self_shadowing=True,
+                                                                must_write_cache=must_write_cache,
+                                                                reach_cache=reach_cache)
                             result[desc][write].add((state, write_node))
 
                 # If any write A is dominated by another write B and any reads in B's scope are also reachable by A,
-                # then merge A and its scope into B's scope.
+                # then merge A and its scope into B's scope. This is what keeps a LOOP-CARRIED chain in one scope:
+                # a read early in a loop body is attributed to the write preceding the loop, while the write later in
+                # that body feeds it on every subsequent iteration -- the two must not be versioned apart.
                 to_remove = OrderedSet()
                 for write, accesses in result[desc].items():
                     if write is None:
@@ -917,10 +1224,19 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     for other_write, other_accesses in result[desc].items():
                         if other_write is not None and other_write[1] is write_node and other_write[0] is write_state:
                             continue
-                        if other_write is None or other_write[0] in dominators:
+                        # ``dominated_through_region``, not plain membership: a write reported from INSIDE a
+                        # dominating region has to be recognised through that region, or the merge is missed
+                        # exactly for the region writes newly found by ``must_write_state`` and a loop-carried
+                        # chain gets versioned apart.
+                        if other_write is None or dominated_through_region(other_write[0], write_state, dominators):
                             noa = len(other_accesses)
                             if noa > 0 and (noa > 1 or list(other_accesses)[0] != other_write):
-                                if any([a_state in reach for a_state, _ in other_accesses]):
+                                reached = [access for access in other_accesses if access[0] in reach]
+                                if reached:
+                                    flow = flow or StateFlow(sdfg)
+                                if any(
+                                        self._sees_value_of(desc, flow, write_state, other_write, access, reach_cache)
+                                        for access in reached):
                                     other_accesses.update(accesses)
                                     other_accesses.add(write)
                                     to_remove.add(write)
@@ -929,6 +1245,155 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     del result[desc][write]
             top_result[sdfg.cfg_id] = result
         return top_result
+
+
+def covers_full_extent(subset: Optional[Range], desc: dt.Data) -> bool:
+    """Whether ``subset`` provably spans the WHOLE of ``desc``.
+
+    Requires every dimension to run from ``0`` to ``shape - 1`` with unit stride. The proof is by
+    symbolic simplification to an exact zero: an expression that does not simplify away is not a
+    proof and is rejected, so a symbolic extent is never *assumed* to cover the shape. No
+    inequality reasoning is involved, hence nothing beyond the canonicalization-wide
+    "symbols are nonnegative" assumption is relied upon.
+
+    :param subset: The memlet subset to test (``None`` never covers).
+    :param desc: The data descriptor whose extent must be covered.
+    :returns: ``True`` only if coverage of the full extent is proven.
+    """
+    if not isinstance(subset, Range) or len(subset) != len(desc.shape):
+        return False
+    for (rb, re, rstep), size in zip(subset.ranges, desc.shape):
+        if symbolic.simplify(rstep - 1) != 0:
+            return False
+        if symbolic.simplify(rb) != 0:
+            return False
+        # The subset is reparsed from strings while the shape carries the declared assumptions, so the
+        # same name arrives as two sympy instances that never cancel and coverage is silently refused.
+        end, extent = symbolic.equalize_symbols_across(re, size)
+        if symbolic.simplify(end - (extent - 1)) != 0:
+            return False
+    return True
+
+
+def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> bool:
+    """Whether ``edge`` (an incoming edge of an access node) provably overwrites all of ``desc``.
+
+    Refuses everything that could leave one element of the previous value observable:
+
+    * a WCR edge -- a read-modify-write, not an overwrite;
+    * a dynamic edge -- the write may not happen at all;
+    * a write handed out of a ``NestedSDFG`` connector -- the outer subset is a propagated
+      over-approximation of what the body actually writes, so it proves nothing;
+    * a write from a ``LibraryNode`` with a non-zero ``beta`` property (BLAS-style accumulate
+      nodes: Gemm/Gemv/Symm/Syrk/Einsum...) -- it folds onto the output's PRIOR value in place,
+      with no explicit read edge to show it, so the write is a read-modify-write like a WCR one;
+    * a write from a reduction ``LibraryNode`` with no ``identity`` -- it has no value to start
+      the fold from, so it starts from the output. The expansion emits no init and gives the
+      output memlet the node's ``wcr``, which is the same in-place read-modify-write;
+    * a subset that does not provably span the whole extent (:func:`covers_full_extent`).
+
+    The whole memlet tree is checked, not just the outer edge: a map that writes ``A[0:N]`` in
+    aggregate may still write each element under a WCR or a dynamic (conditional) inner memlet.
+
+    :param state: The state holding ``edge``.
+    :param edge: The incoming edge of the written access node.
+    :param desc: The written data descriptor.
+    :returns: ``True`` only if a full overwrite is proven.
+    """
+    for tree_edge in state.memlet_tree(edge):
+        if tree_edge.data.wcr is not None or tree_edge.data.dynamic:
+            return False
+        if isinstance(tree_edge.src, nd.NestedSDFG):
+            return False
+        src = tree_edge.src
+        if isinstance(src, nd.LibraryNode):
+            beta = getattr(src, 'beta', None)
+            if beta is not None and not symbolic.equal_valued(0, beta):
+                return False
+            # The default distinguishes "no identity" from "no such property": only a node that
+            # reduces (carries a ``wcr``) and left the identity unset folds onto the output.
+            if getattr(src, 'wcr', None) is not None and getattr(src, 'identity', 0) is None:
+                return False
+    # A write through a view carries the view's full range, whatever reached the view itself.
+    if isinstance(edge.src, nd.AccessNode) and isinstance(edge.src.desc(state), dt.View):
+        view = edge.src.desc(state)
+        into_view = [e for e in state.in_edges(edge.src) if not e.data.is_empty()]
+        if not into_view or not all(writes_whole_array(state, e, view) for e in into_view):
+            return False
+    return covers_full_extent(edge.data.get_dst_subset(edge, state), desc)
+
+
+def fully_overwritten_arrays(sdfg: SDFG) -> Set[str]:
+    """Transient arrays of ``sdfg`` for which EVERY write provably covers the entire array.
+
+    On such an array -- and only on such an array -- a dominating write is a must-def of the whole
+    container, which is the property the dominance-only shadow analysis silently assumes.
+
+    :param sdfg: The SDFG to scan (this SDFG only; nested SDFGs own their own descriptors).
+    :returns: The names of the arrays for which full overwrite is proven.
+    """
+    # A Reference can be pointed at any array and written through it, and that write never shows up
+    # on the target's own access nodes -- the scan below would then miss it and "prove" a full
+    # overwrite that is not one. Rather than track reference targets, refuse the whole SDFG.
+    if any(isinstance(desc, dt.Reference) for desc in sdfg.arrays.values()):
+        return set()
+
+    candidates: Set[str] = set()
+    for name, desc in sdfg.arrays.items():
+        # ``type(...) is Array`` on purpose: a View or Reference aliases another container and a
+        # ContainerArray holds descriptors rather than values -- none of them is privatizable.
+        if type(desc) is not dt.Array or not desc.transient:
+            continue
+        # Size-1 containers belong to the scalar path; leave them to ``ScalarFission``.
+        if desc.total_size == 1:
+            continue
+        # A persistent/external transient may legitimately carry its value across invocations.
+        if desc.lifetime != dtypes.AllocationLifetime.Scope:
+            continue
+        # ``may_alias`` means writes through another name can reach this one, so the writes visible
+        # on this array's access nodes are not all of its writes.
+        if desc.may_alias:
+            continue
+        candidates.add(name)
+
+    if not candidates:
+        return candidates  # nothing to disprove -- skip the scan
+
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data not in candidates:
+                continue
+            desc = sdfg.arrays[node.data]
+            for edge in state.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                if not writes_whole_array(state, edge, desc):
+                    candidates.discard(node.data)
+                    break
+    return candidates
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class ArrayWriteShadowScopes(ScalarWriteShadowScopes):
+    """
+    Write-shadow scopes for transient arrays that every write provably overwrites in full.
+
+    The inherited search decides shadowing by dominance and never looks at a subset. That is exact
+    for scalars (any write is a full write) but false in general for arrays: a dominating write of
+    ``A[0:k]`` does not shadow a read of ``A[0:N]``, and acting on it would privatize an array that
+    still carries elements from a previous iteration -- a silent miscompile.
+
+    This pass re-establishes the missing premise instead of weakening the search: it reports only
+    the arrays of :func:`fully_overwritten_arrays`, on which "dominating write" once again means
+    "must-def of the whole container". Anything it cannot prove is simply not reported, so the
+    consumer sees no candidate and refuses.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
+        return sorted(fully_overwritten_arrays(sdfg))
 
 
 @properties.make_properties
@@ -997,6 +1462,9 @@ class FindReferenceSources(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, OrderedSet[Memlet]] = defaultdict(OrderedSet)
             reference_descs = OrderedSet(k for k, v in sdfg.arrays.items() if isinstance(v, dt.Reference))
+            if not reference_descs:
+                top_result[sdfg.cfg_id] = result  # no Reference: every branch below is dead
+                continue
             for state in sdfg.states():
                 code_sources: Dict[str, OrderedSet[nd.CodeNode]] = defaultdict(OrderedSet)
                 for anode in state.data_nodes():

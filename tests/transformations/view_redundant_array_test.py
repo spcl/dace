@@ -55,7 +55,7 @@ def test_libnode_expansion():
 
 @pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG(f"redundant_array_1_into_2_dims_{copy_subset}_{nonstrict}")
     state = sdfg.add_state()
 
     sdfg.add_array("I", [9], dtype=dace.float32, transient=False)
@@ -87,7 +87,7 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
 
 @pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG(f"redundant_array_2_into_1_dim_{copy_subset}_{nonstrict}")
     state = sdfg.add_state()
 
     sdfg.add_array("I", [3, 3], dtype=dace.float32, transient=False)
@@ -118,7 +118,7 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
 
 
 def test_unsqueeze_view_removal():
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG("unsqueeze_view_removal")
     state = sdfg.add_state()
 
     sdfg.add_view("T", [9], dtype=dace.float32)
@@ -144,7 +144,7 @@ def test_unsqueeze_view_removal():
 
 
 def test_view_offset_removal():
-    sdfg = dace.SDFG("testing")
+    sdfg = dace.SDFG("view_offset_removal")
     state = sdfg.add_state()
 
     i = dace.symbol('i')
@@ -197,7 +197,7 @@ def test_transient_removal_uneven_flow_through_map():
     The final output `Y` should contain zeros everywhere except for the last
     column, which should be the same as the last column of `X`.
     """
-    g = dace.SDFG("testing")
+    g = dace.SDFG("transient_removal_uneven_flow_through_map")
     st0 = g.add_state()
     st1 = g.add_state_after(st0)
 
@@ -246,6 +246,32 @@ def test_transient_removal_uneven_flow_through_map():
     np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
+@dace.program
+def offset_row_view(A: dace.float64[16, 16], B: dace.float64[8]):
+    v = A[2, 0:8]
+    for i in dace.map[0:8]:
+        v[0] += B[i]
+
+
+def test_unsqueeze_view_removal_offsets_the_kept_dimensions():
+    """ The view edge's subset lives in the view's index space, the array edge's in the array's.
+        Offsetting one by the other before the unsqueeze pairs view dim 0 with array dim 0, so a
+        squeezed-out row index leaks into the column range: ``A[2, 0:8]`` became ``A[2, 2:10]``. """
+    sdfg = offset_row_view.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations(UnsqueezeViewRemove, validate=False) == 1
+    sdfg.validate()
+
+    bindings = [e.data for st in sdfg.all_states() for e in st.edges() if e.src_conn == 'views']
+    assert bindings and all(str(m.subset) == '2, 0:8' for m in bindings)
+
+    A = np.arange(256, dtype=np.float64).reshape(16, 16).copy()
+    B = np.arange(1, 9, dtype=np.float64).copy()
+    expected = A.copy()
+    expected[2, 0] += B.sum()
+    sdfg(A=A, B=B)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
@@ -258,3 +284,4 @@ if __name__ == '__main__':
     test_redundant_array_2_into_1_dim("T", True)
     test_unsqueeze_view_removal()
     test_view_offset_removal()
+    test_unsqueeze_view_removal_offsets_the_kept_dimensions()

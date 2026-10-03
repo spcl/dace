@@ -1,8 +1,8 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cuda_runtime.h>
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error

@@ -5,7 +5,7 @@ import pytest
 
 import dace
 import dace.libraries.standard as std
-from dace import SDFG, Memlet
+from dace import SDFG, Memlet, dtypes, nodes
 
 C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
@@ -21,8 +21,8 @@ def make_sdfg():
     A = st.add_access('A')
     C = st.add_access('C')
     R = st.add_reduce('lambda x, y: x + y', [1, 2, 3], 0)
-    st.add_nedge(A, R, Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
-    st.add_nedge(R, C, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
+    st.add_edge(A, None, R, '_in', Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
+    st.add_edge(R, '_out', C, None, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
 
     return g, R
 
@@ -50,6 +50,44 @@ def test_library_node_expand_reduce_pure():
     assert np.allclose(wantC, gotC)
 
 
+@pytest.mark.parametrize('implementation', ['pure', 'pure-seq'])
+def test_expansion_inside_a_map_does_not_shadow_its_parameter(implementation):
+    """A reduce expanded inside a map must not name its own maps after a parameter already in scope.
+
+    The expansion's maps are ``_o<n>`` / ``_i<n>``. Nested under a map that uses the same name, the
+    inner map rebinds it, and the boundary memlet that names the OUTER parameter then reads the inner
+    map's value -- every output element comes out as the first one, with nothing to see in the graph.
+    """
+    N, M = 20, 30
+    sdfg = SDFG('reduce_under_o0')
+    sdfg.add_array('inp', (M, N), dace.float64)
+    sdfg.add_array('out', (N, ), dace.float64)
+    state = sdfg.add_state()
+
+    entry, exit_ = state.add_map('outer', {'_o0': f'0:{N}'})
+    red = state.add_reduce('lambda a, b: a + b', axes=(0, ), identity=0.0)
+    red.implementation = implementation
+    state.add_memlet_path(state.add_read('inp'), entry, red, memlet=Memlet('inp[0:%d, _o0]' % M), dst_conn='_in')
+    state.add_memlet_path(red, exit_, state.add_write('out'), memlet=Memlet('out[_o0]'), src_conn='_out')
+    sdfg.validate()
+
+    sdfg.expand_library_nodes()
+    for nested, _ in sdfg.all_nodes_recursive():
+        if not isinstance(nested, dace.nodes.NestedSDFG):
+            continue
+        inherited = {str(s) for s in nested.symbol_mapping.keys()}
+        for n, _ in nested.sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.MapEntry):
+                clash = set(n.map.params) & inherited
+                assert not clash, f'expansion map rebinds inherited symbol(s) {sorted(clash)}'
+
+    inp = np.random.rand(M, N)
+    out = np.zeros(N)
+    sdfg(inp=inp, out=out)
+    assert np.allclose(out, inp.sum(axis=0))
+    assert not np.allclose(out, out[0]), 'every element equal: the reduction read one column for all outputs'
+
+
 _impls = ['pure', 'CUDA (device)', 'pure-seq', 'GPUAuto']
 _case_params = [([1, 64, 60, 60], (0, 2, 3), [64], np.float32), ([8, 512, 4096], (0, 1), [4096], np.float32),
                 ([8, 512, 4096], (0, 1), [4096], np.float64), ([1024, 8], (0), [8], np.float32),
@@ -73,6 +111,8 @@ def test_multidim_gpu(impl, test_case):
     a = np.random.rand(*in_shape).astype(dtype)
     b = np.random.rand(*out_shape).astype(dtype)
     sdfg = multidimred.to_sdfg(a, b)
+    # One build folder per case: parallel workers compiling the same name overwrite each other's library.
+    sdfg.name = f'multidimred_{_impls.index(impl)}_{_case_params.index(test_case)}'
     sdfg.apply_gpu_transformations()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
     rednode.implementation = impl
@@ -82,7 +122,70 @@ def test_multidim_gpu(impl, test_case):
     assert np.allclose(b, np.sum(a, axis=axes))
 
 
+def test_gpu_auto_expansion_keeps_descriptor_ranks_consistent():
+    """The GPU-auto expansion may FLATTEN the planner input (``(M, N, K) -> (M*N, K)``); the
+    reassigned shape/strides must be accompanied by a matching-rank offset, or the descriptor is
+    invalid and the host-side inline at codegen dies with 'Offset must be the same size as shape'
+    (samples/optimization/matmul.py, offloaded). Codegen-only: no GPU needed."""
+
+    @dace.program
+    def flat_reduce(inp_tensor: dace.float64[16, 8, 32], out_matrix: dace.float64[16, 8]):
+        out_matrix[:] = np.sum(inp_tensor, axis=2)
+
+    sdfg = flat_reduce.to_sdfg(simplify=True)
+    # The offloader reports what it placed on the device; an empty result means the graph
+    # came back running on the host, which every assertion below would then be testing.
+    assert sdfg.apply_gpu_transformations()
+    # Library nodes as well as maps: a graph whose only work is a Reduce carries its device
+    # schedule on the library node and has no map at all until the node is expanded.
+    assert any(node.schedule in dtypes.GPU_SCHEDULES for nested in sdfg.all_sdfgs_recursive()
+               for state in nested.states() for node in state.nodes()
+               if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)))
+    sdfg.expand_library_nodes()
+    for sub in sdfg.all_sdfgs_recursive():
+        for name, desc in sub.arrays.items():
+            if isinstance(desc, dace.data.Array):
+                assert len(desc.offset) == len(desc.shape), \
+                    f'{sub.name}::{name}: offset rank {len(desc.offset)} != shape rank {len(desc.shape)}'
+    sdfg.generate_code()
+
+
+def device_reduce_through_connectors() -> dace.SDFG:
+    """A top-level ``CUDA (device)`` sum wired through the node's own ``_in``/``_out`` connectors."""
+    sdfg = dace.SDFG('device_reduce_through_connectors')
+    sdfg.add_array('A', [64], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('out', [1], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    reduce = state.add_reduce('lambda a, b: a + b', None, 0)
+    reduce.implementation = 'CUDA (device)'
+    reduce.schedule = dace.ScheduleType.GPU_Device
+    reduce.add_in_connector('_in')
+    reduce.add_out_connector('_out')
+    state.add_edge(state.add_read('A'), None, reduce, '_in', dace.Memlet('A[0:64]'))
+    state.add_edge(reduce, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_device_reduce_expands_with_typed_connectors():
+    """The expansion read the output type with ``next`` on a dict view, a TypeError once the connector exists."""
+    sdfg = device_reduce_through_connectors()
+    sdfg.expand_library_nodes()
+    assert not any(isinstance(n, std.Reduce) for n, _ in sdfg.all_nodes_recursive())
+
+
+@pytest.mark.gpu
+def test_device_reduce_through_connectors_computes_the_sum():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = device_reduce_through_connectors()
+    A = cupy.asarray(np.random.default_rng(0).random(64))
+    out = cupy.zeros(1)
+    sdfg(A=A, out=out)
+    assert np.allclose(out.get(), A.get().sum())
+
+
 if __name__ == '__main__':
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])
     test_library_node_expand_reduce_pure()
+    for impl in ['pure', 'pure-seq']:
+        test_expansion_inside_a_map_does_not_shadow_its_parameter(impl)

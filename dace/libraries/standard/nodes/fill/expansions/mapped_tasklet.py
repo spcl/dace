@@ -7,6 +7,7 @@ import dace
 from dace import library
 from dace.libraries.standard.nodes.fill.common import (VALUE_CONNECTOR_NAME, make_fill_skeleton, python_literal)
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
@@ -41,8 +42,13 @@ class ExpandPure(ExpandTransformation):
         # whose spelling carries one comes back as bogus tokens.
         map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, map_lengths)}
         outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
-        schedule = (dace.dtypes.ScheduleType.GPU_Device
-                    if out.storage == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default)
+        # Inside a kernel a device-scheduled map would be a nested kernel, so the storage cannot pick the schedule.
+        if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+            schedule = dace.dtypes.ScheduleType.Sequential
+        elif out.storage == dace.dtypes.StorageType.GPU_Global:
+            schedule = dace.dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dace.dtypes.ScheduleType.Default
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
                                  inputs,

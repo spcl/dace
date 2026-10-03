@@ -217,8 +217,13 @@ class PureDropout(ONNXForward):
         }} else {{
             // Training mode: apply dropout
 
-            // Initialize random seed
+            // Initialize random seed. Device code cannot use std::time or dynamically
+            // initialized function-scope statics; seed from the device clock instead.
+        #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+            uint64_t rng_state = {seed if seed is not None else 'uint64_t(clock64())'};
+        #else
             static uint64_t rng_state = {seed if seed is not None else 'uint64_t(std::time(nullptr))'};
+        #endif
 
             // Scale factor for remaining values (1 / (1 - ratio))
             {dtype_str} scale = ({dtype_str})(1.0 / (1.0 - ratio));

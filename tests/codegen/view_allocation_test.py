@@ -80,7 +80,7 @@ def test_view_in_gpu_kernel():
 
     code = sdfg.generate_code()
     frame = next(c for c in code if c.title == 'Frame').clean_code
-    device = ''.join(c.clean_code for c in code if c.language == 'cu')
+    device = ''.join(c.clean_code for c in code if c.title == 'CUDA')
     binding = re.compile(r'\bV = &A\[')
     assert binding.search(device)
     assert not binding.search(frame)

@@ -20,8 +20,9 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import importlib
 import inspect
-from dace import serialize
+from dace import serialize, symbolic
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
@@ -39,6 +40,41 @@ PassT = TypeVar('PassT', bound=ppl.Pass)
 def explicit_cf_compatible(cls: PassT) -> PassT:
     cls.__explicit_cf_compatible__ = True
     return cls
+
+
+#: Packages holding the built-in transformations. Subclass discovery only sees classes whose defining
+#: module was imported, so name-based deserialization has to load these first.
+BUILTIN_TRANSFORMATION_PACKAGES = ('dace.transformation.dataflow', 'dace.transformation.interstate',
+                                   'dace.transformation.subgraph')
+
+
+def load_builtin_transformations() -> None:
+    """Import the packages holding the built-in transformations.
+
+    Both the ``dace.serialize`` type registry and ``PatternTransformation`` subclass discovery are
+    import-driven, so reading a saved transformation history needs these loaded -- after a bare
+    ``import dace`` they are not, and the names in the history resolve to nothing. Imported here
+    rather than at module level: every one of those packages imports this module.
+    """
+    for package in BUILTIN_TRANSFORMATION_PACKAGES:
+        importlib.import_module(package)
+
+
+def transformation_by_name(name: str, root: Type['TransformationBase']) -> Type['TransformationBase']:
+    """Resolve the transformation class called ``name`` below ``root``, for JSON deserialization.
+
+    An unresolved name used to surface as a bare ``StopIteration``, which the JSON reader swallowed
+    into a silently dropped element; it now raises.
+    """
+    load_builtin_transformations()
+    if root is PatternTransformation:
+        candidates = root.subclasses_recursive(all_subclasses=True)
+    else:
+        candidates = root.subclasses_recursive()
+    for cls in candidates:
+        if cls.__name__ == name:
+            return cls
+    raise TypeError(f'Unknown {root.__name__} {name!r}: no such class in any imported module')
 
 
 class TransformationBase(ppl.Pass):
@@ -301,7 +337,7 @@ class PatternTransformation(TransformationBase):
                                   annotate: bool = True,
                                   permissive: bool = False,
                                   save: bool = True,
-                                  **where: Union[nd.Node, SDFGState]):
+                                  **where: Union[nd.Node, ControlFlowBlock]):
         """
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
         a set of nodes.
@@ -393,7 +429,7 @@ class PatternTransformation(TransformationBase):
                  annotate: bool = True,
                  permissive: bool = False,
                  save: bool = True,
-                 **where: Union[nd.Node, SDFGState]):
+                 **where: Union[nd.Node, ControlFlowBlock]):
         """
         Applies this transformation to a given subgraph, defined by a set of
         nodes. Raises an error if arguments are invalid or transformation is
@@ -437,7 +473,7 @@ class PatternTransformation(TransformationBase):
                           options: Optional[Dict[str, Any]] = None,
                           expr_index: int = 0,
                           permissive: bool = False,
-                          **where: Union[nd.Node, SDFGState]) -> bool:
+                          **where: Union[nd.Node, ControlFlowBlock]) -> bool:
         """
         Checks if the given transformation can be applied to a subgraph, defined by
         a set of nodes.
@@ -489,8 +525,7 @@ class PatternTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'PatternTransformation':
-        xform = next(ext for ext in PatternTransformation.subclasses_recursive(all_subclasses=True)
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], PatternTransformation)
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj.get('expr_index', 0)]
@@ -699,6 +734,16 @@ class ExpandTransformation(PatternTransformation):
     This is an internal interface used to track the expansion of library nodes.
     """
 
+    #: The expansion emits device code and must therefore sit INSIDE a kernel, rather than being a
+    #: call host code issues. Only the expansion knows: a cub block reduce refuses to expand outside
+    #: a kernel, while the device-wide reduce next to it in the same library is a host-issued call.
+    #: Offloading reads this to decide whether a map around the node is a kernel or a host loop.
+    runs_inside_kernel = False
+
+    #: The expansion builds further library nodes, which ``set_fast_implementations`` must then pick
+    #: implementations for too (TensorDot's TTGT emits transposes and a Gemm).
+    composite = False
+
     @classmethod
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]
@@ -720,7 +765,9 @@ class ExpandTransformation(PatternTransformation):
 
     def apply(self, state, sdfg, *args, **kwargs):
         node = state.node(self.subgraph[type(self)._match_node])
-        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        # Expansions build their graphs from strings; parse the parent's symbols at their declared dtypes.
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+            expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
                                               node.in_connectors,
@@ -1045,8 +1092,7 @@ class SubgraphTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'SubgraphTransformation':
-        xform = next(ext for ext in SubgraphTransformation.subclasses_recursive()
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], SubgraphTransformation)
 
         # Reconstruct transformation
         ret = xform()

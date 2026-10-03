@@ -87,6 +87,81 @@ def test_writing_to_scalar_on_iedge_is_invalid():
         sdfg.validate()
 
 
+def _get_sdfg_writing_to_scalar_inside_a_region() -> dace.SDFG:
+    """The offending assignment sits on an interstate edge INSIDE a loop, not at the top level."""
+    sdfg = dace.SDFG("interstate_write_in_region")
+    sdfg.add_scalar("scalar1", dace.int32, transient=True, find_new_name=False)
+    sdfg.add_symbol("symbol1", dace.int32, find_new_name=False)
+
+    entry_state = sdfg.add_state("entry", is_start_block=True)
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry_state, loop, dace.InterstateEdge())
+
+    body1 = loop.add_state("body1", is_start_block=True)
+    body2 = loop.add_state("body2")
+    loop.add_edge(body1, body2, dace.InterstateEdge(assignments={"scalar1": "symbol1"}))
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def test_writing_to_scalar_on_iedge_inside_a_region_is_invalid():
+    """The scalar/array-write check must run on every region, not only on the top-level SDFG.
+
+    ``validate_control_flow_region`` recurses into nested regions but handed the check the SDFG
+    every time, so the top-level edges were re-checked once per region while a region's own
+    interstate edges were never checked at all.
+    """
+    sdfg = _get_sdfg_writing_to_scalar_inside_a_region()
+    with pytest.raises(dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
+                       match="Assignment to a scalar or an array detected in an interstate edge"):
+        sdfg.validate()
+
+
+def test_region_check_does_not_reject_a_plain_symbol_assignment():
+    """Only assignments whose target is a data descriptor are rejected; ordinary symbols are fine."""
+    sdfg = dace.SDFG("interstate_symbol_in_region")
+    sdfg.add_array("array1", (10, ), dace.int32, transient=True, find_new_name=False)
+    sdfg.add_symbol("symbol1", dace.int32, find_new_name=False)
+
+    entry_state = sdfg.add_state("entry", is_start_block=True)
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry_state, loop, dace.InterstateEdge())
+
+    body1 = loop.add_state("body1", is_start_block=True)
+    body2 = loop.add_state("body2")
+    loop.add_edge(body1, body2, dace.InterstateEdge(assignments={"symbol1": "i"}))
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('assignments, names', [
+    ({}, []),
+    ({
+        'a': '1'
+    }, ['a']),
+    ({
+        'i': 'i + 1'
+    }, []),
+    ({
+        'a': 'b',
+        'b': 'a'
+    }, ['a']),
+    ({
+        'x': 'n * 2',
+        'y': 'x + 1',
+        'n': '0'
+    }, ['x', 'y']),
+])
+def test_new_symbol_names_are_the_keys_new_symbols_types(assignments, names):
+    """Inlining reads only these names, and a mismatch with ``new_symbols`` renames a symbol that
+    should have been kept (or keeps one that clashes)."""
+    edge = dace.InterstateEdge(assignments=assignments)
+    assert list(edge.new_symbol_names()) == names
+    assert list(edge.new_symbols(None, {'n': dace.int64, 'b': dace.int64})) == names
+
+
 if __name__ == "__main__":
     test_read_symbols()
     test_used_symbols()
@@ -95,3 +170,5 @@ if __name__ == "__main__":
     test_all_read_arrays()
     test_all_used_arrays()
     test_writing_to_scalar_on_iedge_is_invalid()
+    test_writing_to_scalar_on_iedge_inside_a_region_is_invalid()
+    test_region_check_does_not_reject_a_plain_symbol_assignment()

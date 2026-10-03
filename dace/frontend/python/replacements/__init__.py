@@ -16,4 +16,5 @@ from .mpi import *
 from .operators import *
 from .pymath import *
 from .reduction import *
+from .tile import *
 from .ufunc import *

@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union, Optional
+from typing import Union, Optional
 
+from dace import symbolic
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, nodes
@@ -9,10 +10,10 @@ from dace.sdfg.state import LoopRegion
 
 
 def add_backward_pass(sdfg: SDFG,
-                      outputs: List[Union[nodes.AccessNode, str]],
-                      inputs: List[Union[nodes.AccessNode, str]],
+                      outputs: list[Union[nodes.AccessNode, str]],
+                      inputs: list[Union[nodes.AccessNode, str]],
                       data_forwarding_strategy: str = "store_all",
-                      data_to_recompute: Optional[List[str]] = None,
+                      data_to_recompute: Optional[list[str]] = None,
                       simplify: bool = True,
                       separate_sdfgs: bool = False) -> Optional[SDFG]:
     """ Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
@@ -73,7 +74,9 @@ def add_backward_pass(sdfg: SDFG,
                                 backward_sdfg=backward_sdfg,
                                 data_forwarding_strategy=data_forwarding_strategy,
                                 data_to_recompute=data_to_recompute)
-    gen.backward()
+    # The generator builds memlets from strings; parse them at the forward SDFG's declared symbol dtypes.
+    with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+        gen.backward()
     sdfg.validate()
 
     if simplify:

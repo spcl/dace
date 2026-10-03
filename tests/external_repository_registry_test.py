@@ -1,4 +1,5 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import functools
 import os
 import pathlib
 import subprocess
@@ -48,20 +49,39 @@ def run_cli(env_key: str, env_value: str, *args):
     return result
 
 
+def _in_fresh_home(test):
+    """Run ``test`` with its own ``$HOME``: the default path lives there, so tests running side by side
+    (pytest-xdist, or one per simplify configuration) never clone into or remove each other's repository."""
+
+    @functools.wraps(test)
+    def wrapper():
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = tempfile.mkdtemp(prefix="dace_registry_home_")
+        try:
+            test()
+        finally:
+            shutil.rmtree(os.environ["HOME"], ignore_errors=True)
+            if old_home is None:
+                del os.environ["HOME"]
+            else:
+                os.environ["HOME"] = old_home
+            _set_default_path()
+
+    return wrapper
+
+
 def _get_base_path() -> pathlib.Path:
-    return pathlib.Path(dace.__external_transformations_path__)
+    """The path the CLI resolves, against the current ``$HOME``."""
+    return pathlib.Path(os.path.expandvars(dace.config.Config.get("external_transformations_path")))
 
 
-def _set_and_get_non_default_path() -> str:
-    dace.config.Config.set("external_transformations_path", value="dace/transformation/external")
-    base_path = _get_base_path()
-    return base_path
+def _set_and_get_non_default_path() -> pathlib.Path:
+    dace.config.Config.set("external_transformations_path", value="$HOME/non_default_path/external")
+    return _get_base_path()
 
 
-def _set_default_path() -> str:
+def _set_default_path() -> None:
     dace.config.Config.set("external_transformations_path", value="$HOME/dace_transformations/external_transformations")
-    base_path = _get_base_path()
-    return base_path
 
 
 def _test_add_repository_and_check_file(env_key: str, env_value: str):
@@ -95,6 +115,7 @@ def _test_load_from_file(env_key: str, env_value: str, filepath: str):
     assert found, f"{EXPECTED_FILE} not found in repository"
 
 
+@_in_fresh_home
 def test_add_repository_and_check_file():
     """
     Test adding a repository and checking that the expected file exists in the cloned repository. Cleans-up after test, which is also checked.
@@ -103,6 +124,7 @@ def test_add_repository_and_check_file():
     _test_remove_repository(ENV_KEY, None)
 
 
+@_in_fresh_home
 def test_add_repository_and_check_file_with_env_var():
     """
     Test adding a repository and checking the expected file exists, using an environment variable for the path.
@@ -129,6 +151,7 @@ def _test_import_empty_transformation(env_key: str, env_value: str):
     assert hasattr(module, EXPECTED_CLASS), f"{EXPECTED_CLASS} not found in module"
 
 
+@_in_fresh_home
 def test_import_empty_transformation():
     """
     Test importing the expected transformation class from the cloned repository.
@@ -138,6 +161,7 @@ def test_import_empty_transformation():
     _test_remove_repository(ENV_KEY, None)
 
 
+@_in_fresh_home
 def test_import_empty_transformation_with_env_var():
     """
     Test importing the expected transformation class from the cloned repository using an environment variable for the path root path of external transformations.
@@ -156,6 +180,7 @@ def _test_remove_repository(env_key: str, env_value: str, repo_name: str = REPO_
     assert not repo_path.exists(), "Repository folder still exists after removal"
 
 
+@_in_fresh_home
 def test_remove_repository():
     """
     Test removing a repository and ensuring its directory is deleted.
@@ -164,6 +189,7 @@ def test_remove_repository():
     _test_remove_repository(ENV_KEY, None)
 
 
+@_in_fresh_home
 def test_remove_repository_with_env_var():
     """
     Test removing a repository using an environment variable for the path.
@@ -177,6 +203,7 @@ def test_remove_repository_with_env_var():
 # This test would require a more complex setup to change the config.yaml to
 # impact config once DaCe is imported or to override using environment variables with
 # DACE_external_repository_path when get/set is called.
+@_in_fresh_home
 def test_add_repository_and_check_file_non_default_path():
     """
     Test adding a repository and checking the expected file exists using a non-default path.
@@ -184,9 +211,9 @@ def test_add_repository_and_check_file_non_default_path():
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
-    _set_default_path()
 
 
+@_in_fresh_home
 def test_import_empty_transformation_non_default_path():
     """
     Test importing the expected transformation class from the cloned repository using a non-default path set through environment variables.
@@ -195,9 +222,9 @@ def test_import_empty_transformation_non_default_path():
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_import_empty_transformation(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
-    _set_default_path()
 
 
+@_in_fresh_home
 def test_remove_repository_non_default_path():
     """
     Test removing a repository and ensuring its directory is deleted using a non-default path.
@@ -205,9 +232,9 @@ def test_remove_repository_non_default_path():
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
-    _set_default_path()
 
 
+@_in_fresh_home
 def test_load_from_json_base_path():
     """
     Test loading repositories from a JSON file using the base path.
@@ -220,9 +247,9 @@ def test_load_from_json_base_path():
     _test_load_from_file(ENV_KEY, str(base_path), tmp_file_path)
     _test_remove_repository(ENV_KEY, str(base_path), "external_transformations")
     _test_remove_repository(ENV_KEY, str(base_path), "renamed_external_transformations")
-    _set_default_path()
 
 
+@_in_fresh_home
 def test_load_from_json_non_base_path():
     """
     Test loading repositories from a JSON file using a non-default path.
@@ -235,7 +262,6 @@ def test_load_from_json_non_base_path():
     _test_load_from_file(ENV_KEY, str(base_path), tmp_file_path)
     _test_remove_repository(ENV_KEY, str(base_path), "external_transformations")
     _test_remove_repository(ENV_KEY, str(base_path), "renamed_external_transformations")
-    _set_default_path()
 
 
 if __name__ == "__main__":

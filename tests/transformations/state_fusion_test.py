@@ -395,7 +395,16 @@ def test_inout_second_state_2():
 
     sdfg = func.to_sdfg(simplify=False)
     sdfg.simplify()
-    assert sdfg.number_of_nodes() == 2
+    # StateFusionExtended orders the copy before the in-place double with a happens-before
+    # edge, so the WAR survives a single state -- assert the values, not just the shape.
+    assert sdfg.number_of_nodes() == 1
+
+    A = np.random.rand(128, 128)
+    B = np.zeros((128, 128))
+    expected = A.copy()
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, expected)
+    assert np.allclose(A, 2 * expected)
 
 
 def test_check_paths():
@@ -492,7 +501,112 @@ def test_check_paths():
     assert not do_fuse
 
 
+def _fusible_single_cc(add_barrier: bool):
+    """Two states forming ONE connected component after fusion: ``s1`` writes ``A``,
+    ``s2`` reads ``A`` (true RAW dependence), so plain StateFusion fuses them into a
+    single state. When ``add_barrier`` is set the producer is marked side-effecting
+    (a fusion barrier / dace.callback / I/O tasklet) -- it stays part of that single
+    connected component, so a guard gated on the resulting-CC count would miss it."""
+    sdfg = dace.SDFG('state_fusion_side_effect_test')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+
+    produce = s1.add_tasklet('produce', {}, {'a'}, 'a = 1.0')
+    s1.add_edge(produce, 'a', s1.add_write('A'), None, dace.Memlet('A'))
+
+    consume = s2.add_tasklet('consume', {'a'}, {'b'}, 'b = a + 1.0')
+    s2.add_edge(s2.add_read('A'), None, consume, 'a', dace.Memlet('A'))
+    s2.add_edge(consume, 'b', s2.add_write('B'), None, dace.Memlet('B'))
+
+    if add_barrier:
+        produce.side_effects = True
+    return sdfg
+
+
+def test_side_effect_free_single_cc_fuses():
+    """Control: without a side-effect node the single-CC RAW dataflow fuses to one state."""
+    sdfg = _fusible_single_cc(add_barrier=False)
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.number_of_nodes() == 1
+
+
+def empty_entry_then_worker(name: str, island: bool):
+    """A pinned empty entry state feeding a worker state -- StateFusion's "first state is empty"
+    path, the one that has to decide what the region entry becomes. With ``island`` an extra
+    disconnected source block stands in for the mid-surgery shape index-set splitting produces,
+    where the region can no longer derive its entry."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [1], dace.float64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    worker = sdfg.add_state('worker')
+    tasklet = worker.add_tasklet('write', {}, {'out'}, 'out = 1.0')
+    worker.add_edge(tasklet, 'out', worker.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.add_edge(entry, worker, dace.InterstateEdge())
+    if island:
+        sdfg.add_state('island')
+    return sdfg, entry, worker
+
+
+def test_state_fusion_leaves_a_derivable_region_entry_implicit():
+    """Fusing away the entry of a region that is left with ONE source block must NOT pin the
+    survivor: the region derives its entry, and an explicit pin is what later broke index-set
+    splitting (a pinned entry the split no longer owns). Read ``_start_block`` directly -- the
+    ``start_block`` getter answers from the single source either way, so the pin is invisible
+    through it."""
+    sdfg, _entry, worker = empty_entry_then_worker('fusion_implicit_entry', island=False)
+    assert sdfg._start_block is not None, 'precondition: the entry starts out pinned'
+
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.number_of_nodes() == 1
+    assert sdfg._start_block is None, 'a derivable region entry must stay implicit after fusion'
+    assert sdfg.start_block is worker
+
+
+def test_state_fusion_pins_the_region_entry_the_region_cannot_derive():
+    """The other half of the contract: with a second source block around, nothing derives the
+    entry, so the fusion MUST pin the survivor -- otherwise the region is left with no answer.
+    Applied directly: the extra source is exactly the shape a whole-SDFG validation rejects,
+    which is why it only ever occurs between two transformations."""
+    sdfg, entry, worker = empty_entry_then_worker('fusion_pinned_entry', island=True)
+
+    StateFusion.apply_to(sdfg, first_state=entry, second_state=worker, verify=False, save=False, annotate=False)
+    assert sdfg.number_of_nodes() == 2
+    assert len(sdfg.source_nodes()) == 2, 'the island must keep the entry underivable'
+    assert sdfg._start_block is not None, 'an underivable region entry must be pinned to the survivor'
+    assert sdfg.node(sdfg._start_block) is worker, 'the pin must name the survivor, not the removed entry'
+    assert sdfg.start_block is worker
+
+
+def test_war_behind_an_ordering_edge():
+    """A read node carrying an ordering in-edge is still a read: the WAR must block fusion."""
+    sdfg = dace.SDFG('war_ordering')
+    for name in ('A', 'B', 'P'):
+        sdfg.add_array(name, [4], dace.float64)
+    sdfg.add_transient('C', [1], dace.float64)
+
+    s1 = sdfg.add_state()
+    s1.add_edge(s1.add_tasklet('tP', {}, {'o': None}, 'o = 7.0'), 'o', s1.add_access('P'), None, dace.Memlet('P[0]'))
+    cnode = s1.add_access('C')
+    s1.add_edge(s1.add_tasklet('tZ', {}, {'o': None}, 'o = 0.0'), 'o', cnode, None, dace.Memlet('C[0]'))
+    anode = s1.add_access('A')
+    s1.add_edge(cnode, None, anode, None, dace.Memlet())
+    s1.add_nedge(anode, s1.add_access('B'), dace.Memlet('A[0:4] -> [0:4]'))
+
+    s2 = sdfg.add_state_after(s1)
+    t2 = s2.add_tasklet('t2', {'p': None}, {'a': None}, 'a = 100.0 + p')
+    s2.add_edge(s2.add_access('P'), None, t2, 'p', dace.Memlet('P[0]'))
+    s2.add_edge(t2, 'a', s2.add_access('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
+
+
 if __name__ == "__main__":
+    test_state_fusion_leaves_a_derivable_region_entry_implicit()
+    test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
     test_fuse_assignments()
     test_fuse_assignments_2()
     test_fuse_assignment_in_use()
@@ -510,3 +624,5 @@ if __name__ == "__main__":
     test_inout_second_state()
     test_inout_second_state_2()
     test_check_paths()
+    test_side_effect_free_single_cc_fuses()
+    test_war_behind_an_ordering_edge()

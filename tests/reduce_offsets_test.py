@@ -18,8 +18,8 @@ state = reduce_with_offsets.add_state()
 node_a = state.add_read('A')
 node_b = state.add_write('B')
 red = state.add_reduce('lambda a,b: a+b', [0], 0)
-state.add_nedge(node_a, red, dace.Memlet.simple('A', '25:50, 13:20'))
-state.add_nedge(red, node_b, dace.Memlet.simple('B', '4:11'))
+state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '25:50, 13:20'))
+state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '4:11'))
 
 
 def test_offset_reduce():
@@ -60,8 +60,8 @@ def test_offset_reduce_indices():
     node_a = state.add_read('A')
     node_b = state.add_write('B')
     red = state.add_reduce('lambda a,b: max(a,b)', [0, 1, 2, 3])
-    state.add_nedge(node_a, red, dace.Memlet.simple('A', '0, 1, 2, 0:10'))
-    state.add_nedge(red, node_b, dace.Memlet.simple('B', '0'))
+    state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '0, 1, 2, 0:10'))
+    state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '0'))
 
     reduce_with_indices(A=A, B=B)
 

@@ -34,15 +34,13 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = 'cuda', **config) -> str:
         dace.config.Config.set('compiler', 'cuda', 'default_block_size', value='32,1,1')
         for key, value in config.items():
             dace.config.Config.set('compiler', 'cuda', key, value=value)
-        # The backend and chiplet count are cached for the whole process; clear them before and after, so that the
-        # backend set above reaches the code generator and does not leak into other tests
-        common.get_gpu_backend.cache_clear()
+        # The backend is read from the configuration on every call, but the chiplet count is cached for the whole
+        # process; clear it before and after, so that it does not leak into other tests
         common.get_gpu_chiplet_count.cache_clear()
         try:
             # The GPU code object is named the same for every backend, while its language is the file extension
             return next(c for c in sdfg.generate_code() if c.name == f'{sdfg.name}_cuda').clean_code
         finally:
-            common.get_gpu_backend.cache_clear()
             common.get_gpu_chiplet_count.cache_clear()
 
 
@@ -166,7 +164,7 @@ def test_threadblock_map_keeps_its_own_type():
     assert _declaration(code, 'j') == 'int j = threadIdx.x;'
 
 
-def test_nested_device_map():
+def nested_device_map_code() -> str:
     sdfg = dace.SDFG('nested_device_index_type')
     sdfg.add_array('A', [N, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
@@ -182,9 +180,22 @@ def test_nested_device_map():
                           src_conn='o',
                           memlet=dace.Memlet('A[i, j]'))
 
-    code = _cuda_code(sdfg)
+    return _cuda_code(sdfg)
+
+
+@pytest.mark.old_gpu_codegen_only
+def test_nested_device_map():
+    code = nested_device_map_code()
     assert _declaration(code, 'i') == 'int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);'
     assert _declaration(code, 'j') == 'int64_t j = static_cast<int64_t>(blockIdx.y);'
+
+
+@pytest.mark.new_gpu_codegen_only
+def test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map():
+    code = nested_device_map_code()
+    assert _declaration(code, 'b_i') == 'int64_t b_i = static_cast<int64_t>(blockIdx.y);'
+    assert _declaration(code, 'i') == 'int64_t i = (threadIdx.y + b_i);'
+    assert _declaration(code, 'j') == 'int64_t j = (threadIdx.x + b_j);'
 
 
 def test_nested_sdfg_receives_wide_index():
@@ -203,6 +214,7 @@ def test_nested_sdfg_receives_wide_index():
     assert _declaration(code, 'i') == 'int64_t i = (threadIdx.x + b_i);'
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_persistent_map():
     code = _cuda_code(_persistent(persistent_offset_indices.to_sdfg(simplify=False)))
     header = _declaration(code, 'i')
@@ -210,6 +222,7 @@ def test_persistent_map():
     assert 'i += static_cast<int64_t>(gridDim.x) * 32' in code
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.parametrize('step', [1, 2])
 def test_dynamic_map(step: int):
     code = _cuda_code(_spmv(step), dynamic_map_block_size='64,1,1')
@@ -221,12 +234,15 @@ def test_dynamic_map(step: int):
         assert re.search(r'int64_t j = \w+ \+ 2 \* j_idx;', code)
 
 
+@pytest.mark.old_gpu_codegen_only
 def test_dynamic_map_default_types():
+    # A name of its own: SymPy's cache shares a symbol with every module that declares ``M`` with another type
+    M32 = dace.symbol('M32', dace.int32)
 
     @dace.program
-    def spmv32(A_row: dace.uint32[M + 1], A_col: dace.uint32[M], A_val: dace.float32[M], x: dace.float32[M],
-               b: dace.float32[M]):
-        for i in dace.map[0:M]:
+    def spmv32(A_row: dace.uint32[M32 + 1], A_col: dace.uint32[M32], A_val: dace.float32[M32], x: dace.float32[M32],
+               b: dace.float32[M32]):
+        for i in dace.map[0:M32]:
             for j in dace.map[A_row[i]:A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
@@ -285,6 +301,7 @@ def test_block_index_products_beyond_32_bits():
     assert np.array_equal(out, np.arange(size - tail, size, dtype=np.int64))
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.gpu
 def test_persistent_indices_beyond_32_bits():
     size, offset = 1000, 2**33 + 5
@@ -296,6 +313,7 @@ def test_persistent_indices_beyond_32_bits():
     assert np.array_equal(out, np.arange(size, dtype=np.int64) + offset)
 
 
+@pytest.mark.old_gpu_codegen_only
 @pytest.mark.gpu
 @pytest.mark.parametrize('fine_grained,block_size', [(True, 64), (True, 128), (False, 128)])
 def test_dynamic_map_with_64bit_row_pointers(fine_grained: bool, block_size: int):
@@ -326,16 +344,16 @@ if __name__ == '__main__':
     test_each_dimension_takes_its_own_type()
     test_threadblock_map_keeps_its_own_type()
     test_nested_device_map()
+    test_nested_device_map_is_lowered_to_one_two_dimensional_kernel_map()
     test_nested_sdfg_receives_wide_index()
     test_persistent_map()
-    test_dynamic_map(1)
-    test_dynamic_map(2)
+    for step in [1, 2]:
+        test_dynamic_map(step)
     test_dynamic_map_default_types()
     test_chiplet_distribution()
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
     test_block_index_products_beyond_32_bits()
     test_persistent_indices_beyond_32_bits()
-    test_dynamic_map_with_64bit_row_pointers(True, 64)
-    test_dynamic_map_with_64bit_row_pointers(True, 128)
-    test_dynamic_map_with_64bit_row_pointers(False, 128)
+    for fine_grained, block_size in [(True, 64), (True, 128), (False, 128)]:
+        test_dynamic_map_with_64bit_row_pointers(fine_grained, block_size)

@@ -507,42 +507,6 @@ def test_loop2map_accepts_peeled_affine_form():
     and LoopToMap accepts it."""
     sdfg = peeled_affine_loop.to_sdfg(simplify=True)
     assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
-    # Both variants carry ``sym``: it is read in ``B[i]`` before the body edge reassigns it to
-    # ``A[i-1]``, so a Map would pin it to 0.0 and compute ``B[i] = 0``.
-    assert sdfg.apply_transformations(LoopToMap) == 0
-
-
-def only_loop(sdfg: dace.SDFG) -> LoopRegion:
-    return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
-
-
-def test_loop2map_rejects_symbol_read_in_dataflow_before_assignment():
-    """TSVC s291: ``im`` is read in ``b[im]`` before the body reassigns it, so it is loop-carried."""
-    N = dace.symbol('N')
-
-    @dace.program
-    def carried(a: dace.float64[N], b: dace.float64[N]):
-        im = N - 1
-        for i in range(N):
-            a[i] = b[i] + b[im]
-            im = i
-
-    sdfg = carried.to_sdfg(simplify=True)
-    assert not LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
-
-
-def test_loop2map_accepts_peeled_affine_form():
-    """Peeled and induction-substituted, ``a[i] = b[i] + b[i-1]`` is affine and still accepted."""
-    N = dace.symbol('N')
-
-    @dace.program
-    def peeled(a: dace.float64[N], b: dace.float64[N]):
-        a[0] = b[0] + b[N - 1]
-        for i in range(1, N):
-            a[i] = b[i] + b[i - 1]
-
-    sdfg = peeled.to_sdfg(simplify=True)
-    assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
 
 
 def test_loop2map_accepts_symbol_assigned_on_every_branch_before_read():
@@ -1101,7 +1065,7 @@ def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
 
 def test_symbol_mapping_applies_to_typed_inner_symbols():
     """The inner symbol keeps its declared dtype, so mapping it outward must match by name."""
-    from dace.transformation.interstate.loop_to_map import _through_symbol_mapping
+    from dace.transformation.interstate.loop_to_map import through_symbol_mapping
     inner = dace.SDFG('inner')
     inner.add_symbol('M', dace.int64)
     inner.add_array('x', [10], dace.float64)
@@ -1111,7 +1075,7 @@ def test_symbol_mapping_applies_to_typed_inner_symbols():
     state = outer.add_state()
     nsdfg = state.add_nested_sdfg(inner, {'x'}, set(), symbol_mapping={'M': 'K + 1'})
     subset = dace.subsets.Range([(dace.symbol('M', dace.int64), dace.symbol('M', dace.int64), 1)])
-    result = _through_symbol_mapping(subset, nsdfg)
+    result = through_symbol_mapping(subset, nsdfg)
     assert {str(sym) for sym in result.ndrange()[0][0].free_symbols} == {'K'}
 
 
@@ -1167,6 +1131,35 @@ def test_refuse_when_body_assigns_loop_range_symbol():
     # The loop remains as a LoopRegion; SDFG stays valid.
     assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
+
+
+def loop_writing_a_fixed_element_per_state(state_count: int) -> LoopRegion:
+    sdfg = dace.SDFG("refusal_order")
+    sdfg.add_symbol("N", dace.int64)
+    loop = LoopRegion("for_i", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    states = [loop.add_state(f"s{k}", is_start_block=k == 0) for k in range(state_count)]
+    for k, state in enumerate(states):
+        sdfg.add_array(f"A{k}", (dace.symbol("N"), ), dace.float64)
+        tasklet = state.add_tasklet("w", {}, {"o": dace.float64}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_write(f"A{k}"), None, dace.Memlet(f"A{k}[0]"))
+    for src, dst in zip(states, states[1:]):
+        loop.add_edge(src, dst, dace.InterstateEdge())
+    return loop
+
+
+def test_refusal_reason_follows_block_order_not_memory_addresses():
+    """Companion passes act on the first refusal, so every rebuild must name the first state's write."""
+    keep_alive = []
+    reasons = []
+    for rebuild in range(12):
+        keep_alive.append([object() for _ in range(rebuild * 1543)])
+        loop = loop_writing_a_fixed_element_per_state(8)
+        sut = LoopToMap()
+        sut.loop = loop
+        assert not sut.can_be_applied(loop.parent_graph, 0, loop.sdfg)
+        reasons.append(sut.last_refusal_reason)
+    assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
 
 
 def test_mapped_symbol_the_child_does_not_declare():
@@ -1296,6 +1289,43 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def branchy_symbol_loop() -> dace.SDFG:
+    """A loop whose body is a two-armed conditional, each arm assigning ``s`` on its own
+    interstate edge and writing ``A[i]`` from it."""
+    sdfg = dace.SDFG('l2m_branchy_symbol')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_symbol('s', dace.int64)
+    loop = LoopRegion('loop', 'i < 20', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+
+    cond = ConditionalBlock('choose', sdfg=sdfg, parent=loop)
+    loop.add_node(cond, is_start_block=True)
+    for label, expr, condition in (('then', 'i + 1', 'i % 2 == 0'), ('else', 'i + 2', None)):
+        region = ControlFlowRegion(f'{label}_body', sdfg=sdfg)
+        first = region.add_state(f'{label}_first', is_start_block=True)
+        second = region.add_state(f'{label}_second')
+        region.add_edge(first, second, dace.InterstateEdge(assignments={'s': expr}))
+        t = second.add_tasklet(f'{label}_write', {}, {'o'}, 'o = s')
+        second.add_edge(t, 'o', second.add_write('A'), None, dace.Memlet('A[i]'))
+        cond.add_branch(dace.properties.CodeBlock(condition) if condition else None, region)
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_conditional_body_does_not_crash_the_match():
+    """Every arm assigns ``s`` before reading it, so the loop is a Map. The branch-intersection
+    bookkeeping must not raise: a raised exception is swallowed as 'does not apply', which
+    silently disables LoopToMap for every loop shaped like this."""
+    sdfg = branchy_symbol_loop()
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+    A = np.zeros(20)
+    sdfg(A=A)
+    expected = np.array([(i + 1) if i % 2 == 0 else (i + 2) for i in range(20)], dtype=np.float64)
+    assert np.allclose(A, expected)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -1340,40 +1370,10 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
-
-
-def branchy_symbol_loop() -> dace.SDFG:
-    """A loop whose body is a two-armed conditional, each arm assigning ``s`` on its own
-    interstate edge and writing ``A[i]`` from it."""
-    sdfg = dace.SDFG('l2m_branchy_symbol')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_symbol('s', dace.int64)
-    loop = LoopRegion('loop', 'i < 20', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
-    sdfg.add_node(loop, is_start_block=True)
-
-    cond = ConditionalBlock('choose', sdfg=sdfg, parent=loop)
-    loop.add_node(cond, is_start_block=True)
-    for label, expr, condition in (('then', 'i + 1', 'i % 2 == 0'), ('else', 'i + 2', None)):
-        region = ControlFlowRegion(f'{label}_body', sdfg=sdfg)
-        first = region.add_state(f'{label}_first', is_start_block=True)
-        second = region.add_state(f'{label}_second')
-        region.add_edge(first, second, dace.InterstateEdge(assignments={'s': expr}))
-        t = second.add_tasklet(f'{label}_write', {}, {'o'}, 'o = s')
-        second.add_edge(t, 'o', second.add_write('A'), None, dace.Memlet('A[i]'))
-        cond.add_branch(dace.properties.CodeBlock(condition) if condition else None, region)
-
-    sdfg.validate()
-    return sdfg
-
-
-def test_conditional_body_does_not_crash_the_match():
-    """Every arm assigns ``s`` before reading it, so the loop is a Map. The branch-intersection
-    bookkeeping must not raise: a raised exception is swallowed as 'does not apply', which
-    silently disables LoopToMap for every loop shaped like this."""
-    sdfg = branchy_symbol_loop()
-    assert sdfg.apply_transformations(LoopToMap) == 1
-
-    A = np.zeros(20)
-    sdfg(A=A)
-    expected = np.array([(i + 1) if i % 2 == 0 else (i + 2) for i in range(20)], dtype=np.float64)
-    assert np.allclose(A, expected)
+    test_refusal_reason_follows_block_order_not_memory_addresses()
+    test_mapped_symbol_the_child_does_not_declare()
+    test_read_and_write_confined_to_one_iteration()
+    test_strided_read_and_write_never_alias()
+    test_row_local_overlapping_columns()
+    test_transposed_read_and_write_alias_only_in_one_iteration()
+    test_conditional_body_does_not_crash_the_match()

@@ -1,0 +1,153 @@
+name: HPCAgent-Bench Canonicalize
+
+# The canonicalize CPU path over the HPCAgent-Bench corpus, which lives in its own PUBLIC repo and
+# is cloned rather than vendored. The GPU half of the same gate runs on the CSCS pipeline
+# (``ci/cscs_gpu.yml``), which is the only place with a device.
+# Triggers match every other workflow here: extended is covered through its pull request, not
+# through pushes to the branch. Listing the branch under ``push`` as well ran each of these jobs
+# twice for the same commit, once per event.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main, extended ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  hpcagent-canon-cpu:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    # 60, not 90. The two per-tag caps below bound the sweep at 45m, and setup plus the gate and
+    # the artifact upload took 45s on the last green run, so nothing legitimate can reach an hour.
+    # This is the backstop behind those caps, not the thing that enforces the budget -- when 90 was
+    # the only bound, one hung kernel bought 73 minutes of silence and reported nothing at all.
+    timeout-minutes: 60
+
+    # Both tags in one job. They are 56 and 40 kernels -- measured at 730s and 207s on the last
+    # green run, not the twenty and five minutes this comment used to claim -- and as separate
+    # cells they paid the checkout, the environment sync and the bench clone twice for a quarter
+    # of an hour of work. Each tag still writes its own CSV, is capped separately, and is
+    # summarized separately, so a red names the tag.
+    name: canon-cpu
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
+        groups: testing
+
+    - name: Check out HPCAgent-Bench
+      uses: actions/checkout@v7
+      with:
+        repository: spcl/HPCAgent-Bench
+        path: hpcagent-bench
+
+    - name: The bench must measure the checkout
+      # The bench is not installed into the project environment at all: ``uv run --with-editable .``
+      # layers it, and its dependencies, over the environment ``setup-dace`` already synced. That
+      # keeps dace resolving to THIS checkout -- the bench declares dace as an EXTRA
+      # (``dace @ git+...@extended``), never a base dependency, so nothing in the overlay pulls a
+      # released wheel over the branch under test. ``--project`` is required because the cwd below
+      # is the bench, and without it uv would take the bench for the project.
+      #
+      # ``working-directory`` matters and must match the sweep step below: from the repo root the
+      # cwd shadows anything installed into site-packages, so the check would pass while the sweep
+      # -- which runs from ``hpcagent-bench`` and has no such shadow -- imported the wheel.
+      working-directory: hpcagent-bench
+      run: |
+        resolved=$(uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -c 'import dace, pathlib; print(pathlib.Path(dace.__file__).resolve())')
+        echo "dace resolves to $resolved"
+        case "$resolved" in
+          "$GITHUB_WORKSPACE"/dace/*) ;;
+          *) echo "::error::dace resolves to $resolved, not the checkout at $GITHUB_WORKSPACE"
+             exit 1 ;;
+        esac
+
+    - name: Canonicalize CPU correctness
+      working-directory: hpcagent-bench
+      env:
+        PYTHONHASHSEED: '0'
+        MPI4PY_RC_INITIALIZE: '0'
+        OMPI_MCA_pml: ob1
+        OMPI_MCA_btl: self,vader,tcp
+        PMIX_MCA_gds: hash
+        UCX_VFS_ENABLE: n
+        HWLOC_COMPONENTS: '-gl'
+        DACE_cache: unique
+        DACE_compiler_cpu_implementation: experimental_readable
+        OMP_NUM_THREADS: '4'
+      # ``-r 1``: a correctness gate, not a measurement -- a timing repeat on a shared runner
+      # measures the runner. A non-zero exit is deliberately not fatal here (unlike the gate step
+      # below): the sweep must run to completion so every kernel reaches the CSV, even if some
+      # kernels crash along the way, before the gate step below reads that CSV.
+      #
+      # Each tag runs under ``timeout`` because the bench's own ``-t`` cannot always stop a kernel.
+      # ``-t`` is implemented with ``thread.interrupt_main()``, which sets a flag the interpreter
+      # checks between bytecodes: it cannot preempt a thread parked in a blocking native call --
+      # a C++ compile, a BLAS call, an OpenMP region. Run 34655859327 is what that costs. cavity_flow
+      # went over its 900s, the bench printed "first_execution took too long" exactly on time, and
+      # then nothing happened for a further 73 minutes until the job hit ``timeout-minutes`` and was
+      # cancelled with ZERO rows written. ``timeout`` sends a real SIGTERM to the whole process
+      # group, which lands whatever the main thread is parked in, and ``--kill-after`` follows with
+      # SIGKILL for anything that ignores it.
+      #
+      # The budgets are measured, not guessed. On run 34652205417 (the last green canon-cpu) the
+      # npbench leg was 730s and the llr-focus40 leg 207s, 937s of sweep inside a 16m22s job. 30m
+      # and 15m are 2.5x and 4.3x those, so a healthy sweep never approaches either cap and nothing
+      # is dropped to fit a clock. What the caps buy is that a hung kernel costs its own tag's
+      # remainder instead of the whole gate: the bench appends to the CSV per kernel, so every
+      # kernel that finished before the kill is still in the file the gate step reads.
+      run: |
+        set +e
+        timeout --kill-after=60 30m \
+          uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework \
+          -b all@npbench -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_npbench.csv
+        [ $? -eq 124 ] && echo "::error::the npbench leg hit its 30m cap and was killed; the CSV holds only the kernels that finished before it"
+        timeout --kill-after=60 15m \
+          uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework \
+          -b all@llr-focus40 -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          --csv canon_cpu_llr-focus40.csv
+        [ $? -eq 124 ] && echo "::error::the llr-focus40 leg hit its 15m cap and was killed; the CSV holds only the kernels that finished before it"
+        exit 0
+
+    - name: Gate on the CSV
+      working-directory: hpcagent-bench
+      # --summarize exit codes: 0 = every row green; 1 = the CSV has rows and some crashed,
+      # failed, or disagreed with numpy (a real result, tolerated for now); 2 = the CSV is
+      # missing, unreadable, or has zero data rows (the sweep ran nothing -- never tolerated).
+      # No continue-on-error: a 0-kernel crashed run must not report success.
+      run: |
+        set +e
+        uv run --project "$GITHUB_WORKSPACE" --with-editable . \
+          python -m hpcagent_bench.cli run-framework --summarize \
+          canon_cpu_npbench.csv canon_cpu_llr-focus40.csv
+        code=$?
+        set -e
+        if [ "$code" -ge 2 ]; then
+          echo "::error::the sweep produced no rows -- it crashed before running any kernel"
+          exit 1
+        fi
+        if [ "$code" -eq 1 ]; then
+          echo "::warning::known per-kernel failures remain; tolerated until the corpus is clean"
+        fi
+
+    - name: Keep the verdicts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: canon-cpu
+        path: hpcagent-bench/canon_cpu_*.csv

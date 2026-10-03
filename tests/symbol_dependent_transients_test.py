@@ -50,8 +50,8 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         rednode.implementation = 'CUDA (device)'
     body2_state.add_node(rednode)
     write_tmp2 = body2_state.add_write('tmp2')
-    body2_state.add_nedge(read_tmp1, rednode, dace.Memlet.from_array('tmp1', tmp1))
-    body2_state.add_nedge(rednode, write_tmp2, dace.Memlet('tmp2[0]'))
+    body2_state.add_edge(read_tmp1, None, rednode, '_in', dace.Memlet.from_array('tmp1', tmp1))
+    body2_state.add_edge(rednode, '_out', write_tmp2, None, dace.Memlet('tmp2[0]'))
 
     read_tmp2 = body3_state.add_read('tmp2')
     write_b = body3_state.add_write('B')

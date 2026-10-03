@@ -512,6 +512,42 @@ def test_for_with_field():
     assert np.allclose(A, expected)
 
 
+def test_a_loop_counter_does_not_rebind_a_captured_extent_of_the_same_name():
+    """A program built inside a library expansion captures its extent from the caller, where the symbol
+    can be named like one of the program's own counters (Cholesky's ``k``); the extent must stay fixed."""
+    n = dace.symbol('k')
+
+    @dace.program
+    def lower_row_sums(a: dace.float64[n, n], out: dace.float64[n]):
+        for j in range(n):
+            total = 0.0
+            for k in range(j):
+                total = total + a[j, k]
+            out[j] = total
+
+    a = np.arange(1, 26, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros(5)
+    lower_row_sums(a, out, k=5)
+    expected = np.array([a[j, :j].sum() for j in range(5)])
+    assert np.array_equal(out, expected), (out, expected)
+
+
+def test_an_inner_loop_bound_keeps_a_captured_extent_named_like_the_outer_counter():
+    """The pure linalg expansions run ``for k in range(n)`` around ``for i in range(k + 1, n)``; when the
+    caller's extent is itself named ``k``, the inner bound must still read the extent, not the counter."""
+    n = dace.symbol('k')
+
+    @dace.program
+    def strict_lower_counts(out: dace.float64[n]):
+        for k in range(n):
+            for i in range(k + 1, n):
+                out[i] = out[i] + 1
+
+    out = np.zeros(5)
+    strict_lower_counts(out, k=5)
+    assert np.array_equal(out, np.arange(5, dtype=np.float64)), out
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()

@@ -6,15 +6,15 @@ import dace
 from dace.sdfg import graph as gr, nodes
 
 
-def _reference_node(graph, id):
+def reference_node(graph, id):
     return next(n for i, n in enumerate(graph.nodes()) if i == id)
 
 
-def _reference_node_id(graph, node):
+def reference_node_id(graph, node):
     return next(i for i, n in enumerate(graph.nodes()) if n is node)
 
 
-def _state_with_nodes(count: int) -> dace.SDFGState:
+def state_with_nodes(count: int) -> dace.SDFGState:
     sdfg = dace.SDFG('node_lookup')
     sdfg.add_array('A', [10], dace.float64)
     state = sdfg.add_state()
@@ -28,12 +28,12 @@ def _state_with_nodes(count: int) -> dace.SDFGState:
 
 @pytest.mark.parametrize('count', [1, 2, 7, 50])
 def test_state_node_lookup(count):
-    state = _state_with_nodes(count)
+    state = state_with_nodes(count)
     for i, node in enumerate(state.nodes()):
-        assert state.node(i) is _reference_node(state, i)
-        assert state.node_id(node) == _reference_node_id(state, node) == i
+        assert state.node(i) is reference_node(state, i)
+        assert state.node_id(node) == reference_node_id(state, node) == i
     if count > 1:
-        assert state.node(True) is _reference_node(state, True)
+        assert state.node(True) is reference_node(state, True)
 
 
 def test_control_flow_region_node_lookup():
@@ -45,7 +45,7 @@ def test_control_flow_region_node_lookup():
 
 
 def test_node_lookup_not_found():
-    state = _state_with_nodes(5)
+    state = state_with_nodes(5)
     with pytest.raises(gr.NodeNotFoundError):
         state.node(5)
     with pytest.raises(gr.NodeNotFoundError):
@@ -76,7 +76,7 @@ def test_node_ids_are_positions_in_collapsed_graphs():
             assert graph.node_id(node) == i
 
 
-class _EqualToEveryNode:
+class EqualToEveryNode:
 
     def __eq__(self, other):
         return True
@@ -90,7 +90,7 @@ def test_node_id_is_identity_based():
     graph.add_node('a')
     graph.add_node('b')
     with pytest.raises(gr.NodeNotFoundError):
-        graph.node_id(_EqualToEveryNode())
+        graph.node_id(EqualToEveryNode())
 
 
 if __name__ == '__main__':

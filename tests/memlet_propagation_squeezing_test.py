@@ -235,8 +235,41 @@ def test_memlets_inverted_loop():
     assert out_memlet.subset[1] == (j - 1, j, 1)
 
 
+def test_a_same_rank_reshape_across_a_nested_sdfg_keeps_the_outer_subsets():
+    """The batched einsum lowering reads an (N, 4, 8) array as (B, 8, 4) through permuted strides; the
+    inner indices are not outer indices, and writing them back put A[0:N, 0:8, 0:4] on the edge."""
+    N, B = dace.symbol('N'), dace.symbol('B')
+    sdfg = dace.SDFG('memlet_propagation_same_rank_reshape')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [N, 4, 8], dace.float64)
+    sdfg.add_array('Y', [N, 4, 8], dace.float64)
+    state = sdfg.add_state()
+
+    nsdfg = dace.SDFG('transposed')
+    nsdfg.add_symbol('B', dace.int64)
+    nsdfg.add_array('x', [B, 8, 4], dace.float64, strides=[32, 1, 8])
+    nsdfg.add_array('y', [B, 8, 4], dace.float64, strides=[32, 1, 8])
+    nstate = nsdfg.add_state()
+    nstate.add_mapped_tasklet('copy',
+                              dict(b='0:B', i='0:8', k='0:4'),
+                              dict(inp=dace.Memlet('x[b, i, k]')),
+                              'out = inp',
+                              dict(out=dace.Memlet('y[b, i, k]')),
+                              external_edges=True)
+
+    node = state.add_nested_sdfg(nsdfg, {'x'}, {'y'}, symbol_mapping=dict(B='N'))
+    state.add_edge(state.add_read('A'), None, node, 'x', dace.Memlet('A[0:N, 0:4, 0:8]'))
+    state.add_edge(node, 'y', state.add_write('Y'), None, dace.Memlet('Y[0:N, 0:4, 0:8]'))
+    propagation.propagate_memlets_sdfg(sdfg)
+
+    subsets = {edge.data.data: str(edge.data.subset) for edge in state.edges()}
+    assert subsets == {'A': '0:N, 0:4, 0:8', 'Y': '0:N, 0:4, 0:8'}, subsets
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_memlets_no_squeeze()
     test_memlets_squeeze()
     test_memlets_conditional_upper_bound()
     test_memlets_inverted_loop()
+    test_a_same_rank_reshape_across_a_nested_sdfg_keeps_the_outer_subsets()

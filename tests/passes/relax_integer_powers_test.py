@@ -6,7 +6,7 @@ import pytest
 import sympy
 
 import dace
-from dace import data, symbolic
+from dace import data, symbolic, symbolic_engine
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import ipow, pystr_to_symbolic, symstr
@@ -18,7 +18,7 @@ def ipow_count(sdfg: dace.SDFG) -> int:
     """Count ``ipow`` occurrences across descriptors, map ranges and memlet subsets."""
 
     def atoms(expr):
-        return len(expr.atoms(ipow)) if isinstance(expr, sympy.Basic) else 0
+        return len(expr.atoms(ipow)) if isinstance(expr, symbolic.SymbolicBasic) else 0
 
     total = 0
     for sd in sdfg.all_sdfgs_recursive():
@@ -45,14 +45,14 @@ def test_ipow_roundtrips_through_serialization():
     e = R * ipow(R, K - i - 1) + ipow(R, K - i - 1)
     back = pystr_to_symbolic(str(e))
     assert symstr(e, cpp_mode=True) == symstr(back, cpp_mode=True)
-    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+    assert any(symbolic.head_name(a) == 'ipow' for a in symbolic_engine.preorder_traversal(back))
 
 
 def test_ipow_survives_property_json_roundtrip_and_folds():
     P = symbolic.symbol('P')
     e = 64 * ipow(P, 2)
     back = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(e))
-    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+    assert any(symbolic.head_name(a) == 'ipow' for a in symbolic_engine.preorder_traversal(back))
     assert int(symbolic.evaluate(back, {P: 4})) == 64 * 16
 
 
@@ -305,6 +305,62 @@ def test_loop_condition_off_by_one_not_relaxed():
     assert 'ipow' in build('i < R**K')  # constant exponent -> safe to relax
 
 
+def test_relaxes_pow_inside_a_packed_product():
+    """A stored shape product comes back from serialization UNEVALUATED, so the evaluating
+    constructor answers a canonically REORDERED product. That reordering is not a value change:
+    reading it as one drops the whole node's relaxation and leaves a ``double`` ``pow`` in an
+    int64 array size."""
+    R = dace.symbol('R', positive=True, integer=True)
+    K = dace.symbol('K', positive=True, integer=True)
+    i = dace.symbol('i', positive=True, integer=True)
+
+    sdfg = dace.SDFG('packed')
+    sdfg.add_array('x', [R, R**i, R**(K - i - 1)], dace.float64)  # the stockham stride-permutation shape
+    loop = LoopRegion('L', condition_expr='i < K', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True).add_access('x')  # i in [0, K-1] -> K - i - 1 >= 0
+    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the route a packed product actually reaches the pass by
+
+    packed = sdfg.arrays['x'].total_size
+    assert packed.args != symbolic_engine.Mul(*packed.args).args  # unevaluated: NOT in canonical order
+
+    assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
+    total = sdfg.arrays['x'].total_size
+    assert len(total.atoms(ipow)) == 2  # both powers inside the product, not just the bare shape dims
+    assert not total.atoms(sympy.Pow)  # no libm pow survives in an int64 size
+    assert 'dace::math::pow' not in symstr(total, cpp_mode=True)
+
+
+def test_nested_sdfg_inherits_outer_sign_facts():
+    """A nested SDFG an expansion mints spells its shapes bare (a reparse cannot know signs) --
+    the sign facts live on the symbol OBJECTS in the outer SDFG's descriptors. The facts have to
+    travel by name across the nesting, else ``R**K`` inside declines for want of a sign and
+    codegen emits a ``double`` ``pow`` loop bound."""
+    bare_shape = [pystr_to_symbolic('R**K')]  # bare symbols, exactly as a reparsed store spells them
+
+    inner = dace.SDFG('inner')
+    inner.add_symbol('R', dace.int64)
+    inner.add_symbol('K', dace.int64)
+    inner.add_array('y', bare_shape, dace.float64)
+    inner.add_state().add_access('y')
+    # the whole point: no signs spelled here
+    assert all(s.is_positive is None for s in inner.arrays['y'].free_symbols)
+
+    R = dace.symbol('R', dtype=dace.int64, integer=True, positive=True)
+    K = dace.symbol('K', dtype=dace.int64, integer=True, positive=True)
+    outer = dace.SDFG('outer')
+    outer.add_symbol('R', dace.int64)
+    outer.add_symbol('K', dace.int64)
+    outer.add_array('y', [R**K], dace.float64)
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {}, {'y'}, symbol_mapping={'R': 'R', 'K': 'K'})
+    state.add_edge(nsdfg, 'y', state.add_write('y'), None, dace.Memlet('y[0:R**K]'))
+
+    assert RelaxIntegerPowers().apply_pass(outer, {}) is not None
+    assert len(inner.arrays['y'].shape[0].atoms(ipow)) == 1
+    assert not inner.arrays['y'].shape[0].atoms(sympy.Pow)
+
+
 def test_int64_power_compiles_as_an_integer():
     """A power of int64 symbols the pass proves non-negative lowers to ``ipow`` and stays integral: as a
     double it is neither a legal OpenMP controlling predicate nor a pointer offset."""
@@ -344,4 +400,6 @@ if __name__ == '__main__':
     test_refuses_pow_under_unknown_sign_stride()
     test_descending_loop_still_relaxes()
     test_loop_condition_off_by_one_not_relaxed()
+    test_relaxes_pow_inside_a_packed_product()
+    test_nested_sdfg_inherits_outer_sign_facts()
     test_int64_power_compiles_as_an_integer()

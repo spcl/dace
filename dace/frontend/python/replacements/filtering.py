@@ -5,9 +5,54 @@ NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
-from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
+from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState, nodes
 
 from typing import List, Optional, Set
+
+
+def branch_type(operand, arr: Optional[data.Data]) -> dtypes.typeclass:
+    """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
+
+    A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
+    ``sympy.Mul`` and friends -- is in no dtype map.
+    """
+    if arr is not None:
+        return arr.dtype
+    if symbolic.issymbolic(operand):
+        return symbolic.symtype(operand)
+    return dtypes.dtype_to_typeclass(type(operand))
+
+
+def branch_code(operand) -> str:
+    """The branch spelled for the tasklet: sympy prints ``**`` and ``/``, C++ needs neither."""
+    return symbolic.symstr(operand) if symbolic.issymbolic(operand) else operand
+
+
+def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:
+    """Whether ``out = where(cond, left, right)`` is exactly a MergeLibraryNode: three arrays of one type (so no
+    cast), and a condition that does not widen the result."""
+    if left not in arrays or right not in arrays or arrays[left].dtype != arrays[right].dtype:
+        return False
+    return list(broadcast_together(arrays[cond].shape, arrays[out].shape)[0]) == list(arrays[out].shape)
+
+
+def where_as_merge_node(state: SDFGState, cond: str, left: str, right: str, out: str,
+                        left_node: Optional[nodes.AccessNode], right_node: Optional[nodes.AccessNode],
+                        generated_nodes: Optional[Set[nodes.Node]]) -> None:
+    """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode, reusing the given access nodes."""
+    from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
+
+    arrays = state.sdfg.arrays
+    node = MergeLibraryNode('_where_')
+    new_nodes = [node, state.add_write(out)]
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, new_nodes[1], None, Memlet.from_array(out, arrays[out]))
+    for conn, name, given in ((node.TRUE_CONNECTOR_NAME, left, left_node),
+                              (node.FALSE_CONNECTOR_NAME, right, right_node), (node.MASK_CONNECTOR_NAME, cond, None)):
+        src = given or state.add_read(name)
+        new_nodes += [] if given else [src]
+        state.add_edge(src, None, node, conn, Memlet.from_array(name, arrays[name]))
+    if generated_nodes is not None:
+        generated_nodes.update(new_nodes)
 
 
 @oprepo.replaces('numpy.where')
@@ -35,12 +80,15 @@ def _array_array_where(visitor: ProgramVisitor,
     except KeyError:
         right_arr = None
 
-    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
-    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
+    left_type = branch_type(left_operand, left_arr)
+    right_type = branch_type(right_operand, right_arr)
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    tasklet_args = [
+        '__incond', '__in1' if left_arr else branch_code(left_operand),
+        '__in2' if right_arr else branch_code(right_operand)
+    ]
     result_type, casting = result_type(arguments[1:])
     left_cast = casting[0]
     right_cast = casting[1]
@@ -54,10 +102,11 @@ def _array_array_where(visitor: ProgramVisitor,
     right_shape = right_arr.shape if right_arr else [1]
     cond_shape = cond_arr.shape if cond_arr else [1]
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
-
-    # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
+    # The result has the broadcast shape of all three arguments: a condition wider than both operands widens it
+    full_shape = broadcast_together(broadcast_together(left_shape, right_shape)[0], cond_shape)[0]
+    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape)
+    right_idx = broadcast_together(right_shape, full_shape)[3]
+    cond_idx = broadcast_together(cond_shape, full_shape)[3]
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -68,8 +117,13 @@ def _array_array_where(visitor: ProgramVisitor,
         cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
-        raise ValueError('Both x and y cannot be scalars in numpy.where')
-    storage = left_arr.storage if left_arr else right_arr.storage
+        # Both x and y are constants: the result -- and the iteration space -- is shaped like `cond`.
+        if cond_arr is None or isinstance(cond_arr, data.Scalar):
+            raise ValueError('numpy.where with scalar x, y and a scalar condition returns a 0-dimensional array, '
+                             'which DaCe cannot represent')
+        storage = cond_arr.storage
+    else:
+        storage = left_arr.storage if left_arr else right_arr.storage
 
     out_operand, out_arr = sdfg.add_transient(visitor.get_target_name(),
                                               out_shape,
@@ -78,7 +132,13 @@ def _array_array_where(visitor: ProgramVisitor,
                                               find_new_name=True)
 
     if list(out_shape) == [1]:
-        tasklet = state.add_tasklet('_where_', {'__incond', '__in1', '__in2'}, {'__out'},
+        # Constant operands are inlined in the tasklet code, so they get no connector
+        in_connectors = {'__incond': None}
+        if left_arr:
+            in_connectors['__in1'] = None
+        if right_arr:
+            in_connectors['__in2'] = None
+        tasklet = state.add_tasklet('_where_', in_connectors, {'__out': None},
                                     '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]))
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)
@@ -104,6 +164,9 @@ def _array_array_where(visitor: ProgramVisitor,
                     generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
+    elif merge_node_expresses_where(sdfg.arrays, cond_operand, left_operand, right_operand, out_operand):
+        where_as_merge_node(state, cond_operand, left_operand, right_operand, out_operand, left_operand_node,
+                            right_operand_node, generated_nodes)
     else:
         inputs = {}
         inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for __dace_init_cuda: the inherited-error drain, and one-GPU-per-process."""
 import ctypes
+from dace.codegen import common
 import importlib
 from ctypes.util import find_library
 
@@ -8,8 +9,6 @@ import numpy as np
 
 import dace
 import pytest
-
-from dace.transformation.interstate import GPUTransformSDFG
 
 
 def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
@@ -23,13 +22,13 @@ def _gpu_sdfg(name: str = 'drain_probe') -> dace.SDFG:
                              'out = inp + 1.0',
                              dict(out=dace.Memlet('A[i]')),
                              external_edges=True)
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations()
     return sdfg
 
 
 def _sources(sdfg: dace.SDFG):
     objs = sdfg.generate_code()
-    cu = next(o.clean_code for o in objs if o.language == 'cu')
+    cu = next(o.clean_code for o in objs if o.title == 'CUDA')
     frame = next(o.clean_code for o in objs if o.language == 'cpp' and o.name == sdfg.name)
     return cu, frame
 
@@ -104,18 +103,27 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     if 'MemPool_t' not in cu:
         pytest.skip('this SDFG did not request pooled allocation')
 
-    assert 'DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool' in cu
-    assert 'DACE_GPU_CHECK(cudaMemPoolSetAttribute' in cu
+    backend = common.get_gpu_backend()
+    assert f'DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool' in cu
+    assert f'DACE_GPU_CHECK({backend}MemPoolSetAttribute' in cu
     assert cu.index('__state->gpu_context = new') < cu.index('MemPool_t')
 
     # A literal 0 never fails loudly, it just configures a pool the allocations never touch.
-    assert 'DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool(&mempool, __dace_device))' in cu
+    assert f'DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device))' in cu
 
 
-def _load_cudart():
-    """The runtime as a ctypes handle: generated modules link it dynamically, so it is the same
-    instance and the same per-thread error slot."""
-    for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
+#: The runtime library of each GPU backend, as ``find_library`` names and as sonames to try.
+_RUNTIME_LIBRARIES = {
+    'cuda': ('cudart', 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'),
+    'hip': ('amdhip64', 'libamdhip64.so', 'libamdhip64.so.7', 'libamdhip64.so.6'),
+}
+
+
+def _load_gpu_runtime():
+    """The configured backend's runtime as a ctypes handle: generated modules link it dynamically, so
+    it is the same instance and the same per-thread error slot."""
+    lookup, *sonames = _RUNTIME_LIBRARIES[common.get_gpu_backend()]
+    for name in (find_library(lookup), *sonames):
         if not name:
             continue
         try:
@@ -141,9 +149,10 @@ def test_foreign_error_is_not_charged_to_the_next_program():
     the pending error back, and reports ``cudaErrorInvalidDevice`` - so ``invalid argument (1)``
     surfaces as ``invalid device ordinal (101)``. Poisoned via ctypes; cupy clears the slot.
     """
-    cudart = _load_cudart()
-    if cudart is None:
-        pytest.skip('libcudart is not loadable from this process')
+    runtime = _load_gpu_runtime()
+    if runtime is None:
+        pytest.skip('the GPU runtime library is not loadable from this process')
+    backend = common.get_gpu_backend()
 
     a = np.random.rand(4096).astype(np.float64)
     b = np.zeros(1, dtype=np.float64)
@@ -154,9 +163,10 @@ def test_foreign_error_is_not_charged_to_the_next_program():
     reduce_node.implementation = 'CUDA (device)'
     csdfg = sdfg.compile()
 
-    cudart.cudaFree(ctypes.c_void_p(0))  # initialize the runtime before handing it a bad call
-    rc = cudart.cudaMemcpy(ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_size_t(1), ctypes.c_int(2))
-    if rc == 0 or cudart.cudaPeekAtLastError() == 0:
+    runtime[f'{backend}Free'](ctypes.c_void_p(0))  # initialize the runtime before handing it a bad call
+    # Kind 2 is device-to-host on both backends
+    rc = runtime[f'{backend}Memcpy'](ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_size_t(1), ctypes.c_int(2))
+    if rc == 0 or runtime[f'{backend}PeekAtLastError']() == 0:
         pytest.skip('this runtime build left nothing pending, so there is nothing to inherit')
 
     csdfg(a=a, b=b)  # must not raise: the pending error is not this SDFG's
@@ -180,7 +190,7 @@ def test_init_selects_device_zero_once():
     cu, _ = _sources(_gpu_sdfg('one_device_probe'))
 
     assert 'const int __dace_device = 0;' in cu
-    assert cu.count('cudaSetDevice(') == 1, 'selecting it anywhere else would make it mutable'
+    assert cu.count(f'{common.get_gpu_backend()}SetDevice(') == 1, 'selecting it anywhere else would make it mutable'
 
 
 def test_the_device_ordinal_is_not_configurable():
@@ -210,28 +220,22 @@ def test_the_program_runs_on_device_zero_whatever_the_caller_was_on():
     """``__dace_init_cuda`` SELECTS device 0 rather than inheriting the caller's, so the thread is
     on it when the program returns. Started from a different device, which is the only way to tell
     selecting apart from inheriting."""
-    cudart = None
-    for name in (find_library('cudart'), 'libcudart.so', 'libcudart.so.13', 'libcudart.so.12'):
-        if name:
-            try:
-                cudart = ctypes.CDLL(name)
-                break
-            except OSError:
-                continue
-    if cudart is None:
-        pytest.skip('libcudart is not loadable from this process')
+    runtime = _load_gpu_runtime()
+    if runtime is None:
+        pytest.skip('the GPU runtime library is not loadable from this process')
+    backend = common.get_gpu_backend()
 
     count = ctypes.c_int(0)
-    cudart.cudaGetDeviceCount(ctypes.byref(count))
+    runtime[f'{backend}GetDeviceCount'](ctypes.byref(count))
     if count.value < 2:
         pytest.skip(f'need two visible GPUs to tell selecting apart from inheriting, saw {count.value}')
 
-    cudart.cudaSetDevice(1)
+    runtime[f'{backend}SetDevice'](1)
     a = np.random.rand(8)
     _gpu_sdfg('device_runs_on_zero')(A=a)
 
     current = ctypes.c_int(-1)
-    cudart.cudaGetDevice(ctypes.byref(current))
+    runtime[f'{backend}GetDevice'](ctypes.byref(current))
     assert current.value == 0
 
 

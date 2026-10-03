@@ -8,16 +8,25 @@ import torch
 
 import dace
 from tests.autodiff.test_single_state import SDFGBackwardRunner
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu
 
 
-def run_max_reduction_test(dace_func, torch_func, inputs, rtol=1e-5, atol=1e-5):
+def run_max_reduction_test(dace_func, torch_func, inputs, device, rtol=1e-5, atol=1e-5):
     sdfg = dace_func.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{device}"
     runner = SDFGBackwardRunner(sdfg, "__return")
 
     sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
     torch_dict = {name: torch.tensor(arr.copy(), requires_grad=True) for name, arr in inputs.items()}
 
-    sdfg_results = runner.run(**sdfg_dict)
+    # The backward pass is added by SDFGBackwardRunner; lower the resulting graph to GPU and run it
+    # under the experimental CUDA code generator (mirrors tests.ml_gpu_utils.run_sdfg).
+    if is_gpu(device):
+        runner.sdfg.apply_gpu_transformations()
+        with experimental_cuda():
+            sdfg_results = runner.run(**sdfg_dict)
+    else:
+        sdfg_results = runner.run(**sdfg_dict)
     torch_results = torch_func(**torch_dict)
 
     for k, v in torch_results.items():
@@ -27,7 +36,8 @@ def run_max_reduction_test(dace_func, torch_func, inputs, rtol=1e-5, atol=1e-5):
 
 
 @pytest.mark.autodiff
-def test_max_single_maximum():
+@pytest.mark.parametrize("device", DEVICES)
+def test_max_single_maximum(device):
     """Max reduction with single maximum - no ties."""
 
     def torch_func(*, W):
@@ -43,11 +53,12 @@ def test_max_single_maximum():
         return S
 
     inputs = dict(W=np.array([1.0, 3.0, 2.0, 0.0], dtype=np.float32))
-    run_max_reduction_test(dace_func, torch_func, inputs)
+    run_max_reduction_test(dace_func, torch_func, inputs, device=device)
 
 
 @pytest.mark.autodiff
-def test_max_tied_values_2d():
+@pytest.mark.parametrize("device", DEVICES)
+def test_max_tied_values_2d(device):
     """Max reduction with tied values along an axis.
 
     For input [[1, 3], [3, 2]] with max along axis=0:
@@ -68,11 +79,12 @@ def test_max_tied_values_2d():
         return S
 
     inputs = dict(W=np.array([[1.0, 3.0], [3.0, 2.0]], dtype=np.float32))
-    run_max_reduction_test(dace_func, torch_func, inputs)
+    run_max_reduction_test(dace_func, torch_func, inputs, device=device)
 
 
 @pytest.mark.autodiff
-def test_max_tied_values_same_column():
+@pytest.mark.parametrize("device", DEVICES)
+def test_max_tied_values_same_column(device):
     """Max reduction with tied values in the same column.
 
     For input [[3, 1], [3, 2]] with max along axis=0:
@@ -95,11 +107,12 @@ def test_max_tied_values_same_column():
         return S
 
     inputs = dict(W=np.array([[3.0, 1.0], [3.0, 2.0]], dtype=np.float32))
-    run_max_reduction_test(dace_func, torch_func, inputs)
+    run_max_reduction_test(dace_func, torch_func, inputs, device=device)
 
 
 @pytest.mark.autodiff
-def test_max_all_equal_column():
+@pytest.mark.parametrize("device", DEVICES)
+def test_max_all_equal_column(device):
     """Max reduction where entire column has same value.
 
     For input [[3, 1], [3, 2], [3, 0]] with max along axis=0:
@@ -122,11 +135,12 @@ def test_max_all_equal_column():
         return S
 
     inputs = dict(W=np.array([[3.0, 1.0], [3.0, 2.0], [3.0, 0.0]], dtype=np.float32))
-    run_max_reduction_test(dace_func, torch_func, inputs)
+    run_max_reduction_test(dace_func, torch_func, inputs, device=device)
 
 
 @pytest.mark.autodiff
-def test_min_tied_values():
+@pytest.mark.parametrize("device", DEVICES)
+def test_min_tied_values(device):
     """Min reduction with tied values.
 
     For input [[1, 2], [1, 3], [2, 1]] with min along axis=0:
@@ -149,12 +163,12 @@ def test_min_tied_values():
         return S
 
     inputs = dict(W=np.array([[1.0, 2.0], [1.0, 3.0], [2.0, 1.0]], dtype=np.float32))
-    run_max_reduction_test(dace_func, torch_func, inputs)
+    run_max_reduction_test(dace_func, torch_func, inputs, device=device)
 
 
 if __name__ == "__main__":
-    test_max_single_maximum()
-    test_max_tied_values_2d()
-    test_max_tied_values_same_column()
-    test_max_all_equal_column()
-    test_min_tied_values()
+    test_max_single_maximum(device="cpu")
+    test_max_tied_values_2d(device="cpu")
+    test_max_tied_values_same_column(device="cpu")
+    test_max_all_equal_column(device="cpu")
+    test_min_tied_values(device="cpu")

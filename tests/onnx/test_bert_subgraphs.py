@@ -12,6 +12,8 @@ from onnx import helper, numpy_helper, TensorProto
 import torch
 from dace.ml import ONNXModel
 
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+
 
 def make_slice_model():
     """Create a simple ONNX model with a Slice operation."""
@@ -72,35 +74,45 @@ def make_reshape_model():
 
 
 @pytest.mark.onnx
-def test_slice():
+@pytest.mark.parametrize("device", DEVICES)
+def test_slice(device):
     model = make_slice_model()
-    dace_model = ONNXModel("test_slice", model, onnx_simplify=False)
+    dace_model = ONNXModel(f"test_slice_{device}", model, onnx_simplify=False, cuda=is_gpu(device))
 
-    data = torch.ones(2)
+    data = torch.ones(2).to(torch_device(device))
 
-    out = dace_model(data=data)
+    with experimental_cuda():
+        out = dace_model(data=data)
+    if is_gpu(device):
+        out = out.cpu()
     assert out.shape == (1, ), f"Expected output shape (1,), got {out.shape}"
     assert out[0] == 1.0, f"Expected output value 1.0, got {out[0]}"
 
 
 @pytest.mark.onnx
-def test_reshape():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reshape(device):
     model = make_reshape_model()
-    dace_model = ONNXModel("test_reshape", model)
-    dace_model()
+    dace_model = ONNXModel(f"test_reshape_{device}", model, cuda=is_gpu(device))
+    with experimental_cuda():
+        dace_model()
 
 
 @pytest.mark.onnx
-def test_save_transients():
+@pytest.mark.parametrize("device", DEVICES)
+def test_save_transients(device):
     model = make_reshape_model()
     transients = {}
-    dace_model = ONNXModel("test_save_transients", model, save_transients=transients)
-    dace_model()
-    assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(),
-                          dace_model.weights["bert/embeddings/Reshape_4:0"])
+    dace_model = ONNXModel(f"test_save_transients_{device}", model, save_transients=transients, cuda=is_gpu(device))
+    with experimental_cuda():
+        dace_model()
+    weight = dace_model.weights["bert/embeddings/Reshape_4:0"]
+    if is_gpu(device):
+        weight = weight.cpu()
+    assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(), weight)
 
 
 if __name__ == "__main__":
-    test_slice()
-    test_reshape()
-    test_save_transients()
+    test_slice("cpu")
+    test_reshape("cpu")
+    test_save_transients("cpu")

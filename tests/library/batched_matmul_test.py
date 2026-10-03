@@ -6,6 +6,7 @@ import dace
 import dace.libraries.blas as blas
 
 from dace.library import change_default
+from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
 
 @pytest.mark.parametrize("implementation, dtype", [
@@ -222,6 +223,155 @@ def test_batchmm_4d_broadcast_lhs(implementation: str, dtype):
         ref = x @ y
 
         assert np.allclose(ref, z)
+
+
+@pytest.mark.mkl
+@pytest.mark.parametrize("dtype, rtol", [(dace.complex64, 1e-5), (dace.complex128, 1e-12)])
+def test_batchmm_complex_mkl(dtype, rtol: float):
+    """MKL's ``?gemm_batch`` takes MKL_Complex8/16 coefficients and operands by value, not dace::complex."""
+    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+
+    @dace.program
+    def bmm_complex(A: dtype[b, m, k], B: dtype[b, k, n], C: dtype[b, m, n]):
+        C[:] = A @ B
+
+    sdfg = bmm_complex.to_sdfg()
+    sdfg.name = f'bmm_complex_mkl_{dtype.to_string()}'
+    with change_default(blas, 'MKL'):
+        sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    npdtype = dtype.as_numpy_dtype()
+    x = (rng.standard_normal((3, 32, 30)) + 1j * rng.standard_normal((3, 32, 30))).astype(npdtype)
+    y = (rng.standard_normal((3, 30, 31)) + 1j * rng.standard_normal((3, 30, 31))).astype(npdtype)
+    z = np.zeros((3, 32, 31), dtype=npdtype)
+    sdfg(A=x, B=y, C=z, b=3, m=32, n=31, k=30)
+
+    ref = x @ y
+    np.testing.assert_allclose(z, ref, rtol=rtol, atol=rtol * np.abs(ref).max())
+
+
+def create_bmm_sdfg(dtype, A_shape, B_shape, C_shape, alpha, beta, implementation, sdfg_name):
+    sdfg = dace.SDFG(sdfg_name)
+    state = sdfg.add_state()
+    A, A_arr = sdfg.add_array("A", A_shape, dtype)
+    B, B_arr = sdfg.add_array("B", B_shape, dtype)
+    C, C_arr = sdfg.add_array("C", C_shape, dtype)
+
+    rA = state.add_read("A")
+    rB = state.add_read("B")
+    wC = state.add_write("C")
+
+    libnode = BatchedMatMul('_BatchedMatMul_')
+    libnode.alpha = alpha
+    libnode.beta = beta
+    libnode.implementation = implementation
+    state.add_node(libnode)
+
+    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+
+    return sdfg
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+])
+def test_batchmm_alpha(implementation: str, dtype):
+    """alpha != 1 must scale A @ B: every CPU expansion used to hard-code alpha=1 and drop node.alpha."""
+    b, m, n, k = 3, 32, 31, 30
+    alpha = 2.5
+
+    sdfg = create_bmm_sdfg(dtype, [b, m, k], [b, k, n], [b, m, n], alpha, 0.0, implementation,
+                           f"bmm_alpha_{implementation}_{dtype.to_string()}")
+
+    rng = np.random.default_rng(0)
+    x = rng.random((b, m, k)).astype(dtype.as_numpy_dtype())
+    y = rng.random((b, k, n)).astype(dtype.as_numpy_dtype())
+    z = np.zeros((b, m, n), dtype=dtype.as_numpy_dtype())
+
+    sdfg(A=x, B=y, C=z)
+
+    ref = alpha * (x @ y)
+    np.testing.assert_allclose(z, ref, rtol=1e-5)
+
+
+@pytest.mark.parametrize("implementation, dtype, rtol", [
+    pytest.param("pure", dace.complex64, 1e-5),
+    pytest.param("pure", dace.complex128, 1e-12),
+    pytest.param("MKL", dace.complex64, 1e-5, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.complex128, 1e-12, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.complex64, 1e-5, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.complex128, 1e-12, marks=pytest.mark.lapack),
+])
+def test_batchmm_alpha_complex(implementation: str, dtype, rtol: float):
+    """A complex alpha != 1 must scale A @ B; MKL additionally routes it through MKL_Complex8/16."""
+    b, m, n, k = 3, 32, 30, 31
+    alpha = complex(1.5, -0.5)
+
+    sdfg = create_bmm_sdfg(dtype, [b, m, k], [b, k, n], [b, m, n], alpha, 0.0, implementation,
+                           f"bmm_alpha_complex_{implementation}_{dtype.to_string()}")
+
+    rng = np.random.default_rng(0)
+    npdtype = dtype.as_numpy_dtype()
+    x = (rng.standard_normal((b, m, k)) + 1j * rng.standard_normal((b, m, k))).astype(npdtype)
+    y = (rng.standard_normal((b, k, n)) + 1j * rng.standard_normal((b, k, n))).astype(npdtype)
+    z = np.zeros((b, m, n), dtype=npdtype)
+
+    sdfg(A=x, B=y, C=z)
+
+    ref = alpha * (x @ y)
+    np.testing.assert_allclose(z, ref, rtol=rtol, atol=rtol * np.abs(ref).max())
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    pytest.param("rocBLAS", dace.float64, marks=pytest.mark.gpu),
+])
+@pytest.mark.parametrize("beta", [0.0, 1.0, 0.5])
+def test_batchmm_beta(implementation: str, dtype, beta: float):
+    """beta scales the PRIOR value of C in place: BatchedMatMul carries no _cin connector (see
+    BatchedMatMul.__init__), so every expansion reads and writes C through its sole "_c" connector,
+    mirroring Gemm(cin=False). Result must equal alpha * A @ B + beta * C0 for beta in {0, 1, 0.5}."""
+    b, m, n, k = 2, 4, 5, 3
+    alpha = 1.5
+
+    beta_tag = str(beta).replace('.', 'p')
+    sdfg = create_bmm_sdfg(dtype, [b, m, k], [b, k, n], [b, m, n], alpha, beta, implementation,
+                           f"bmm_beta_{implementation}_{dtype.to_string()}_{beta_tag}")
+
+    rng = np.random.default_rng(0)
+    x = rng.random((b, m, k)).astype(dtype.as_numpy_dtype())
+    y = rng.random((b, k, n)).astype(dtype.as_numpy_dtype())
+    c0 = rng.random((b, m, n)).astype(dtype.as_numpy_dtype())
+    z = c0.copy()
+
+    sdfg(A=x, B=y, C=z)
+
+    ref = alpha * (x @ y) + beta * c0
+    np.testing.assert_allclose(z, ref, rtol=1e-5)
+
+
+def test_batchmm_symbolic_alpha_pure():
+    """A symbolic alpha (a runtime coefficient, as LiftEinsum's __einsum_alpha) must reach the pure
+    expansion as an expression instead of failing in float()."""
+    b, m, n, k = 2, 4, 5, 3
+    alpha = dace.symbol('alpha', dace.float64)
+    sdfg = create_bmm_sdfg(dace.float64, [b, m, k], [b, k, n], [b, m, n], alpha, 0.0, "pure", "bmm_symbolic_alpha")
+    sdfg.add_symbol('alpha', dace.float64)
+    rng = np.random.default_rng(0)
+    x, y = rng.random((b, m, k)), rng.random((b, k, n))
+    z = np.zeros((b, m, n))
+    sdfg(A=x, B=y, C=z, alpha=2.5)
+    np.testing.assert_allclose(z, 2.5 * (x @ y), rtol=1e-12)
 
 
 if __name__ == "__main__":

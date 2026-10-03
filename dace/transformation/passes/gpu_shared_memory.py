@@ -203,7 +203,7 @@ class PlanSharedMemory(ppl.Pass):
     each container. In dynamic shared memory, the containers of each SDFG are laid out contiguously, followed by those
     of its nested SDFGs; a nested SDFG receives the offset of its part as the symbol ``__dace_dynsmem_base`` unless the
     offset is a constant. The number of bytes to launch each kernel with is stored in the
-    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry.
+    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry, its static bytes in ``_cuda_static_shared_memory``.
     """
 
     CATEGORY: str = 'GPU'
@@ -222,6 +222,7 @@ class PlanSharedMemory(ppl.Pass):
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
             kernel_entry._cuda_dynamic_shared_memory = plan.dynamic_bytes
+            kernel_entry._cuda_static_shared_memory = plan.static_bytes
             if plan.levels or plan.static_bytes:
                 result[kernel_entry] = plan
         return result or None

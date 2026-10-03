@@ -1,7 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-from dace import dtypes, data
-from typing import Any, Dict, Tuple
+from copy import deepcopy as dc
+from dace import dtypes, data, symbolic
+from typing import Any, Dict, List, Tuple
+
+
+def matrix_view(subset) -> Tuple[List[Any], List[int]]:
+    """
+    Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
+
+    Squeezing unconditionally rejects a genuine ``(N, 1)`` column as "not a matrix"; not squeezing at
+    all rejects an ``(NQ, 1, NP)`` reshape. Callers that read a size, a stride or a dimension index
+    must all use this view, or they disagree about which dimensions the operand has.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view, and the subset dimensions it kept.
+    """
+    size = subset.size()
+    if len(size) == 2:
+        return size, list(range(len(size)))
+    squeezed = dc(subset)
+    dims = squeezed.squeeze()
+    return squeezed.size(), dims
 
 
 def to_blastype(dtype):
@@ -43,6 +63,16 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
         raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
 
 
+def rocblas_type(ctype: str) -> str:
+    """Map a CUDA vendor C type from :func:`cublas_type_metadata` to its rocBLAS spelling.
+
+    Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
+    rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
+    where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
+    """
+    return {'cuComplex': 'rocblas_float_complex', 'cuDoubleComplex': 'rocblas_double_complex'}.get(ctype, ctype)
+
+
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
         dtypes.float16: 'CUDA_R_16F',
@@ -80,6 +110,24 @@ def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
         dtypes.uint64: '32I',
     }
     return types[dtype]
+
+
+def packed_unit_extent(shape, strides) -> List:
+    """``strides`` with the free stride of a single row or column replaced by a packed matrix's.
+
+    A dimension of extent 1 is never stepped over, so its stride is free, but BLAS still checks the
+    leading dimension against the other extent: the ``(1, K)`` row an ``abij,ab->aij`` einsum lowers
+    to reached ``cblas_zgemm`` with ``lda = 1 < K``, which OpenBLAS refuses without computing anything
+    (npbench vexx_k's augmentation). Both strides 1 name a single row or column whose extents may be
+    symbolic; the row-major form with the column count as the row stride is exact for either.
+    """
+    *batch, s_rows, s_cols = strides
+    rows, cols = shape[-2:]
+    if symbolic.equal_valued(1, cols) and symbolic.equal_valued(1, s_rows):
+        s_cols = rows
+    elif symbolic.equal_valued(1, s_cols) and (symbolic.equal_valued(1, rows) or symbolic.equal_valued(1, s_rows)):
+        s_rows = cols
+    return [*batch, s_rows, s_cols]
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
@@ -213,3 +261,99 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
+    """Shared validation for BLAS Level-1 nodes whose shape is
+    ``vector -> scalar`` (``ASUM``, ``NRM2``, ``IAMAX``, ``DOT``, ...).
+
+    Every such node takes one rank-1 input and writes a single-element
+    output; the only thing that differs across the operations is the
+    error-message name and the post-validation work the caller does
+    with the descriptor / stride / length.  Returns the same canonical
+    tuple every per-op ``validate`` was constructing by hand.
+
+    :param node: the library node being validated.
+    :param sdfg: parent SDFG.
+    :param state: parent state.
+    :param op_name: short operation name used in error messages
+        (``"ASUM"``, ``"NRM2"``, ...).
+    :returns: ``((desc_x, stride_x), desc_res, n)``.
+    :raises ValueError: arity / rank / output-size mismatches.
+    """
+    import copy as _copy
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        raise ValueError(f"{op_name} expects one input and one output")
+    in_memlet = in_edges[0].data
+    desc_x = sdfg.arrays[in_memlet.data]
+    desc_res = sdfg.arrays[out_edges[0].data.data]
+    squeezed = _copy.deepcopy(in_memlet.subset)
+    sqdims = squeezed.squeeze()
+    if len(squeezed.size()) != 1:
+        raise ValueError(f"{op_name} only supported on 1-D arrays")
+    stride_x = desc_x.strides[sqdims[0]]
+    n = squeezed.num_elements()
+    if out_edges[0].data.subset.num_elements() != 1:
+        raise ValueError(f"Output of {op_name} must be a single element")
+    return (desc_x, stride_x), desc_res, n
+
+
+def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
+    """Feed ``node`` a copy of every operand on ``connectors`` whose element type is not ``dtype``,
+    cast to ``dtype``.
+
+    A vendor BLAS routine takes ONE element type for all its matrices, and the expansions name it
+    after one operand while casting every pointer to it. A real matrix times a complex one (npbench
+    cegterg's ``deeq @ ps``) then reads the real buffer as complex numbers: the OpenBLAS build rejects
+    the pointer, the rocBLAS/cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
+    the operands to the result type, so the copy is exactly that promotion. The copy covers the
+    memlet's subset only, with the same size, so every shape and matrix-view rule reading the
+    connector sees what it saw before; it is contiguous, so the leading dimension is its own.
+
+    :param node: The library node whose inputs are promoted.
+    :param state: The state containing ``node``.
+    :param connectors: The input connectors that carry matrix or vector operands.
+    :param dtype: The element type the vendor call computes in.
+    """
+    from dace import Memlet  # Avoid import loop
+    from dace.symbolic import symstr
+    sdfg = state.sdfg
+    for edge in [e for e in state.in_edges(node) if e.dst_conn in connectors]:
+        src_desc = sdfg.arrays[edge.data.data]
+        if src_desc.dtype == dtype:
+            continue
+        subset = edge.data.subset
+        shape = subset.size()
+        name, desc = sdfg.add_transient(f'{node.label}{edge.dst_conn}_as_{dtype.to_string()}',
+                                        shape,
+                                        dtype,
+                                        storage=src_desc.storage,
+                                        find_new_name=True)
+        params = [f'__promote{d}' for d in range(len(shape))]
+        index = ', '.join(f'{symstr(begin)} + ({symstr(step)}) * {p}'
+                          for (begin, _, step), p in zip(subset.ranges, params))
+        # A device-resident operand is cast by a kernel: host code cannot read GPU_Global memory.
+        schedule = (dtypes.ScheduleType.GPU_Device
+                    if src_desc.storage == dtypes.StorageType.GPU_Global else dtypes.ScheduleType.Default)
+        entry, exit_ = state.add_map(f'{name}_cast', {
+            p: f'0:{symstr(n)}'
+            for p, n in zip(params, shape)
+        },
+                                     schedule=schedule)
+        cast = state.add_tasklet(f'{name}_cast', {'__inp'}, {'__out'}, '__out = __inp')
+        promoted = state.add_access(name)
+        state.add_memlet_path(edge.src,
+                              entry,
+                              cast,
+                              src_conn=edge.src_conn,
+                              dst_conn='__inp',
+                              memlet=Memlet(data=edge.data.data, subset=index))
+        state.add_memlet_path(cast,
+                              exit_,
+                              promoted,
+                              src_conn='__out',
+                              memlet=Memlet(data=name, subset=', '.join(params)))
+        state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
+        state.remove_edge(edge)

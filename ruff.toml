@@ -1,5 +1,16 @@
 [lint]
-select = ["F401"]
+# F821 (undefined name) catches a class of bug that is invisible until import time: a class or
+# helper introduced without its import. F401 alone does not see it.
+select = ["F401", "F821"]
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]
+# A tasklet body reads and writes its connectors as bare names (``out >> Output[i]``), which are
+# bound by the DaCe frontend rather than by Python, so F821 flags every one of them.
+"tests/**" = ["F821"]
+"samples/**" = ["F821"]
+"tutorials/**" = ["F821"]
+"dace/libraries/**" = ["F821"]
+"dace/frontend/**" = ["F821"]
+"dace/autodiff/**" = ["F821"]
+"dace/external/**" = ["F821"]

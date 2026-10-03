@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Strided N-D device copy, issued as a loop of contiguous ``cudaMemcpyAsync`` calls.
+"""Strided N-D device copy, issued as a loop of contiguous ``gpuMemcpyAsync`` calls.
 """
 from typing import TYPE_CHECKING
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 @library.register_expansion(CopyLibraryNode, 'MemcpyCUDANDStrided')
 class ExpandMemcpyCUDANDStrided(ExpandTransformation):
     """Fallback for >=3D-strided cross-boundary copies that can't collapse to one
-    ``cudaMemcpyAsync`` / ``cudaMemcpy2DAsync``: a Sequential map issuing one ``cudaMemcpyAsync``
+    ``gpuMemcpyAsync`` / ``cudaMemcpy2DAsync``: a Sequential map issuing one ``gpuMemcpyAsync``
     per row over every collapsed dim except the chunk axis (``stride == 1`` both sides)."""
     environments = [environments.CUDA]
 
@@ -99,7 +99,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
                                                                            schedule=dace.dtypes.ScheduleType.Sequential,
                                                                            language=dace.Language.CPP,
                                                                            external_edges=True)
-        # Force pointer connectors so codegen types them T*, matching cudaMemcpyAsync's signature.
+        # Force pointer connectors so codegen types them T*, matching gpuMemcpyAsync's signature.
         inner_tasklet.in_connectors[inner_in] = dace.dtypes.pointer(inp.dtype)
         inner_tasklet.out_connectors[inner_out] = dace.dtypes.pointer(out.dtype)
 

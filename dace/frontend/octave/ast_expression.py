@@ -167,8 +167,8 @@ class AST_BinExpression(AST_Node):
         s.add_edge(tasklet, "c", map_exit, None, dace.memlet.Memlet.simple(tmp, 'i,j,k'))
         rednode = s.add_reduce('lambda a,b: a+b', (2, ), 0)
         s.add_edge(map_exit, None, tmp, None, dace.memlet.Memlet.simple(tmp, '0:' + M + ',0:' + N + ',0:' + K))
-        s.add_edge(tmp, None, rednode, None, dace.memlet.Memlet.simple(tmp, '0:' + M + ',0:' + N + ',0:' + K))
-        s.add_edge(rednode, None, C, None, dace.memlet.Memlet.simple(C, '0:' + M + ',0:' + N))
+        s.add_edge(tmp, None, rednode, '_in', dace.memlet.Memlet.simple(tmp, '0:' + M + ',0:' + N + ',0:' + K))
+        s.add_edge(rednode, '_out', C, None, dace.memlet.Memlet.simple(C, '0:' + M + ',0:' + N))
 
     def vec_mult_vect(self, sdfg, state, op):
         lhs_dims = self.lhs.get_dims()
@@ -196,8 +196,8 @@ class AST_BinExpression(AST_Node):
         s.add_edge(tasklet, "c", map_exit, None, dace.memlet.Memlet.simple(tmp, 'i'))
         rednode = s.add_reduce('lambda a,b: a+b', (0, ), 0)
         s.add_edge(map_exit, None, tmp, None, dace.memlet.Memlet.simple(tmp, '0:' + N))
-        s.add_edge(tmp, None, rednode, None, dace.memlet.Memlet.simple(tmp, '0:' + N))
-        s.add_edge(rednode, None, C, None, dace.memlet.Memlet.simple(C, '0'))
+        s.add_edge(tmp, None, rednode, '_in', dace.memlet.Memlet.simple(tmp, '0:' + N))
+        s.add_edge(rednode, '_out', C, None, dace.memlet.Memlet.simple(C, '0'))
 
     def matrix2d_matrix2d_plus_or_minus(self, sdfg, state, op):
         lhs_dims = self.lhs.get_dims()
