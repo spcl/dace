@@ -59,12 +59,12 @@ def test_cuda_dace_header_compiles_with_float16(tmp_path):
 # ``dace::float16`` IS the native CUDA ``half``, which non-explicitly converts to float, every
 # integer width, and char -- a dozen built-in targets. A BARE ``sqrt(half_value)`` -- what the
 # numpy frontend's ``simple_call`` used to emit for ``np.sqrt``: ``__out = sqrt(__inp)``, no module
-# qualifier -- resolves through ordinary unqualified lookup to ``std::sqrt``'s float/double/long
-# double overloads, each reachable through a DIFFERENT one of those conversion operators; two
-# candidates tie for best and nvcc refuses the call as ambiguous. ``dace::math::sqrt`` already
-# carries a non-template ``dace::float16`` overload (dace/math.h, ``DACE_MATH_UNARY_LP``) that is
-# an exact-type match and so unambiguously wins, but nothing reaches it unless the call is
-# qualified -- which is what ``cppunparse.py``'s ``_renamed_funcs`` now does for ``sqrt``.
+# qualifier -- used to resolve through ordinary unqualified lookup to ``std::sqrt``'s
+# float/double/long double overloads only, each reachable through a DIFFERENT one of those
+# conversion operators; two candidates tied for best and nvcc refused the call as ambiguous.
+# ``cppunparse.py``'s ``_renamed_funcs`` qualifies the call as ``dace::math::sqrt`` for that reason,
+# and dace/math.h now also defines a global exact-match ``sqrt(dace::float16)`` (with the rest of
+# libm), so the bare spelling compiles as well.
 NAKED_SQRT_KERNEL_SRC = """
 #include <cuda_runtime.h>
 #include <dace/dace.h>
@@ -76,14 +76,12 @@ __global__ void k(dace::float16* o, const dace::float16* a) {
 
 
 @pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; CUDA header compile check skipped")
-def test_cuda_naked_sqrt_is_still_ambiguous_for_float16(tmp_path):
-    """Documents *why* codegen must never emit a bare ``sqrt(dace::float16)`` on CUDA: unlike the
-    ``dace::math::exp`` case above (a header-only fix), a naked call is inherently ambiguous
-    because ``half`` converts implicitly to a dozen built-in types -- there is no way to make this
-    particular spelling compile without either qualifying the call or making ``dace::float16``
-    stop converting implicitly. This is the negative control for
-    ``test_cuda_generated_sqrt_is_qualified_for_float16`` below: if this ever starts compiling,
-    the class of bug changed and the codegen-side fix may no longer be required."""
+def test_cuda_naked_sqrt_compiles_for_float16(tmp_path):
+    """A bare ``sqrt(dace::float16)`` on CUDA reaches the global half overload in dace/math.h
+    instead of tying between ``std::sqrt``'s float/double/long double overloads. Codegen still
+    qualifies the call (``test_cuda_generated_sqrt_is_qualified_for_float16`` below); this pins
+    that the unqualified spelling, which hand-written or older generated code may still use,
+    builds too."""
     src = tmp_path / "probe_naked_sqrt.cu"
     src.write_text(NAKED_SQRT_KERNEL_SRC)
     result = subprocess.run(
@@ -95,8 +93,9 @@ def test_cuda_naked_sqrt_is_still_ambiguous_for_float16(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert "more than one instance of overloaded function" in result.stderr
-    assert result.returncode != 0
+    assert "more than one instance of overloaded function" not in result.stderr, \
+        f"bare sqrt(dace::float16) is ambiguous again:\n{result.stderr}"
+    assert result.returncode == 0, f"bare sqrt(dace::float16) failed to compile:\n{result.stderr}"
 
 
 @pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; CUDA header compile check skipped")
@@ -104,7 +103,7 @@ def test_cuda_generated_sqrt_is_qualified_for_float16(tmp_path):
     """End-to-end regression for the reported bug: ``np.sqrt`` on a ``dace.float16`` array, lowered
     for GPU (``apply_gpu_transformations``), used to generate a bare ``sqrt(...)`` tasklet call and
     fail to compile with nvcc's "more than one instance of overloaded function \\"sqrt\\" matches
-    the argument list" (matching ``test_cuda_naked_sqrt_is_still_ambiguous_for_float16`` above).
+    the argument list".
     Asserts BOTH the generated source text (the call must be qualified, not bare -- a structural
     check, not just "it compiled") and that the generated CUDA translation unit actually builds."""
     N = dace.symbol('N')

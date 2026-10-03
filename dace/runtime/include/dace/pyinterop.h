@@ -53,11 +53,15 @@ typedef void *pyobject;
 // are all floating-point or all integral. We reject the mixed case in Min/Max
 // because the integer argument truncates the floating-point result (C++14-safe
 // variadic recursion; no fold expression).
+// ``dace::float16`` is floating-point too, though ``std::is_floating_point`` says otherwise.
+template <typename T>
+struct _dace_minmax_is_fp
+    : std::integral_constant<bool, std::is_floating_point<T>::value || std::is_same<T, dace::float16>::value> {};
 template <typename... Ts>
 struct _dace_minmax_same_kind : std::true_type {};
 template <typename T0, typename T1, typename... Ts>
 struct _dace_minmax_same_kind<T0, T1, Ts...>
-    : std::integral_constant<bool, (std::is_floating_point<T0>::value == std::is_floating_point<T1>::value) &&
+    : std::integral_constant<bool, (_dace_minmax_is_fp<T0>::value == _dace_minmax_is_fp<T1>::value) &&
                                        _dace_minmax_same_kind<T1, Ts...>::value> {};
 
 // Sympy functions. The return type follows ``std::common_type`` (matching the
@@ -73,12 +77,16 @@ struct _dace_minmax_same_kind<T0, T1, Ts...>
 template <typename U, typename... T>
 static DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
-  return min(val, vals...);
+  // Compare in the result type: a half mixed with a double would otherwise round the double to half.
+  using R = typename std::common_type<U, T...>::type;
+  return min(R(val), R(vals)...);
 }
 template <typename U, typename... T>
 static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
-  return max(val, vals...);
+  // Compare in the result type: a half mixed with a double would otherwise round the double to half.
+  using R = typename std::common_type<U, T...>::type;
+  return max(R(val), R(vals)...);
 }
 // Deduced, not ``T``: ``abs`` of a complex value is real, so pinning the return to the argument
 // type turns ``Abs(z)`` back into a complex and every comparison on it loses its candidate.
@@ -89,7 +97,9 @@ static DACE_HDFI auto Abs(T val) {
 template <typename T, typename U>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue,
                                                                       const U& iffalse) {
-  return condition ? iftrue : iffalse;
+  // Both arms in the result type: ``c ? h : 1.0`` with a half arm is ambiguous otherwise.
+  using R = typename std::common_type<T, U>::type;
+  return condition ? R(iftrue) : R(iffalse);
 }
 
 #endif  // __DACE_INTEROP_H

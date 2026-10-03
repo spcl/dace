@@ -159,7 +159,9 @@ static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
 
 // Workarounds for float16 in CUDA
 // NOTES: * Half precision types are not trivially convertible, so other types
-//          will be implicitly converted to it in min/max.
+//          will be implicitly converted to it in min/max -- except a float or double, which
+//          would be rounded to half before the comparison (``min(1e-20, h)`` answering 0). Those
+//          compare in the wider type instead and return it, as codegen types the call.
 //        * half comparisons are designated "device-only", so they must call
 //          device-only functions as well.
 #ifdef __CUDACC__
@@ -169,12 +171,20 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16&
   return (b < a) ? min(b, c...) : min(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const T& b, const Ts&... c) {
-  return (dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...);
+DACE_CONSTEXPR __device__ __forceinline__ auto min(const dace::float16& a, const T& b, const Ts&... c) {
+  if constexpr (std::is_floating_point<T>::value) {
+    return min(T(a), b, c...);
+  } else {
+    return dace::float16((dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...));
+  }
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const T& a, const dace::float16& b, const Ts&... c) {
-  return (b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...);
+DACE_CONSTEXPR __device__ __forceinline__ auto min(const T& a, const dace::float16& b, const Ts&... c) {
+  if constexpr (std::is_floating_point<T>::value) {
+    return min(a, T(b), c...);
+  } else {
+    return dace::float16((b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...));
+  }
 }
 template <typename... Ts>
 DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const dace::float16& b,
@@ -182,13 +192,153 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16&
   return (a < b) ? max(b, c...) : max(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const T& b, const Ts&... c) {
-  return (a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...);
+DACE_CONSTEXPR __device__ __forceinline__ auto max(const dace::float16& a, const T& b, const Ts&... c) {
+  if constexpr (std::is_floating_point<T>::value) {
+    return max(T(a), b, c...);
+  } else {
+    return dace::float16((a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...));
+  }
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const dace::float16& b, const Ts&... c) {
-  return (dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...);
+DACE_CONSTEXPR __device__ __forceinline__ auto max(const T& a, const dace::float16& b, const Ts&... c) {
+  if constexpr (std::is_floating_point<T>::value) {
+    return max(a, T(b), c...);
+  } else {
+    return dace::float16((dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...));
+  }
 }
+
+// Mixed half / built-in arithmetic operators. ``half`` converts to float and is constructible
+// from every arithmetic type, so ``half < 1e-14`` or ``float / half`` matches both the built-in
+// operator and ``operator<op>(__half, __half)`` and nvcc rejects it as ambiguous. These exact
+// matches win: the half is promoted to float and the built-in operator runs, so the result
+// follows the usual promotion (half op float -> float, half op double -> double).
+#define DACE_HALF_MIXED_OP(OP)                                                     \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr> \
+  DACE_HDFI auto operator OP(const dace::float16& a, const T& b) {                 \
+    return float(a) OP b;                                                          \
+  }                                                                                \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr> \
+  DACE_HDFI auto operator OP(const T& a, const dace::float16& b) {                 \
+    return a OP float(b);                                                          \
+  }
+DACE_HALF_MIXED_OP(+)
+DACE_HALF_MIXED_OP(-)
+DACE_HALF_MIXED_OP(*)
+DACE_HALF_MIXED_OP(/)
+DACE_HALF_MIXED_OP(<)
+DACE_HALF_MIXED_OP(<=)
+DACE_HALF_MIXED_OP(>)
+DACE_HALF_MIXED_OP(>=)
+DACE_HALF_MIXED_OP(==)
+DACE_HALF_MIXED_OP(!=)
+#undef DACE_HALF_MIXED_OP
+
+// Compound assignment into a built-in (``float x; x += h``): the built-in ``+=`` takes any
+// promoted arithmetic right operand, and half converts to each of them equally well.
+#define DACE_HALF_MIXED_ASSIGN_OP(OP)                                              \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr> \
+  DACE_HDFI T& operator OP##=(T& a, const dace::float16& b) {                      \
+    return a = static_cast<T>(a OP float(b));                                      \
+  }
+DACE_HALF_MIXED_ASSIGN_OP(+)
+DACE_HALF_MIXED_ASSIGN_OP(-)
+DACE_HALF_MIXED_ASSIGN_OP(*)
+DACE_HALF_MIXED_ASSIGN_OP(/)
+#undef DACE_HALF_MIXED_ASSIGN_OP
+
+// The half-only functions below are templates on purpose. ``half`` lives in the global namespace,
+// so argument-dependent lookup finds these globals from inside ``dace::math`` too, where they would
+// tie with DaCe's own non-template half overloads (``dace::math::exp(half)``, ``sqrt``, ``log``,
+// ``tanh``). On a tie the non-template wins, so DaCe's versions keep precedence.
+#define DACE_HALF_ONLY template <typename H, std::enable_if_t<std::is_same<H, dace::float16>::value>* = nullptr>
+
+// ``abs(half)`` would otherwise be ambiguous between the float/double/long double std::abs.
+DACE_HALF_ONLY DACE_HDFI H abs(const H& a) { return __habs(a); }
+
+// libm functions that codegen leaves unqualified (``sin(h)``): each std:: overload is equally good
+// for a half, so this exact match runs the float version and rounds back. A half paired with a
+// built-in in a binary function follows the operators above: the half is promoted to float.
+#define DACE_HALF_UNARY(NAME) \
+  DACE_HALF_ONLY DACE_HDFI H NAME(const H& a) { return H(std::NAME(float(a))); }
+#define DACE_HALF_BINARY(NAME)                                                                  \
+  DACE_HALF_ONLY DACE_HDFI H NAME(const H& a, const H& b) {                                     \
+    return H(std::NAME(float(a), float(b)));                                                    \
+  }                                                                                             \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>              \
+  DACE_HDFI auto NAME(const dace::float16& a, const T& b) {                                     \
+    return std::NAME(float(a), b);                                                              \
+  }                                                                                             \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>              \
+  DACE_HDFI auto NAME(const T& a, const dace::float16& b) {                                     \
+    return std::NAME(a, float(b));                                                              \
+  }
+DACE_HALF_UNARY(sqrt)
+DACE_HALF_UNARY(cbrt)
+DACE_HALF_UNARY(exp)
+DACE_HALF_UNARY(exp2)
+DACE_HALF_UNARY(expm1)
+DACE_HALF_UNARY(log)
+DACE_HALF_UNARY(log2)
+DACE_HALF_UNARY(log10)
+DACE_HALF_UNARY(log1p)
+DACE_HALF_UNARY(sin)
+DACE_HALF_UNARY(cos)
+DACE_HALF_UNARY(tan)
+DACE_HALF_UNARY(asin)
+DACE_HALF_UNARY(acos)
+DACE_HALF_UNARY(atan)
+DACE_HALF_UNARY(sinh)
+DACE_HALF_UNARY(cosh)
+DACE_HALF_UNARY(tanh)
+DACE_HALF_UNARY(asinh)
+DACE_HALF_UNARY(acosh)
+DACE_HALF_UNARY(atanh)
+DACE_HALF_UNARY(erf)
+DACE_HALF_UNARY(erfc)
+DACE_HALF_UNARY(tgamma)
+DACE_HALF_UNARY(lgamma)
+DACE_HALF_UNARY(floor)
+DACE_HALF_UNARY(ceil)
+DACE_HALF_UNARY(trunc)
+DACE_HALF_UNARY(round)
+DACE_HALF_UNARY(rint)
+DACE_HALF_UNARY(nearbyint)
+DACE_HALF_BINARY(fmod)
+DACE_HALF_BINARY(remainder)
+DACE_HALF_BINARY(atan2)
+DACE_HALF_BINARY(hypot)
+DACE_HALF_BINARY(fmin)
+DACE_HALF_BINARY(fmax)
+DACE_HALF_BINARY(fdim)
+DACE_HALF_BINARY(copysign)
+#undef DACE_HALF_UNARY
+#undef DACE_HALF_BINARY
+#undef DACE_HALF_ONLY
+
+// ``std::common_type`` of a half and a built-in has no answer (``true ? h : 1.0`` is ambiguous), so
+// every helper that names its result through it -- ``Min``/``Max``, ``ITE``, ``IfExpr``, the
+// variadic ``min``/``max`` -- dropped out of overload resolution. Answer it the way the operators
+// above promote: the half counts as a float. Any other pairing keeps the standard rule (the type
+// of the conditional expression, or no ``type`` when that is ill-formed).
+template <typename A, typename B, typename = void>
+struct _dace_half_ternary_type {};
+template <typename A, typename B>
+struct _dace_half_ternary_type<A, B, std::void_t<decltype(false ? std::declval<A>() : std::declval<B>())>> {
+  using type = std::decay_t<decltype(false ? std::declval<A>() : std::declval<B>())>;
+};
+namespace std {
+template <typename T>
+struct common_type<dace::float16, T>
+    : conditional<is_arithmetic<T>::value, common_type<float, T>, _dace_half_ternary_type<dace::float16, T>>::type {};
+template <typename T>
+struct common_type<T, dace::float16>
+    : conditional<is_arithmetic<T>::value, common_type<T, float>, _dace_half_ternary_type<T, dace::float16>>::type {};
+template <>
+struct common_type<dace::float16, dace::float16> {
+  using type = dace::float16;
+};
+}  // namespace std
 #endif
 
 #ifndef DACE_SYNTHESIS
@@ -631,6 +781,22 @@ DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
     return std::pow(a, b);
   }
 }
+#ifdef __CUDACC__
+// std::pow has no half overload, so a half argument makes the float/double/long double overloads
+// equally good (ambiguous). Promote the half to float; half ** half stays half. An integral
+// exponent is left to ``pow`` above, which multiplies in half.
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+DACE_HDFI auto pow(const dace::float16& a, const T& b) {
+  return std::pow(float(a), b);
+}
+template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>
+DACE_HDFI auto pow(const T& a, const dace::float16& b) {
+  return std::pow(a, float(b));
+}
+static DACE_HDFI dace::float16 pow(const dace::float16& a, const dace::float16& b) {
+  return dace::float16(std::pow(float(a), float(b)));
+}
+#endif
 
 template <typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a) {
@@ -801,6 +967,54 @@ DACE_MATH_UNARY_LP(exp, dace::float16)
 DACE_MATH_UNARY_LP(exp, dace::bfloat16)
 DACE_MATH_UNARY_LP(log, dace::float16)
 DACE_MATH_UNARY_LP(log, dace::bfloat16)
+#ifdef __CUDACC__
+// Codegen qualifies ``math.sin(h)`` as ``dace::math::sin``, whose template body calls ``std::sin``
+// and so hits the same float/double/long double tie for a half. ``tanh`` (and ``exp``, above) have
+// their native half overloads in dace/cuda/halfvec.cuh.
+DACE_MATH_UNARY_LP(sin, dace::float16)
+DACE_MATH_UNARY_LP(sinh, dace::float16)
+DACE_MATH_UNARY_LP(cos, dace::float16)
+DACE_MATH_UNARY_LP(cosh, dace::float16)
+DACE_MATH_UNARY_LP(tan, dace::float16)
+DACE_MATH_UNARY_LP(log10, dace::float16)
+DACE_MATH_UNARY_LP(log1p, dace::float16)
+DACE_MATH_UNARY_LP(log2, dace::float16)
+DACE_MATH_UNARY_LP(exp2, dace::float16)
+DACE_MATH_UNARY_LP(expm1, dace::float16)
+DACE_MATH_UNARY_LP(asin, dace::float16)
+DACE_MATH_UNARY_LP(asinh, dace::float16)
+DACE_MATH_UNARY_LP(acos, dace::float16)
+DACE_MATH_UNARY_LP(acosh, dace::float16)
+DACE_MATH_UNARY_LP(atan, dace::float16)
+DACE_MATH_UNARY_LP(atanh, dace::float16)
+DACE_MATH_UNARY_LP(cbrt, dace::float16)
+DACE_MATH_UNARY_LP(lgamma, dace::float16)
+DACE_MATH_UNARY_LP(tgamma, dace::float16)
+DACE_MATH_UNARY_LP(ceil, dace::float16)
+DACE_MATH_UNARY_LP(trunc, dace::float16)
+DACE_MATH_UNARY_LP(erf, dace::float16)
+DACE_MATH_UNARY_LP(erfc, dace::float16)
+DACE_MATH_UNARY_LP(nearbyint, dace::float16)
+DACE_MATH_UNARY_LP(round, dace::float16)
+// The binary ones take ``(const T&, const T&)``, so a half beside a built-in deduces no ``T`` at all.
+// As with the operators, the half is promoted to float; half with half stays half.
+#define DACE_MATH_BINARY_HALF(NAME)                                                \
+  static DACE_HDFI dace::float16 NAME(const dace::float16& a, const dace::float16& b) { \
+    return dace::float16(std::NAME(float(a), float(b)));                           \
+  }                                                                                \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr> \
+  DACE_HDFI auto NAME(const dace::float16& a, const T& b) {                        \
+    return std::NAME(float(a), b);                                                 \
+  }                                                                                \
+  template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr> \
+  DACE_HDFI auto NAME(const T& a, const dace::float16& b) {                        \
+    return std::NAME(a, float(b));                                                 \
+  }
+DACE_MATH_BINARY_HALF(atan2)
+DACE_MATH_BINARY_HALF(fmod)
+DACE_MATH_BINARY_HALF(hypot)
+#undef DACE_MATH_BINARY_HALF
+#endif
 #undef DACE_MATH_UNARY_LP
 
 #ifdef DACE_THRUST_COMPLEX

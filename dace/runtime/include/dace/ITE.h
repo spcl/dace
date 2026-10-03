@@ -8,7 +8,9 @@
 // their common type.
 template <typename TA, typename TB>
 static DACE_CONSTEXPR DACE_HDFI typename std::common_type<TA, TB>::type ITE(bool c, TA a, TB b) {
-  return c ? a : b;
+  // Both arms in the result type: ``c ? h : 1.0`` with a half arm is ambiguous otherwise.
+  using R = typename std::common_type<TA, TB>::type;
+  return c ? R(a) : R(b);
 }
 
 #endif  // __DACE_ITE_H
