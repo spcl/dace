@@ -38,7 +38,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype`` (exact-width types).
 INDEX_CTYPES = {'int64': 'int64_t', 'int32': 'int32_t'}
@@ -1144,7 +1144,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         ndim = len(desc.shape)
         dim_syms = [symbolic.symbol('__d%d' % i) for i in range(ndim)]
         flatexpr = flat_offset(dim_syms, desc)
-        extra = sorted((flatexpr.free_symbols - set(dim_syms)), key=lambda s: str(s))
+        extra = sorted((as_basic(flatexpr).free_symbols - set(dim_syms)), key=lambda s: str(s))
         extra_names = [str(s) for s in extra]
 
         base = re.sub(r'\W', '_', data_name)
@@ -1202,7 +1202,7 @@ class NestedMultiDimSubscriptLowerer(ast.NodeTransformer):
         self.remover = remover
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
-        if isinstance(node.slice, ast.Tuple) and self.remover._is_bare_data(rname(node)):
+        if isinstance(node.slice, ast.Tuple) and self.remover._is_bare_data(required(rname(node))):
             access = self.remover._bare_access(node)
             if access is not None:
                 return ast.copy_location(ast.Name(id=access), node)
@@ -1257,7 +1257,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     def visit_Assign(self, node: ast.Assign) -> ast.AST:
         target_node = node.targets[-1]
         target = rname(target_node)
-        if not self._is_bare_data(target):
+        if not self._is_bare_data(required(target)):
             return super().visit_Assign(node)
         # A bare-data target is never WCR. One statement, so the unparser does not declare the LHS ``auto``.
         value = self.visit(astutils.copy_tree(node.value))
@@ -1276,10 +1276,10 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         target = rname(node)
-        bare_const = self._scalar_constant_name(target)
+        bare_const = self._scalar_constant_name(required(target))
         if bare_const is not None:
             return ast.copy_location(ast.Name(id=bare_const), node)
-        if not self._is_bare_data(target):
+        if not self._is_bare_data(required(target)):
             return super().visit_Subscript(node)
         access = self._bare_access(node)
         if access is None:
@@ -1289,7 +1289,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
         name = rname(node)
-        if self._is_bare_data(name):
+        if self._is_bare_data(required(name)):
             desc = self.sdfg.arrays[name]
             ptrname = self.codegen.ptr(name, desc, self.sdfg)
             if self.codegen._is_value_scalar(ptrname, desc):

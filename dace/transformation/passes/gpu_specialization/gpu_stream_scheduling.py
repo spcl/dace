@@ -13,6 +13,7 @@ from enum import Enum
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
+from dace.sdfg.narrowing import config_int
 from dace.ordered import OrderedSet
 
 import dace
@@ -119,7 +120,7 @@ class PerComponentGPUStreamScheduler(GPUStreamSchedulingStrategy):
     # Assignment (WCC).
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
-        self._max_concurrent_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
+        self._max_concurrent_streams = config_int('compiler', 'cuda', 'max_concurrent_streams')
         assignments: Dict[nodes.Node, int] = dict()
         for state in sdfg.states():
             self.assign_in_state(sdfg, False, state, assignments, 0)

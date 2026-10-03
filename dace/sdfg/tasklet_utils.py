@@ -1038,7 +1038,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         else:
             # Handle the correct order, left-of the operand is `1` and right is `2`
             op = _extract_single_op(code_str)
-            reordered = _reorder_rhs(code_str, op, rhs, constant)
+            reordered = _reorder_rhs(code_str, op, rhs, required(constant))
             rhs1 = rhs if reordered[0] == rhs else None
             rhs2 = rhs if reordered[1] == rhs else None
             constant1 = constant if reordered[0] == constant else None

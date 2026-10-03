@@ -9,6 +9,7 @@ from dace import symbolic
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 from dace.subsets import Range
+from dace.sdfg.narrowing import as_basic
 
 
 def is_computation(node: nodes.Node) -> bool:
@@ -111,7 +112,7 @@ def nominal_volume(subset: Range) -> Optional[int]:
     """
     count = subset.num_elements()
     try:
-        resolved = symbolic.evaluate(count, {symbol: NOMINAL_EXTENT for symbol in count.free_symbols})
+        resolved = symbolic.evaluate(count, {symbol: NOMINAL_EXTENT for symbol in as_basic(count).free_symbols})
     except (TypeError, ValueError, KeyError, AttributeError):
         return None
     return int(resolved) if float(resolved).is_integer() and resolved > 0 else None

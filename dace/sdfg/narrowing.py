@@ -92,10 +92,10 @@ def as_typeclass(dtype: object) -> dtypes.typeclass:
     return dtype
 
 
-def free_symbols(expr: sympy.Expr) -> set[sympy.Symbol]:
+def free_symbols(expr: sympy.Basic) -> set[sympy.Symbol]:
     """Free symbols of ``expr`` narrowed from sympy's ``set[Basic]`` to ``set[Symbol]``.
 
-    :param expr: A sympy expression.
+    :param expr: A sympy expression, relational or boolean.
     :returns: Its free symbols.
     :raises TypeError: If a free symbol is not a ``sympy.Symbol`` (an ``Indexed`` object, for example).
     """

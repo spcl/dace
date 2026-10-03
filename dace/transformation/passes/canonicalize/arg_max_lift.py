@@ -1185,9 +1185,9 @@ class ArgMaxLift(ppl.Pass):
         # ``.coeff`` sees the loop var inside products like ``inc*(i-1)`` (the
         # closed form ``InductionVariableSubstitution`` leaves -- otherwise
         # ``.coeff`` returns 0 for the unexpanded form and the affine match fails).
-        idx = idx.expand()
-        coeff = coeff_of(idx, lv, 1)
-        base = coeff_of(idx, lv, 0)
+        idx = as_expr(idx).expand()
+        coeff = coeff_of(idx, as_expr(lv), 1)
+        base = coeff_of(idx, as_expr(lv), 0)
         if symbolic.simplify(idx - (base + coeff * lv)) != 0:
             return None
         if lv in coeff.free_symbols or lv in base.free_symbols:

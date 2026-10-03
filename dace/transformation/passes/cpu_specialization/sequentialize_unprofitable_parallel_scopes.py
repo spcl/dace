@@ -58,8 +58,8 @@ lever for measuring the cost model itself.
 """
 from typing import Any, Dict, List, Optional
 
+from dace.sdfg.narrowing import config_int
 from dace import SDFG, dtypes, properties, symbolic
-from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -76,7 +76,7 @@ def min_work_per_region() -> int:
 
     :returns: ``compiler.cpu.parallel_min_work_per_region``; 0 disables the size rule.
     """
-    return int(Config.get('compiler', 'cpu', 'parallel_min_work_per_region'))
+    return config_int('compiler', 'cpu', 'parallel_min_work_per_region')
 
 
 @properties.make_properties

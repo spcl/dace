@@ -20,7 +20,7 @@ def _ceil_div(e, b):
     """Ceiling division ``ceil(e / b)`` for int or symbolic ``e`` and integer ``b``."""
     e = _sym(e)
     if e.is_Integer:
-        return sympy.Integer(-(-int(e) // int(b)))  # plain ints here: ordinary integer ceil
+        return sympy.Integer(-(-int(as_expr(e)) // int(b)))  # plain ints here: ordinary integer ceil
     return symbolic.int_ceil(e, b)
 
 

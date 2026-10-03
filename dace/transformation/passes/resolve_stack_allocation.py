@@ -6,6 +6,7 @@ import sympy
 
 from dace import SDFG, Config, data, dtypes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.narrowing import as_expr
 
 #: Constant-sized register arrays below this many elements default to the stack.
 STACK_ARRAY_MAX_ELEMENTS = 2048
@@ -24,7 +25,7 @@ def resolve_stack_allocation(desc: data.Data, constants: dict[str, object]) -> d
     if isinstance(size, sympy.Basic):
         # By name: the constant's symbol may have another dtype than the one in the shape.
         size = size.subs({sym: constants[sym.name] for sym in size.free_symbols})
-    size = int(size)
+    size = int(as_expr(size))
     size_bytes = size * desc.dtype.bytes if not isinstance(desc.dtype, dtypes.opaque) else 0
     if size < STACK_ARRAY_MAX_ELEMENTS and size_bytes <= Config.get('compiler', 'max_stack_array_size'):
         return dtypes.StackAllocation.Stack

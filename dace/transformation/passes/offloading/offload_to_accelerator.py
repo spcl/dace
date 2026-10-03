@@ -1035,7 +1035,7 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             input_and_output = get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry) | get_data_used_by_outgoing_access_nodes(sdfg, state,
-                                                                                 state.exit_node(map_entry))
+                                                                                 required(state.exit_node(map_entry)))
             if is_taskloop:
                 pass  # transparent for now, resolved below once the body has spoken
             elif is_gpu:
@@ -1218,7 +1218,7 @@ class OffloadToAccelerator(ppl.Pass):
             if not memlet:
                 continue
             data_name = memlet.data
-            if memlet.data in sdfg.arrays and is_array(data_name, sdfg):
+            if memlet.data in sdfg.arrays and is_array(required(data_name), sdfg):
                 cpu_set.add(memlet.data)
 
         # add array accesses in branches
@@ -1678,7 +1678,8 @@ class OffloadToAccelerator(ppl.Pass):
                 if is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
+            self._insert_copy_names_in_block(sdfg, required(node.block), rename_dict,
+                                             node.type == OffloadingIRNode.EDGE)
 
         traverse_IR(IR, _insert_copy_names_in_node)
 

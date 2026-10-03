@@ -73,13 +73,13 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
     with a known identity (folded across the lanes), or nothing outside the map reads it."""
     inner = set(state.scope_subgraph(entry).nodes())
     for edge in state.out_edges(state.exit_node(entry)):
-        if edge.data.is_empty() or not lane_private(state.sdfg, edge.data.data):
+        if edge.data.is_empty() or not lane_private(state.sdfg, required(edge.data.data)):
             continue
         if edge.data.wcr is not None:
             if required(edge.data.subset).num_elements() != 1:
                 return False
             continue
-        if reads_outside(state.sdfg, edge.data.data, inner):
+        if reads_outside(state.sdfg, required(edge.data.data), inner):
             return False
     return True
 
@@ -87,8 +87,8 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
 def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
     """Whether ``node`` writes a shared (not lane-private) container it also reads: once per lane is wrong."""
     read = {edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()}
-    return any(edge.data.data in read and not lane_private(state.sdfg, edge.data.data) for edge in state.out_edges(node)
-               if not edge.data.is_empty())
+    return any(edge.data.data in read and not lane_private(state.sdfg, required(edge.data.data))
+               for edge in state.out_edges(node) if not edge.data.is_empty())
 
 
 def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bool:

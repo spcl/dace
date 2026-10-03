@@ -27,6 +27,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis import ControlFlowBlockReachability
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.optionals import required
 
 # Prefix for renamed iterators; self-identifying in codegen / dumped SDFGs.
 _LOOP_ITER_NAME_PREFIX = "_loop_it"
@@ -261,7 +262,7 @@ class UniqueLoopIterators(ppl.Pass):
             # The rename parses ``new_name`` from text, so it is typed as the loop declares ``old_name``, and later
             # passes that parse the loop variable find the dtype the loop now has.
             declared = cfg.new_symbols(base).get(old_name)
-            dace.symbolic.declare_symbol_dtype(new_name, declared)
+            dace.symbolic.declare_symbol_dtype(new_name, required(declared))
             with dace.symbolic.serialization_symbol_dtypes({new_name: declared}, inherit=True):
                 self._rename_one_loop_var(cfg, old_name, new_name)
             renamed.add(new_name)

@@ -61,7 +61,7 @@ def average_blocks_touched(
             # N*(i - i + 1) and the affine guard below rejects an index that is plainly affine.
             eq_addr, psym, step = equalize_symbols_across(addr, psym, step)
             # byte-address movement per step
-            stride = sp.simplify(eq_addr.subs(psym, psym + step) - eq_addr)
+            stride = sp.simplify(as_expr(eq_addr.subs(psym, as_expr(psym) + as_expr(step))) - as_expr(eq_addr))
             # affine in psym <=> the step delta is free of psym; '//' and '%' indices are not, and would
             # leak the loop variable into the "per-iteration" cost, crashing the later float()
             if psym in stride.free_symbols:

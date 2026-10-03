@@ -12,6 +12,7 @@ import dace
 from dace.memlet import Memlet
 from dace import typeclass
 from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Label prefix of every tasklet :func:`materialise_lane_id_index_tile` mints. The tile pipeline
 #: emits these itself, already at tile shape, so the tile-candidate gates recognise them by this
@@ -461,7 +462,7 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
                 if vector_map_param in {str(s) for s in required(sub).free_symbols}:
                     return False
                 try:
-                    if int(required(sub).num_elements()) == 1:
+                    if int(as_expr(required(sub).num_elements())) == 1:
                         return True
                 except (TypeError, ValueError):
                     return False
@@ -497,7 +498,7 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
             outer_desc = parent_state.sdfg.arrays.get(outer_ie.data.data)
             if outer_desc is not None and outer_desc.transient:
                 try:
-                    if (int(required(outer_sub).num_elements()) > 1 and
+                    if (int(as_expr(required(outer_sub).num_elements())) > 1 and
                             dace.symbolic.simplify(required(outer_sub).num_elements() - outer_desc.total_size) == 0):
                         return False
                 except (TypeError, ValueError):
@@ -539,7 +540,7 @@ def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: 
         try:
             shape_is_one = (isinstance(desc, dace.data.Array) and len(desc.shape) == 1
                             and bool(dace.symbolic.simplify(desc.shape[0] - 1) == 0))
-            ne_is_one = int(required(ie.data.subset).num_elements()) == 1
+            ne_is_one = int(as_expr(required(ie.data.subset).num_elements())) == 1
         except (TypeError, ValueError):
             shape_is_one = False
             ne_is_one = False

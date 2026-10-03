@@ -248,7 +248,7 @@ def body_may_overwrite(region: ControlFlowRegion, loop: LoopRegion, read: Memlet
     :param read: The read whose location must survive the whole loop unchanged.
     :returns: ``True`` unless the read location is provably never written.
     """
-    desc = loop.sdfg.arrays.get(read.data)
+    desc = loop.sdfg.arrays.get(required(read.data))
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)

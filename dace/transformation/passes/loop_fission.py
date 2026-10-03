@@ -427,7 +427,7 @@ def _independent_groups(state: SDFGState,
                 for sub1, is_w1 in subs1:
                     for sub2, is_w2 in subs2:
                         if is_w1 or is_w2:
-                            if _accesses_interfere_across_iterations(loop, sub1, sub2, bounds=loop_bounds):
+                            if _accesses_interfere_across_iterations(required(loop), sub1, sub2, bounds=loop_bounds):
                                 dependent = True
                                 break
                     if dependent:

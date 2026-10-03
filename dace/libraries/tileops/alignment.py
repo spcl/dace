@@ -235,7 +235,7 @@ def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
     # the allocator's guarantee.
     if isinstance(arr, dace.data.View) or arr.start_offset != 0:
         return None
-    if not base_offset_is_visible(parent_sdfg, edge.data.data):
+    if not base_offset_is_visible(parent_sdfg, required(edge.data.data)):
         return None
     subset = edge.data.subset
     if subset is None:

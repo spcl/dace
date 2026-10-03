@@ -23,7 +23,7 @@ from dace.libraries.tileops.lanes import GATHER_INDEX_DTYPES, gather_lane_offset
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 from dace.optionals import required
-from dace.sdfg.narrowing import as_range
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 
 def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list[str]:
@@ -97,7 +97,7 @@ def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
     for d in range(K):
         Dfac = replicate[d] if d < len(replicate) else 1
         try:
-            Di = int(Dfac)
+            Di = int(as_expr(Dfac))
             if Di <= 1 or (int(widths[d]) % Di) == 0:
                 continue  # no replicate, or D divides W -> the box path is correct
         except (TypeError, ValueError):
@@ -110,7 +110,7 @@ def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
             raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "
                                       f"begin in the source memlet, got {begin!r} ({fname}); int_ceil / "
                                       f"non-floor replicate-with-remainder is not yet supported.")
-        dividend, divisor = begin.args
+        dividend, divisor = as_basic(begin).args
         div_syms = {str(s) for s in dividend.free_symbols}
         cand = [p for p in map_params if p in div_syms]
         if len(cand) != 1:
@@ -459,7 +459,7 @@ class TileGather(TileOp):
                         # base addressing differs -- refuse loudly rather than emit
                         # the phase-0-only box (no silent miscompile).
                         try:
-                            Di = int(replicate[d])
+                            Di = int(as_expr(replicate[d]))
                             if Di > 1 and (int(widths[d]) % Di) != 0:
                                 raise NotImplementedError(
                                     f"{self.label}: non-dividing REPLICATE factor {Di} on tile dim {d} "
@@ -502,7 +502,7 @@ class TileGather(TileOp):
         """
         for factor in self.replicate_factor_per_dim or []:
             try:
-                if int(factor) > 1:
+                if int(as_expr(factor)) > 1:
                     return True
             except (TypeError, ValueError):
                 return True

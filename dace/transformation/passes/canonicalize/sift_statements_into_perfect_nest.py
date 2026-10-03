@@ -127,7 +127,7 @@ def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
             # identity misses the dependence and reports the index as independent of the loop.
             e, iv = symbolic.equalize_symbols_across(e, iv_sym)
             if iv in e.free_symbols:
-                if symbolic.simplify(e - iv) != 0:
+                if symbolic.simplify(as_expr(e) - iv) != 0:
                     return True
     return False
 

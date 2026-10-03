@@ -786,7 +786,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 den, num = -den, -num
             if sol is not None and not _is_zero(num * sol[1] - sol[0] * den):
                 return ()  # dimensions disagree on where the crossover is
-            sol = (num, int(den))
+            sol = (num, int(as_expr(den)))
         if sol is None:
             return ()
         num, den = sol

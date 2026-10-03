@@ -364,13 +364,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                 s_expr = as_basic(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
-                                    loop_len = e_expr + 1 - b_expr
+                                    loop_len = as_expr(e_expr) + 1 - b_expr
                                     loop_step = s_expr
                                     if isinstance(loop_len / loop_step, (int, sympy.Number)):
                                         multiplier = dace.symbolic.SymExpr(int(loop_len / loop_step))
                                         multipliers.append(multiplier)
                                         assert b_expr == 0
-                                        e_expr = b_expr + multiplier - 1
+                                        e_expr = as_expr(b_expr) + multiplier - 1
                                         s_expr = dace.symbolic.SymExpr(1)
 
                                 new_range_list.append((b_expr, e_expr, s_expr))

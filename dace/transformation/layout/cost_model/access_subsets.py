@@ -2,6 +2,7 @@ import dace
 from typing import Dict, List
 import copy
 from dace.sdfg.narrowing import as_range
+from dace.optionals import required
 """Access subsets: per-array index ranges touched by a loop nest."""
 
 
@@ -76,14 +77,14 @@ def get_access_subsets(
             memlet = edge.data
             if memlet.is_empty() or memlet.data is None:
                 continue
-            _union_into(access_ranges, memlet.data, memlet.subset)
+            _union_into(access_ranges, memlet.data, required(memlet.subset))
 
         # writes
         for edge in state.out_edges(tasklet):
             memlet = edge.data
             if memlet.is_empty() or memlet.data is None:
                 continue
-            _union_into(access_ranges, memlet.data, memlet.subset)
+            _union_into(access_ranges, memlet.data, required(memlet.subset))
 
     return access_ranges
 

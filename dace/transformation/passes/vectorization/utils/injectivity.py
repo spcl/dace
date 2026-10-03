@@ -10,7 +10,7 @@ import sympy
 
 from dace import data as dt
 from dace import subsets, symbolic
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) -> bool:
@@ -32,11 +32,14 @@ def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) ->
     if not params:
         return False
     ranges = equalized_range(write_subset).ranges
-    by_name = {str(sym): sym for rng in ranges for bound in rng for sym in bound.free_symbols}
+    by_name = {str(sym): sym for rng in ranges for bound in rng for sym in as_basic(bound).free_symbols}
     loop_syms = {name: by_name.get(name, symbolic.pystr_to_symbolic(name)) for name in params}
     covered = set()
     for (begin, end, _step) in ranges:
-        varying = [name for name, sym in loop_syms.items() if sym in begin.free_symbols or sym in end.free_symbols]
+        varying = [
+            name for name, sym in loop_syms.items()
+            if sym in as_basic(begin).free_symbols or sym in as_basic(end).free_symbols
+        ]
         if begin != end:
             # Multi-element range: if loop-varying, per-iter windows may overlap -> not injective.
             if varying:
@@ -90,7 +93,7 @@ def scatter_write_is_injective(write_subset: subsets.Range, lane_var: str, desc:
         equalized = equalized_range(write_subset)
         for beg, end, _step in equalized.ranges:
             for bound in (beg, end):
-                if len(bound.atoms(symbolic.Subscript)) > 0:
+                if len(as_basic(bound).atoms(symbolic.Subscript)) > 0:
                     return False
         return write_subset_is_injective(equalized, [lane_var])
     except Exception:  # noqa: BLE001 -- a bound we cannot parse is not a bound we can prove

@@ -155,7 +155,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Prefixes for the transients and symbol this pass introduces.
 MASK_PREFIX = 'compaction_mask_'
@@ -424,7 +424,7 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 if edge.data.wcr is not None:
                     return False  # a conflict resolution is an accumulation, not an append
-                desc = sdfg.arrays.get(edge.data.data)
+                desc = sdfg.arrays.get(required(edge.data.data))
                 if isinstance(desc, data.Stream):
                     return False  # stream push order is observable
         return True
@@ -448,7 +448,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 expr, sym = symbolic.equalize_symbols_across(expr, sym)
                 if sym not in expr.free_symbols:
                     continue
-                bumps.append((name, symbolic.simplify(expr - sym), inside))
+                bumps.append((name, symbolic.simplify(as_expr(expr) - as_expr(sym)), inside))
         if len(bumps) != 1:
             return None  # zero or several carried cursors -> no single closed form
         name, step, inside = bumps[0]
@@ -507,7 +507,7 @@ class LoopToStreamCompaction(ppl.Pass):
         for memlet in self.meta_reads(loop, sdfg):
             uses_cursor = cursor in {str(s) for s in required(memlet.subset).free_symbols}
             target = cursor_read if uses_cursor else read
-            target[memlet.data] = target.get(memlet.data, 0) + 1
+            target[memlet.data] = target.get(required(memlet.data), 0) + 1
         for name in cursor_written:
             if name in read or name in cursor_read:
                 return False  # in-place compaction: the parallel scatter races its own input
@@ -554,7 +554,7 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 if edge.data.subset != guard_reads[name]:
                     return False  # the body overwrites an element the guard read at another index
-                if not self.subset_is_injective_point(edge.data.subset, loop_vars):
+                if not self.subset_is_injective_point(required(edge.data.subset), loop_vars):
                     return False  # two iterations share the element -> the hoist changes the value read
         return True
 

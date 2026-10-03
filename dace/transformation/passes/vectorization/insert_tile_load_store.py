@@ -46,7 +46,7 @@ from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKi
                                                                         build_symbol_definition_map, TileAccess)
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_range
+from dace.sdfg.narrowing import as_expr, as_range
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
@@ -751,7 +751,7 @@ class InsertTileLoadStore(ppl.Pass):
         def _stride_is_one(s: symbolic.SymbolicType | int) -> bool:
             # Unit stride is literal int 1; symbolic (``N``, ``N*M``) isn't int-convertible.
             try:
-                return int(s) == 1
+                return int(as_expr(s)) == 1
             except (TypeError, ValueError):
                 return False
 
@@ -1206,7 +1206,7 @@ class InsertTileLoadStore(ppl.Pass):
             for e in inner_state.in_edges(node):
                 if e.data is None:
                     continue
-                src_desc = sdfg.arrays.get(e.data.data)
+                src_desc = sdfg.arrays.get(required(e.data.data))
                 if not isinstance(src_desc, data.Array):
                     continue
                 src_shape = tuple(src_desc.shape)

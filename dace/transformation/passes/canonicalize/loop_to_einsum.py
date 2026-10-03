@@ -99,6 +99,7 @@ from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_wi
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.sdfg.narrowing import as_basic, as_expr
+from dace.optionals import required
 
 
 class EinsumSpec(NamedTuple):
@@ -502,7 +503,7 @@ def _boundary_axis_order(edges: List[MultiConnectorEdge[Memlet]], probe: SDFG,
         desc = probe.arrays.get(e.data.data)
         if desc is None or (desc.transient and not transient_ok):
             continue
-        order = _axis_order(e.data.subset)
+        order = _axis_order(required(e.data.subset))
         if order is None:
             return None
         if found is not None:

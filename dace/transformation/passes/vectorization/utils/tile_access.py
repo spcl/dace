@@ -246,7 +246,7 @@ def _sympify_tasklet_rhs(text: str) -> sympy.Expr | None:
     Strip only the unparseable ``dace.``/``np.`` prefix textually, then defer to
     :func:`dace.symbolic.pystr_to_symbolic` + sympy-level cast collapse.
     """
-    return _strip_casts(_safe_sympify(_CAST_PREFIX_RE.sub('', text)))
+    return _strip_casts(required(_safe_sympify(_CAST_PREFIX_RE.sub('', text))))
 
 
 def _reaching_ise_assignment(state: SDFGState, symbol: str, inner_sdfg: SDFG | None = None) -> str | None:
@@ -965,7 +965,7 @@ def classify_tile_access(subset: Range,
             per_dim_kind.append(PerDimKind.GATHER)
             dim_strides.append(None)
             dim_iter_var.append(None)
-            gather_index_per_dim.append(_resolve_gather_index_an(inner_sdfg, lo_sym))
+            gather_index_per_dim.append(_resolve_gather_index_an(inner_sdfg, required(lo_sym)))
             dim_offset.append(None)
             replicate_factor_per_dim.append(None)
             dim_to_canonical_iter_var.append(None)
@@ -1003,7 +1003,7 @@ def classify_tile_access(subset: Range,
             tvar = next(iter(direct_tile_vars))
             # Stop 3a: ``int_floor(c*tvar + c0, k)`` / ``int_ceil(...)`` -> REPLICATE factor k.
             # Before the affine check so the function call doesn't fall through to AFFINE.
-            replicate_k = _detect_replicate_factor(lo_sym, tvar)
+            replicate_k = _detect_replicate_factor(required(lo_sym), tvar)
             if replicate_k is not None:
                 per_dim_kind.append(PerDimKind.REPLICATE)
                 dim_strides.append(1)  # contracted-box stride
@@ -1020,7 +1020,7 @@ def classify_tile_access(subset: Range,
             # a per-lane index tile ``[f(l+0), .., f(l+W-1)]`` (expand the modulus per lane, then
             # gather). Recorded as GATHER so the shared emit dispatch routes it to the gather
             # path; the per-lane expression is recovered from the subset-begin text.
-            modular_N = _detect_modular_factor(lo_sym, tvar)
+            modular_N = _detect_modular_factor(required(lo_sym), tvar)
             if modular_N is not None:
                 per_dim_kind.append(PerDimKind.GATHER)
                 dim_strides.append(None)
@@ -1030,8 +1030,8 @@ def classify_tile_access(subset: Range,
                 replicate_factor_per_dim.append(None)
                 dim_to_canonical_iter_var.append(None)
                 continue
-            coeff = _affine_coeff_for(lo_sym, tvar)
-            offset = _affine_offset_for(lo_sym, tvar)
+            coeff = _affine_coeff_for(required(lo_sym), tvar)
+            offset = _affine_offset_for(required(lo_sym), tvar)
             if coeff is not None and coeff == 1:
                 per_dim_kind.append(PerDimKind.STRUCTURED_1)
                 dim_strides.append(1)
@@ -1100,7 +1100,7 @@ def classify_tile_access(subset: Range,
         # the single-var check at Stop 3.
         multi_var_gather = False
         for tv in direct_tile_vars:
-            c = _affine_coeff_for(lo_sym, tv)
+            c = _affine_coeff_for(required(lo_sym), tv)
             if c is None:  # non-affine in tv (e.g. i**2)
                 multi_var_gather = True
                 break

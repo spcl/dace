@@ -95,7 +95,7 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         # bound), so a shared name can carry two symbol instances with different dtypes. Subtraction
         # goes through identity, not name, and would leave ``i - i`` uncancelled.
         pa, pb = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
-        diff = symbolic.simplify(pa - pb)
+        diff = symbolic.simplify(as_expr(pa) - as_expr(pb))
         if diff == 0:
             return True
         return symbolic.simplify(_int_floor_to_sympy(diff)) == 0

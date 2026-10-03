@@ -40,6 +40,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses
+from dace.optionals import required
 
 
 def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegion, sdfg: SDFG) -> bool:
@@ -88,7 +89,7 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     if _one_elem(write_subset) != 1:
         return False
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    if _uses(write_subset, loop_var_sym):
+    if _uses(required(write_subset), loop_var_sym):
         return False
 
     final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)

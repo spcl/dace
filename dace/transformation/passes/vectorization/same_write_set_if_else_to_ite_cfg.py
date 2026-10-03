@@ -644,8 +644,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                                    am_state,
                                    arr,
                                    subset,
-                                   then_op,
-                                   else_op,
+                                   required(then_op),
+                                   required(else_op),
                                    cond_text,
                                    cond_array_name=cond_array_name,
                                    cond_producer=cond_producer)

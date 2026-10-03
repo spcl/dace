@@ -108,7 +108,7 @@ class Property(Generic[T]):
             self,
             getter=None,
             setter=None,
-            dtype: Type[T] = None,
+            dtype: Optional[Type[T]] = None,
             default=None,
             from_json=None,
             to_json=None,

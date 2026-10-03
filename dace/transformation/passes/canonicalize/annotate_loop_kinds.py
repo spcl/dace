@@ -44,7 +44,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.subsets import Subset
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_range
+from dace.sdfg.narrowing import as_basic, as_range, free_symbols
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
 PARALLEL = 'parallel -- the iterations are independent'
@@ -177,7 +177,7 @@ def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -
     """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
     name is one symbol instance whichever scope minted it."""
     expr = symbolic.pystr_to_symbolic(str(expr))
-    repl = {sym: mapping[sym.name] for sym in as_basic(expr).free_symbols if sym.name in mapping}
+    repl = {sym: mapping[sym.name] for sym in free_symbols(as_basic(expr)) if sym.name in mapping}
     expr = expr.subs(repl, simultaneous=True) if repl else expr
     return symbolic.pystr_to_symbolic(str(expr))
 
