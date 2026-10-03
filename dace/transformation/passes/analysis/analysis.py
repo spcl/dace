@@ -15,7 +15,6 @@ from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import align_memlet
 from typing import Dict, Iterable, Iterator, List, Set, Tuple, Any, Optional, Union
-import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
 from ordered_set import OrderedSet
 
@@ -702,7 +701,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
     def apply(self, region, pipeline_results) -> SymbolScopeDict:
         result: SymbolScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
 
-        idom = nx.immediate_dominators(region.nx, region.start_block)
+        idom = sdutil.immediate_dominators(region.nx, region.start_block)
         all_doms = cfg_analysis.all_dominators(region, idom)
 
         b_reach: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = pipeline_results[
@@ -857,7 +856,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     idom_dict[cfg] = {b: b for _, b in cfg.branches}
                     all_doms = {b: OrderedSet([b]) for _, b in cfg.branches}
                 else:
-                    idom_dict[cfg] = nx.immediate_dominators(cfg.nx, cfg.start_block)
+                    idom_dict[cfg] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
                     all_doms = cfg_analysis.all_dominators(cfg, idom_dict[cfg])
 
                 # Since all_control_flow_regions goes top-down in the graph hierarchy, we can build a transitive
