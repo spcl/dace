@@ -41,8 +41,9 @@ def generate_experimental_cuda(sdfg: dace.SDFG):
         return sdfg.generate_code()
 
 
-def code_of(code_objects, language: str) -> str:
-    return '\n'.join(obj.clean_code for obj in code_objects if obj.language == language)
+def code_of(code_objects, device: bool) -> str:
+    """The device translation unit (titled 'CUDA' on both backends; HIP emits it as C++) or all host code."""
+    return '\n'.join(obj.clean_code for obj in code_objects if (obj.title == 'CUDA') == device)
 
 
 def test_dynamic_range_bounds_reach_the_device_translation_unit():
@@ -50,7 +51,7 @@ def test_dynamic_range_bounds_reach_the_device_translation_unit():
     TU has no other way to see a host scalar."""
     sdfg = build_dynamic_range_kernel_sdfg()
     sdfg.validate()
-    device_code = code_of(generate_experimental_cuda(sdfg), 'cu')
+    device_code = code_of(generate_experimental_cuda(sdfg), device=True)
 
     # The declaration line, not just its first parenthesis: ``__launch_bounds__(...)`` sits between
     # the return type and the parameter list.
@@ -71,7 +72,7 @@ def test_launch_site_does_not_self_initialise_a_program_argument():
     sdfg = build_dynamic_range_kernel_sdfg()
     sdfg.validate()
     code_objects = generate_experimental_cuda(sdfg)
-    host_code = code_of(code_objects, 'cpp')
+    host_code = code_of(code_objects, device=False)
 
     self_initialised = re.findall(r'\b\w+[\w\s*&]*?\b(\w+)\s*=\s*\1\s*;', host_code)
     assert not self_initialised, f'self-initialised declarations in host code: {self_initialised}'
