@@ -12,6 +12,7 @@ Codegen-only: no GPU and no nvcc required.
 import pytest
 
 import dace
+from dace.codegen import common
 from dace import dtypes
 from dace.codegen.exceptions import CodegenError
 from dace.transformation.passes import insert_explicit_copies
@@ -74,7 +75,7 @@ def test_a_device_copy_with_an_undecidable_competing_write_is_not_emitted_on_the
     code = frame[0].clean_code
 
     assert 'CopyND' not in code, 'the device-to-device copy was emitted as a host copy'
-    assert 'cudaMemcpyAsync' in code, 'the device-to-device copy was not emitted as a GPU copy'
+    assert f'{common.get_gpu_backend()}MemcpyAsync' in code, 'the device-to-device copy was not emitted as a GPU copy'
 
 
 def test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_device():
@@ -84,7 +85,8 @@ def test_copies_out_of_one_source_into_different_arrays_are_all_emitted_on_the_d
     code = frame[0].clean_code
 
     assert 'CopyND' not in code, 'a device-to-device copy was emitted as a host copy'
-    assert code.count('cudaMemcpyAsync') == 2, 'expected both device-to-device copies as GPU copies'
+    assert code.count(
+        f'{common.get_gpu_backend()}MemcpyAsync') == 2, 'expected both device-to-device copies as GPU copies'
 
 
 def test_a_device_copy_left_implicit_is_an_error_rather_than_a_host_copy(monkeypatch):
