@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU tests for cuFFT lowering of :class:`dace.libraries.fft.nodes.FFT`.
+"""GPU tests for the vendor FFT lowering (cuFFT on CUDA, hipFFT on HIP) of :class:`dace.libraries.fft.nodes.FFT`.
 
-Extends the basic 1-D cuFFT coverage in :file:`fft_test.py` with:
+Extends the basic 1-D coverage in :file:`fft_test.py` with:
 
 * 2-D complex128 forward FFT,
 * 3-D complex128 forward FFT,
@@ -14,6 +14,12 @@ import pytest
 
 import dace
 import dace.libraries.fft as fftlib
+from dace.codegen.common import get_gpu_backend
+
+
+def _gpu_fft() -> str:
+    """The FFT implementation of the configured GPU backend."""
+    return {'cuda': 'cuFFT', 'hip': 'hipFFT'}[get_gpu_backend()]
 
 
 def _expand_with(backend, nodes_to_set):
@@ -31,8 +37,8 @@ def _restore(previous):
 
 
 @pytest.mark.gpu
-def test_cufft_2d():
-    """2-D complex128 forward FFT through cuFFT (true N-D FFT, matches ``np.fft.fftn``)."""
+def test_gpu_fft_2d():
+    """2-D complex128 forward FFT through the vendor FFT (true N-D FFT, matches ``np.fft.fftn``)."""
     M, N = 32, 48
 
     @dace.program
@@ -41,7 +47,7 @@ def test_cufft_2d():
 
     sdfg = fft2d.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT])
+    prev = _expand_with(_gpu_fft(), [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -54,8 +60,8 @@ def test_cufft_2d():
 
 
 @pytest.mark.gpu
-def test_cufft_3d():
-    """3-D complex128 forward FFT through cuFFT (true N-D FFT, matches ``np.fft.fftn``)."""
+def test_gpu_fft_3d():
+    """3-D complex128 forward FFT through the vendor FFT (true N-D FFT, matches ``np.fft.fftn``)."""
     L, M, N = 8, 12, 16
 
     @dace.program
@@ -64,7 +70,7 @@ def test_cufft_3d():
 
     sdfg = fft3d.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT])
+    prev = _expand_with(_gpu_fft(), [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -77,8 +83,8 @@ def test_cufft_3d():
 
 
 @pytest.mark.gpu
-def test_cufft_complex64_roundtrip():
-    """1-D complex64 forward+inverse round trip through cuFFT (CUFFT_C2C)."""
+def test_gpu_fft_complex64_roundtrip():
+    """1-D complex64 forward+inverse round trip through the vendor FFT (C2C)."""
     N = 128
 
     @dace.program
@@ -88,7 +94,7 @@ def test_cufft_complex64_roundtrip():
 
     sdfg = roundtrip.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT, fftlib.IFFT])
+    prev = _expand_with(_gpu_fft(), [fftlib.FFT, fftlib.IFFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -103,7 +109,6 @@ def test_cufft_complex64_roundtrip():
 
 
 if __name__ == '__main__':
-    test_cufft_2d()
-    test_cufft_3d()
-    test_cufft_complex64_roundtrip()
-    print('cuFFT extended GPU tests PASS')
+    test_gpu_fft_2d()
+    test_gpu_fft_3d()
+    test_gpu_fft_complex64_roundtrip()

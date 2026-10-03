@@ -2,6 +2,7 @@
 """
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
+import dataclasses
 
 from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
 from dace import transformation as xf
@@ -86,8 +87,30 @@ class IDFTExpansion(xf.ExpandTransformation):
 
 
 ##################################################################################################
-# cuFFT expansions
+# GPU expansions: cuFFT (CUDA) and hipFFT (HIP) share one generator; hipFFT mirrors the cuFFT API.
 ##################################################################################################
+
+
+@dataclasses.dataclass(frozen=True)
+class _GpuFftApi:
+    """Spelling of the vendor FFT API: the function prefix, the constant prefix and the inverse direction."""
+    name: str
+    prefix: str
+    constant: str
+    inverse: str
+
+
+_CUFFT = _GpuFftApi('cuFFT', 'cufft', 'CUFFT', 'CUFFT_INVERSE')
+_HIPFFT = _GpuFftApi('hipFFT', 'hipfft', 'HIPFFT', 'HIPFFT_BACKWARD')
+
+
+def _expand_gpu_fft(node, parent_state: SDFGState, parent_sdfg: SDFG, is_inverse: bool, api: _GpuFftApi):
+    input, output = _get_input_and_output(parent_state, node)
+    indesc = parent_sdfg.arrays[input]
+    outdesc = parent_sdfg.arrays[output]
+    if str(node.factor) != '1':
+        raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
+    return _generate_gpu_fft_code(indesc, outdesc, parent_sdfg, is_inverse, node.axis, api)
 
 
 @library.register_expansion(FFT, 'cuFFT')
@@ -97,12 +120,7 @@ class cuFFTFFTExpansion(xf.ExpandTransformation):
 
     @staticmethod
     def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, node.axis)
+        return _expand_gpu_fft(node, parent_state, parent_sdfg, False, _CUFFT)
 
 
 @library.register_expansion(IFFT, 'cuFFT')
@@ -112,24 +130,43 @@ class cuFFTIFFTExpansion(xf.ExpandTransformation):
 
     @staticmethod
     def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, node.axis)
+        return _expand_gpu_fft(node, parent_state, parent_sdfg, True, _CUFFT)
 
 
-def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_inverse: bool, axis=None):
+@library.register_expansion(FFT, 'hipFFT')
+class hipFFTFFTExpansion(xf.ExpandTransformation):
+    environments = [env.hipFFT]
+
+    @staticmethod
+    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return _expand_gpu_fft(node, parent_state, parent_sdfg, False, _HIPFFT)
+
+
+@library.register_expansion(IFFT, 'hipFFT')
+class hipFFTIFFTExpansion(xf.ExpandTransformation):
+    environments = [env.hipFFT]
+
+    @staticmethod
+    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return _expand_gpu_fft(node, parent_state, parent_sdfg, True, _HIPFFT)
+
+
+def _generate_gpu_fft_code(indesc: data.Data,
+                           outdesc: data.Data,
+                           sdfg: SDFG,
+                           is_inverse: bool,
+                           axis=None,
+                           api: _GpuFftApi = _CUFFT):
     from dace.codegen.targets import cpp  # Avoid import loops
+    p = api.prefix
     if len(indesc.shape) not in (1, 2, 3):
-        raise ValueError('cuFFT only supports 1/2/3-dimensional FFT')
+        raise ValueError(f'{api.name} only supports 1/2/3-dimensional FFT')
     if indesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError('cuFFT implementation requires input array to be on GPU')
+        raise ValueError(f'{api.name} implementation requires input array to be on GPU')
     if outdesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError('cuFFT implementation requires output array to be on GPU')
+        raise ValueError(f'{api.name} implementation requires output array to be on GPU')
 
-    cufft_type = _types_to_cufft(indesc.dtype, outdesc.dtype)
+    fft_type = _types_to_gpu_fft(indesc.dtype, outdesc.dtype, api)
     init_code = ''
     exit_code = ''
     callsite_code = ''
@@ -138,46 +175,44 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
     if not is_inverse:
         plan_name = f'fwdplan{cuFFTFFTExpansion.plan_uid}'
         cuFFTFFTExpansion.plan_uid += 1
-        direction = 'CUFFT_FORWARD'
+        direction = f'{api.constant}_FORWARD'
         tasklet_prefix = ''
     else:
         plan_name = f'invplan{cuFFTIFFTExpansion.plan_uid}'
         cuFFTIFFTExpansion.plan_uid += 1
-        direction = 'CUFFT_INVERSE'
+        direction = api.inverse
         tasklet_prefix = 'i'
 
     fields = [
-        f'cufftHandle {plan_name};',
+        f'{p}Handle {plan_name};',
     ]
     plan_name = f'__state->{plan_name}'
 
     init_code += f'''
-    cufftCreate(&{plan_name});
+    {p}Create(&{plan_name});
     '''
     exit_code += f'''
-    cufftDestroy({plan_name});
+    {p}Destroy({plan_name});
     '''
 
-    # Keep ``cufftMakePlan{N}d`` for the N-D case since its ABI is leaner than cufftMakePlanMany.
+    # Keep ``MakePlan{N}d`` for the N-D case since its ABI is leaner than MakePlanMany.
     if axis is None:
         cdims = ', '.join([cpp.sym2cpp(s) for s in indesc.shape])
-        # ``cufftMakePlan1d`` is the only variant that takes a ``batch`` argument;
-        # the 2-D / 3-D entry points do not.  Passing batch=1 to the higher-rank
-        # plans raised a "too many arguments" build error.
+        # ``MakePlan1d`` is the only variant that takes a ``batch`` argument; the 2-D / 3-D entry points do not.
         batch_arg = ", /*batch=*/1" if len(indesc.shape) == 1 else ""
         make_plan = f'''
         {{
             size_t __work_size = 0;
-            cufftMakePlan{len(indesc.shape)}d({plan_name}, {cdims}, {cufft_type}{batch_arg}, &__work_size);
+            {p}MakePlan{len(indesc.shape)}d({plan_name}, {cdims}, {fft_type}{batch_arg}, &__work_size);
         }}
         '''
     else:
         ndim = len(indesc.shape)
         axis_norm = int(axis) if axis >= 0 else ndim + int(axis)
         if axis_norm not in (0, ndim - 1):
-            raise NotImplementedError(f"cuFFT axis-aware expansion only handles axis=0 or axis=ndim-1 "
+            raise NotImplementedError(f"{api.name} axis-aware expansion only handles axis=0 or axis=ndim-1 "
                                       f"(got axis={axis} on shape {indesc.shape}); intermediate axes need "
-                                      f"``cufftXtMakePlanMany`` with explicit per-dim strides.")
+                                      f"``XtMakePlanMany`` with explicit per-dim strides.")
         n_sym = indesc.shape[axis_norm]
         other_dims = [d for i, d in enumerate(indesc.shape) if i != axis_norm]
         howmany_sym = 1
@@ -194,10 +229,10 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
             int __stride = (int){cpp.sym2cpp(stride_sym)};
             int __dist = (int){cpp.sym2cpp(dist_sym)};
             int __howmany = (int){cpp.sym2cpp(howmany_sym)};
-            cufftMakePlanMany({plan_name}, /*rank=*/1, __n_arr,
+            {p}MakePlanMany({plan_name}, /*rank=*/1, __n_arr,
                               /*inembed=*/NULL, __stride, __dist,
                               /*onembed=*/NULL, __stride, __dist,
-                              {cufft_type}, __howmany, &__work_size);
+                              {fft_type}, __howmany, &__work_size);
         }}
         '''
 
@@ -217,11 +252,11 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
 
     # Execute plan
     callsite_code += f'''
-    cufftSetStream({plan_name}, __dace_current_stream);
-    cufftXtExec({plan_name}, _inp, _out, {direction});
+    {p}SetStream({plan_name}, __dace_current_stream);
+    {p}XtExec({plan_name}, _inp, _out, {direction});
     '''
 
-    return nodes.Tasklet(f'cufft_{tasklet_prefix}fft', {'_inp'}, {'_out'},
+    return nodes.Tasklet(f'{p}_{tasklet_prefix}fft', {'_inp'}, {'_out'},
                          callsite_code,
                          language=dtypes.Language.CPP,
                          state_fields=fields,
@@ -362,11 +397,11 @@ def _get_input_and_output(state: SDFGState, node: nodes.LibraryNode):
     return in_edge.data.data, out_edge.data.data
 
 
-def _types_to_cufft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass):
+def _types_to_gpu_fft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass, api: _GpuFftApi = _CUFFT):
     typedict = {
         dtypes.float32: 'R',
         dtypes.float64: 'D',
         dtypes.complex64: 'C',
         dtypes.complex128: 'Z',
     }
-    return f'CUFFT_{typedict[indtype]}2{typedict[outdtype]}'
+    return f'{api.constant}_{typedict[indtype]}2{typedict[outdtype]}'
