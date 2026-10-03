@@ -123,7 +123,12 @@ for _name, _kind in (('sum', 'sum'), ('prod', 'prod'), ('amax', 'amax'), ('amin'
 
 
 @register_lowering(*resolve('prims.var'))
-def lower_prims_var(ctx: LoweringContext, node, tensor: TensorValue, dims=None, correction=1, output_dtype=None,
+def lower_prims_var(ctx: LoweringContext,
+                    node,
+                    tensor: TensorValue,
+                    dims=None,
+                    correction=1,
+                    output_dtype=None,
                     **kwargs):
     """``var(x, dims) = sum((x - mean)^2) / (N - correction)`` composed from two reductions and two pointwise maps."""
     from .pointwise import pointwise_into

@@ -194,7 +194,11 @@ class LoweringContext:
         self.containers[name] = desc
         return TensorValue(name, desc, tshape, tuple(tstrides), torch_dtype, device, source)
 
-    def add_tensor_like(self, prefix: str, val: torch.Tensor, transient: bool = True, contiguous: bool = False,
+    def add_tensor_like(self,
+                        prefix: str,
+                        val: torch.Tensor,
+                        transient: bool = True,
+                        contiguous: bool = False,
                         **kwargs) -> TensorValue:
         """
         Registers a container matching a FakeTensor's shape, dtype and strides.
@@ -210,7 +214,11 @@ class LoweringContext:
                  torch_dtype: torch.dtype) -> TensorValue:
         shape, strides = _container_shape(tshape, tstrides)
         name = self.new_name(prefix)
-        desc = data.ArrayView(to_dace_dtype(torch_dtype), shape, strides=strides, transient=True, storage=base.desc.storage)
+        desc = data.ArrayView(to_dace_dtype(torch_dtype),
+                              shape,
+                              strides=strides,
+                              transient=True,
+                              storage=base.desc.storage)
         self.containers[name] = desc
         return TensorValue(name, desc, tuple(tshape), tuple(tstrides), torch_dtype, base.device)
 
@@ -228,7 +236,10 @@ class LoweringContext:
             self._scopes.pop()
 
     # ------------------------------------------------------------------ emission helpers
-    def emit_view(self, prefix: str, base: TensorValue, val: torch.Tensor,
+    def emit_view(self,
+                  prefix: str,
+                  base: TensorValue,
+                  val: torch.Tensor,
                   subset: Optional[subsets.Range] = None) -> TensorValue:
         """
         Emits a view of ``base`` with the shape/strides of FakeTensor ``val``. ``subset`` selects the viewed region of
@@ -247,8 +258,8 @@ class LoweringContext:
         view = self.add_view(prefix, base, tshape, tstrides, torch_dtype)
         subset = subset if subset is not None else base.full_range()
         memlet = Memlet(data=base.name, subset=subset, other_subset=view.full_range())
-        self.emit(tn.ViewNode(target=view.name, source=base.name, memlet=memlet, src_desc=base.desc,
-                              view_desc=view.desc))
+        self.emit(
+            tn.ViewNode(target=view.name, source=base.name, memlet=memlet, src_desc=base.desc, view_desc=view.desc))
         return view
 
     def emit_copy(self,
@@ -261,7 +272,11 @@ class LoweringContext:
                         other_subset=dst_subset if dst_subset is not None else dst.full_range())
         self.emit(tn.CopyNode(target=dst.name, memlet=memlet))
 
-    def emit_tasklet(self, name: str, inputs: Dict[str, Memlet], code: str, outputs: Dict[str, Memlet],
+    def emit_tasklet(self,
+                     name: str,
+                     inputs: Dict[str, Memlet],
+                     code: str,
+                     outputs: Dict[str, Memlet],
                      language: dtypes.Language = dtypes.Language.Python) -> tn.TaskletNode:
         tasklet = nodes.Tasklet(sanitize_name(name), set(inputs.keys()), set(outputs.keys()), code, language=language)
         return self.emit(tn.TaskletNode(tasklet, dict(inputs), dict(outputs)))
@@ -275,8 +290,23 @@ class LoweringContext:
         name = sanitize_name(name)
         tasklet = nodes.Tasklet(name, set(inputs.keys()), set(outputs.keys()), code)
         mapnode = nodes.Map(name + '_map', list(params), subsets.Range(list(ranges)))
-        self.emit(tn.MapScope(node=nodes.MapEntry(mapnode), children=[tn.TaskletNode(tasklet, dict(inputs),
-                                                                                       dict(outputs))]))
+        self.emit(
+            tn.MapScope(node=nodes.MapEntry(mapnode), children=[tn.TaskletNode(tasklet, dict(inputs), dict(outputs))]))
+
+    def emit_nested_mapped_tasklet(self, name: str, outer_params: Sequence[str], outer_ranges: Sequence[Tuple],
+                                   inner_params: Sequence[str], inner_ranges: Sequence[Tuple],
+                                   inputs: Dict[str, Memlet], code: str, outputs: Dict[str, Memlet]) -> None:
+        """Emits ``map outer: map inner: tasklet`` (e.g. a reduction window inside an output-element map)."""
+        name = sanitize_name(name)
+        tasklet = nodes.Tasklet(name, set(inputs.keys()), set(outputs.keys()), code)
+        inner = nodes.Map(name + '_inner_map',
+                          list(inner_params),
+                          subsets.Range(list(inner_ranges)),
+                          schedule=dtypes.ScheduleType.Sequential)
+        outer = nodes.Map(name + '_map', list(outer_params), subsets.Range(list(outer_ranges)))
+        inner_scope = tn.MapScope(node=nodes.MapEntry(inner),
+                                  children=[tn.TaskletNode(tasklet, dict(inputs), dict(outputs))])
+        self.emit(tn.MapScope(node=nodes.MapEntry(outer), children=[inner_scope]))
 
     def emit_library_call(self, node: nodes.LibraryNode, in_memlets: Dict[str, Memlet],
                           out_memlets: Dict[str, Memlet]) -> None:

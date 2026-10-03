@@ -84,7 +84,8 @@ class GraphImporter:
                              simplify=getattr(self.options, 'simplify', True))
         return ImportResult(sdfg, stree, inputs, outputs, dict(symtab.symbols))
 
-    def lower_subgraph(self, ctx: LoweringContext, sub_gm: torch.fx.GraphModule, bindings: Sequence[Value]) -> List[Value]:
+    def lower_subgraph(self, ctx: LoweringContext, sub_gm: torch.fx.GraphModule,
+                       bindings: Sequence[Value]) -> List[Value]:
         """Lowers a HOP subgraph into the current scope, binding its placeholders to ``bindings`` positionally."""
         placeholders = [n for n in sub_gm.graph.nodes if n.op == 'placeholder']
         if len(placeholders) != len(bindings):

@@ -15,21 +15,22 @@ aten = torch.ops.aten
 #: Composite operators that ``core_aten_decompositions`` leaves intact but we want decomposed into primitives.
 EXTRA_DECOMPOSITIONS = [
     '_softmax', '_log_softmax', 'softmax', 'log_softmax', 'native_layer_norm', 'layer_norm', 'native_group_norm',
-    'group_norm', '_native_batch_norm_legit_no_training', '_native_batch_norm_legit', 'native_batch_norm',
-    'batch_norm', 'gelu', 'silu', 'mish', 'hardtanh', 'hardswish', 'hardsigmoid', 'leaky_relu', 'elu', 'celu', 'selu',
-    'softplus', 'log_sigmoid_forward', 'log_sigmoid', 'native_dropout', 'dropout', 'tril', 'triu', 'masked_fill',
-    'baddbmm', 'logsumexp', 'var_mean', 'var', 'std', 'std_mean', 'norm', 'linalg_vector_norm', 'repeat', 'roll',
-    'stack', 'expand_as', 'reshape', 'flatten', 'squeeze',
-    'unsqueeze', 'index_select', 'embedding', '_unsafe_index', 'nan_to_num', 'cumsum', 'upsample_nearest2d',
-    '_adaptive_avg_pool2d', 'avg_pool2d', 'binary_cross_entropy_with_logits', 'mse_loss', 'l1_loss', 'smooth_l1_loss',
-    'huber_loss', 'nll_loss_forward', 'nll_loss', 'cross_entropy_loss'
+    'group_norm', '_native_batch_norm_legit_no_training', '_native_batch_norm_legit', 'native_batch_norm', 'batch_norm',
+    'gelu', 'silu', 'mish', 'hardtanh', 'hardswish', 'hardsigmoid', 'leaky_relu', 'elu', 'celu', 'selu', 'softplus',
+    'log_sigmoid_forward', 'log_sigmoid', 'native_dropout', 'dropout', 'tril', 'triu', 'masked_fill', 'baddbmm',
+    'logsumexp', 'var_mean', 'var', 'std', 'std_mean', 'norm', 'linalg_vector_norm', 'repeat', 'roll', 'stack',
+    'expand_as', 'reshape', 'flatten', 'squeeze', 'unsqueeze', 'index_select', 'embedding', 'nan_to_num', 'cumsum',
+    'upsample_nearest2d', '_adaptive_avg_pool2d', 'binary_cross_entropy_with_logits', 'mse_loss', 'l1_loss',
+    'smooth_l1_loss', 'huber_loss', 'nll_loss_forward', 'nll_loss', 'cross_entropy_loss'
 ]
 
 #: Operators lowered natively by the frontend; removed from the decomposition table.
 NATIVE_OPS = [
     'mm', 'bmm', 'addmm', 'mv', 'dot', 'matmul', 'linear', 'convolution', '_to_copy', 'clone', 'cat', 'clamp',
     'clamp_min', 'clamp_max', 'expand', 'view', '_unsafe_view', 'permute', 't', 'transpose', 'slice', 'select', 'alias',
-    'detach', 'split', 'split_with_sizes', 'unbind', 'narrow', 'as_strided', 'sum', 'mean', 'amax', 'amin', 'prod', 'max', 'min', 'argmax', 'argmin', 'where', 'full', 'full_like',
+    'detach', 'split', 'split_with_sizes', 'unbind', 'narrow', 'as_strided', 'index', '_unsafe_index', 'gather',
+    'max_pool2d_with_indices', 'max_pool1d_with_indices', 'max_pool3d_with_indices', 'avg_pool2d', 'avg_pool1d',
+    'avg_pool3d', 'sum', 'mean', 'amax', 'amin', 'prod', 'max', 'min', 'argmax', 'argmin', 'where', 'full', 'full_like',
     'zeros', 'zeros_like', 'ones', 'ones_like', 'empty', 'empty_like', 'new_zeros', 'new_ones', 'new_full', 'new_empty',
     'arange', 'scalar_tensor', 'addcmul', 'addcdiv', 'lerp', 'rsub', 'sigmoid', 'tanh', 'relu', 'flip', 'exp', 'log',
     'sqrt', 'rsqrt', 'square', 'reciprocal', 'pow', 'copy'

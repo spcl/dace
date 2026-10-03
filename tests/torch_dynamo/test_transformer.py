@@ -98,7 +98,8 @@ class EncoderBlock(nn.Module):
 def test_transformer_block(backend):
     torch.manual_seed(0)
     model = EncoderBlock().eval()
-    _check(backend, model, [(torch.randn(2, 5, 32), ), (torch.randn(3, 9, 32), ), (torch.randn(4, 4, 32), )],
+    _check(backend,
+           model, [(torch.randn(2, 5, 32), ), (torch.randn(3, 9, 32), ), (torch.randn(4, 4, 32), )],
            rtol=1e-3,
            atol=1e-4)
 

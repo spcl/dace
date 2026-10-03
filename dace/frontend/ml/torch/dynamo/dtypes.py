@@ -49,8 +49,7 @@ def to_torch_dtype(dtype: dtypes.typeclass) -> torch.dtype:
 
 
 def is_floating(dtype: dtypes.typeclass) -> bool:
-    return dtype in (dace.float16, dace.bfloat16, dace.float32, dace.float64) or dtype.type.__name__.startswith(
-        'float')
+    return dtype in (dace.float16, dace.bfloat16, dace.float32, dace.float64) or dtype.type.__name__.startswith('float')
 
 
 def is_boolean(dtype: dtypes.typeclass) -> bool:

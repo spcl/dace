@@ -36,8 +36,12 @@ def _materialize_if_view(ctx: LoweringContext, t: TensorValue, prefix: str) -> T
     return out
 
 
-def alias_view(ctx: LoweringContext, node, base: TensorValue, subset: Optional[subsets.Range] = None,
-               val: Optional[torch.Tensor] = None, prefix: Optional[str] = None) -> TensorValue:
+def alias_view(ctx: LoweringContext,
+               node,
+               base: TensorValue,
+               subset: Optional[subsets.Range] = None,
+               val: Optional[torch.Tensor] = None,
+               prefix: Optional[str] = None) -> TensorValue:
     """
     Creates a view of ``base`` with the shape/strides of ``node``'s FakeTensor (or ``val``).
 
@@ -62,13 +66,12 @@ def _slice_subset(tensor: TensorValue, dim: int, start, length, step=1) -> subse
 
 
 # ---------------------------------------------------------------------- pure reinterpretations
-@register_lowering(*resolve('aten.view.default', 'aten._unsafe_view.default', 'aten.reshape.default',
-                            'aten.permute.default', 'aten.t.default', 'aten.transpose.int', 'aten.unsqueeze.default',
-                            'aten.squeeze.default', 'aten.squeeze.dim', 'aten.squeeze.dims', 'aten.alias.default',
-                            'aten.detach.default', 'aten.view.dtype', 'aten.unfold.default',
-                            'aten.movedim.int', 'aten.lift_fresh.default', 'aten._reshape_alias.default',
-                            'prims.broadcast_in_dim', 'prims.view_of', 'prims.transpose', 'prims.squeeze',
-                            'prims.collapse_view', 'prims.split_dim', 'prims.slice_in_dim', 'prims.slice'))
+@register_lowering(*resolve(
+    'aten.view.default', 'aten._unsafe_view.default', 'aten.reshape.default', 'aten.permute.default', 'aten.t.default',
+    'aten.transpose.int', 'aten.unsqueeze.default', 'aten.squeeze.default', 'aten.squeeze.dim', 'aten.squeeze.dims',
+    'aten.alias.default', 'aten.detach.default', 'aten.view.dtype', 'aten.unfold.default', 'aten.movedim.int',
+    'aten.lift_fresh.default', 'aten._reshape_alias.default', 'prims.broadcast_in_dim', 'prims.view_of',
+    'prims.transpose', 'prims.squeeze', 'prims.collapse_view', 'prims.split_dim', 'prims.slice_in_dim', 'prims.slice'))
 def lower_reinterpret(ctx: LoweringContext, node, tensor: TensorValue, *args, **kwargs):
     if node.target in (aten.alias.default, aten.detach.default, aten.lift_fresh.default):
         return tensor
@@ -90,7 +93,8 @@ def lower_as_strided(ctx: LoweringContext, node, tensor: TensorValue, size, stri
         return alias_view(ctx, node, tensor)
     indices = _offset_to_indices(offset, tensor.tshape, tensor.tstrides)
     if indices is None:
-        raise UnsupportedOpError(node.target, f'cannot express storage offset {offset} within strides {tensor.tstrides}')
+        raise UnsupportedOpError(node.target,
+                                 f'cannot express storage offset {offset} within strides {tensor.tstrides}')
     # The view spans from the offset element; extents along base dims are irrelevant for pointer computation but the
     # subset must stay well-formed, so use a single element per base dimension.
     subset = subsets.Range([(i, i, 1) for i in indices])
@@ -144,8 +148,9 @@ def lower_split(ctx: LoweringContext, node, tensor: TensorValue, split_size_or_s
     views = []
     start = 0
     for k, (v, length) in enumerate(zip(vals, sizes)):
-        views.append(alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, length), val=v,
-                                prefix=f'v_{node.name}_{k}'))
+        views.append(
+            alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, length), val=v,
+                       prefix=f'v_{node.name}_{k}'))
         start = start + length
     return TupleValue(views)
 

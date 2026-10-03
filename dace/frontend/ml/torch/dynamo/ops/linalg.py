@@ -14,10 +14,7 @@ def _matmul(ctx: LoweringContext, node, a: TensorValue, b: TensorValue) -> Tenso
     from dace.libraries.blas import MatMul
     val = node.meta['val']
     out = ctx.add_tensor_like('t_' + node.name, val)
-    ctx.emit_library_call(MatMul('mm_' + node.name), {
-        '_a': a.memlet(),
-        '_b': b.memlet()
-    }, {'_c': out.memlet()})
+    ctx.emit_library_call(MatMul('mm_' + node.name), {'_a': a.memlet(), '_b': b.memlet()}, {'_c': out.memlet()})
     return out
 
 
@@ -34,5 +31,7 @@ def lower_addmm(ctx: LoweringContext, node, bias: TensorValue, a: TensorValue, b
     alpha = as_sym(alpha) if not isinstance(alpha, float) else alpha
     if beta == 1 and alpha == 1:
         return lower_pointwise_values(ctx, node, [mm, bias], '{0} + {1}', prefix='t_' + node.name + '_bias')
-    return lower_pointwise_values(ctx, node, [mm, bias], f'({alpha}) * {{0}} + ({beta}) * {{1}}',
+    return lower_pointwise_values(ctx,
+                                  node, [mm, bias],
+                                  f'({alpha}) * {{0}} + ({beta}) * {{1}}',
                                   prefix='t_' + node.name + '_bias')

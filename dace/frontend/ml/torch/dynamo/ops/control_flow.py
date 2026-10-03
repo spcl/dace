@@ -145,8 +145,7 @@ def _slice_subset(base: TensorValue, i) -> subsets.Range:
 
 
 def _slice_view(ctx: LoweringContext, prefix: str, base: TensorValue, i) -> TensorValue:
-    return ctx.emit_view_raw(prefix, base, base.tshape[1:], base.tstrides[1:], base.torch_dtype,
-                             _slice_subset(base, i))
+    return ctx.emit_view_raw(prefix, base, base.tshape[1:], base.tstrides[1:], base.torch_dtype, _slice_subset(base, i))
 
 
 def _for_scope(node, i: symbolic.symbol, length, children: list) -> tn.ForScope:
@@ -171,9 +170,7 @@ def lower_scan(ctx: LoweringContext, node, combine_graph, init=(), xs=(), additi
     state = [ctx.add_tensor_like(f't_{node.name}_c{k}', v) for k, v in enumerate(vals[:num_carry])]
     for src, dst in zip(init, state):
         ctx.emit_copy(src, dst)
-    stacked = [
-        ctx.add_tensor_like(f't_{node.name}_y{j}', v) for j, v in enumerate(vals[num_carry:])
-    ]
+    stacked = [ctx.add_tensor_like(f't_{node.name}_y{j}', v) for j, v in enumerate(vals[num_carry:])]
 
     i = _loop_var(ctx, node)
     length = xs[0].tshape[0]

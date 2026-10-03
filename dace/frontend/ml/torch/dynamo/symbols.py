@@ -74,6 +74,10 @@ class SymbolTable:
         if isinstance(expr, sympy.Basic):
             name = type(expr).__name__
             args = [self._as_sympy(self.to_dace(a)) for a in expr.args]
+            if name == 'Max':  # torch.utils._sympy.functions.Max (distinct from sympy.Max)
+                return sympy.Max(*args)
+            if name == 'Min':
+                return sympy.Min(*args)
             if name == 'FloorDiv':
                 return symbolic.int_floor(*args)
             if name == 'CeilDiv':

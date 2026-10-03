@@ -74,8 +74,11 @@ def literal(value: Any, dtype: Optional[dtypes.typeclass]) -> str:
     return text
 
 
-def emit_elementwise(ctx: LoweringContext, name: str, out: TensorValue,
-                     inputs: Sequence[Tuple[TensorValue, Sequence[str]]], code: str,
+def emit_elementwise(ctx: LoweringContext,
+                     name: str,
+                     out: TensorValue,
+                     inputs: Sequence[Tuple[TensorValue, Sequence[str]]],
+                     code: str,
                      params: Optional[Sequence[str]] = None) -> None:
     """Emits ``map over out: __out = code(__in0, __in1, ...)`` with explicit per-input index expressions."""
     params = list(params) if params is not None else [f'__i{k}' for k in range(out.rank)]
@@ -225,33 +228,58 @@ _UNARY = {
 }
 
 _BINARY = {
-    aten.mul: '({0}) * ({1})',
-    aten.div: '({0}) / ({1})',
-    aten.true_divide: '({0}) / ({1})',
-    aten.maximum: 'max({0}, {1})',
-    aten.minimum: 'min({0}, {1})',
-    aten.fmax: 'max({0}, {1})',
-    aten.fmin: 'min({0}, {1})',
-    aten.atan2: 'atan2({0}, {1})',
-    aten.fmod: lambda dt: ('fmod({0}, {1})' if is_floating(dt) else '({0}) % ({1})'),
-    aten.remainder: lambda dt: ('(({0}) - floor(({0}) / ({1})) * ({1}))'
-                                if is_floating(dt) else '((({0}) % ({1})) + ({1})) % ({1})'),
-    aten.eq: '({0}) == ({1})',
-    aten.ne: '({0}) != ({1})',
-    aten.lt: '({0}) < ({1})',
-    aten.le: '({0}) <= ({1})',
-    aten.gt: '({0}) > ({1})',
-    aten.ge: '({0}) >= ({1})',
-    aten.logical_and: '({0}) and ({1})',
-    aten.logical_or: '({0}) or ({1})',
-    aten.logical_xor: '(({0}) != 0) != (({1}) != 0)',
-    aten.bitwise_and: lambda dt: ('({0}) and ({1})' if is_boolean(dt) else '({0}) & ({1})'),
-    aten.bitwise_or: lambda dt: ('({0}) or ({1})' if is_boolean(dt) else '({0}) | ({1})'),
-    aten.bitwise_xor: lambda dt: ('(({0}) != ({1}))' if is_boolean(dt) else '({0}) ^ ({1})'),
-    aten.copysign: 'copysign({0}, {1})',
-    aten.hypot: 'hypot({0}, {1})',
-    aten.clamp_min: 'max({0}, {1})',
-    aten.clamp_max: 'min({0}, {1})',
+    aten.mul:
+    '({0}) * ({1})',
+    aten.div:
+    '({0}) / ({1})',
+    aten.true_divide:
+    '({0}) / ({1})',
+    aten.maximum:
+    'max({0}, {1})',
+    aten.minimum:
+    'min({0}, {1})',
+    aten.fmax:
+    'max({0}, {1})',
+    aten.fmin:
+    'min({0}, {1})',
+    aten.atan2:
+    'atan2({0}, {1})',
+    aten.fmod:
+    lambda dt: ('fmod({0}, {1})' if is_floating(dt) else '({0}) % ({1})'),
+    aten.remainder:
+    lambda dt: ('(({0}) - floor(({0}) / ({1})) * ({1}))' if is_floating(dt) else '((({0}) % ({1})) + ({1})) % ({1})'),
+    aten.eq:
+    '({0}) == ({1})',
+    aten.ne:
+    '({0}) != ({1})',
+    aten.lt:
+    '({0}) < ({1})',
+    aten.le:
+    '({0}) <= ({1})',
+    aten.gt:
+    '({0}) > ({1})',
+    aten.ge:
+    '({0}) >= ({1})',
+    aten.logical_and:
+    '({0}) and ({1})',
+    aten.logical_or:
+    '({0}) or ({1})',
+    aten.logical_xor:
+    '(({0}) != 0) != (({1}) != 0)',
+    aten.bitwise_and:
+    lambda dt: ('({0}) and ({1})' if is_boolean(dt) else '({0}) & ({1})'),
+    aten.bitwise_or:
+    lambda dt: ('({0}) or ({1})' if is_boolean(dt) else '({0}) | ({1})'),
+    aten.bitwise_xor:
+    lambda dt: ('(({0}) != ({1}))' if is_boolean(dt) else '({0}) ^ ({1})'),
+    aten.copysign:
+    'copysign({0}, {1})',
+    aten.hypot:
+    'hypot({0}, {1})',
+    aten.clamp_min:
+    'max({0}, {1})',
+    aten.clamp_max:
+    'min({0}, {1})',
 }
 
 for _op, _template in _UNARY.items():
@@ -347,11 +375,11 @@ def lower_div_mode(ctx, node, a, b, *, rounding_mode=None):
     if rounding_mode is None:
         return lower_pointwise_values(ctx, node, [a, b], '({0}) / ({1})')
     if rounding_mode == 'floor':
-        return lower_pointwise_values(
-            ctx, node, [a, b], lambda dt: ('floor(({0}) / ({1}))' if is_floating(dt) else 'int_floor({0}, {1})'))
+        return lower_pointwise_values(ctx, node, [a, b], lambda dt: ('floor(({0}) / ({1}))'
+                                                                     if is_floating(dt) else 'int_floor({0}, {1})'))
     if rounding_mode == 'trunc':
-        return lower_pointwise_values(
-            ctx, node, [a, b], lambda dt: ('trunc(({0}) / ({1}))' if is_floating(dt) else '({0}) / ({1})'))
+        return lower_pointwise_values(ctx, node, [a, b], lambda dt: ('trunc(({0}) / ({1}))'
+                                                                     if is_floating(dt) else '({0}) / ({1})'))
     raise UnsupportedOpError(node.target, f'rounding_mode={rounding_mode}')
 
 
@@ -401,8 +429,7 @@ def lower_addcmul(ctx, node, a, t1, t2, *, value=1):
 
 @register_lowering(aten.addcdiv.default)
 def lower_addcdiv(ctx, node, a, t1, t2, *, value=1):
-    return lower_pointwise_values(ctx, node, [a, t1, t2], '({0}) + {value} * (({1}) / ({2}))',
-                                  kwargs={'value': value})
+    return lower_pointwise_values(ctx, node, [a, t1, t2], '({0}) + {value} * (({1}) / ({2}))', kwargs={'value': value})
 
 
 @register_lowering(aten.lerp.Scalar, aten.lerp.Tensor)
