@@ -12,7 +12,7 @@ import sys
 import types
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, AbstractSet, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Mapping,
+from typing import (TYPE_CHECKING, AbstractSet, Any, Literal, AnyStr, Callable, Dict, Iterable, Iterator, List, Mapping,
                     Optional, Sequence, Set, Tuple, Union, overload)
 
 import dace
@@ -647,9 +647,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
         return copy.copy(self._scope_leaves_cached)
 
+    @overload
     def scope_dict(self,
-                   return_ids: bool = False,
-                   validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node, None]]:
+                   return_ids: Literal[False] = False,
+                   validate: bool = True) -> Dict[nd.Node, Optional[nd.EntryNode]]:
+        ...
+
+    @overload
+    def scope_dict(self, return_ids: Literal[True], validate: bool = True) -> Dict[int, Optional[int]]:
+        ...
+
+    def scope_dict(self, return_ids: bool = False, validate: bool = True):
         """
         Return the scope dict, i.e. map every node inside the state to its enclosing scope or `None` if at global scope.
 
@@ -686,9 +694,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             return _scope_dict_to_ids(self, result)
         return result
 
+    @overload
     def scope_children(self,
-                       return_ids: bool = False,
-                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState', None], List[nd.Node]]:
+                       return_ids: Literal[False] = False,
+                       validate: bool = True) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
+        ...
+
+    @overload
+    def scope_children(self, return_ids: Literal[True], validate: bool = True) -> Dict[Optional[int], List[int]]:
+        ...
+
+    def scope_children(self, return_ids: bool = False, validate: bool = True):
         """For every scope node returns the list of nodes that are inside that scope.
 
         The global scope is denoted by `None`. It is essentially the inversion of `scope_dict`.

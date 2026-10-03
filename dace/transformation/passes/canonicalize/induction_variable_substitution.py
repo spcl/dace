@@ -68,7 +68,7 @@ from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -76,7 +76,7 @@ from dace.transformation.passes.canonicalize.dead_carried_store import reaches
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.narrowing import as_basic, as_expr, as_state
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
@@ -127,7 +127,7 @@ class InductionVariableSubstitution(ppl.Pass):
         # Each substitution strictly removes one carried symbol / loop, so this
         # terminates; the cap is a runaway backstop.
         count = 0
-        for _ in range(1000):
+        for _round in range(1000):
             progressed = False
             # ``SDFG.free_symbols`` re-derives itself from the whole graph on EVERY access -- it is a
             # property, not a cached one (~0.5s on CloudSC). The invariance checks below consult it once
@@ -136,7 +136,7 @@ class InductionVariableSubstitution(ppl.Pass):
             # so hoisting it here is exact. ``materialize_loop_exit_symbols`` already threads it the
             # same way for the same reason.
             sdfg_free_symbols = sdfg.free_symbols
-            for node, parent in list(sdfg.all_nodes_recursive()):
+            for node, _parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
                 # An early-exit loop (``break`` / ``continue`` targeting THIS loop) has a
@@ -157,11 +157,12 @@ class InductionVariableSubstitution(ppl.Pass):
                 #     (the derived symbol a primary-IV substitution just freed);
                 # (5) an IV incremented identically in every branch of a body
                 #     conditional -> hoist it out so (3) can then close it (s124).
-                if (_try_substitute(parent, node, sdfg, sdfg_free_symbols)
-                        or try_substitute_use_site_iv(parent, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_iedge_iv(parent, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_derived_symbol(parent, node, sdfg, sdfg_free_symbols)
-                        or _hoist_branch_uniform_iv(parent, node, sdfg, sdfg_free_symbols)):
+                region = node.parent_graph
+                if (_try_substitute(region, node, sdfg, sdfg_free_symbols)
+                        or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
+                        or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
@@ -1226,13 +1227,13 @@ def rotation_body_chain(loop: LoopRegion) -> Optional[List[SDFGState]]:
     if any(loop.in_degree(b) > 1 or loop.out_degree(b) > 1 for b in blocks):
         return None
     chain: List[SDFGState] = []
-    seen: Dict[SDFGState, None] = {}
-    cur = loop.start_block
+    seen: Dict[ControlFlowBlock, None] = {}
+    cur: Optional[ControlFlowBlock] = loop.start_block
     while cur is not None:
         if cur in seen:
             return None
         seen[cur] = None
-        chain.append(cur)
+        chain.append(as_state(cur))
         out = loop.out_edges(cur)
         cur = out[0].dst if out else None
     if len(chain) != len(blocks):
@@ -1751,11 +1752,11 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
         budget: Dict[Any, int] = {}
         count = 0
         while True:
-            for node, parent in list(sdfg.all_nodes_recursive()):
+            for node, _parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion) or loop_analysis.loop_jumps(node):
                     continue
                 budget.setdefault(node, self.peel_limit)
-                if try_substitute_rotation(parent, node, sdfg, budget):
+                if try_substitute_rotation(node.parent_graph, node, sdfg, budget):
                     count += 1
                     break  # SDFG mutated -> restart the scan on a fresh node list
             else:
