@@ -304,7 +304,37 @@ def test_a_reshape_reads_a_size_argument_through_a_symbol():
     assert np.array_equal(out, a.reshape(2, 4)[:, 3]), out
 
 
+@dace.program
+def size_from_empty_into_a_branch(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    b = np.empty(Nt + 1, dace.float64)  # promoted before the branch, so the assignment enters it
+    if Nt > 2:
+        for i in range(N):
+            b[i] = a[i] * 2.0
+        for i in range(N):
+            out[i] = b[i]
+    else:
+        for i in range(N):
+            out[i] = 0.0
+
+
+@dace.program
+def calls_size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    size_from_empty(a, Nt, out)
+
+
+@pytest.mark.parametrize('program', [size_from_empty_into_a_branch, calls_size_from_empty])
+def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program):
+    """The promoted size reaches a conditional, or a nested SDFG's loops, on the edge entering it."""
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    program(a=a, Nt=np.int64(nt), out=out)
+    assert np.allclose(out, a * 2.0)
+
+
 if __name__ == '__main__':
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
     test_size_can_be_reassigned_after_use_as_a_shape()
