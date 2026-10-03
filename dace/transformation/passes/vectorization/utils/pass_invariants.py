@@ -32,6 +32,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from typing import Tuple
+from dace.sdfg.narrowing import as_expr
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
@@ -527,7 +528,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     if inner is None:
                         continue
                     try:
-                        collapsed = int(inner.total_size) == 1
+                        collapsed = int(as_expr(inner.total_size)) == 1
                     except (TypeError, ValueError):
                         collapsed = False
                     if collapsed:

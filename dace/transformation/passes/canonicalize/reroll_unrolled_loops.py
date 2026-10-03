@@ -42,6 +42,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_expr
 
 
 def _const_int(value: symbolic.SymbolicType | int) -> Optional[int]:
@@ -53,7 +54,7 @@ def _const_int(value: symbolic.SymbolicType | int) -> Optional[int]:
     try:
         sym = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else symbolic.pystr_to_symbolic(str(value))
         if sym.is_Integer:
-            return int(sym)
+            return int(as_expr(sym))
     except Exception:
         return None
     return None

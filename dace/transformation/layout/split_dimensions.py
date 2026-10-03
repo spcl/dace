@@ -6,6 +6,7 @@ from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indic
 from dataclasses import dataclass
 import copy
 from sympy import simplify
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -119,7 +120,7 @@ class SplitDimensions(ppl.Pass):
             if sym not in subs_dict:
                 subs_dict[sym] = 2**32 - 1
 
-        evaluated = [int(dace.symbolic.simplify(e.subs(subs_dict))) for e in range_exprs]
+        evaluated = [int(as_expr(dace.symbolic.simplify(e.subs(subs_dict)))) for e in range_exprs]
         b, e, s = evaluated
         return ((e + 1) - b), s == 1
 

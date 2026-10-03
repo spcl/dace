@@ -55,6 +55,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_expr
 
 _OP_CPP = {'max': '>', 'min': '<'}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
@@ -134,7 +135,7 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     # compile-time-constant stride folds away, a symbolic one stays a runtime multiply.
     step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
     try:
-        unit_stride = (int(symbolic.simplify(step)) == 1)
+        unit_stride = (int(as_expr(symbolic.simplify(step))) == 1)
     except (TypeError, ValueError):
         unit_stride = False
     step_str = sym2cpp(step)

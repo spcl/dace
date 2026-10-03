@@ -64,6 +64,7 @@ import enum
 # ``dace.libraries.standard.nodes.scan`` <-> ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
+from dace.sdfg.narrowing import as_expr
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
@@ -343,7 +344,7 @@ def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
     codegen's scalar-typing of single-element subsets."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     n = symbolic.simplify(in_edges[0].data.subset.num_elements())
-    return getattr(n, 'is_Integer', False) and int(n) == 1
+    return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
 
 
 def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:

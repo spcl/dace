@@ -12,6 +12,7 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy, fill
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties
@@ -790,7 +791,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :returns: True iff the length simplifies to the integer 1.
         """
         try:
-            return int(dace.symbolic.simplify(copy_length)) == 1
+            return int(as_expr(dace.symbolic.simplify(copy_length))) == 1
         except (TypeError, ValueError):
             return False
 
@@ -836,7 +837,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             return None
         # The contiguity helpers assume a unit step; only lift stride-1 loops.
         try:
-            if int(dace.symbolic.simplify(stride)) != 1:
+            if int(as_expr(dace.symbolic.simplify(stride))) != 1:
                 return None
         except (TypeError, ValueError):
             return None

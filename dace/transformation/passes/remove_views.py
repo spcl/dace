@@ -49,6 +49,7 @@ from dace.frontend.python import astutils
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.narrowing import as_expr
 
 _PASS = 'RemoveViews'
 _DEBUGPRINT = config.Config.get('debugprint') in (True, '1', 'true', 'yes')
@@ -201,7 +202,7 @@ def _int_shape(desc: dt.Data) -> Optional[List[int]]:
 def _int_strides(desc: dt.Data) -> Optional[List[int]]:
     """Return the strides as a list of Python ints, or None if symbolic."""
     try:
-        return [int(s) for s in desc.strides]
+        return [int(as_expr(s)) for s in desc.strides]
     except (TypeError, ValueError):
         return None
 
@@ -264,7 +265,8 @@ def _reshape_subset(
     # Case 2: full view range
     try:
         is_full = all(
-            int(r[0]) == 0 and int(r[1]) == d - 1 and int(r[2]) == 1 for r, d in zip(edge_subset.ranges, view_shape))
+            int(as_expr(r[0])) == 0 and int(as_expr(r[1])) == d - 1 and int(as_expr(r[2])) == 1
+            for r, d in zip(edge_subset.ranges, view_shape))
     except (TypeError, ValueError):
         is_full = False
     if is_full:
@@ -480,11 +482,11 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
 
             idx_ast = indices[vdims_here[0]]
             try:
-                rs_int = int(rs)
+                rs_int = int(as_expr(rs))
             except (TypeError, ValueError):
                 rs_int = None
             try:
-                rb_int = int(rb)
+                rb_int = int(as_expr(rb))
             except (TypeError, ValueError):
                 rb_int = None
 

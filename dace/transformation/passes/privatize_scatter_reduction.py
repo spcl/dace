@@ -91,6 +91,7 @@ from dace.sdfg import SDFGState, nodes
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.sdfg.narrowing import as_expr
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
@@ -136,7 +137,7 @@ def _is_single_element(desc: data.Data) -> bool:
     if isinstance(desc, data.Scalar):
         return True
     try:
-        return int(desc.total_size) <= 1
+        return int(as_expr(desc.total_size)) <= 1
     except (TypeError, ValueError):
         return False  # symbolic size -> a genuine bounded array (e.g. ``bins``)
 

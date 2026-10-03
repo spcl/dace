@@ -56,6 +56,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_expr
 
 
 def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
@@ -64,7 +65,7 @@ def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
         s = symbolic.simplify(symbolic.pystr_to_symbolic(str(value)))
     except Exception:
         return None
-    return int(s) if s.is_Integer and int(s) > 0 else None
+    return int(as_expr(s)) if s.is_Integer and int(as_expr(s)) > 0 else None
 
 
 def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
@@ -214,11 +215,11 @@ def _axis_affine(idx: symbolic.SymbolicType,
         off = symbolic.simplify(idx - coeff * v)
     except Exception:
         return None
-    if not (coeff.is_Integer and int(coeff) > 0):
+    if not (coeff.is_Integer and int(as_expr(coeff)) > 0):
         return None
     if any(lv in off.free_symbols for lv in loop_var_syms):
         return None
-    return v, int(coeff), off
+    return v, int(as_expr(coeff)), off
 
 
 def _classify_side(

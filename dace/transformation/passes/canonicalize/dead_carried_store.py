@@ -36,6 +36,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.sdfg.narrowing import as_expr
 
 
 class CarriedStore(NamedTuple):
@@ -89,7 +90,7 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
         offset = symbolic.simplify(begin - ivar)
         if not offset.is_Integer:
             return None
-        found = (axis, int(offset))
+        found = (axis, int(as_expr(offset)))
     return found
 
 
@@ -337,7 +338,7 @@ class DeadCarriedStoreElimination(ppl.Pass):
             stride = loop_analysis.get_loop_stride(loop)
             if stride is None or not symbolic.pystr_to_symbolic(stride).is_Integer:
                 continue
-            stride = int(symbolic.pystr_to_symbolic(stride))
+            stride = int(as_expr(symbolic.pystr_to_symbolic(stride)))
             if stride < 1:
                 continue  # a descending loop kills FORWARD; out of scope until something needs it
             body = body_is_analyzable(loop)

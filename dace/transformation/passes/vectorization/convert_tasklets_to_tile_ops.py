@@ -32,6 +32,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             mask_connectors_are_bool,
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
+from dace.sdfg.narrowing import as_expr
 
 #: Binary ops -> :class:`TileBinop`. Comparisons produce bool tile outputs -> :class:`TileITE`
 #: cond input. ``pow``/``ipow`` are the function-form power spellings; ``**`` stays for any
@@ -879,7 +880,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             sub = edge.data.subset
             n = sub.num_elements() if sub is not None else desc.total_size
             try:
-                return int(n)
+                return int(as_expr(n))
             except (TypeError, ValueError):
                 return None
 

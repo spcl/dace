@@ -31,6 +31,7 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
 )
+from dace.sdfg.narrowing import as_expr
 
 
 def sdfg_to_python(sdfg: SDFG) -> str:
@@ -1005,7 +1006,7 @@ def _emit_symbolic(expr) -> str:
         return repr(expr)
     if isinstance(expr, sympy.Basic):
         if expr.is_Integer:
-            return repr(int(expr))
+            return repr(int(as_expr(expr)))
         return repr(symbolic.symstr(expr, cpp_mode=False))
     return repr(str(expr))
 
@@ -1020,7 +1021,7 @@ def _emit_symbolic_inline(expr) -> str:
         return repr(expr)
     if isinstance(expr, sympy.Basic):
         if expr.is_Integer:
-            return repr(int(expr))
+            return repr(int(as_expr(expr)))
         return f"symbolic.pystr_to_symbolic({_pyrepr(symbolic.symstr(expr))})"
     return _pyrepr(str(expr))
 
@@ -1409,7 +1410,7 @@ def _emit_value(value) -> str:
         return _emit_language(value)
     if isinstance(value, sympy.Basic):
         if value.is_Integer:
-            return repr(int(value))
+            return repr(int(as_expr(value)))
         return f"symbolic.pystr_to_symbolic({_pyrepr(symbolic.symstr(value))})"
     if isinstance(value, CodeBlock):
         return f"CodeBlock({_pyrepr(value.as_string)})"

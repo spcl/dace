@@ -85,6 +85,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
+from dace.sdfg.narrowing import as_expr
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = '_untile_k_'
@@ -181,7 +182,7 @@ def _is_constant_positive_int(expr: symbolic.SymbolicType) -> Optional[int]:
         return None
     if not s.is_number or not s.is_Integer:
         return None
-    v = int(s)
+    v = int(as_expr(s))
     return v if v > 0 else None
 
 
@@ -208,7 +209,7 @@ def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicT
     if s.is_number:
         if not s.is_Integer:
             return None
-        v = int(s)
+        v = int(as_expr(s))
         if v <= 1:
             return None
         return (s, v)
@@ -410,7 +411,7 @@ def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
         return False
     if diff.is_number:
         try:
-            return int(diff) == 0
+            return int(as_expr(diff)) == 0
         except (TypeError, ValueError):
             return False
     return False

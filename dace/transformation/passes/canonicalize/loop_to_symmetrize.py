@@ -30,6 +30,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
 from dace.transformation.passes.canonicalize.loop_to_transpose import (_single_body_state, _single_child_loop,
                                                                        match_copy_chain)
+from dace.sdfg.narrowing import as_expr
 
 
 def _const_nonneg_int(value: object) -> Optional[int]:
@@ -38,7 +39,7 @@ def _const_nonneg_int(value: object) -> Optional[int]:
         s = symbolic.pystr_to_symbolic(str(value))
     except Exception:
         return None
-    return int(s) if s.is_Integer and int(s) >= 0 else None
+    return int(as_expr(s)) if s.is_Integer and int(as_expr(s)) >= 0 else None
 
 
 def _point_indices(subset: Optional[Subset], outer: str, inner: str) -> Optional[List[str]]:

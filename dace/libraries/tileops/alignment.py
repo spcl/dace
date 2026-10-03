@@ -17,6 +17,7 @@ from dace.sdfg.nodes import Node, Tasklet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import SymbolicType
+from dace.sdfg.narrowing import as_expr
 
 #: Suffix of the label of the map a tile-remainder split leaves fully in bounds. The vectorizer writes it and the proof
 #: below reads it: a tiled dim of such a map has an extent that is a whole number of tiles.
@@ -79,7 +80,7 @@ def enclosing_param_ranges(
                 # Only a TILED dim (step == its width > 1) carries a guarantee; a step-1 dim's
                 # extent divides 1 and says nothing.
                 if entry.map.label.endswith(TILE_MAIN_MARKER) and step.is_Integer and step > 1:
-                    even.append((rng[1] - rng[0] + 1, int(step)))
+                    even.append((rng[1] - rng[0] + 1, int(as_expr(step))))
             entry = state.entry_node(entry)
         nsdfg_node = sdfg.parent_nsdfg_node
         if nsdfg_node is None:
@@ -123,7 +124,7 @@ def even_extent_substitutions(even: list[tuple[SymbolicType, int]]) -> dict[Symb
         if not rest.is_Integer:
             continue
         t = dace.symbolic.symbol(f"__dace_align_t{n}", nonnegative=True, integer=True)
-        subs[sym] = width * t - int(rest)
+        subs[sym] = width * t - int(as_expr(rest))
     return subs
 
 
@@ -363,9 +364,9 @@ def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, ed
     shift = dace.symbolic.simplify(at_base % chunk)
     if not shift.is_Integer:
         return declined(arr, edge, elem_bytes, allow_shift)
-    if dace.symbolic.simplify(at_end + vlen + chunk - int(shift) - size).is_nonpositive is not True:
+    if dace.symbolic.simplify(at_end + vlen + chunk - int(as_expr(shift)) - size).is_nonpositive is not True:
         return declined(arr, edge, elem_bytes, allow_shift)
-    return chunk * elem_bytes, int(shift)
+    return chunk * elem_bytes, int(as_expr(shift))
 
 
 def align_template_arg(node: Node,

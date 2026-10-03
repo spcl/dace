@@ -174,6 +174,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.induction_variable_substitution import staged_iedge_rhs
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.sdfg.narrowing import as_expr
 
 #: Map AST comparison op class -> DaCe reduction type.
 CMP_AST_TO_RTYPE: Dict[Type[ast.cmpop], dtypes.ReductionType] = {
@@ -540,7 +541,7 @@ class ArgMaxLift(ppl.Pass):
         if start is None or end is None or stride is None:
             return None
         try:
-            if int(symbolic.simplify(stride)) != 1:
+            if int(as_expr(symbolic.simplify(stride))) != 1:
                 return None
         except (TypeError, ValueError):
             return None
@@ -730,7 +731,7 @@ class ArgMaxLift(ppl.Pass):
         if start is None or end is None or stride is None:
             return None
         try:
-            if int(symbolic.simplify(stride)) != 1:
+            if int(as_expr(symbolic.simplify(stride))) != 1:
                 return None
         except (TypeError, ValueError):
             return None

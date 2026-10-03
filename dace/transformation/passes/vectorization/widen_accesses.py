@@ -45,6 +45,7 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
                                                                         classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_expr
 
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
@@ -702,7 +703,7 @@ class WidenAccesses(ppl.Pass):
         if other.data in to_widen:
             return True  # the other endpoint is itself being widened to a tile
         try:
-            return int(other_desc.total_size) != 1
+            return int(as_expr(other_desc.total_size)) != 1
         except (TypeError, ValueError):
             return True
 

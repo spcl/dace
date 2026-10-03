@@ -66,7 +66,7 @@ from dace import symbolic
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.subsets import Range, Subset
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.sdfg.narrowing import free_symbol_names
+from dace.sdfg.narrowing import as_expr, free_symbol_names
 
 
 class PerDimKind(enum.Enum):
@@ -832,7 +832,7 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
     if isinstance(divisor, (sympy.Float, float)):
         return None
     try:
-        k = int(divisor)
+        k = int(as_expr(divisor))
         if k <= 1:
             return None
     except (TypeError, ValueError):
@@ -865,7 +865,7 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> int | None:
         return None
     dividend, divisor = expr.args
     try:
-        N = int(divisor)
+        N = int(as_expr(divisor))
     except (TypeError, ValueError):
         return None
     if N <= 1:

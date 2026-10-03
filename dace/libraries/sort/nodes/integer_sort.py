@@ -31,6 +31,7 @@ from dace.codegen.common import global_code_id, sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers  # local helper functions kept out of this file for readability
 from .. import environments
+from dace.sdfg.narrowing import as_expr
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_keys_in"
@@ -78,7 +79,7 @@ def _is_length_one(node: "IntegerSort", state: dace.SDFGState) -> bool:
     from dace import symbolic as _sym
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     n = _sym.simplify(in_edges[0].data.subset.num_elements())
-    return getattr(n, 'is_Integer', False) and int(n) == 1
+    return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
 
 
 def _degenerate_single_element_tasklet(node: "IntegerSort") -> nodes.Tasklet:

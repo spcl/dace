@@ -2559,6 +2559,19 @@ def test_lowering_a_guard_assignment_never_registers_the_enclosing_iterator():
     assert 'i' not in sdfg.symbols
 
 
+def test_symbol_read_check_handles_while_loop_without_init_or_update():
+    """A while-style LoopRegion has no init / update statement; the symbol-read scan must skip them, not crash."""
+    sdfg = dace.SDFG("while_loop_symbol_read")
+    sdfg.add_symbol("limit", dace.int64)
+    loop = LoopRegion("while_loop", condition_expr="limit > 0")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    assert loop.init_statement is None and loop.update_statement is None
+    be = branch_elimination.BranchElimination()
+    assert be._symbol_appears_as_read(sdfg, "limit")
+    assert not be._symbol_appears_as_read(sdfg, "other")
+
+
 if __name__ == "__main__":
     test_s1161()
     test_top_level_if()
@@ -2607,5 +2620,6 @@ if __name__ == "__main__":
     test_nested_if()
     test_tasklets_in_if()
     test_disjoint_subsets()
+    test_symbol_read_check_handles_while_loop_without_init_or_update()
     for use_pass_flag in [True, False]:
         test_multi_state_branch_body(use_pass_flag)

@@ -60,6 +60,7 @@ from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NA
                                                 INIT_CONNECTOR_NAME, COEF_CONNECTOR_NAME, in_connector, out_connector,
                                                 init_connector)
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_expr
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {
@@ -1652,7 +1653,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> Optional[_CompositeBo
                 r_axis, k_r, r_others, r_coef = _classify_subset(src_subset, loop_var)
                 if (r_axis == w_axis and r_coef == 1 and _same_other_indices(r_others, w_others) and k_r is not None):
                     try:
-                        diff = int(symbolic.simplify(k_w - k_r))
+                        diff = int(as_expr(symbolic.simplify(k_w - k_r)))
                     except Exception:
                         diff = None
                     if diff == 1:
@@ -1683,7 +1684,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> Optional[_CompositeBo
                     if (r_axis == w_axis and r_coef == 1 and _same_other_indices(r_others, w_others)
                             and k_r is not None):
                         try:
-                            diff = int(symbolic.simplify(k_w - k_r))
+                            diff = int(as_expr(symbolic.simplify(k_w - k_r)))
                         except Exception:
                             diff = None
                         if diff == 1:
@@ -2593,7 +2594,7 @@ def _admissible_scan_stride(diff):
     if diff is None or not isinstance(diff, sympy.Basic):
         return None
     if diff.is_Integer:
-        return int(diff) if int(diff) >= 1 else None
+        return int(as_expr(diff)) if int(as_expr(diff)) >= 1 else None
     # Symbolic: admit an integer-typed stride whose sign is not provably non-positive. A
     # provably ``<= 0`` stride can never satisfy the residue-class scan's ``stride >= 1``
     # validity condition, so specializing it would only ever emit a dead scan branch behind

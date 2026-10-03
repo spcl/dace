@@ -17,6 +17,7 @@ import sympy
 
 from dace import subsets, symbolic
 from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +365,7 @@ def classify_tile_access(
     ndim = len(array_strides)
     aligned = all(match_dims[p] == ndim - K + p for p in range(K))
     try:
-        innermost_unit_stride = int(array_strides[match_dims[-1]]) == 1
+        innermost_unit_stride = int(as_expr(array_strides[match_dims[-1]])) == 1
     except (TypeError, ValueError):
         innermost_unit_stride = pystr_to_symbolic(str(array_strides[match_dims[-1]] - 1)) == 0
 
