@@ -170,50 +170,52 @@ static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
 //          will be implicitly converted to it in min/max -- except a float or double, which
 //          would be rounded to half before the comparison (``min(1e-20, h)`` answering 0). Those
 //          compare in the wider type instead and return it.
-//        * half comparisons are designated "device-only", so they must call
-//          device-only functions as well.
 #ifdef __CUDACC__
 template <typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const dace::float16& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI dace::float16 min(const dace::float16& a, const dace::float16& b, const Ts&... c)
 {
     return (a < b) ? min(a, c...) : min(b, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ auto min(const dace::float16& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI auto min(const dace::float16& a, const T& b, const Ts&... c)
 {
-    if constexpr (std::is_floating_point<T>::value)
+    if constexpr (std::is_floating_point<T>::value) {
         return min(T(a), b, c...);
-    else
+    } else {
         return dace::float16((a < dace::float16(b)) ? min(a, c...) : min(dace::float16(b), c...));
+    }
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ auto min(const T& a, const dace::float16& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI auto min(const T& a, const dace::float16& b, const Ts&... c)
 {
-    if constexpr (std::is_floating_point<T>::value)
+    if constexpr (std::is_floating_point<T>::value) {
         return min(a, T(b), c...);
-    else
+    } else {
         return dace::float16((dace::float16(a) < b) ? min(dace::float16(a), c...) : min(b, c...));
+    }
 }
 template <typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const dace::float16& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI dace::float16 max(const dace::float16& a, const dace::float16& b, const Ts&... c)
 {
     return (a > b) ? max(a, c...) : max(b, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ auto max(const dace::float16& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI auto max(const dace::float16& a, const T& b, const Ts&... c)
 {
-    if constexpr (std::is_floating_point<T>::value)
+    if constexpr (std::is_floating_point<T>::value) {
         return max(T(a), b, c...);
-    else
+    } else {
         return dace::float16((a > dace::float16(b)) ? max(a, c...) : max(dace::float16(b), c...));
+    }
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ auto max(const T& a, const dace::float16& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI auto max(const T& a, const dace::float16& b, const Ts&... c)
 {
-    if constexpr (std::is_floating_point<T>::value)
+    if constexpr (std::is_floating_point<T>::value) {
         return max(a, T(b), c...);
-    else
+    } else {
         return dace::float16((dace::float16(a) > b) ? max(dace::float16(a), c...) : max(b, c...));
+    }
 }
 
 // Mixed half / built-in arithmetic operators. ``half`` converts to float and is constructible
@@ -741,12 +743,11 @@ namespace dace
         }
 #ifdef __CUDACC__
         // std::pow has no half overload, so a half argument makes the float/double/long double
-        // overloads equally good (ambiguous). Promote the half to float; half ** half stays half.
-        // An integral exponent is left to ``pow`` above, which multiplies in half.
-        template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+        // overloads equally good (ambiguous).
+                template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
         DACE_HDFI auto pow(const dace::float16& a, const T& b)
         {
-            return std::pow(float(a), b);
+            return std::pow(T(a), b);
         }
         template<typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>
         DACE_HDFI auto pow(const T& a, const dace::float16& b)

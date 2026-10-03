@@ -790,13 +790,21 @@ class CPPUnparser:
         #    self.dispatch(if_clause)
 
     def _IfExp(self, t):
+        # ``c ? half : double`` is ambiguous in C++, so cast both arms to their common type.
+        cast_open, cast_close = "", ""
+        try:
+            types = [type_inference.infer_expr_type(ast.unparse(a), self.defined_symbols) for a in (t.body, t.orelse)]
+            if dtypes.float16 in types and types[0] != types[1]:
+                cast_open, cast_close = dtypes.result_type_of(*types).ctype + "(", ")"
+        except Exception:
+            pass
         self.write("(")
         self.dispatch(t.test)
-        self.write(" ? ")
-        type_body = self.dispatch(t.body)
-        self.write(" : ")
-        type_orelse = self.dispatch(t.orelse)
-        self.write(")")
+        self.write(" ? " + cast_open)
+        self.dispatch(t.body)
+        self.write(cast_close + " : " + cast_open)
+        self.dispatch(t.orelse)
+        self.write(cast_close + ")")
 
     def _Set(self, t):
         raise NotImplementedError('Invalid C++')

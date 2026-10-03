@@ -41,14 +41,10 @@ private:
 
 typedef void *pyobject;
 
-// Whether a CUDA half is among the arguments
+// True if any argument is a dace::float16: Min/Max then compare in the common type
+// instead of the first argument's type, so Min(h, 1e-20) is not rounded to half.
 template <typename... Ts>
-struct _dace_has_half
-#ifdef __CUDACC__
-    : std::disjunction<std::is_same<Ts, dace::float16>...> {};
-#else
-    : std::false_type {};
-#endif
+struct _dace_has_half : std::disjunction<std::is_same<Ts, dace::float16>...> {};
 
 // Sympy functions
 template <typename U, typename... T>
