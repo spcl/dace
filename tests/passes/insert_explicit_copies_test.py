@@ -797,6 +797,56 @@ def test_a_container_passing_through_a_map_exit_is_not_a_copy():
     InsertExplicitCopies().apply_pass(sdfg, {})
 
     assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert not [e for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.MapExit)], \
+        "the renaming access node is dropped, not left as an implicit copy edge for codegen to read the far side of"
+    sdfg.validate()
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def _build_pass_through_with_second_reader_sdfg(name: str) -> dace.SDFG:
+    """``B`` is written slice by slice and handed to the exit as the same container, but a tasklet also reads the
+    slice, so the access node carrying it cannot be dropped."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("C", [_N_STAGE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    incr = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    twice = state.add_tasklet("twice", {"_in"}, {"_out"}, "_out = 2.0 * _in")
+    written = state.add_access("B")
+    state.add_memlet_path(state.add_access("A"), me, ime, incr, dst_conn="_in", memlet=Memlet("A[bi+ti]"))
+    state.add_memlet_path(incr, imx, written, src_conn="_out", memlet=Memlet("B[bi+ti]"))
+    state.add_memlet_path(written, twice, dst_conn="_in", memlet=Memlet("B[bi]"))
+    state.add_memlet_path(twice, mx, state.add_access("C"), src_conn="_out", memlet=Memlet("C[bi]"))
+    state.add_memlet_path(written, mx, state.add_access("B"), memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice():
+    """When the access node carrying the pass-through cannot be dropped, the copy that stays covers the slice the
+    iteration owns on both sides: deriving its far side from the array would write the slice over the array's start."""
+    sdfg = _build_pass_through_with_second_reader_sdfg("same_container_through_exit_read_again")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    state = sdfg.start_state
+    copies = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1
+    (src_edge, ) = state.in_edges(copies[0])
+    (dst_edge, ) = state.out_edges(copies[0])
+    assert src_edge.data.subset == dst_edge.data.subset == dace.subsets.Range.from_string(f"bi:bi+{_TILE}")
+
+    A = np.arange(_N_STAGE, dtype=np.float64)
+    B = np.zeros(_N_STAGE)
+    C = np.zeros(_N_STAGE)
+    sdfg(A=A, B=B, C=C)
+    np.testing.assert_array_equal(B, A + 1.0)
+    expected_c = np.zeros(_N_STAGE)
+    expected_c[::_TILE] = 2.0 * (A[::_TILE] + 1.0)
+    np.testing.assert_array_equal(C, expected_c)
 
 
 def _view_an_names(sdfg, state):
@@ -1518,6 +1568,7 @@ if __name__ == '__main__':
     test_lift_stage_in_copy()
     test_lift_stage_out_copy()
     test_a_container_passing_through_a_map_exit_is_not_a_copy()
+    test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice()
     test_lift_stage_in_copy_through_view()
     test_lift_stage_out_copy_through_view()
     test_lift_stage_in_copy_chained_map_entries()
