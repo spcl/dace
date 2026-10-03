@@ -26,7 +26,7 @@ EXTRA_DECOMPOSITIONS = [
 
 #: Operators lowered natively by the frontend; removed from the decomposition table.
 NATIVE_OPS = [
-    'mm', 'bmm', 'addmm', 'mv', 'dot', 'matmul', 'linear', 'convolution', '_to_copy', 'clone', 'cat', 'clamp',
+    'mm', 'bmm', 'addmm', 'mv', 'dot', 'matmul', 'convolution', '_to_copy', 'clone', 'cat', 'clamp',
     'clamp_min', 'clamp_max', 'expand', 'view', '_unsafe_view', 'permute', 't', 'transpose', 'slice', 'select', 'alias',
     'detach', 'split', 'split_with_sizes', 'unbind', 'narrow', 'as_strided', 'index', '_unsafe_index', 'gather',
     'max_pool2d_with_indices', 'max_pool1d_with_indices', 'max_pool3d_with_indices', 'avg_pool2d', 'avg_pool1d',
