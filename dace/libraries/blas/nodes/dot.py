@@ -49,9 +49,15 @@ class ExpandDotPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        # A one-iteration map here would fork a thread team to write a single scalar
-        init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
-        init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
+        if dace.dtypes.can_access(dace.dtypes.ScheduleType.CPU_Multicore, desc_res.storage):
+            # A bare tasklet: a one-iteration map would fork a thread team to write a single scalar
+            init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
+            init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
+        else:
+            # A result in device memory is initialized by a one-iteration map, which is scheduled on the device
+            init_state.add_mapped_tasklet("_dot_init", {"__i_unused": "0:1"}, {},
+                                          "_out = 0", {"_out": dace.Memlet("_result[0]")},
+                                          external_edges=True)
 
         # Multiplication map
         state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
