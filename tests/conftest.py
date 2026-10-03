@@ -20,9 +20,10 @@ if _worker:
     # DACE_default_build_folder=<dir> would otherwise collapse every worker back onto one folder.
     # Suffix the env var itself so both that isolation and the per-worker split survive.
     _base = os.environ.get("DACE_default_build_folder")
+    _folder = f"{_base}_{_worker}" if _base else f".dacecache_{_worker}"
     if _base:
-        os.environ["DACE_default_build_folder"] = f"{_base}_{_worker}"
-    Config.set("default_build_folder", value=f".dacecache_{_worker}")
+        os.environ["DACE_default_build_folder"] = _folder
+    Config.set("default_build_folder", value=_folder)
 
 
 @pytest.hookimpl()
