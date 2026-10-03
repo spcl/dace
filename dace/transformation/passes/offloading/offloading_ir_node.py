@@ -2,7 +2,6 @@
 
 from dace.ordered import OrderedSet
 
-from dace.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, LoopRegion, ControlFlowBlock
 
 #: Array names longer than this are left out of the IR dump.
@@ -88,13 +87,13 @@ class OffloadingIRNode:
         # GPU offload never finished. How many routes there are is :meth:`has_one_route`'s question.
         result: list[OffloadingIRNode] = []
         seen: set = set()
-        stack = [self]
+        stack: list[OffloadingIRNode] = [self]
         while stack:
             node = stack.pop()
             if node in seen:
                 continue
             seen.add(node)
-            children = []
+            children: list[OffloadingIRNode] = []
             for next in node.next:
                 if next == self.close:  # a tail: a node that points at this section's end (close-node)
                     result.append(node)
@@ -115,7 +114,7 @@ class OffloadingIRNode:
         """
         assert self.is_open_node()
         routes: dict = {}
-        stack = [(self, False)]
+        stack: list[tuple[OffloadingIRNode, bool]] = [(self, False)]
         while stack:
             node, expanded = stack.pop()
             if node in routes:
@@ -157,9 +156,9 @@ class OffloadingIRNode:
         return state
 
     @staticmethod
-    def new_edge_node(edge: InterstateEdge, cpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
-        edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, edge, cpu_set, OrderedSet(), [], None)
-        edge_node.debug_name = f"_edge_{edge.label}"
+    def new_edge_node(block: ControlFlowBlock, cpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
+        edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, block, cpu_set, OrderedSet(), [], None)
+        edge_node.debug_name = f"_edge_{block.label}"
         return edge_node
 
     @staticmethod

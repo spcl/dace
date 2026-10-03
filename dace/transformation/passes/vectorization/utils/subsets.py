@@ -17,6 +17,7 @@ from dace.sdfg.nodes import AccessNode
 from dace.subsets import Range
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
+from dace.sdfg.narrowing import as_basic
 
 
 def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
@@ -125,7 +126,7 @@ def symbol_instances(subset: dace.subsets.Range) -> dict[str, symbolic.symbol]:
     carried: dict[str, symbolic.symbol] = {}
     for dim in subset.ranges:
         for bound in dim:
-            for sym in bound.free_symbols:
+            for sym in as_basic(bound).free_symbols:
                 if isinstance(sym, symbolic.symbol):
                     carried.setdefault(str(sym), sym)
     return carried

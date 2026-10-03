@@ -6,6 +6,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.subscript_rewrite import rewrite_expression
 from dace.sdfg import nodes as nd
 from dataclasses import dataclass
+from dace.optionals import required
 
 
 def _is_full_extent(memlet, arr) -> bool:
@@ -493,8 +494,8 @@ def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "Permu
         if max(spanned_dims(in_edge.data), spanned_dims(out_edge.data)) == 0:
             continue  # unit element
 
-        in_desc = state.sdfg.arrays[in_edge.data.data]
-        out_desc = state.sdfg.arrays[out_edge.data.data]
+        in_desc = state.sdfg.arrays[required(in_edge.data.data)]
+        out_desc = state.sdfg.arrays[required(out_edge.data.data)]
         if not (covers_full_array(in_edge.data, in_desc) and covers_full_array(out_edge.data, out_desc)):
             raise NotImplementedError(
                 f"{context}: copy '{copy_node.label}' was made transposing by the layout "
@@ -543,7 +544,7 @@ def rewrite_state_for_permute(state: dace.SDFGState,
             new_subset = []
             permute_indices = permute_map[old_name]
             for i in range(len(permute_indices)):
-                new_subset.append(edge.data.subset[permute_indices[i]])
+                new_subset.append(required(edge.data.subset)[permute_indices[i]])
             edge.data.subset = dace.subsets.Range(new_subset)
 
             flip_gemm_operand_if_transposed(edge, permute_indices)

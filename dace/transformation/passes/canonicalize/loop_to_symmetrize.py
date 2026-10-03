@@ -18,29 +18,31 @@ Match: both loops unit-stride, perfect one-child nest (empty connective
 states tolerated), constant nonnegative inner offset, single 2-D array at
 transposed single-point subscripts, no other body effect.
 """
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import symbolic
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
 from dace.transformation.passes.canonicalize.loop_to_transpose import (_single_body_state, _single_child_loop,
                                                                        match_copy_chain)
+from dace.sdfg.narrowing import as_expr
 
 
-def _const_nonneg_int(value) -> Optional[int]:
+def _const_nonneg_int(value: object) -> Optional[int]:
     """``value`` as a nonnegative Python ``int`` if constant, else ``None``."""
     try:
         s = symbolic.pystr_to_symbolic(str(value))
     except Exception:
         return None
-    return int(s) if s.is_Integer and int(s) >= 0 else None
+    return int(as_expr(s)) if s.is_Integer and int(as_expr(s)) >= 0 else None
 
 
-def _point_indices(subset, outer: str, inner: str) -> Optional[list]:
+def _point_indices(subset: Optional[Subset], outer: str, inner: str) -> Optional[List[str]]:
     """If ``subset`` is a 2-D single point over exactly ``{outer, inner}``,
     return the ordered list of which variable each axis is (``[outer, inner]``
     or ``[inner, outer]``); else ``None``."""
@@ -72,7 +74,7 @@ class LoopToSymmetrize(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Lift every matching symmetrization nest in ``sdfg`` and its nested SDFGs."""
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -95,7 +97,8 @@ class LoopToSymmetrize(ppl.Pass):
         if inner_init is None:
             return False
         try:
-            offset = symbolic.simplify(symbolic.pystr_to_symbolic(inner_init) - symbolic.pystr_to_symbolic(outer_var))
+            offset = symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(inner_init)) - as_expr(symbolic.pystr_to_symbolic(outer_var)))
         except Exception:
             return False
         col_offset = _const_nonneg_int(offset)
@@ -121,13 +124,14 @@ class LoopToSymmetrize(ppl.Pass):
         source_upper = (read_order == [outer_var, inner_var])
 
         row_lo = str(loop_analysis.get_init_assignment(outer))
-        row_hi = str(symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer)) + 1))
-        col_hi = str(symbolic.simplify(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner)) + 1))
+        row_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer))) + 1))
+        col_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner))) + 1))
 
         self._replace(cfg, outer, array, desc, row_lo, row_hi, col_offset, col_hi, source_upper)
         return True
 
-    def _extract_symmetric_copy(self, state: SDFGState, outer_var: str, inner_var: str):
+    def _extract_symmetric_copy(self, state: SDFGState, outer_var: str,
+                                inner_var: str) -> Optional[Tuple[str, List[str], List[str]]]:
         """Match an in-place transposed copy of one 2-D array in ``state``.
 
         The body must read one square array ``X`` at a single point, pass the
@@ -150,8 +154,8 @@ class LoopToSymmetrize(ppl.Pass):
             return None
         return array, read_order, write_order
 
-    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, array: str, desc, row_lo: str, row_hi: str,
-                 col_offset: int, col_hi: str, source_upper: bool) -> None:
+    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, array: str, desc: dace.data.Data, row_lo: str,
+                 row_hi: str, col_offset: int, col_hi: str, source_upper: bool) -> None:
         """Replace the ``outer`` loop nest with a state holding a ``Symmetrize`` node."""
         from dace.libraries.standard.nodes import Symmetrize
         was_start = cfg.start_block is outer

@@ -18,6 +18,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (check
                                                                            is_vectorizable_map, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
+from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties
@@ -142,7 +143,7 @@ class MarkTileDims(ppl.Pass):
             # extent stays tiled: the masked remainder / runtime guard handles a runtime trip < W.
             if self.assume_even:
                 try:
-                    if int(symbolic.simplify(ub - lb + 1)) < W:
+                    if int(as_expr(symbolic.simplify(ub - lb + 1))) < W:
                         return None
                 except (TypeError, ValueError):
                     pass

@@ -58,7 +58,7 @@ bodies (which need :class:`LoopFission` to run first) are still out of scope --
 the innermost body must be a single statement for the oracle.
 """
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 import sympy
 
@@ -72,6 +72,8 @@ from dace.properties import CodeBlock
 from dace.symbolic import symstr
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Loop-control properties swapped to realize an interchange.
 _LOOP_META_ATTRS = ('loop_variable', 'init_statement', 'loop_condition', 'update_statement', 'inverted')
@@ -94,8 +96,8 @@ class LoopStridePermutation(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, object]) -> Optional[int]:
         """Interchange every eligible perfect loop nest in ``sdfg`` so a
@@ -275,18 +277,18 @@ class LoopStridePermutation(ppl.Pass):
             return False
 
         osym = pystr_to_symbolic(ovar)
-        c = i0.coeff(osym, 1)
-        d = dace.symbolic.simplify(i0 - c * osym)
-        if osym in d.free_symbols or not c.is_integer or not c.is_positive:
+        c = as_expr(i0).coeff(as_expr(osym), 1)
+        d = dace.symbolic.simplify(i0 - required(c) * osym)
+        if osym in as_basic(d).free_symbols or not required(c).is_integer or not required(c).is_positive:
             return False
         # ``int_floor`` is a floor division: a negative numerator would round the wrong way, so the
         # rewrite is only taken where the new outer loop starts at or above ``d``.
-        if (c * j0).is_nonnegative is not True:
+        if (required(c) * j0).is_nonnegative is not True:
             return False
 
         floor_expr = symstr(dace.symbolic.int_floor(pystr_to_symbolic(ivar) - d, c))
         outer.loop_variable, inner.loop_variable = ivar, ovar
-        outer.init_statement = CodeBlock(ivar + ' = ' + symstr(c * j0 + d))
+        outer.init_statement = CodeBlock(ivar + ' = ' + symstr(required(c) * j0 + d))
         outer.loop_condition = CodeBlock(ivar + ' <= ' + symstr(i1))
         outer.update_statement = CodeBlock(ivar + ' = ' + ivar + ' + 1')
         inner.init_statement = CodeBlock(ovar + ' = ' + symstr(j0))
@@ -338,7 +340,7 @@ class LoopStridePermutation(ppl.Pass):
                     continue
                 for rng, stride in zip(subset.ndrange(), desc.strides):
                     try:
-                        is_unit = bool(dace.symbolic.simplify(pystr_to_symbolic(stride) - 1) == 0)
+                        is_unit = bool(dace.symbolic.simplify(as_expr(pystr_to_symbolic(stride)) - 1) == 0)
                     except Exception:  # noqa: BLE001
                         is_unit = False
                     if not is_unit:
@@ -348,7 +350,7 @@ class LoopStridePermutation(ppl.Pass):
                     for v in loop_vars:
                         if v not in free:
                             continue
-                        coeff = index_expr.coeff(pystr_to_symbolic(v), 1)
+                        coeff = as_expr(index_expr).coeff(as_expr(pystr_to_symbolic(v)), 1)
                         if sympy.Abs(coeff) == 1:
                             result.add(v)
         return result

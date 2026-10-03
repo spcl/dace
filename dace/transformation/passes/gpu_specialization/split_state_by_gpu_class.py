@@ -5,7 +5,7 @@ Independent CPU components and the CPU prefixes of mixed ``[CPU?, GPU, CPU?]`` c
 predecessor state; lifting the GPU middle out leaves the CPU suffix in the original state. Interleaved patterns
 (``GPU -> CPU -> GPU``, cycles, ``MIXED`` interior nodes) are refused.
 """
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -14,7 +14,7 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                weakly_connected_node_sets)
@@ -78,9 +78,9 @@ class SplitStateByGPUClass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set[type]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         # A copy is classified GPU only once lifted to a ``CopyLibraryNode``.
-        return {InsertExplicitCopies}
+        return [InsertExplicitCopies]
 
     def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[Dict[str, int]]:
         # A wired SDFG must not be split again.

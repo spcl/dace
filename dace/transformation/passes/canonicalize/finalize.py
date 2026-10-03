@@ -20,6 +20,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 ``auto_optimize(s)``.
 """
 import os
+from typing import List
 
 from dace import SDFG, dtypes, symbolic
 from dace.config import Config
@@ -53,6 +54,7 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation import helpers as xfh
+from dace.sdfg.narrowing import as_range
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
@@ -65,14 +67,14 @@ TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
 SMALL_MATMUL_DIM = 32
 
 
-def _all_matmul_extents_small(state, node, limit: int) -> bool:
+def _all_matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: int) -> bool:
     """True iff every operand/output extent of a matmul library ``node`` is a constant
     at most ``limit`` (the matmul is known-small). A symbolic extent -> not known-small."""
     saw = False
     for e in list(state.in_edges(node)) + list(state.out_edges(node)):
         if e.data is None or e.data.subset is None:
             continue
-        for ext in e.data.subset.size():
+        for ext in as_range(e.data.subset).size():
             saw = True
             try:
                 if int(ext) > limit:
@@ -101,7 +103,7 @@ def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return all(any(symbolic.equal_valued(1, s) for s in _matrix_operand(operand)[3]) for operand in operands)
 
 
-def canonicalize_fast_library_priority(device: dtypes.DeviceType):
+def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> List[str]:
     """Availability-aware fast-implementation priority for the canonicalize perf tail.
 
     Prefer OpenBLAS (BLAS + LAPACKE, i.e. LAPACK) over MKL -- MKL is blocklisted by the caller, per
@@ -133,7 +135,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
         # ``pure`` is auto_optimize's terminal fallback rather than a forced pick, so it is dropped
         # here. A tensor library this host cannot build against is already absent from that list.
         return [impl for impl in find_fast_library(device) if impl != 'pure']
-    prio = []
+    prio: List[str] = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')
     if fftw3.FFTW3.is_installed():
@@ -167,7 +169,9 @@ def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG
         for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state))
 
 
-def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = SMALL_MATMUL_DIM):
+def canonicalize_set_fast_implementations(sdfg: SDFG,
+                                          device: dtypes.DeviceType,
+                                          small_dim: int = SMALL_MATMUL_DIM) -> None:
     """Select library-node implementations for the canonicalize perf tail.
 
     Delegates to :func:`~dace.transformation.auto.auto_optimize.set_fast_implementations` with the
@@ -392,7 +396,9 @@ def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
 
 def vector_operands(state: SDFGState, node: nodes.LibraryNode) -> bool:
     """Whether every input of ``node`` is a vector, so a ``MatMul`` specializes to a ``Dot``."""
-    return all(len([extent for extent in edge.data.subset.size() if extent != 1]) <= 1 for edge in state.in_edges(node))
+    return all(
+        len([extent for extent in as_range(edge.data.subset).size() if extent != 1]) <= 1
+        for edge in state.in_edges(node))
 
 
 def expand_gathered_dots(sdfg: SDFG) -> int:

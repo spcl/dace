@@ -59,6 +59,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import nest_state_subgraph
+from dace.sdfg.narrowing import as_map_entry
 
 
 def _identifiers(expr: str) -> Set[str]:
@@ -280,7 +281,7 @@ def _enclosing_map_params(st: SDFGState, me: MapEntry) -> Set[str]:
     params: Set[str] = set()
     scope = st.entry_node(me)
     while scope is not None:
-        params |= {str(p) for p in scope.map.params}
+        params |= {str(p) for p in as_map_entry(scope).map.params}
         scope = st.entry_node(scope)
     return params
 

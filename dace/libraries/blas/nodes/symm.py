@@ -14,7 +14,7 @@ is a correct reference lowering, and ``MKL`` / ``OpenBLAS`` / ``cuBLAS`` /
 ``rocBLAS`` dispatch to the vendor ``dsymm`` / ``cublasDsymm`` kernels.
 """
 from copy import deepcopy as dc
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import dace.library
 import dace.sdfg.nodes
@@ -27,6 +27,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .. import environments
 from .rank_k_helpers import gpu_coeff_pointers, host_can_read
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 
 def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -38,15 +40,19 @@ def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
     c = next((e for e in out_edges if e.src_conn == "_c"), None)
     if a is None or b is None or c is None:
         raise ValueError("Symm: expected _a, _b inputs and a _c output")
-    ad, bd, cd = (sdfg.arrays[e.data.data] for e in (a, b, c))
-    return (ad, a.data.subset.size(), ad.strides), (bd, b.data.subset.size(), bd.strides), (cd, c.data.subset.size(),
-                                                                                            cd.strides)
+    ad, bd, cd = (sdfg.arrays[required(e.data.data)] for e in (a, b, c))
+    return (ad, as_range(a.data.subset).size(), ad.strides), (bd, as_range(b.data.subset).size(),
+                                                              bd.strides), (cd, as_range(c.data.subset).size(),
+                                                                            cd.strides)
 
 
 def _scalar_conn_descs(node: "Symm", state: SDFGState, sdfg: SDFG) -> dict:
     """Descriptors of the runtime coefficient connectors (``_alpha`` / ``_beta``)
     that are actually wired, keyed by connector name."""
-    return {e.dst_conn: sdfg.arrays[e.data.data] for e in state.in_edges(node) if e.dst_conn in ("_alpha", "_beta")}
+    return {
+        e.dst_conn: sdfg.arrays[required(e.data.data)]
+        for e in state.in_edges(node) if e.dst_conn in ("_alpha", "_beta")
+    }
 
 
 @dace.library.expansion
@@ -54,7 +60,7 @@ class ExpandSymmPure(ExpandTransformation):
     """Reference lowering: materialize the full symmetric ``A`` from its ``uplo``
     triangle, then ``C = beta*C + alpha * (A@B | B@A)`` as a WCR contraction."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG) -> SDFG:
@@ -158,7 +164,7 @@ class _ExpandSymmCBLAS(ExpandTransformation):
     """CBLAS ``cblas_?symm`` (row-major): handles the DaCe row-major layout
     directly, so no operand transpose trick is needed (unlike the GPU path)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -261,7 +267,9 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
     ``C = alpha*A*B + beta*C`` (row-major) ``<=> C^T = alpha*B^T*A + beta*C^T``
     (A symmetric): a ``side`` flip, a ``uplo`` flip, and swapped ``m``/``n``."""
 
-    environments = []
+    dialect: gpu_dialect.GpuBlasDialect
+
+    environments: List[type] = []
     backend = "cu"
 
     @classmethod

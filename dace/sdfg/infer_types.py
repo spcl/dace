@@ -175,10 +175,10 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
 
 
 def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.EntryNode],
-                                           parent_schedules: List[dtypes.ScheduleType] = None,
+                                           parent_schedules: Optional[List[Optional[dtypes.ScheduleType]]] = None,
                                            use_parent_schedule: bool = False,
-                                           state: SDFGState = None,
-                                           child_nodes: Dict[nodes.Node, List[nodes.Node]] = None):
+                                           state: Optional[SDFGState] = None,
+                                           child_nodes: Optional[Dict[nodes.Node, List[nodes.Node]]] = None):
     """
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces ``ScheduleType.Default`` and ``StorageType.Default``

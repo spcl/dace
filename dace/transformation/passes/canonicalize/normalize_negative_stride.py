@@ -31,7 +31,7 @@ Out of scope:
   through the new positive-iterator form.
 * While loops (no ``loop_variable``).
 """
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import dace
 from dace import SDFG, properties, symbolic
@@ -40,18 +40,19 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
+from dace.sdfg.narrowing import as_basic
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
 POS_ITER_PREFIX = '_loop_pos_'
 
 
-def _is_negative(value) -> bool:
+def _is_negative(value: symbolic.SymbolicType) -> bool:
     """``True`` iff ``value`` simplifies to a concrete negative number."""
     try:
         s = symbolic.simplify(value)
     except Exception:
         return False
-    return s.is_number and s.is_negative
+    return as_basic(s).is_number and as_basic(s).is_negative
 
 
 @properties.make_properties
@@ -67,7 +68,7 @@ class NormalizeNegativeStride(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Rewrite every eligible negative-stride loop in ``sdfg`` (and nested SDFGs).
 
         :returns: The number of loops rewritten, or ``None`` if none.

@@ -59,28 +59,31 @@ mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 """
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, Type
 
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.dead_carried_store import reaches
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr, as_state
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
 SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'])
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
-CLOSED_FORM = {
+CLOSED_FORM: Dict[Type[ast.operator], Callable[[str, str, str], str]] = {
     ast.Add: lambda init, c, n: f"(({init}) + ({c}) * ({n}))",
     ast.Mult: lambda init, c, n: f"(({init}) * (({c}) ** ({n})))",
 }
@@ -93,9 +96,9 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     pattern matching; the codegen still emits the cast from the original tasklet
     body, only this pass's analysis treats it as a no-op.
     """
-    TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
+    TYPECAST_NAMES: Dict[str, None] = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
@@ -116,7 +119,7 @@ class InductionVariableSubstitution(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         # Fixed point: substituting a primary IV frees the symbols derived from
         # it. e.g. TSVC s128 -- substituting ``j := j + 2`` rewrites ``k := j + 1``
         # to ``k := 2*i`` (a pure loop-var expression), which the next round's
@@ -124,7 +127,7 @@ class InductionVariableSubstitution(ppl.Pass):
         # Each substitution strictly removes one carried symbol / loop, so this
         # terminates; the cap is a runaway backstop.
         count = 0
-        for _ in range(1000):
+        for _round in range(1000):
             progressed = False
             # ``SDFG.free_symbols`` re-derives itself from the whole graph on EVERY access -- it is a
             # property, not a cached one (~0.5s on CloudSC). The invariance checks below consult it once
@@ -133,7 +136,7 @@ class InductionVariableSubstitution(ppl.Pass):
             # so hoisting it here is exact. ``materialize_loop_exit_symbols`` already threads it the
             # same way for the same reason.
             sdfg_free_symbols = sdfg.free_symbols
-            for node, parent in list(sdfg.all_nodes_recursive()):
+            for node, _parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
                 # An early-exit loop (``break`` / ``continue`` targeting THIS loop) has a
@@ -154,11 +157,12 @@ class InductionVariableSubstitution(ppl.Pass):
                 #     (the derived symbol a primary-IV substitution just freed);
                 # (5) an IV incremented identically in every branch of a body
                 #     conditional -> hoist it out so (3) can then close it (s124).
-                if (_try_substitute(parent, node, sdfg, sdfg_free_symbols)
-                        or try_substitute_use_site_iv(parent, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_iedge_iv(parent, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_derived_symbol(parent, node, sdfg, sdfg_free_symbols)
-                        or _hoist_branch_uniform_iv(parent, node, sdfg, sdfg_free_symbols)):
+                region = node.parent_graph
+                if (_try_substitute(region, node, sdfg, sdfg_free_symbols)
+                        or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
+                        or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
@@ -206,7 +210,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     return True
 
 
-def step_is_loop_invariant(step_names, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
+def step_is_loop_invariant(step_names: Iterable[object], loop: LoopRegion, sdfg: SDFG,
+                           sdfg_free_symbols: Set[str]) -> bool:
     """Whether a candidate IV STEP, built from ``step_names``, is loop-invariant.
 
     THIS is the test that separates an induction variable from a REDUCTION, and it is the only
@@ -245,10 +250,11 @@ class TaskletIV(NamedTuple):
     """
     accum: str  #: container the update eventually writes (after any staging transients)
     subset: str  #: the single-element, loop-invariant accumulator slot
-    op_type: type  #: ``ast.Add`` / ``ast.Mult``
+    op_type: Type[ast.operator]  #: ``ast.Add`` / ``ast.Mult``
     const_val: Any  #: numeric literal, or a source string over loop-invariant symbols
-    in_edge: Any  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
-    write_edge: Any  #: the tasklet's update write edge
+    in_edge: MultiConnectorEdge[
+        mm.Memlet]  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
+    write_edge: MultiConnectorEdge[mm.Memlet]  #: the tasklet's update write edge
     reads_accum: bool  #: the carried read traces back to ``accum[subset]`` (a true recurrence)
 
 
@@ -321,7 +327,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     # ``step`` a SDFG symbol, which lifts the same way.
     in_connector_names = dict.fromkeys(tasklet.in_connectors.keys())
 
-    def _is_carrier(node):
+    def _is_carrier(node: ast.AST) -> bool:
         return isinstance(node, ast.Name) and node.id in in_connector_names
 
     # EXACTLY one side may be a connector. Two connectors is ``__out = __in1 + __in2``, where the
@@ -452,7 +458,7 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
 # Use-site closed-form substitution (SCEV expansion) for a DATA accumulator
 
 
-def trip_index(loop: LoopRegion, start, stride):
+def trip_index(loop: LoopRegion, start: symbolic.SymbolicType, stride: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """Trip index ``t`` of the iteration running with ``loop_variable``: ``loop_var == start + t*stride``.
 
     Every visited ``loop_var`` makes ``loop_var - start`` an EXACT multiple of ``stride``, so
@@ -491,8 +497,10 @@ class UseSitePlan(NamedTuple):
     pre_node: nodes.AccessNode  #: accumulator version holding the value on entry to the iteration
     post_node: nodes.AccessNode  #: accumulator version the IV update writes
     chain: List[nodes.AccessNode]  #: staging transients between the IV tasklet and ``post_node``
-    pre_reads: List[Any]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
-    post_reads: List[Any]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
+    pre_reads: List[MultiConnectorEdge[
+        mm.Memlet]]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
+    post_reads: List[MultiConnectorEdge[
+        mm.Memlet]]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
 
 
 def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet,
@@ -540,8 +548,8 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
     if any(n in reachable_from_update for n in entry_versions):
         return None
 
-    pre_reads: List[Any] = []
-    post_reads: List[Any] = []
+    pre_reads: List[MultiConnectorEdge[mm.Memlet]] = []
+    post_reads: List[MultiConnectorEdge[mm.Memlet]] = []
     for node in entry_versions + [post_node]:
         bucket = post_reads if node is post_node else pre_reads
         for e in state.out_edges(node):
@@ -636,7 +644,8 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
 
 
 def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, state: SDFGState, iv: TaskletIV,
-                                plan: UseSitePlan, start, end, stride) -> None:
+                                plan: UseSitePlan, start: symbolic.SymbolicType, end: symbolic.SymbolicType,
+                                stride: symbolic.SymbolicType) -> None:
     """Commit the rewrite :func:`plan_use_site_substitution` validated."""
 
     t = trip_index(loop, start, stride)
@@ -703,15 +712,17 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         if len(branches) < 2 or all(c is not None for c in conds):
             continue  # no else branch -> a path skips the increment -> unsound to hoist
 
-        def branch_increments(br):
-            incs = {}
+        def branch_increments(
+                br: ControlFlowRegion) -> Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
+            incs: Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]] = {}
             for e in br.edges():
                 for lhs, rhs in (e.data.assignments or {}).items():
                     try:
-                        delta = symbolic.simplify(symbolic.pystr_to_symbolic(rhs) - symbolic.pystr_to_symbolic(lhs))
+                        delta = symbolic.simplify(
+                            as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs)))
                     except Exception:
                         continue
-                    if delta.is_number:
+                    if as_basic(delta).is_number:
                         incs.setdefault(lhs, []).append((e, delta))
             return incs
 
@@ -776,7 +787,7 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     return False
 
 
-def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[str]:
+def _consistent_use_side(loop: LoopRegion, iv_edge: Edge[InterstateEdge], sym_name: str) -> Optional[str]:
     """Which side of the IV increment ``iv_edge`` every use of ``sym_name`` runs on.
 
     ``'before'`` (body sees ``norm_iter * step``), ``'after'`` (``norm_iter + 1``), ``'unused'`` (either
@@ -819,7 +830,8 @@ def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[s
     return 'unused'  # no body use -> either offset reproduces the (absent) reads
 
 
-def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name: str):
+def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
+                          sym_name: str) -> Optional[symbolic.SymbolicType]:
     """The value ``sym_name`` holds on ENTRY to ``loop``, or ``None`` if it is not
     locally provable.
 
@@ -832,7 +844,7 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     in_edges = list(parent.in_edges(loop))
     if not in_edges:
         return None
-    vals: dict = {}
+    vals: Dict[symbolic.SymbolicType, None] = {}
     for e in in_edges:
         rhs = (e.data.assignments or {}).get(sym_name)
         if rhs is None:
@@ -844,7 +856,7 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     if len(vals) != 1:
         return None
     (val, ) = vals
-    if loop.loop_variable in (str(s) for s in val.free_symbols):
+    if loop.loop_variable in (str(s) for s in as_basic(val).free_symbols):
         return None  # references the loop variable, which is undefined before the loop
     return val
 
@@ -929,7 +941,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
     return False
 
 
-def staged_iedge_rhs(rhs: str, src_state, sdfg: SDFG):
+def staged_iedge_rhs(rhs: str, src_state: SDFGState, sdfg: SDFG) -> Optional[symbolic.SymbolicType]:
     """The arithmetic an interstate assignment's RHS stands for when it is staged through a
     transient, or ``None`` when ``rhs`` is not such a staging and should be read as written.
 
@@ -1007,7 +1019,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             staged = staged_iedge_rhs(rhs, e.src, sdfg)
             rhs_expr = symbolic.pystr_to_symbolic(rhs) if staged is None else staged
             lhs_sym = symbolic.pystr_to_symbolic(lhs)
-            diff = symbolic.simplify(rhs_expr - lhs_sym)
+            diff = symbolic.simplify(rhs_expr - as_expr(lhs_sym))
         except Exception:
             # ``rhs`` may be a comparison (``StrictGreaterThan`` etc.) or
             # other non-arithmetic expression on which ``-`` raises
@@ -1015,8 +1027,9 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             continue
         # A numeric literal is always admissible; anything else must pass the IV-vs-reduction
         # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
-        if not diff.is_number:
-            if not diff.free_symbols or not step_is_loop_invariant(diff.free_symbols, loop, sdfg, sdfg_free_symbols):
+        if not as_basic(diff).is_number:
+            if not as_basic(diff).free_symbols or not step_is_loop_invariant(
+                    as_basic(diff).free_symbols, loop, sdfg, sdfg_free_symbols):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
@@ -1079,7 +1092,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             return False
 
     # 3. Closed form: with the increment stripped, ``sym`` is ``sym_init``.
-    post_iedge_expr = symbolic.simplify(sym_sym + body_offset * step)
+    post_iedge_expr = symbolic.simplify(as_expr(sym_sym) + body_offset * step)
 
     # 4. Clear the IV iedge first so the substitution does not rewrite it onto itself.
     iv_edge.data.assignments = {}
@@ -1089,7 +1102,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     # 5. Materialize ``sym + trip_count * step`` for later readers (and the next outer iteration) on
     #    the iedge into a spliced ``iv_post`` state; existing exit edges are rerouted from it.
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    post_loop_expr = symbolic.simplify(sym_sym + trip_count * step)
+    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + trip_count * step)
     post_loop_value = symbolic.symstr(post_loop_expr)
 
     # Two-level counter (s126): if the lone unconditional exit edge only assigns ``sym``, compose
@@ -1175,7 +1188,7 @@ class RotationPlan(NamedTuple):
     remat: RematSource | None = None  #: producer to clone, when the carried value is computed
 
 
-def _subset_at(edge, node) -> Optional[subsets.Subset]:
+def _subset_at(edge: MultiConnectorEdge[mm.Memlet], node: nodes.AccessNode) -> Optional[subsets.Subset]:
     """The subset ``edge``'s memlet addresses in ``node``'s container (``node`` is one endpoint).
 
     A memlet names ONE of its two containers in ``data``; the other side lives in ``other_subset``.
@@ -1214,13 +1227,13 @@ def rotation_body_chain(loop: LoopRegion) -> Optional[List[SDFGState]]:
     if any(loop.in_degree(b) > 1 or loop.out_degree(b) > 1 for b in blocks):
         return None
     chain: List[SDFGState] = []
-    seen: Dict[SDFGState, None] = {}
-    cur = loop.start_block
+    seen: Dict[ControlFlowBlock, None] = {}
+    cur: Optional[ControlFlowBlock] = loop.start_block
     while cur is not None:
         if cur in seen:
             return None
         seen[cur] = None
-        chain.append(cur)
+        chain.append(as_state(cur))
         out = loop.out_edges(cur)
         cur = out[0].dst if out else None
     if len(chain) != len(blocks):
@@ -1272,7 +1285,7 @@ def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFG
     return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in value_edges(st.in_edges(n))]
 
 
-def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var) -> bool:
+def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var: symbolic.SymbolicType) -> bool:
     """Whether ``tasklet`` may be EVALUATED A SECOND TIME, on another iteration's inputs.
 
     A clone runs the code again, so anything the original does beyond writing its output connector is
@@ -1308,8 +1321,9 @@ def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop
     return True
 
 
-def staged_write(sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
-                 reader_sub: subsets.Subset):
+def staged_write(
+        sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
+        reader_sub: subsets.Subset) -> Optional[Tuple[int, SDFGState, nodes.AccessNode, MultiConnectorEdge[mm.Memlet]]]:
     """The body write whose value the read of ``reader_node[reader_sub]`` provably sees.
 
     Returns ``(chain index, state, node, edge)`` for that write, or ``None`` when the read cannot be
@@ -1336,8 +1350,9 @@ def staged_write(sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node
     return ssi, sstate, snode, sedge
 
 
-def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var, stride, reader_si: int, reader_node: nodes.AccessNode,
-                 reader_sub: subsets.Subset, depth: int) -> RematSource | None:
+def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var: symbolic.SymbolicType, stride: symbolic.SymbolicType,
+                 reader_si: int, reader_node: nodes.AccessNode, reader_sub: subsets.Subset,
+                 depth: int) -> RematSource | None:
     """The clone chain that recomputes, at ``i - stride``, the value read at ``reader_node``.
 
     Recursive over the producer's own inputs: one the body writes is recomputed in turn rather than
@@ -1388,8 +1403,9 @@ def remat_shifts(source: RematSource) -> int:
     return sum(int(inp.moved) + (remat_shifts(inp.source) if inp.source is not None else 0) for inp in source.inputs)
 
 
-def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var, stride, wsi: int,
-                              write_edge) -> RematSource | None:
+def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var: symbolic.SymbolicType,
+                              stride: symbolic.SymbolicType, wsi: int,
+                              write_edge: MultiConnectorEdge[mm.Memlet]) -> RematSource | None:
     """The producer whose re-evaluation at ``i - stride`` equals the value ``write_edge`` stores.
 
     Disjoint from the shifted-read chase in :func:`plan_rotation` by construction: this requires the
@@ -1420,7 +1436,7 @@ def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, lo
 
 
 def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
-                  stride) -> Optional[RotationPlan]:
+                  stride: symbolic.SymbolicType) -> Optional[RotationPlan]:
     """Validate that ``accum`` is a delay line and enumerate the rewrite. Mutates nothing.
 
     Every ``return None`` below is one of the discriminators listed at the top of this section.
@@ -1493,7 +1509,7 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
         if _body_writes(chain, src_data):
             return None
         shifted = copy.deepcopy(src_subset)
-        shifted.replace({loop_var: loop_var - stride})
+        required(shifted).replace({loop_var: loop_var - stride})
         if str(shifted) == str(src_subset):
             return None  # not actually shifted -> a same-iteration copy, no delay to remove
 
@@ -1595,8 +1611,8 @@ def emit_remat_clone(sdfg: SDFG, st: SDFGState, source: RematSource, hint: str) 
     """
 
     producer = source.producer
-    clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
-                          producer.code.as_string, producer.code.language)
+    clone = nodes.Tasklet(f'{producer.label}_remat', copy.deepcopy(producer.in_connectors),
+                          copy.deepcopy(producer.out_connectors), producer.code.as_string, producer.code.language)
     st.add_node(clone)
     for inp in source.inputs:
         if inp.source is None:
@@ -1717,7 +1733,7 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
                                      'depth a rotation may have (0 disables the pass). Peeling is what makes the '
                                      'shifted read valid on the first iteration.')
 
-    def __init__(self, peel_limit: int = 4):
+    def __init__(self, peel_limit: int = 4) -> None:
         super().__init__()
         self.peel_limit = peel_limit
 
@@ -1727,7 +1743,7 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         if self.peel_limit <= 0:
             return None
         # Fixed point: a multi-stage delay line only reveals its outer stage once the inner one is
@@ -1736,11 +1752,11 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
         budget: Dict[Any, int] = {}
         count = 0
         while True:
-            for node, parent in list(sdfg.all_nodes_recursive()):
+            for node, _parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion) or loop_analysis.loop_jumps(node):
                     continue
                 budget.setdefault(node, self.peel_limit)
-                if try_substitute_rotation(parent, node, sdfg, budget):
+                if try_substitute_rotation(node.parent_graph, node, sdfg, budget):
                     count += 1
                     break  # SDFG mutated -> restart the scan on a fresh node list
             else:

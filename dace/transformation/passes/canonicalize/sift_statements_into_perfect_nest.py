@@ -52,9 +52,12 @@ from dace import SDFG, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
+from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 from dace.transformation.passes.move_if_into_loop import _linear_order
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.optionals import required
 
 
 def _provably_nonempty(loop: LoopRegion) -> bool:
@@ -72,15 +75,15 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
         return False
     s = symbolic.pystr_to_symbolic(stride)
     if s.is_positive:
-        diff = symbolic.simplify(symbolic.pystr_to_symbolic(end) - symbolic.pystr_to_symbolic(init))
+        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(init)))
     elif s.is_negative:
-        diff = symbolic.simplify(symbolic.pystr_to_symbolic(init) - symbolic.pystr_to_symbolic(end))
+        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(init)) - as_expr(symbolic.pystr_to_symbolic(end)))
     else:
         return False
-    return diff.is_nonnegative is True
+    return as_basic(diff).is_nonnegative is True
 
 
-def _last_reached_iterate(loop: LoopRegion):
+def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """The value of the loop variable on the final executed iteration.
 
     ``get_loop_end`` normalizes the raw bound (``i < a -> a-1``, ``i <= a -> a``); with a
@@ -101,10 +104,10 @@ def _last_reached_iterate(loop: LoopRegion):
     # a rational and ``sym2cpp`` prints it without the floor, so the guard below compares against a
     # truncated value and the post-body fires mid-loop. Same hazard documented in
     # ``materialize_loop_exit_symbols``.
-    return symbolic.simplify(init_s + symbolic.int_floor(end_s - init_s, stride_s) * stride_s)
+    return symbolic.simplify(init_s + symbolic.int_floor(as_expr(end_s) - as_expr(init_s), stride_s) * stride_s)
 
 
-def _has_outer_carry(subset, iv: str) -> bool:
+def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
     """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset.
 
     A single-point / range begin or end of the form ``iv`` (offset 0) is per-iteration and
@@ -124,7 +127,7 @@ def _has_outer_carry(subset, iv: str) -> bool:
             # identity misses the dependence and reports the index as independent of the loop.
             e, iv = symbolic.equalize_symbols_across(e, iv_sym)
             if iv in e.free_symbols:
-                if symbolic.simplify(e - iv) != 0:
+                if symbolic.simplify(as_expr(e) - iv) != 0:
                     return True
     return False
 
@@ -283,7 +286,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         inner.add_edge(pre_if, old_start, InterstateEdge())
     if post_if is not None:
         inner.add_node(post_if, ensure_unique_name=True)
-        inner.add_edge(old_sink, post_if, InterstateEdge())
+        inner.add_edge(required(old_sink), post_if, InterstateEdge())
     if pre_if is not None:
         # Make the prepended pre-guard the explicit inner-body start (the getter otherwise
         # prefers a unique source node, and a stale start corrupts dominator analysis).

@@ -119,23 +119,37 @@ re-fuses whatever should recombine.
 import copy
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from types import ModuleType
+from typing import Any, Iterable, List, Sequence, Type, Union
 
-from dace import SDFG, Memlet, dtypes, properties, symbolic
+from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
+
+#: An edge of a body state that carries a value.
+ValueEdge = MultiConnectorEdge[Memlet]
+#: ``(state, access node, edge)`` of one input read in an output's producer cone.
+ConeRead = tuple[SDFGState, nodes.AccessNode, ValueEdge]
+#: What the statement analysis walks: a nested SDFG's body, or a loop that is split in place.
+Body = Union[SDFG, LoopRegion]
+#: ``name -> [(state, node)]`` for every data node of a body.
+StageIndex = dict[str, list[tuple[SDFGState, nodes.AccessNode]]]
+#: Per-output cone reads, memoized across the checks of one split.
+Cone = dict[str, list[ConeRead]]
 
 
-def states_touch_view(states, arrays: dict) -> bool:
+def states_touch_view(states: Iterable[SDFGState], arrays: dict[str, dt.Data]) -> bool:
     """Whether any state names a ``View``: it owns no storage, so a clone cut from its binding
     edge is unbound, and the split refuses rather than try to carry the binding."""
     return any(isinstance(arrays[n.data], dt.View) for st in states for n in st.data_nodes() if n.data in arrays)
 
 
-def neighbours_touch_view(state: SDFGState, node) -> bool:
+def neighbours_touch_view(state: SDFGState, node: nodes.Node) -> bool:
     """Whether an AccessNode adjacent to ``node`` is a ``View`` (the split rewires those edges)."""
     arrays = state.sdfg.arrays
     return any(
@@ -143,7 +157,7 @@ def neighbours_touch_view(state: SDFGState, node) -> bool:
         if isinstance(n, nodes.AccessNode) and n.data in arrays)
 
 
-def is_opaque_code(node, sdfg: SDFG) -> bool:
+def is_opaque_code(node: nodes.Node, sdfg: SDFG) -> bool:
     """Whether ``node``'s effects are invisible to statement splitting.
 
     Splitting clones a body once per independent output group, so anything a node does
@@ -183,7 +197,7 @@ def _has_interstate_assignments(sdfg: SDFG) -> bool:
     return any(e.data.assignments for e in sdfg.all_interstate_edges())
 
 
-def value_edges(edges) -> list:
+def value_edges(edges: Iterable[MultiConnectorEdge[Memlet]]) -> list[ValueEdge]:
     """The edges of ``edges`` that carry a VALUE, dropping the empty-memlet ordering edges.
 
     :param edges: The edges to filter.
@@ -191,7 +205,7 @@ def value_edges(edges) -> list:
     return [e for e in edges if e.data is not None and not e.data.is_empty()]
 
 
-def producer_edges(state, node) -> list:
+def producer_edges(state: SDFGState, node: nodes.Node) -> list[ValueEdge]:
     """``node``'s in-edges that carry a VALUE, dropping the empty-memlet ordering edges.
 
     An empty memlet constrains execution ORDER, not dataflow, so it must not make one statement
@@ -214,7 +228,7 @@ def producer_edges(state, node) -> list:
     return value_edges(state.in_edges(node))
 
 
-def body_compute_states(loop: LoopRegion) -> list | None:
+def body_compute_states(loop: LoopRegion) -> list[SDFGState] | None:
     """The loop body's non-empty states, or ``None`` when the body is not a plain chain of them.
 
     One state is what the frontend leaves for a simple body. A body that hands a value on through a
@@ -236,7 +250,7 @@ def body_compute_states(loop: LoopRegion) -> list | None:
     return states or None
 
 
-def body_stage_index(body, index: dict) -> dict[str, list]:
+def body_stage_index(body: Body, index: StageIndex) -> StageIndex:
     """``name -> [(state, node)]`` for every data node in ``body``, in walk order, filled into
     ``index`` on first use.
 
@@ -251,7 +265,11 @@ def body_stage_index(body, index: dict) -> dict[str, list]:
     return index
 
 
-def staged_producer_edges(body, state, node, input_names: dict[str, None], stage_index=None) -> list:
+def staged_producer_edges(body: Body,
+                          state: SDFGState,
+                          node: nodes.Node,
+                          input_names: dict[str, None],
+                          stage_index: StageIndex | None = None) -> list[tuple[SDFGState, ValueEdge]]:
     """``(state, edge)`` for every VALUE producer of ``node``, following one staged transient back
     into the state that wrote it.
 
@@ -276,7 +294,13 @@ def staged_producer_edges(body, state, node, input_names: dict[str, None], stage
     return [(st, e) for st, n in sites.get(node.data, ()) if st is not state for e in producer_edges(st, n)]
 
 
-def local_transient_index(sdfg: SDFG) -> tuple:
+#: ``(per-state names, states per name, always-outside, per-loop condition names, loop conditions per
+#: name, candidate positions, candidates no state or loop condition names)``.
+LocalTransientIndex = tuple[dict[int, dict[str, None]], Counter[str], dict[str, None], dict[int, dict[str, None]],
+                            Counter[str], dict[str, int], list[str]]
+
+
+def local_transient_index(sdfg: SDFG) -> LocalTransientIndex:
     """One walk of ``sdfg`` answering :func:`loop_local_transients` for every loop it contains.
 
     "Observed outside THIS loop" is a whole-SDFG question with a per-loop hole in it, so the walk
@@ -289,7 +313,7 @@ def local_transient_index(sdfg: SDFG) -> tuple:
               loop conditions per name, candidate positions, candidates no state or loop condition names)``.
     """
     state_names: dict[int, dict[str, None]] = {}
-    in_states: Counter = Counter()
+    in_states: Counter[str] = Counter()
     for state in sdfg.all_states():
         names = dict.fromkeys(n.data for n in state.data_nodes())
         state_names[id(state)] = names
@@ -298,7 +322,7 @@ def local_transient_index(sdfg: SDFG) -> tuple:
     for e in sdfg.all_interstate_edges():
         always.update(dict.fromkeys(s for s in e.data.free_symbols if s in sdfg.arrays))
     cond_names: dict[int, dict[str, None]] = {}
-    in_conditions: Counter = Counter()
+    in_conditions: Counter[str] = Counter()
     for cfr in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(cfr, ConditionalBlock):
             for cond, _ in cfr.branches:
@@ -314,7 +338,7 @@ def local_transient_index(sdfg: SDFG) -> tuple:
     return state_names, in_states, always, cond_names, in_conditions, position, unnamed
 
 
-def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = None) -> dict[str, None]:
+def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: LocalTransientIndex | None = None) -> dict[str, None]:
     """``sdfg``'s transients that nothing outside ``loop`` observes -- the loop's own temporaries.
 
     Read as a value by anything outside (an access node, an interstate-edge or region condition
@@ -327,7 +351,7 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = No
                   already holds one. ``None`` builds it here, per loop.
     """
     state_names, in_states, _, cond_names, in_conditions, position, unnamed = index or local_transient_index(sdfg)
-    inner: Counter = Counter()
+    inner: Counter[str] = Counter()
     for state in loop.all_states():
         names = state_names.get(id(state))
         if names is not None:
@@ -347,10 +371,10 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = No
 class LoopSplitIndex:
     """The whole-SDFG indices the loop split reads, each built on first use for an unmutated ``sdfg``."""
     sdfg: SDFG
-    use: tuple | None = None
-    local: tuple | None = None
+    use: tuple[dict[str, set[int]], set[str]] | None = None
+    local: LocalTransientIndex | None = None
 
-    def use_sites(self) -> tuple:
+    def use_sites(self) -> tuple[dict[str, set[int]], set[str]]:
         if self.use is None:
             self.use = loop_analysis.symbol_use_sites(self.sdfg)
         return self.use
@@ -417,7 +441,7 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     return reads
 
 
-def rmw_confined(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]) -> bool:
+def rmw_confined(body: Body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]) -> bool:
     """Whether every read-modify-write array is read ONLY by the group that writes it.
 
     The split clones the whole body once per group and the clones are unordered siblings, so an
@@ -460,14 +484,14 @@ def rmw_stays_in_writer_group(node: nodes.NestedSDFG, rmw: list[str], groups: li
     return rmw_confined(node.sdfg, dict.fromkeys(node.in_connectors), rmw, groups)
 
 
-def edge_subset(edge, name: str):
+def edge_subset(edge: ValueEdge, name: str) -> subsets.Subset | None:
     """The subset ``edge`` touches of array ``name``, whichever end of the memlet carries it."""
     if edge.data is None or edge.data.is_empty():
         return None
     return edge.data.subset if edge.data.data == name else edge.data.other_subset
 
 
-def subset_point(subset) -> list | None:
+def subset_point(subset: subsets.Subset | None) -> list[symbolic.SymbolicType] | None:
     """The single element ``subset`` addresses, one expression per dimension, else ``None``.
 
     Only a point access has a direction to compare: a slice covers several iterations at once and
@@ -485,7 +509,7 @@ def subset_point(subset) -> list | None:
     return point
 
 
-def access_offset(read_subset, write_subset) -> int | None:
+def access_offset(read_subset: subsets.Subset | None, write_subset: subsets.Subset | None) -> int | None:
     """Sign of ``read - write`` as a constant iteration offset, or ``None`` when undecidable.
 
     Positive means the read is AHEAD of the write -- it wants an element a LATER iteration
@@ -513,7 +537,7 @@ def access_offset(read_subset, write_subset) -> int | None:
     return 0
 
 
-def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> list:
+def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> list[ConeRead]:
     """``(state, access_node, edge)`` for every input array read in ``out_name``'s producer cone.
 
     :func:`output_input_reads` with the edges kept, because the SUBSET on the edge is what decides
@@ -542,7 +566,7 @@ def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -
     return found
 
 
-def read_cone(body, out_name: str, in_names: dict[str, None], memo=None) -> list:
+def read_cone(body: Body, out_name: str, in_names: dict[str, None], memo: Cone | None = None) -> list[ConeRead]:
     """:func:`output_read_edges` memoised per output name.
 
     The cone depends on ``(body, out_name, in_names)`` only, yet the split analyses ask for it once
@@ -557,9 +581,9 @@ def read_cone(body, out_name: str, in_names: dict[str, None], memo=None) -> list
     return memo[out_name]
 
 
-def write_subsets(body, name: str) -> list:
+def write_subsets(body: Body, name: str) -> list[subsets.Subset]:
     """Every subset of ``name`` that ``body`` STORES to."""
-    out = []
+    out: list[subsets.Subset] = []
     for state in body.all_states():
         for node in state.data_nodes():
             if node.data != name:
@@ -652,7 +676,7 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
             return
 
 
-def rmw_analyzable(body) -> bool:
+def rmw_analyzable(body: Body) -> bool:
     """Whether the cross-group read/write picture of ``body`` can be read off its dataflow at all.
 
     Shared precondition of both split policies: a branch guard or an index-symbol assignment is
@@ -662,7 +686,7 @@ def rmw_analyzable(body) -> bool:
     return not _has_conditional(body) and not _has_interstate_assignments(body)
 
 
-def iteration_distinct(subsets, loop_var: str) -> bool:
+def iteration_distinct(subsets: Sequence[subsets.Subset | None], loop_var: str) -> bool:
     """Whether ``subsets`` name a DIFFERENT element on every iteration of ``loop_var``.
 
     A store the loop variable does not reach is the same element every iteration -- a value the
@@ -676,7 +700,7 @@ def iteration_distinct(subsets, loop_var: str) -> bool:
     return bool(subsets) and all(sub is not None and loop_var in (str(s) for s in sub.free_symbols) for sub in subsets)
 
 
-def carries_across_iterations(body, name: str, in_names: dict[str, None], cone=None) -> bool:
+def carries_across_iterations(body: LoopRegion, name: str, in_names: dict[str, None], cone: Cone | None = None) -> bool:
     """Whether ``name``'s read-modify-write actually crosses iterations.
 
     A name the loop both reads and writes is not automatically a recurrence: ``a[i] = a[i] + x[i]``
@@ -700,7 +724,7 @@ def carries_across_iterations(body, name: str, in_names: dict[str, None], cone=N
     return False
 
 
-def sees_written_value(states: list, name: str, state, node) -> bool:
+def sees_written_value(states: list[SDFGState], name: str, state: SDFGState, node: nodes.AccessNode) -> bool:
     """Whether the read at ``node`` sees ``name``'s store from the SAME iteration.
 
     Within one state the answer is dataflow: an access node with producers is the post-write value,
@@ -721,7 +745,11 @@ def sees_written_value(states: list, name: str, state, node) -> bool:
     return any(producer_edges(st, n) for st in before for n in st.data_nodes() if n.data == name)
 
 
-def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]], cone=None):
+def split_order(body: LoopRegion,
+                in_names: dict[str, None],
+                rmw: list[str],
+                groups: list[dict[str, None]],
+                cone: Cone | None = None) -> list[dict[str, None]] | None:
     """``groups`` re-ordered so the split is legal, or ``None`` when no order is.
 
     :func:`rmw_confined` decides whether the groups can run as UNORDERED siblings, which needs every
@@ -789,7 +817,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
                     # Same element, same iteration: whether the read already sees the write decides.
                     first = writer if sees_written_value(states, name, state, node) else reader
                 else:
-                    first = reader if offset > 0 else writer
+                    first = reader if required(offset) > 0 else writer
                 after[first][writer if first == reader else reader] = None
                 constrained = True
     if not constrained:
@@ -822,11 +850,11 @@ def topological_group_order(after: list[dict[int, None]]) -> list[int] | None:
     return order if len(order) == len(after) else None
 
 
-def merge_carried_groups(body,
+def merge_carried_groups(body: LoopRegion,
                          groups: list[dict[str, None]],
                          rmw: list[str],
                          in_names: dict[str, None],
-                         cone=None) -> list[dict[str, None]]:
+                         cone: Cone | None = None) -> list[dict[str, None]]:
     """``groups`` with the producer of a CARRIED value and everything that reads it merged into one.
 
     A value the loop carries -- ``s`` in TSVC ``s2251``, written every iteration at the same element
@@ -862,7 +890,7 @@ def merge_carried_groups(body,
     return merged
 
 
-def independent_groups(body, out_names: list[str], in_names: dict[str, None]) -> list[dict[str, None]]:
+def independent_groups(body: Body, out_names: list[str], in_names: dict[str, None]) -> list[dict[str, None]]:
     """Partition ``out_names`` so two outputs share a group iff their producer cones overlap.
 
     :param body: The body to walk (see :func:`rmw_confined`).
@@ -872,7 +900,7 @@ def independent_groups(body, out_names: list[str], in_names: dict[str, None]) ->
     dep = {oc: _output_dependency(body, oc, in_names) for oc in out_names}
     parent = {oc: oc for oc in out_names}
 
-    def find(x):
+    def find(x: str) -> str:
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -930,8 +958,8 @@ class SplitStatements(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         count = 0
@@ -966,7 +994,7 @@ class SplitStatements(ppl.Pass):
         return count
 
     @staticmethod
-    def _independent_output_groups(state, node: nodes.NestedSDFG):
+    def _independent_output_groups(state: SDFGState, node: nodes.NestedSDFG) -> list[dict[str, None]] | None:
         """Partition ``node``'s output connectors into independent groups, or ``None`` to refuse.
 
         A STRAIGHT-LINE body qualifies like a conditional / gather-scatter one: the guard and the
@@ -998,12 +1026,12 @@ class SplitStatements(ppl.Pass):
 
     @staticmethod
     def _split(parent_sdfg: SDFG,
-               state,
+               state: SDFGState,
                node: nodes.NestedSDFG,
-               groups,
-               simplify_cls,
+               groups: list[dict[str, None]],
+               simplify_cls: Type[ppl.Pass],
                rmw_read_is_dead: bool = False,
-               cut_other_stores: bool = False):
+               cut_other_stores: bool = False) -> None:
         """Clone ``node`` once per group, prune each, rewire, drop original.
 
         :param rmw_read_is_dead: The caller established (via :func:`rmw_stays_in_writer_group`) that a
@@ -1050,7 +1078,7 @@ class SplitStatements(ppl.Pass):
             clone = state.add_nested_sdfg(clone_sdfg,
                                           inputs=dict.fromkeys(kept_in),
                                           outputs=dict.fromkeys(sorted(grp)),
-                                          symbol_mapping=dict(node.symbol_mapping))
+                                          symbol_mapping=copy.deepcopy(node.symbol_mapping))
             for e in in_edges:
                 if e.dst_conn is not None and e.dst_conn not in kept_in:
                     continue
@@ -1104,7 +1132,9 @@ class SplitStatements(ppl.Pass):
         return count
 
     @staticmethod
-    def _split_one_map(cfg, state, entry, simplify_cls, helpers, inline_cls, subgraph_cls) -> bool:
+    def _split_one_map(cfg: ControlFlowRegion, state: SDFGState, entry: nodes.MapEntry, simplify_cls: Type[ppl.Pass],
+                       helpers: ModuleType, inline_cls: Type[transformation.TransformationBase],
+                       subgraph_cls: Type[SubgraphView[Any, Any]]) -> bool:
         """Split one straight-line multi-output map into one FLAT map per output; return whether it fired.
 
         Nest the WHOLE scope (entry..exit) into a NestedSDFG, clone it per output (``_split`` duplicates a
@@ -1208,7 +1238,8 @@ class SplitStatements(ppl.Pass):
         return count
 
     @staticmethod
-    def loop_output_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex):
+    def loop_output_groups(loop: LoopRegion, sdfg: SDFG,
+                           index: LoopSplitIndex) -> tuple[list[dict[str, None]], bool] | None:
         """``(groups, ordered)`` for the loop, or ``None`` to refuse -- computed WITHOUT touching it.
 
         ``ordered`` says the clones must run one after the other, in the order ``groups`` gives,
@@ -1297,11 +1328,11 @@ class SplitStatements(ppl.Pass):
         return None if ordered is None else (ordered, True)
 
     @staticmethod
-    def _minimal_loops(body,
+    def _minimal_loops(body: LoopRegion,
                        groups: list[dict[str, None]],
                        rmw: list[str],
                        in_names: dict[str, None],
-                       cone=None) -> list[dict[str, None]] | None:
+                       cone: Cone | None = None) -> list[dict[str, None]] | None:
         """Coalesce the output groups into two loops: CARRIED and FREE.
 
         The split peels data-parallel statements out of a recurrence; finer splits only add sweeps
@@ -1325,8 +1356,10 @@ class SplitStatements(ppl.Pass):
         return [carried, free]
 
     @staticmethod
-    def _split_one_loop(sdfg: SDFG, loop: LoopRegion, groups, ordered: bool, simplify_cls, helpers, inline_cls,
-                        subgraph_cls) -> bool:
+    def _split_one_loop(sdfg: SDFG, loop: LoopRegion, groups: list[dict[str, None]], ordered: bool,
+                        simplify_cls: Type[ppl.Pass], helpers: ModuleType,
+                        inline_cls: Type[transformation.TransformationBase],
+                        subgraph_cls: Type[SubgraphView[Any, Any]]) -> bool:
         """Outline ``loop``, clone it per group, inline the clones back; return whether it fired.
 
         ``nest_sdfg_subgraph`` moves the loop's own temporaries INSIDE the nest (they are its
@@ -1365,7 +1398,8 @@ class SplitStatements(ppl.Pass):
         return True
 
     @staticmethod
-    def _split_ordered(state, node: nodes.NestedSDFG, groups, simplify_cls):
+    def _split_ordered(state: SDFGState, node: nodes.NestedSDFG, groups: list[dict[str, None]],
+                       simplify_cls: Type[ppl.Pass]) -> list[nodes.NestedSDFG] | None:
         """Clone ``node`` once per group into CONSECUTIVE states; the clones, or ``None`` to refuse.
 
         :meth:`_split` puts every clone in ONE state, where they are unordered siblings -- which is
@@ -1434,7 +1468,7 @@ class SplitStatements(ppl.Pass):
             clone = target.add_nested_sdfg(clone_sdfg,
                                            inputs=dict.fromkeys(kept_in),
                                            outputs=dict.fromkeys(sorted(grp)),
-                                           symbol_mapping=dict(node.symbol_mapping))
+                                           symbol_mapping=copy.deepcopy(node.symbol_mapping))
             for e in in_edges:
                 if e.dst_conn not in kept_in:
                     continue

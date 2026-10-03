@@ -2,7 +2,7 @@
 """The shuffle registry: user-defined value-permutation sigma (forward + inverse expressions), minting sympy Function classes and C++ lowerings for codegen."""
 import ast
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import sympy
 
@@ -63,7 +63,7 @@ def _symbol_params(*exprs: str) -> Tuple[str, ...]:
 
 def _make_function_class(cname: str, expr: str, params: Tuple[str, ...]) -> type:
     """Mint a ``sympy.Function`` subclass ``cname`` printing as ``cname(i, *params)``; folds constant-index calls."""
-    fold = None
+    fold: Optional[Callable[[int], int]] = None
     if not params:
         # Fold via a restricted eval on integer indices (expression uses only ``i``).
         code = compile(expr, f"<shuffle:{cname}>", "eval")

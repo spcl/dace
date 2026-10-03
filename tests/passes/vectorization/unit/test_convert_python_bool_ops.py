@@ -47,16 +47,14 @@ def test_detect_binop_or():
     t = _tasklet(["_c_0", "_c_1"], "_o", "_o = (_c_0 or _c_1)")
     res = ConvertTaskletsToTileOps()._detect_binop(t)
     assert res is not None
-    out_conn, a_conn, b_conn, op = res
-    assert op == "||"
+    assert res.op == "||"
 
 
 def test_detect_binop_and():
     t = _tasklet(["_c_0", "_c_1"], "_o", "_o = (_c_0 and _c_1)")
     res = ConvertTaskletsToTileOps()._detect_binop(t)
     assert res is not None
-    out_conn, a_conn, b_conn, op = res
-    assert op == "&&"
+    assert res.op == "&&"
 
 
 @pytest.mark.parametrize("code", ["_o = not _c_0", "_o = (not _c_0)"])

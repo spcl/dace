@@ -20,7 +20,7 @@ Downstream chain: ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``
 """
 import copy
 import re
-from typing import Any
+from typing import Any, List, Type, Union
 
 import dace
 from dace import data as dd
@@ -45,6 +45,7 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
                                                                         classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
@@ -59,7 +60,7 @@ def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, A
 def _is_single_element(size: symbolic.SymbolicType | int) -> bool:
     # True iff ``size`` is provably one element.
     try:
-        return int(size) == 1
+        return int(as_expr(size)) == 1
     except (TypeError, ValueError):
         return False
 
@@ -166,8 +167,8 @@ class WidenAccesses(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:
@@ -227,7 +228,7 @@ class WidenAccesses(ppl.Pass):
         if sub is None:
             return None
         try:
-            ranges = list(sub.ranges)
+            ranges = list(as_range(sub).ranges)
         except Exception:  # noqa: BLE001
             return None
         # Per-dim classification; skip GATHER dims (begin is an array subscript).
@@ -252,7 +253,7 @@ class WidenAccesses(ppl.Pass):
             if not is_single:
                 continue
             try:
-                beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
+                beg_syms = as_basic(dace.symbolic.SymExpr(str(beg))).free_symbols
             except Exception:  # noqa: BLE001
                 beg_syms = set()
             dominating_k = None
@@ -285,11 +286,11 @@ class WidenAccesses(ppl.Pass):
         # fresh ``symbol(name)`` carries different sympy assumptions / dtype, so ``subs`` and
         # ``in free_symbols`` answer against the wrong object and the stride silently reads as
         # "not affine" (see the symbol-identity rule in dace/symbolic.py).
-        iv = next((sym for sym in beg.free_symbols if str(sym) == iter_var), None)
+        iv = next((sym for sym in as_basic(beg).free_symbols if str(sym) == iter_var), None)
         if iv is None:
             return None
-        step = dace.symbolic.simplify(beg.subs(iv, iv + 1) - beg)
-        if any(str(sym) == iter_var for sym in step.free_symbols) or step.is_negative:
+        step = dace.symbolic.simplify(beg.subs(iv, as_expr(iv) + 1) - beg)
+        if any(str(sym) == iter_var for sym in as_basic(step).free_symbols) or as_basic(step).is_negative:
             return None
         return step
 
@@ -702,7 +703,7 @@ class WidenAccesses(ppl.Pass):
         if other.data in to_widen:
             return True  # the other endpoint is itself being widened to a tile
         try:
-            return int(other_desc.total_size) != 1
+            return int(as_expr(other_desc.total_size)) != 1
         except (TypeError, ValueError):
             return True
 

@@ -89,11 +89,11 @@ A no-op when the body is a single block, when a body edge carries an assignment
 (a cross-loop induction variable such as TSVC ``s126``'s ``k``, which cloning
 the loop would increment once per clone), or when the groups do not separate.
 """
-from typing import Any
+from typing import Any, List, Type, Union
 
 from dace import SDFG, properties
 from dace.config import Config
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups, _rw_subsets
@@ -170,7 +170,7 @@ def eliminate_trivial_loops(sdfg: SDFG, verdicts: dict[LoopHeader, bool]) -> int
     return applied
 
 
-def level_parallel(blocks: list, loop_var: str | None, arrays: dict[str, Any]) -> bool:
+def level_parallel(blocks: list[ControlFlowBlock], loop_var: str | None, arrays: dict[str, Any]) -> bool:
     """Whether ``loop_var`` carries no dependence for ``blocks`` on their own.
 
     A container the blocks WRITE is dependence-free across iterations of ``loop_var`` while every
@@ -205,7 +205,7 @@ def level_parallel(blocks: list, loop_var: str | None, arrays: dict[str, Any]) -
                if name in arrays and not arrays[name].transient)
 
 
-def parallel_level_diagnostic(loop: LoopRegion, groups: list[list]) -> tuple[int, int]:
+def parallel_level_diagnostic(loop: LoopRegion, groups: list[list[ControlFlowBlock]]) -> tuple[int, int]:
     """``(fused, distributed)`` parallel levels at ``loop``'s own level, for the split ``groups``.
 
     A DIAGNOSTIC, never a gate. Fused, the parent level is parallel only where it is parallel for
@@ -223,7 +223,7 @@ def parallel_level_diagnostic(loop: LoopRegion, groups: list[list]) -> tuple[int
     return fused, sum(int(level_parallel(group, loop_var, arrays)) for group in groups)
 
 
-def distribute_loops(sdfg: SDFG, diagnostics: list | None = None) -> int:
+def distribute_loops(sdfg: SDFG, diagnostics: list[tuple[str, int, int]] | None = None) -> int:
     """Distribute every loop of ``sdfg`` whose body splits into more than one dependence component.
 
     :param sdfg: The SDFG to transform in place.
@@ -278,7 +278,7 @@ class PerfectLoopNesting(ppl.Pass):
                                  desc="Target policy: 'gpu' also sinks outer statements into the inner "
                                  "loop to expose the outer axis; 'cpu' distributes only.")
 
-    def __init__(self, target: str = 'cpu'):
+    def __init__(self, target: str = 'cpu') -> None:
         super().__init__()
         self.target = target
 
@@ -288,8 +288,8 @@ class PerfectLoopNesting(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)

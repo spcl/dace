@@ -35,6 +35,7 @@ from dace.transformation.passes.analysis import scopes
 from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
+from dace.sdfg.narrowing import as_expr, as_range
 
 
 class _RenameLoadName(ast.NodeTransformer):
@@ -147,9 +148,9 @@ def keeps_absolute_index(lo: Union[int, sympy.Basic], offset: Union[int, sympy.B
     A constant ``lo`` inside the inner extent is relative even when it equals the window start
     (``A[4, 1:3]`` written at inner ``[0, 1]``)."""
     lo_expr = sympy.sympify(lo)
-    if lo_expr - sympy.sympify(offset) != 0:
+    if as_expr(lo_expr) - as_expr(sympy.sympify(offset)) != 0:
         return False
-    in_extent = (lo_expr.is_Integer and lo_expr >= 0 and dim < len(inner_shape) and bool(
+    in_extent = (lo_expr.is_Integer and as_expr(lo_expr) >= 0 and dim < len(inner_shape) and bool(
         (sympy.sympify(inner_shape[dim]) - lo_expr).is_positive))
     return not in_extent
 
@@ -159,7 +160,8 @@ def widened_range(lo: sympy.Basic, hi: sympy.Basic, stp: sympy.Basic, offset: sy
     """An inner range of a window starting at ``offset`` with outer step ``step``, in outer coordinates: inner
     position ``p`` is outer ``offset + p * step``."""
     # a single element keeps its own step: there is nothing to stride over
-    return (offset + lo * step, offset + hi * step, stp if lo == hi else stp * step)
+    return (offset + as_expr(lo) * as_expr(step), offset + as_expr(hi) * as_expr(step),
+            stp if lo == hi else as_expr(stp) * as_expr(step))
 
 
 def outer_indices(indices: Sequence[sympy.Basic], offset_dims: List[sympy.Basic], collapsed_dims: List[bool],
@@ -168,12 +170,12 @@ def outer_indices(indices: Sequence[sympy.Basic], offset_dims: List[sympy.Basic]
     memlet begins: a full-rank subscript maps each axis, a rank-reduced one reads collapsed axes at their offset."""
     if len(indices) == len(offset_dims):
         return [
-            index if keeps_absolute_index(index, offset, inner_shape, dim) else offset + index * step
+            index if keeps_absolute_index(index, offset, inner_shape, dim) else offset + as_expr(index) * as_expr(step)
             for dim, (index, offset, step) in enumerate(zip(indices, offset_dims, step_dims))
         ]
     surviving = iter(indices)
     return [
-        offset if collapsed else offset + next(surviving) * step
+        offset if collapsed else offset + as_expr(next(surviving)) * as_expr(step)
         for offset, collapsed, step in zip(offset_dims, collapsed_dims, step_dims)
     ]
 
@@ -280,7 +282,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
             if memlet.data != inner_name:
                 widen_far_side_of_copy(state, edge, inner_name, inner_shape, outer_ranges)
                 continue
-            new_range_list, inner_is_full_rank = outer_ranges(memlet.subset.ranges)
+            new_range_list, inner_is_full_rank = outer_ranges(as_range(memlet.subset).ranges)
             if not inner_is_full_rank:
                 remap_reduce_axes(edge.dst, collapsed_dims)
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
@@ -693,7 +695,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             # inner [N,N]).
             inner_desc = inner_sdfg.arrays[in_conn]
             collapsed_dims = []
-            for (b, e, s) in iedge.data.subset.ranges:
+            for (b, e, s) in as_range(iedge.data.subset).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:
@@ -713,7 +715,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             inner_desc = inner_sdfg.arrays[out_conn]
             collapsed_dims = []
-            for (b, e, s) in oedge.data.subset.ranges:
+            for (b, e, s) in as_range(oedge.data.subset).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:

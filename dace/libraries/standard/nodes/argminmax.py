@@ -50,6 +50,9 @@ from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 def _flat_size(shape) -> int:
@@ -246,7 +249,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 @dace.library.expansion
 class ExpandArgMinPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMin` -- multi-state min/min pipeline."""
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
@@ -256,7 +259,7 @@ class ExpandArgMinPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandArgMaxPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMax` -- multi-state max/min pipeline."""
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

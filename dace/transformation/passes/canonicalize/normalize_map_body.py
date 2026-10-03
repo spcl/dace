@@ -17,7 +17,7 @@ all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 """
 import copy
 from collections import Counter
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from dace import SDFG, data, nodes, properties
 from dace.sdfg import SDFGState
@@ -26,6 +26,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
+from dace.optionals import required
 
 
 def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry,
@@ -54,7 +55,7 @@ def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
                if not isinstance(n, (nodes.MapEntry, nodes.MapExit)))
 
 
-def _uniquify_data_against(inner: SDFG, taken_data) -> dict:
+def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> Dict[str, str]:
     """Rename ``inner``'s data descriptors that collide with ``taken_data`` to
     fresh names, so ``inner`` can be spliced into another SDFG without a clash.
 
@@ -113,7 +114,7 @@ def shared_carrier_connectors(state: SDFGState, keep: nodes.NestedSDFG,
         carrier, name = e.src, e.data.data
         if elsewhere is None:
             elsewhere = Counter(n.data for st in state.sdfg.states() for n in st.data_nodes())
-        if elsewhere[name] != 1 or not state.sdfg.arrays[name].transient:
+        if elsewhere[name] != 1 or not required(state.sdfg.arrays[required(name)]).transient:
             return None  # something else observes it: cannot be made internal
         if any(oe.dst is not drop for oe in state.out_edges(carrier)):
             return None
@@ -214,7 +215,7 @@ class NormalizeMapBody(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         merged = 0
         # One topological order per state and run: a state can hold many map entries, and each used
         # to sort the whole state again. A merge rewires its state, so that state's order is dropped.

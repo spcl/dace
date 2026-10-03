@@ -24,6 +24,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     map_body_nodes,
 )
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
+from dace.optionals import required
 
 
 @properties.make_properties
@@ -162,7 +163,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                 continue
             # Deliberately ``all_nodes_between``: a body ending in a write-only scratch scalar comes back empty
             # and stays un-nested, since the widener cannot lower it yet; RestoreUntiledMapStride fixes the step.
-            body_nodes = OrderedSet(node for node in g.all_nodes_between(n, g.exit_node(n))
+            body_nodes = OrderedSet(node for node in g.all_nodes_between(n, required(g.exit_node(n)))
                                     if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)))
             if not body_nodes:
                 continue

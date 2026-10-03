@@ -19,7 +19,7 @@ from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import Callable, List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
     pass
@@ -108,7 +108,7 @@ class Property(Generic[T]):
             self,
             getter=None,
             setter=None,
-            dtype: Type[T] = None,
+            dtype: Optional[Type[T]] = None,
             default=None,
             from_json=None,
             to_json=None,
@@ -517,7 +517,15 @@ class ListProperty(Property[List[T]]):
     """ Property type for lists.
     """
 
-    def __init__(self, element_type: T, *args, **kwargs):
+    @overload
+    def __init__(self, element_type: Type[T], *args, **kwargs) -> None:
+        ...
+
+    @overload
+    def __init__(self, element_type: Callable[..., T], *args, **kwargs) -> None:
+        ...
+
+    def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
 

@@ -12,9 +12,11 @@ from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import code_text
+from dace.optionals import required
 
 #: Storages whose buffer is a plain allocation this pass may resize.
-RESIZABLE_STORAGE = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
+RESIZABLE_STORAGE: Tuple[dtypes.StorageType,
+                         ...] = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
 
 
 def named_in_text(sdfg: SDFG, name: str) -> bool:
@@ -221,7 +223,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
                     desc.storage = dtypes.StorageType.Register
                 for _, edge in accesses:
                     edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
-                    edge.data.volume = edge.data.subset.num_elements()
+                    edge.data.volume = required(edge.data.subset).num_elements()
                 shrunk += 1
         return shrunk or None
 

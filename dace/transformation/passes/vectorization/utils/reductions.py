@@ -20,6 +20,8 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
+from typing import Dict, Type
+from dace.optionals import required
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -107,14 +109,14 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
 # loop_to_reduce WCR tables but yields this module's short op token
 # rather than a ``lambda a, b: ...`` string (a different representation,
 # not duplicated behaviour). max / min are function calls, not infix.
-_AST_BINOP_TO_OP = {
+_AST_BINOP_TO_OP: Dict[Type[ast.operator], str] = {
     ast.Add: "+",
     ast.Mult: "*",
     ast.BitAnd: "&",
     ast.BitOr: "|",
     ast.BitXor: "^",
 }
-_AST_BOOLOP_TO_OP = {
+_AST_BOOLOP_TO_OP: Dict[Type[ast.boolop], str] = {
     ast.Or: "|",
     ast.And: "&",
 }
@@ -360,8 +362,8 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
             continue
         read_edge, write_edge = reads[acc], writes[acc]
         # ``y[j] = y[j] + e`` is element-wise, not a reduction: the slot must be one fixed element
-        if read_edge.data.subset != write_edge.data.subset or set(
-                map_entry.map.params) & write_edge.data.subset.free_symbols:
+        if read_edge.data.subset != write_edge.data.subset or set(map_entry.map.params) & required(
+                write_edge.data.subset).free_symbols:
             continue
         op = _op_through_body(state, body, read_edge, write_edge)
         if op is None or op not in IDENTITY:

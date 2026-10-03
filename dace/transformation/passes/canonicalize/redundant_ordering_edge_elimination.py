@@ -68,7 +68,7 @@ def candidate_edges(state: SDFGState) -> List[MultiConnectorEdge[Memlet]]:
     return [entry[3] for entry in ranked]
 
 
-def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node, ignored: OrderedSet) -> bool:
+def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node, ignored: OrderedSet[int]) -> bool:
     """Is ``dst`` reachable from ``src`` over the state's edges, ignoring ``ignored``?
 
     Reachability runs over ALL edges, data and ordering alike, because a data edge implies

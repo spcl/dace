@@ -7,6 +7,7 @@ import numpy
 import sympy as sp
 
 from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def average_blocks_touched(
@@ -32,7 +33,8 @@ def average_blocks_touched(
     extents = {}
     for param in params:
         begin, end, step = ranges[param]
-        extent = int_floor(pystr_to_symbolic(end) - pystr_to_symbolic(begin), pystr_to_symbolic(step)) + 1
+        extent = int_floor(
+            as_expr(pystr_to_symbolic(end)) - as_expr(pystr_to_symbolic(begin)), pystr_to_symbolic(step)) + 1
         # an empty level makes total_iters 0, and the per-iteration average below divides by it (-> zoo)
         if extent.is_number and extent <= 0:
             raise ValueError(f"loop parameter {param!r} has range {ranges[param]}, i.e. {extent} iterations; "
@@ -48,7 +50,7 @@ def average_blocks_touched(
 
         strides = sdfg.arrays[arr].strides
         index = [pystr_to_symbolic(rb) for rb, _, _ in subset.ranges]
-        addr = sum(idx * pystr_to_symbolic(st) for idx, st in zip(index, strides))
+        addr = sum(as_expr(idx) * as_expr(pystr_to_symbolic(st)) for idx, st in zip(index, strides))
 
         total_new = sp.Integer(1)  # the first iteration always touches a new block
         for depth, param in enumerate(params):
@@ -59,7 +61,7 @@ def average_blocks_touched(
             # N*(i - i + 1) and the affine guard below rejects an index that is plainly affine.
             eq_addr, psym, step = equalize_symbols_across(addr, psym, step)
             # byte-address movement per step
-            stride = sp.simplify(eq_addr.subs(psym, psym + step) - eq_addr)
+            stride = sp.simplify(as_expr(eq_addr.subs(psym, as_expr(psym) + as_expr(step))) - as_expr(eq_addr))
             # affine in psym <=> the step delta is free of psym; '//' and '%' indices are not, and would
             # leak the loop variable into the "per-iteration" cost, crashing the later float()
             if psym in stride.free_symbols:
@@ -79,7 +81,7 @@ def average_blocks_touched(
         # The per-step guard above only sees one parameter at a time, so a cross-parameter index like
         # A[i*j] clears it twice and still leaks both into the average. Catch it on the result, where
         # the caller's float() would otherwise fail naming neither the array nor the index.
-        leaked = sorted({str(s) for s in average.free_symbols} & set(params))
+        leaked = sorted({str(s) for s in as_basic(average).free_symbols} & set(params))
         if leaked:
             raise ValueError(f"array {arr!r}: index {subset} is not affine in {leaked} together (e.g. a "
                              f"product of two loop parameters), so the per-iteration block average "

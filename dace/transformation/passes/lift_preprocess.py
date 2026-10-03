@@ -13,7 +13,7 @@ side-effect free on a no-match.
 The canonicalization pipeline wires it in ahead of every lift stage. A direct caller that
 builds an SDFG straight from the Python frontend and wants the lifts must run it first.
 """
-from typing import Optional, Set, Type
+from typing import List, Optional, Type, Union
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl
@@ -32,8 +32,8 @@ class LiftPreprocess(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """Normalize every loop body in ``sdfg`` (and nested SDFGs).

@@ -17,14 +17,14 @@ from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState,
-                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow, SymbolResolver,
-                             sdfg_scope_symbols)
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, DataflowGraphView,
+                             SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow,
+                             SymbolResolver, sdfg_scope_symbols)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Dict, Generator, List, Mapping, Optional, Set, Sequence, Tuple, Type, Union
 
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
@@ -1116,7 +1116,7 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     return False
 
 
-def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
+def get_view_node(state: DataflowGraphView, view: nd.AccessNode) -> nd.AccessNode:
     """
     Given a view access node, returns the viewed access node
     if existent, else None
@@ -1213,7 +1213,7 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     return result
 
 
-def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
+def get_view_edge(state: DataflowGraphView, view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
     Given a view access node, returns the
     incoming/outgoing edge which points to the viewed access node.
@@ -1947,13 +1947,13 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
-def view_edge_with_memlet(state: SDFGState, view: nd.AccessNode) -> Optional[MultiConnectorEdge[mm.Memlet]]:
+def view_edge_with_memlet(state: DataflowGraphView, view: nd.AccessNode) -> Optional[MultiConnectorEdge[mm.Memlet]]:
     """The edge binding ``view`` if it carries a memlet; ``None`` for an orphaned view without one."""
     e = get_view_edge(state, view)
     return e if e is not None and e.data else None
 
 
-def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: DataflowGraphView, fsymbols: Set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
     An Array is non-free symbol dependent when its attributes (e.g., shape)
@@ -1982,7 +1982,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
         # is the View.
         n = get_view_node(state, node)
         if n and isinstance(n, nd.AccessNode):
-            d = state.parent.arrays[n.data]
+            d = state.sdfg.arrays[n.data]
             return is_nonfree_sym_dependent(n, d, state, fsymbols)
     elif isinstance(desc, dt.Array):
         if any(str(s) not in fsymbols for s in desc.free_symbols):
@@ -2963,7 +2963,7 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     specialize_scalars(sdfg, {scalar_name: scalar_val})
 
 
-def specialize_scalars(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, str]]):
+def specialize_scalars(sdfg: 'dace.SDFG', values: Mapping[str, Union[float, int, str]]):
     """Bake scalar data containers to constant values, recursively through nested SDFGs.
 
     Folds each scalar's reads into the reading tasklets, drops its edges/connectors and rewrites loop

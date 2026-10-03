@@ -29,20 +29,30 @@ BLAS primitive is defined to compute. Any deviation -- a different coefficient, 
 transposed operand, an extra term -- makes the comparison fail and the lift a clean
 no-op.
 """
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, TypedDict
 
 import sympy
 
 from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_expr, as_map_entry
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
 # producer edges; a well-formed state bottoms out in a handful of steps).
 MAX_RESOLVE_DEPTH = 64
+
+
+class LeafRoles(TypedDict):
+    """Leaves of a resolved expression bucketed by role, as :func:`classify_leaves` returns them."""
+    c: Optional[sympy.Symbol]
+    coeffs: Dict[str, sympy.Symbol]
+    row: Dict[str, sympy.Symbol]
+    col: Dict[str, sympy.Symbol]
+    trans: Optional[str]
 
 
 class ArrayRead(NamedTuple):
@@ -77,12 +87,12 @@ class StateValueResolver:
     as "no match".
     """
 
-    def __init__(self, state: SDFGState):
+    def __init__(self, state: SDFGState) -> None:
         self.state = state
         self.leaves: Dict[sympy.Symbol, ArrayRead] = {}
         self.by_key: Dict[Tuple[str, Tuple[str, ...]], sympy.Symbol] = {}
 
-    def leaf(self, array: str, index) -> sympy.Symbol:
+    def leaf(self, array: str, index: Sequence[symbolic.SymbolicType]) -> sympy.Symbol:
         """A stable leaf symbol for the read ``array[index]`` (same read -> same symbol)."""
         key = (array, tuple(str(symbolic.simplify(i)) for i in index))
         existing = self.by_key.get(key)
@@ -93,7 +103,11 @@ class StateValueResolver:
         self.by_key[key] = sym
         return sym
 
-    def value_at(self, node: nodes.AccessNode, index, depth: int = 0, allow_wcr: bool = False) -> sympy.Basic:
+    def value_at(self,
+                 node: nodes.AccessNode,
+                 index: Sequence[symbolic.SymbolicType],
+                 depth: int = 0,
+                 allow_wcr: bool = False) -> sympy.Basic:
         """Value stored into AccessNode ``node`` at ``index``.
 
         ``allow_wcr`` resolves a WCR write to the TERM being combined (the reduction
@@ -119,7 +133,8 @@ class StateValueResolver:
             return self.value_at(edge.src, subset_indices(edge.data.subset), depth + 1)
         raise ValueError(f"rank-k resolve: unsupported producer {type(edge.src).__name__}")
 
-    def through_map_exit(self, map_exit: nodes.MapExit, out_conn: str, index, depth: int) -> sympy.Basic:
+    def through_map_exit(self, map_exit: nodes.MapExit, out_conn: str, index: Sequence[symbolic.SymbolicType],
+                         depth: int) -> sympy.Basic:
         """Evaluate the tasklet inside ``map_exit``'s scope that produces ``index``,
         binding the map parameters from its write subset."""
         in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else out_conn
@@ -133,7 +148,7 @@ class StateValueResolver:
             entry = self.state.entry_node(edge.src)
             if entry is None:
                 raise ValueError("rank-k resolve: tasklet outside a map scope")
-            binding = unify(subset_indices(edge.data.subset), index, entry.map.params)
+            binding = unify(subset_indices(edge.data.subset), index, as_map_entry(entry).map.params)
             return self.eval_tasklet(edge.src, binding, depth, edge.src_conn)
         raise ValueError("rank-k resolve: no producer into map exit")
 
@@ -202,10 +217,12 @@ def source_access(state: SDFGState, entry: nodes.MapEntry, out_conn: str) -> Opt
     return None
 
 
-def equals(a, b) -> bool:
+def equals(a: object, b: object) -> bool:
     """Symbolic equality of two scalar expressions."""
     try:
-        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(a)) - symbolic.pystr_to_symbolic(str(b))) == 0)
+        return bool(
+            symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(str(a))) - as_expr(symbolic.pystr_to_symbolic(str(b)))) == 0)
     except Exception:
         return False
 
@@ -213,7 +230,7 @@ def equals(a, b) -> bool:
 def expressions_equal(actual: sympy.Basic, expected: sympy.Basic) -> bool:
     """Whether two resolved value expressions are symbolically identical."""
     try:
-        return bool(symbolic.simplify(sympy.expand(actual - expected)) == 0)
+        return bool(symbolic.simplify(sympy.expand(as_expr(actual) - as_expr(expected))) == 0)
     except Exception:
         return False
 
@@ -239,7 +256,7 @@ def loop_extent(loop: LoopRegion) -> Optional[object]:
     end = loop_analysis.get_loop_end(loop)
     if init is None or end is None or not equals(init, 0):
         return None
-    return symbolic.simplify(symbolic.pystr_to_symbolic(str(end)) + 1)
+    return symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(end))) + 1)
 
 
 def single_body_state(region: ControlFlowRegion) -> Optional[SDFGState]:
@@ -277,7 +294,7 @@ def beta_and_inner_loop(outer: LoopRegion) -> Optional[Tuple[SDFGState, LoopRegi
     return scale, inner
 
 
-def reaches(region: ControlFlowRegion, src, dst) -> bool:
+def reaches(region: ControlFlowRegion, src: ControlFlowBlock, dst: ControlFlowBlock) -> bool:
     """Whether ``dst`` is reachable from ``src`` along ``region``'s control flow."""
     seen, stack = dict.fromkeys([id(src)]), [src]
     while stack:
@@ -304,12 +321,12 @@ def sink_node(state: SDFGState) -> Optional[nodes.AccessNode]:
     return sinks[0]
 
 
-def written_arrays(state: SDFGState) -> dict:
+def written_arrays(state: SDFGState) -> Dict[str, None]:
     """Names of arrays the state writes."""
     return dict.fromkeys(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
 
 
-def nontransient_written(state: SDFGState, sdfg: SDFG) -> dict:
+def nontransient_written(state: SDFGState, sdfg: SDFG) -> Dict[str, None]:
     """Names of NON-transient arrays the state writes.
 
     The frontend stages every indexed read through a transient scalar
@@ -350,7 +367,7 @@ def internal_writes_contained(loop: LoopRegion, root: SDFG, c_array: str) -> boo
     return True
 
 
-def triangle_of(subset: subsets.Subset, row: str, n) -> Optional[str]:
+def triangle_of(subset: subsets.Subset, row: str, n: symbolic.SymbolicType) -> Optional[str]:
     """``'L'`` if ``subset`` is the lower-triangle row slice ``[row, 0:row+1]``,
     ``'U'`` if it is the upper-triangle row slice ``[row, row:n]``, else ``None``."""
     if subset is None or len(subset) != 2:
@@ -364,7 +381,7 @@ def triangle_of(subset: subsets.Subset, row: str, n) -> Optional[str]:
     row_sym = symbolic.pystr_to_symbolic(row)
     if equals(cb, 0) and equals(ce, row_sym):
         return "L"
-    if equals(cb, row_sym) and equals(ce, symbolic.pystr_to_symbolic(str(n)) - 1):
+    if equals(cb, row_sym) and equals(ce, as_expr(symbolic.pystr_to_symbolic(str(n))) - 1):
         return "U"
     return None
 
@@ -378,7 +395,7 @@ def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subs
 
 
 def classify_leaves(resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol,
-                    k: Optional[str]) -> Optional[dict]:
+                    k: Optional[str]) -> Optional[LeafRoles]:
     """Bucket a resolved expression's leaves by role.
 
     :returns: a dict with ``'c'`` (the prior ``C[i,j]`` leaf), ``'coeffs'`` (leaves that
@@ -390,7 +407,7 @@ def classify_leaves(resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: s
     """
     i_sym = symbolic.pystr_to_symbolic(i)
     k_sym = symbolic.pystr_to_symbolic(k) if k is not None else None
-    out = {"c": None, "coeffs": {}, "row": {}, "col": {}, "trans": None}
+    out: LeafRoles = {"c": None, "coeffs": {}, "row": {}, "col": {}, "trans": None}
     for sym, read in resolver.leaves.items():
         desc = sdfg.arrays.get(read.array)
         if desc is None:
@@ -435,7 +452,7 @@ def is_single_element(desc: dt.Data) -> bool:
 
 
 def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol,
-                     n) -> Optional[Tuple[str, str]]:
+                     n: symbolic.SymbolicType) -> Optional[Tuple[str, str]]:
     """Match ``C[i, <triangle>] *= beta[0]``.
 
     :returns: ``(beta_array, uplo)``, or ``None``.
@@ -464,7 +481,7 @@ def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: symp
 
 
 def resolve_accumulate(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: str,
-                       n) -> Optional[Tuple[sympy.Basic, dict, str]]:
+                       n: symbolic.SymbolicType) -> Optional[Tuple[sympy.Basic, LeafRoles, str]]:
     """Resolve the inner ``k``-loop body's write to ``C[i, <triangle>]``.
 
     :returns: ``(value_expression, leaf_roles, uplo)``, or ``None`` if the state is not
@@ -490,7 +507,7 @@ def resolve_accumulate(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sy
     return value, roles, uplo
 
 
-def loop_invariant(loop: LoopRegion, names) -> bool:
+def loop_invariant(loop: LoopRegion, names: Iterable[str]) -> bool:
     """Whether none of ``names`` is written anywhere inside ``loop``.
 
     The lift hoists the operands and coefficients out of the nest and hands them to the
@@ -503,7 +520,7 @@ def loop_invariant(loop: LoopRegion, names) -> bool:
     return not any(n in written for n in names)
 
 
-def operand_shape_ok(sdfg: SDFG, array: str, trans: str, n, k) -> bool:
+def operand_shape_ok(sdfg: SDFG, array: str, trans: str, n: symbolic.SymbolicType, k: symbolic.SymbolicType) -> bool:
     """Whether ``array`` is the ``N x K`` (``trans='N'``) / ``K x N`` (``'T'``) operand."""
     desc = sdfg.arrays.get(array)
     if desc is None or len(desc.shape) != 2:
@@ -512,7 +529,7 @@ def operand_shape_ok(sdfg: SDFG, array: str, trans: str, n, k) -> bool:
     return equals(desc.shape[0], want[0]) and equals(desc.shape[1], want[1])
 
 
-def square_output_ok(sdfg: SDFG, array: str, n) -> bool:
+def square_output_ok(sdfg: SDFG, array: str, n: symbolic.SymbolicType) -> bool:
     desc = sdfg.arrays.get(array)
     if desc is None or len(desc.shape) != 2:
         return False

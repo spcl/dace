@@ -15,6 +15,7 @@ from typing import Callable, Dict, Iterable, Iterator, List, Optional
 from dace.ordered import OrderedSet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import (AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState)
+from dace.optionals import required
 
 Replay = Callable[[], Iterable[ControlFlowBlock]]
 
@@ -105,7 +106,7 @@ class ReachSet(OrderedSet):
         return reach
 
     def lay_out(self) -> None:
-        items = list(dict.fromkeys(self.replay()))
+        items = list(dict.fromkeys(required(self.replay)()))
         self.laid_out_items = items
         self.laid_out_map = dict(zip(items, range(len(items))))
         self.replay = None
@@ -135,12 +136,12 @@ class ReachSet(OrderedSet):
         """The members in no particular order, read off the bitset without laying the items out."""
         if self.replay is None:
             return iter(self.laid_out_items)
-        return self.numbering.blocks_at(self.bits)
+        return required(self.numbering).blocks_at(self.bits)
 
     def __contains__(self, key: object) -> bool:
         if self.replay is None:
             return key in self.laid_out_map
-        position = self.numbering.positions.get(key)
+        position = required(self.numbering).positions.get(key)
         return position is not None and (self.bits >> position) & 1 == 1
 
     def __len__(self) -> int:
@@ -334,7 +335,7 @@ class BlockReachability:
         numbering = self.numberings[region]
         bits = numbering.expanded(region) if isinstance(region, LoopRegion) else 0
         parent = self.parents[region]
-        single = self.single_level[parent].get(region)
+        single = required(self.single_level[required(parent)]).get(region)
         if single is not None:
             bits |= single.bits
             if isinstance(parent, LoopRegion):
@@ -374,7 +375,7 @@ class BlockReachability:
             yield from self.within(region)
             yield region
         parent = self.parents[region]
-        single = self.single_level[parent].get(region)
+        single = required(self.single_level[required(parent)]).get(region)
         for reached in single if single is not None else ():
             if isinstance(reached, ControlFlowRegion):
                 yield from self.within(reached)
@@ -386,7 +387,7 @@ class BlockReachability:
 def states_only(reach: OrderedSet) -> Optional[OrderedSet]:
     """The states in ``reach``, in its order, or ``None`` when there are none."""
     if isinstance(reach, ReachSet) and reach.replay is not None:
-        bits = reach.bits & reach.numbering.states
+        bits = reach.bits & required(reach.numbering).states
         if not bits:
             return None
         return ReachSet.deferred(bits, reach.numbering, functools.partial(filter_states, reach))

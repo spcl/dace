@@ -70,7 +70,7 @@ class AddThreadBlockMaps(ppl.Pass):
             n
             for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
-        kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, tb_inserted_kernels) or {}
+        kernel_dimensions_map = InferGPUGridAndBlockSize().infer(sdfg, tb_inserted_kernels) or {}
         return {
             'kernel_dimensions_map': kernel_dimensions_map,
             'tb_inserted_kernels': tb_inserted_kernels,

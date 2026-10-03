@@ -15,6 +15,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.replace import replace_in_codeblock
 import ast
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.optionals import required
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
@@ -353,20 +355,22 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     self.begin_expr):
                                 has_matches = True
 
-                                b_expr = dace.symbolic.SymExpr(
-                                    symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr))).simplify()
-                                e_expr = dace.symbolic.SymExpr(
-                                    symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr))).simplify()
-                                s_expr = dace.symbolic.SymExpr(symstr(s)).simplify()
+                                b_expr = as_basic(
+                                    dace.symbolic.SymExpr(
+                                        symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                e_expr = as_basic(
+                                    dace.symbolic.SymExpr(
+                                        symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                s_expr = as_basic(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
-                                    loop_len = e_expr + 1 - b_expr
+                                    loop_len = as_expr(e_expr) + 1 - b_expr
                                     loop_step = s_expr
                                     if isinstance(loop_len / loop_step, (int, sympy.Number)):
                                         multiplier = dace.symbolic.SymExpr(int(loop_len / loop_step))
                                         multipliers.append(multiplier)
                                         assert b_expr == 0
-                                        e_expr = b_expr + multiplier - 1
+                                        e_expr = as_expr(b_expr) + multiplier - 1
                                         s_expr = dace.symbolic.SymExpr(1)
 
                                 new_range_list.append((b_expr, e_expr, s_expr))
@@ -385,7 +389,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         if has_matches:
                             new_range = dace.subsets.Range(new_range_list)
                             state_node.map.range = new_range
-                            nodes_between = state.all_nodes_between(state_node, state.exit_node(state_node))
+                            nodes_between = state.all_nodes_between(state_node, required(state.exit_node(state_node)))
                             edges_between = state.all_edges(*nodes_between)
                             self._repl_memlets_on_edge_list(state, edges_between, repldict)
                             self._repl_tasklets_on_node_list(state, nodes_between, repldict)
@@ -425,7 +429,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         opens = lhs.count("(")
         exits = lhs.count(")")
         rhs = "(" * (opens - exits) + rhs
-        expr_str = lhs + op_to_split + symstr(dace.symbolic.SymExpr(rhs).simplify()) + (")" * (opens - exits))
+        expr_str = lhs + op_to_split + symstr(as_basic(dace.symbolic.SymExpr(rhs)).simplify()) + (")" * (opens - exits))
         return expr_str
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:
@@ -458,7 +462,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     expr = dace.symbolic.SymExpr(n.loop_condition.as_string)
                     if isinstance(expr, sympy.core.relational.Relational) and isinstance(expr, sympy.LessThan):
                         lhs, rhs = expr.lhs, expr.rhs
-                        n.loop_condition = CodeBlock(symstr(sympy.StrictLessThan(lhs, rhs + 1)))
+                        n.loop_condition = CodeBlock(symstr(sympy.StrictLessThan(lhs, as_expr(rhs) + 1)))
 
                     # Simplify only the rhs do this by splitting the expression from "<" and ( with the number of opened ( from left
                     # Then simplify it and add back

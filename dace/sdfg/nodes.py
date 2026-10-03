@@ -12,7 +12,7 @@ import dace
 import itertools
 import dace.serialize
 import sympy as sp
-from typing import Any, Dict, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import rname
@@ -102,6 +102,12 @@ class Node(object):
                                    "Rendered as a comment by the standalone (CPF) rendering and "
                                    "ignored everywhere else. Never a directive: nothing in the "
                                    "pipeline dispatches on it. None when nothing was recorded.")
+
+    if TYPE_CHECKING:
+        # Type-only: every concrete node class defines a ``label``; the base does not.
+        @property
+        def label(self) -> str:
+            ...
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type

@@ -12,7 +12,7 @@ import itertools
 import re
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, List, Optional, Tuple
 
 import sympy
 
@@ -31,6 +31,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.ordered import OrderedSet
 from dace.symbolic_engine import to_sympy
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
@@ -181,9 +183,9 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
     """
     expr = symbolic.simplify(expr)
     if expr.is_number:
-        return bool(expr >= 0)
+        return bool(as_expr(expr) >= 0)
     positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
-    return symbolic.simplify(expr.subs(positive)).is_nonnegative is True
+    return as_basic(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
 
 
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
@@ -417,7 +419,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     # Buffered ``(sdfg, sym, edges, skip_cb)`` deletions during a compound cond lift (``None`` outside
     # one), so a later refusal leaves no committed deletion behind: no partial lifts.
-    _deferred_drops = None
+    _deferred_drops: Optional[List[Tuple[Any, ...]]] = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -618,11 +620,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             parent.remove_edge(e)
         parent.remove_node(cb)
         for e in in_edges:
-            parent.add_edge(e.src, ct_state, e.data)
+            parent.add_edge(required(e).src, ct_state, required(e).data)
         parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
         parent.add_edge(ce_state, am_state, dace.InterstateEdge())
         for e in out_edges:
-            parent.add_edge(am_state, e.dst, e.data)
+            parent.add_edge(am_state, required(e).dst, required(e).data)
 
         # ITE tasklets. Non-writing arm contributes pre-cb value (reads original ``arr``,
         # intact because writing arm targets its private temp). Resolve cond once so the
@@ -1145,7 +1147,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else:
             # A symbolic value (``m = n - 1`` feeding ``m > 1``) keeps the symbol's type; ``bool`` truncates it.
             shape = (1, )
-            cond_dtype = sdfg.symbols[cond_sym] if cond_sym in sdfg.symbols else def_edge.data.new_symbols(
+            cond_dtype = sdfg.symbols[cond_sym] if cond_sym in sdfg.symbols else required(def_edge).data.new_symbols(
                 sdfg, sdfg.symbols)[cond_sym]
         cond_name, _ = sdfg.add_array(name=f"_cond_{cond_sym}",
                                       shape=shape,

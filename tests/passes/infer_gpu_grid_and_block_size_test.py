@@ -35,13 +35,13 @@ def test_infer_block_size_conflict_with_larger_threadblock_map():
     silently accepted and the user's block size overridden."""
     sdfg, _state, _dev = _kernel_with_nested_threadblock([32, 1, 1], tb_extent=64)
     with pytest.raises(ValueError):
-        InferGPUGridAndBlockSize().apply_pass(sdfg, set())
+        InferGPUGridAndBlockSize().infer(sdfg, set())
 
 
 def test_infer_block_size_matching_user_and_threadblock_no_conflict():
     """A user ``gpu_block_size`` equal to the nested thread-block size is not a conflict."""
     sdfg, _state, dev = _kernel_with_nested_threadblock([64, 1, 1], tb_extent=64)
-    dims = InferGPUGridAndBlockSize().apply_pass(sdfg, set())
+    dims = InferGPUGridAndBlockSize().infer(sdfg, set())
     _grid, block = dims[dev]
     assert [int(b) for b in block] == [64, 1, 1], block
 
@@ -52,7 +52,7 @@ def test_infer_block_size_non_3d_user_size_matching_no_conflict():
     raw (non-3D) user value while the thread-block sizes are normalized to 3D, so [64] never compared
     equal to [64,1,1] and a matching config raised a false 'conflicting sizes' ValueError."""
     sdfg, _state, dev = _kernel_with_nested_threadblock([64], tb_extent=64)
-    dims = InferGPUGridAndBlockSize().apply_pass(sdfg, set())
+    dims = InferGPUGridAndBlockSize().infer(sdfg, set())
     _grid, block = dims[dev]
     assert [int(b) for b in block] == [64, 1, 1], block
 
@@ -78,7 +78,7 @@ def test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbo
     state.add_memlet_path(nsdfg, dev_mx, state.add_write('A'), src_conn='a', memlet=dace.Memlet('A[0:64]'))
     sdfg.validate()
 
-    _grid, block = InferGPUGridAndBlockSize().apply_pass(sdfg, set())[dev_me]
+    _grid, block = InferGPUGridAndBlockSize().infer(sdfg, set())[dev_me]
     assert [int(b) for b in block] == [32, 1, 1], block
 
 

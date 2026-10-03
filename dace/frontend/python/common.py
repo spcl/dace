@@ -10,7 +10,7 @@ from dace.sdfg.sdfg import SDFG
 
 class DaceSyntaxError(Exception):
 
-    def __init__(self, visitor, node: ast.AST, message: str):
+    def __init__(self, visitor, node: Optional[ast.AST], message: str):
         self.visitor = visitor
         self.node = node
         self.message = message

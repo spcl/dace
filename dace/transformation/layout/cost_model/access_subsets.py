@@ -1,6 +1,7 @@
 import dace
 from typing import Dict, List
 import copy
+from dace.sdfg.narrowing import as_range
 """Access subsets: per-array index ranges touched by a loop nest."""
 
 
@@ -115,7 +116,7 @@ def _union_into(
                 existing = dace.subsets.Range([(idx, idx, 1) for idx in existing])
 
         new_ranges = []
-        for (rb, re, rs), (nb, ne, ns) in zip(existing.ranges, new_subset.ranges):
+        for (rb, re, rs), (nb, ne, ns) in zip(existing.ranges, as_range(new_subset).ranges):
             lo = sp.Min(rb, nb)
             hi = sp.Max(re, ne)
             # keep step only if identical, else 1

@@ -16,7 +16,7 @@ from dace.sdfg.nodes import AccessNode, Node
 from dace.sdfg.state import SDFGState
 
 
-def is_scalar_or_len1_source(state: SDFGState, edge: Edge) -> bool:
+def is_scalar_or_len1_source(state: SDFGState, edge: Edge[Memlet]) -> bool:
     """True when ``edge.src`` reads a Scalar or an all-extent-1 Array.
 
     :param state: State holding ``edge``.

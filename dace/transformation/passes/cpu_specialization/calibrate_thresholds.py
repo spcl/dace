@@ -2,6 +2,7 @@
 """Calibrate the fork/join thresholds to the host CPU, at the start of the specialization band."""
 from typing import Any, Dict, Optional
 
+from dace.sdfg.narrowing import config_int
 from dace import SDFG, properties
 from dace.config import Config
 from dace.transformation import pass_pipeline as ppl
@@ -44,15 +45,15 @@ class CalibrateCpuThresholds(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """:returns: the keys this pass set, mapped to the derived value; ``None`` when it set none."""
-        applied = {}
+        applied: Dict[str, int] = {}
         for key, derive in CALIBRATED:
-            current = Config.get(*key)
+            current = config_int(*key)
             # A user-set value wins. ``Config.set`` would lose to a ``DACE_*`` environment variable
             # anyway, but a config FILE would be overwritten, so the comparison is what protects it.
-            if int(current) != int(Config.get_default(*key)):
+            if current != int(Config.get_default(*key)):
                 continue
             value = derive()
-            if int(value) == int(current):
+            if int(value) == current:
                 continue
             Config.set(*key, value=value)
             applied['.'.join(key)] = value

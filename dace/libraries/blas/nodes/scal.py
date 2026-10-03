@@ -7,6 +7,7 @@ and a cuBLAS expansion. The ``_x`` connector is both input and output
 (in-place), matching the cBLAS / cuBLAS in-place signature.
 """
 import copy
+from typing import List, TYPE_CHECKING
 import warnings
 
 import dace.library
@@ -18,6 +19,8 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
@@ -30,7 +33,7 @@ class ExpandScalPure(ExpandTransformation):
     array for ``_x`` and ``_res`` to achieve true in-place scaling.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -110,7 +113,8 @@ class ExpandScalMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandScalGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):

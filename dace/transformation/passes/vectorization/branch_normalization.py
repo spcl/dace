@@ -29,7 +29,8 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
-from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range, free_symbol_names
 from dace.ordered import OrderedSet
 
 
@@ -546,7 +547,7 @@ class BranchNormalization(ppl.Pass):
         """Apply the symbol deletions :meth:`freeze_guards` deferred, each re-checked against the current graph."""
         drops = lifter._deferred_drops
         lifter._deferred_drops = None
-        for drop in drops:
+        for drop in required(drops):
             lifter._drop_interstate_symbol(drop[0], drop[1], drop[2])
 
     @staticmethod
@@ -765,7 +766,7 @@ class BranchNormalization(ppl.Pass):
                         for s in (ed.data.subset, ed.data.other_subset):
                             if s is None:
                                 continue
-                            for r in s.ranges:
+                            for r in as_range(s).ranges:
                                 for elem in r:
                                     if elem is None:
                                         continue

@@ -49,6 +49,7 @@ from dace.config import Config, set_temporary
 from dace.sdfg import SDFG, nodes
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+from dace.optionals import required
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
 #: nothing else: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the
@@ -493,7 +494,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                 if produced.guid in before:
                     continue
                 for guid in subtree_guids(produced, state):
-                    provenance.setdefault(guid, (origin, description))
+                    required(provenance).setdefault(guid, (origin, description))
 
 
 #: The prefix DaCe gives a data container that carries a program's return value. A single return is

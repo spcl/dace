@@ -45,7 +45,7 @@ edge becomes a plain copy, so the pass is idempotent.
 """
 import ast
 import copy
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import numpy
 
@@ -173,8 +173,8 @@ class NormalizeWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _seed_desc(self, oc_desc: data.Data) -> data.Data:
         """Descriptor for the body-local accumulator mirroring ``oc`` (transient)."""

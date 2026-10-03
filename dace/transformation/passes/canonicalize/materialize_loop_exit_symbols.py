@@ -44,7 +44,7 @@ Out of scope:
   does not produce).
 """
 import ast
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
@@ -77,10 +77,10 @@ def _parse_affine_update(rhs_str: str, lhs: str) -> Optional[Tuple[type, str]]:
     if not isinstance(expr, ast.BinOp) or type(expr.op) not in (ast.Add, ast.Mult):
         return None
 
-    def _is_lhs(node):
+    def _is_lhs(node: ast.AST) -> bool:
         return isinstance(node, ast.Name) and node.id == lhs
 
-    def _refs_lhs(node):
+    def _refs_lhs(node: ast.AST) -> bool:
         return any(_is_lhs(n) for n in ast.walk(node))
 
     if _is_lhs(expr.left) and not _refs_lhs(expr.right):
@@ -229,7 +229,7 @@ def reiterated_names(post_blocks: Dict[ControlFlowBlock, None]) -> Dict[str, Non
 
 
 def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[ControlFlowBlock, None], old_name: str,
-                               new_name: str, sdfg: SDFG):
+                               new_name: str, sdfg: SDFG) -> None:
     """Replace every reference to ``old_name`` with ``new_name`` in the
     post-loop blocks: interstate edges into / between them (when both endpoints
     are post-loop), and the blocks' own contents.
@@ -255,7 +255,7 @@ def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[Cont
 class _RenameNames(ast.NodeTransformer):
     """Substitute identifiers in an ast tree."""
 
-    def __init__(self, mapping: Dict[str, str]):
+    def __init__(self, mapping: Dict[str, str]) -> None:
         self.mapping = mapping
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
@@ -320,7 +320,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Materialise every eligible IV symbol's exit value. Returns the count
         or ``None`` if nothing matched."""
         materialised = 0

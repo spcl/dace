@@ -33,6 +33,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import helpers as xfh, pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
+from dace.optionals import required
 
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -75,7 +76,7 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
         if edge.data.is_empty() or not lane_private(state.sdfg, edge.data.data):
             continue
         if edge.data.wcr is not None:
-            if edge.data.subset.num_elements() != 1:
+            if required(edge.data.subset).num_elements() != 1:
                 return False
             continue
         if reads_outside(state.sdfg, edge.data.data, inner):

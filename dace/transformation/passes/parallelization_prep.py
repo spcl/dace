@@ -25,19 +25,20 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Set
 import sympy
 
 from dace import properties, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState,
                              enclosing_region_symbols)
 from dace.transformation import pass_pipeline as ppl
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr, config_int
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
-DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit')
-DEFAULT_UNROLL_TASKLET_BUDGET = Config.get('optimizer', 'canonicalization', 'unroll_tasklet_budget')
+DEFAULT_UNROLL_LIMIT = config_int('optimizer', 'canonicalization', 'unroll_limit')
+DEFAULT_UNROLL_TASKLET_BUDGET = config_int('optimizer', 'canonicalization', 'unroll_tasklet_budget')
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
-DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
+DEFAULT_PEEL_LIMIT = config_int('optimizer', 'canonicalization', 'peel_limit')
 #: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
 _MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'ftn_modulo', 'CMod'})
 #: "not built yet", distinct from a built-but-absent value.
@@ -665,7 +666,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if offset is None:
                     continue
                 try:
-                    x = symbolic.pystr_to_symbolic(ast.unparse(other)) + offset
+                    x = as_expr(symbolic.pystr_to_symbolic(ast.unparse(other))) + offset
                 except Exception:
                     continue
                 if symbolic.free_symbol_like(x, ivar_sym) is None and x not in values:
@@ -758,32 +759,33 @@ class BestEffortLoopPeeling(ppl.Pass):
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
             w = _as_symbolic(wb)
             r = _as_symbolic(rb)
-            if not _is_zero(_as_symbolic(we) - w) or not _is_zero(_as_symbolic(re_) - r):
+            if not _is_zero(as_expr(_as_symbolic(we)) -
+                            as_expr(w)) or not _is_zero(as_expr(_as_symbolic(re_)) - as_expr(r)):
                 return ()  # a multi-element range in this dim is not a clean point access
             # Each side's OWN spelling of the loop variable: a differently-assumed instance is a
             # different sympy symbol, against which ``coeff`` silently answers 0.
             iw = symbolic.free_symbol_like(w, ivar)
             ir = symbolic.free_symbol_like(r, ivar)
             if iw is None and ir is None:
-                if not _is_zero(w - r):
+                if not _is_zero(as_expr(w) - as_expr(r)):
                     return ()  # loop-invariant dimension that does not match -> never aliases
                 continue
             if iw is None:
                 iw = ivar  # absent from this side: ``coeff`` correctly yields 0 for any spelling
             if ir is None:
                 ir = ivar
-            aw, ar = w.coeff(iw, 1), r.coeff(ir, 1)
+            aw, ar = as_expr(w).coeff(iw, 1), as_expr(r).coeff(ir, 1)
             bw, br = symbolic.simplify(w - aw * iw), symbolic.simplify(r - ar * ir)
             if any(symbolic.free_symbol_like(t, ivar) is not None for t in (aw, ar, bw, br)):
                 return ()  # not affine in the loop variable
-            den, num = symbolic.simplify(aw - ar), br - bw
-            if not den.is_Integer or den == 0:
+            den, num = symbolic.simplify(required(aw) - ar), br - bw
+            if not as_basic(den).is_Integer or den == 0:
                 return ()  # equal (or non-integer) slopes -> no integer crossover to split at
             if den < 0:
                 den, num = -den, -num
             if sol is not None and not _is_zero(num * sol[1] - sol[0] * den):
                 return ()  # dimensions disagree on where the crossover is
-            sol = (num, int(den))
+            sol = (num, int(as_expr(den)))
         if sol is None:
             return ()
         num, den = sol
@@ -852,23 +854,23 @@ class BestEffortLoopPeeling(ppl.Pass):
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
             w = _as_symbolic(wb)
             r = _as_symbolic(rb)
-            if not _is_zero(_as_symbolic(we) - w):
+            if not _is_zero(as_expr(_as_symbolic(we)) - as_expr(w)):
                 return None  # multi-element write range in this dim -> not a clean point
-            if not _is_zero(_as_symbolic(re_) - r):
+            if not _is_zero(as_expr(_as_symbolic(re_)) - as_expr(r)):
                 return None  # multi-element read range in this dim
             iv = symbolic.free_symbol_like(w, ivar)
             if iv is not None:
-                a = w.coeff(iv, 1)
+                a = as_expr(w).coeff(iv, 1)
                 b = symbolic.simplify(w - a * iv)
                 if symbolic.free_symbol_like(a, ivar) is not None or symbolic.free_symbol_like(b, ivar) is not None:
                     return None  # non-affine in the loop variable
-                if not (a.is_number and _is_zero(a * a - 1)):
+                if not (required(a).is_number and _is_zero(required(a) * a - 1)):
                     return None  # |a| != 1 -> solution may be non-integer
                 xi = symbolic.simplify((r - b) / a)
                 if sol is not None and not _is_zero(xi - sol):
                     return None  # inconsistent solution across dimensions
                 sol = xi
-            elif not _is_zero(w - r):
+            elif not _is_zero(as_expr(w) - as_expr(r)):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
@@ -1198,7 +1200,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             baseline = self._mappable_loop_count(copy.deepcopy(mini), verdicts)
         except Exception:
             return None
-        verdicts.pop(split_label, None)
+        verdicts.pop(required(split_label), None)
         best_count, best = baseline, None
         for x in candidates:
             singleton = x not in two_way
@@ -1279,7 +1281,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         """Whether ``x`` is provably ``>= 0`` -- a concrete non-negative number once
         simplified (the deciding differences of a range bound reduce to numbers)."""
         s = symbolic.simplify(x)
-        return s.is_number and s >= 0
+        return as_basic(s).is_number and s >= 0
 
     @staticmethod
     def _provably_nonneg_symbolic(x) -> bool:
@@ -1318,7 +1320,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         needs ``o < m``), then checked at the smallest admissible ``m``."""
         import sympy
         s = symbolic.simplify(x)
-        if s.is_number:
+        if as_basic(s).is_number:
             return frozenset() if s >= 0 else None
         if not isinstance(m, sympy.Symbol):
             return None
@@ -1326,13 +1328,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         coeffs: Dict[Any, Any] = {}
         rem = s
         for sym in (m, *offsets):
-            c = s.coeff(sym, 1)
-            if not c.is_number:
+            c = as_expr(s).coeff(sym, 1)
+            if not required(c).is_number:
                 return None  # nonlinear or a cross term (e.g. m*offset) -- cannot bound
             coeffs[sym] = c
             rem = rem - c * sym
         c0 = symbolic.simplify(rem)
-        if not c0.is_number:
+        if not as_basic(c0).is_number:
             return None  # a free symbol we have no bound for remains
         # Fold each offset into the worst-case (C1*m + C0): a negative coefficient is
         # worst at o = m - 1 (contributing c*m - c, and needing o < m); a non-negative
@@ -1345,7 +1347,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 C1 += coeffs[o]
                 C0 -= coeffs[o]
                 relied.add(o)
-        if not (C1.is_number and C0.is_number):
+        if not (C1.is_number and as_basic(C0).is_number):
             return None
         if C1 < 0:
             return None  # decreasing in m -> not bounded below as m grows
@@ -1444,13 +1446,13 @@ class BestEffortLoopPeeling(ppl.Pass):
             iv = symbolic.free_symbol_like(arg, lv)
             if iv is None:
                 continue
-            a = arg.coeff(iv, 1)
+            a = as_expr(arg).coeff(iv, 1)
             rest = arg - a * iv
             if symbolic.free_symbol_like(a, lv) is not None or symbolic.free_symbol_like(rest, lv) is not None:
                 return None  # not affine in this loop variable
             if self._provably_nonneg(a):
                 lo, hi = lo.subs(iv, start), hi.subs(iv, end)
-            elif self._provably_nonneg(-a):
+            elif self._provably_nonneg(-required(a)):
                 lo, hi = lo.subs(iv, end), hi.subs(iv, start)
             else:
                 return None  # indeterminate slope sign
@@ -1461,14 +1463,14 @@ class BestEffortLoopPeeling(ppl.Pass):
         # C's ``%`` agrees with the floored band only where the argument is nonnegative.
         first_band = 0 if isinstance(mod, symbolic.CMod) else -(self.peel_limit + 1)
         for t in range(first_band, self.peel_limit + 2):
-            lo_relied = self._nonneg_assuming_large_modulus(lo - t * m, m, offsets)
+            lo_relied = self._nonneg_assuming_large_modulus(lo - t * as_expr(m), m, offsets)
             if lo_relied is None:
                 continue
-            hi_relied = self._nonneg_assuming_large_modulus(m - 1 - (hi - t * m), m, offsets)
+            hi_relied = self._nonneg_assuming_large_modulus(as_expr(m) - 1 - (hi - t * as_expr(m)), m, offsets)
             if hi_relied is None:
                 continue
             relations = frozenset(sympy.StrictLessThan(o, m) for o in (lo_relied | hi_relied))
-            return arg - t * m, relations
+            return arg - t * as_expr(m), relations
         return None
 
     def _loop_own_ranges(self, loop: LoopRegion) -> Dict[Any, Any]:
@@ -1522,7 +1524,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                                 iv = symbolic.free_symbol_like(arg, ivar)
                                 if iv is None:
                                     continue
-                                a = arg.coeff(iv, 1)
+                                a = as_expr(arg).coeff(iv, 1)
                                 b = arg - a * iv
                                 if (symbolic.free_symbol_like(a, ivar) is not None
                                         or symbolic.free_symbol_like(b, ivar) is not None):
@@ -1562,10 +1564,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         (ivar, (start, end)), = ranges.items()
         points = []
         for _mod, _arg, m, a, b in self._affine_body_modulos(loop, ranges):
-            if not (a.is_number and _is_zero(a * a - 1)):
+            if not (required(a).is_number and _is_zero(required(a) * a - 1)):
                 continue  # |a| != 1: the crossing is not an exact integer in general
             for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
-                x = symbolic.pystr_to_symbolic(str(symbolic.simplify((t * m - b) / a)))  # emit spelling
+                x = symbolic.pystr_to_symbolic(str(symbolic.simplify((t * as_expr(m) - b) / a)))  # emit spelling
                 if symbolic.free_symbol_like(x, ivar) is not None:
                     continue
                 # Drop x at/left of the start (empty/no-op before-segment) or right of

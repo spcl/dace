@@ -31,6 +31,8 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Prefix for the collision-count scalar the guard allocates (one per guarded idx).
 _COUNT_PREFIX = '_scatter_guard_count_'
@@ -173,12 +175,12 @@ def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
         return False
 
     # Write position must be the bare point ``[loop_var]`` so sweeping j covers exactly [0, M).
-    ndrange = list(write.data.subset.ndrange())
+    ndrange = list(required(write.data.subset).ndrange())
     if len(ndrange) != 1:
         return False
     begin, stop, _ = ndrange[0]
-    if (symbolic.simplify(symbolic.pystr_to_symbolic(str(begin)) - loop_var) != 0
-            or symbolic.simplify(symbolic.pystr_to_symbolic(str(stop)) - loop_var) != 0):
+    if (symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(begin))) - as_expr(loop_var)) != 0
+            or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(stop))) - as_expr(loop_var)) != 0):
         return False
 
     # Stored value must be an affine function of the loop variable with a non-zero integer
@@ -211,11 +213,11 @@ def value_is_injective_affine(value_expr: str, loop_var: str) -> bool:
     """
     j = symbolic.pystr_to_symbolic(str(loop_var))
     expr = symbolic.pystr_to_symbolic(str(value_expr))
-    lead = expr.coeff(j, 1)
-    const = expr.coeff(j, 0)
-    if symbolic.simplify(expr - (lead * j + const)) != 0:  # non-affine in loop_var
+    lead = as_expr(expr).coeff(as_expr(j), 1)
+    const = as_expr(expr).coeff(as_expr(j), 0)
+    if symbolic.simplify(expr - (required(lead) * j + const)) != 0:  # non-affine in loop_var
         return False
-    return bool(lead.is_Integer) and lead != 0
+    return bool(required(lead).is_Integer) and lead != 0
 
 
 def insert_scatter_guard(sdfg: SDFG,

@@ -49,6 +49,7 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
 from dace.transformation.passes.iteration_domain import loop_trip_count, same_trip_count
 from dace.transformation.passes.loop_fission import _linear_blocks, _single_compute_state
+from dace.optionals import required
 
 
 @transformation.explicit_cf_compatible
@@ -371,7 +372,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             for edata in body2_edges:
                 edata.replace(v2, v1)  # unify the iterator inside a preserved bridge assignment too
         order = LoopFusion._body_blocks(first)
-        last = order[-1]
+        last = required(order)[-1]
         for block in body2:
             # ensure_unique_name: a block from ``second`` may share the frontend's auto-generated name
             # with one of ``first``'s blocks; without a rename the fused loop carries two identically-named

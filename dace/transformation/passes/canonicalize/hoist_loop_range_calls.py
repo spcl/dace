@@ -31,6 +31,7 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
+from dace.sdfg.narrowing import as_map_entry
 
 #: Prefix for a minted range symbol. ``__dace`` keeps it out of the ABI (``SDFG.arglist`` drops the
 #: prefix on both the scalar and free-symbol paths), which is what makes minting one free.
@@ -119,7 +120,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         scope = state.scope_dict()
         parent_entry = scope.get(entry)
         while parent_entry is not None:
-            enclosing.update(parent_entry.map.params)
+            enclosing.update(as_map_entry(parent_entry).map.params)
             parent_entry = scope.get(parent_entry)
         assignments: List[Tuple[str, str]] = []
         ranges = []

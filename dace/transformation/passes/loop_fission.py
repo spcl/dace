@@ -19,6 +19,8 @@ from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
@@ -50,7 +52,7 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
         except Exception:
             return False
         if loop_sym in expr.free_symbols:
-            offset = symbolic.simplify(expr - loop_sym)
+            offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
             if not (getattr(offset, 'is_number', False) and offset == 0):
                 return False
             saw_loop_var = True
@@ -663,7 +665,7 @@ class LoopFission(ppl.Pass):
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
         orig_order = _linear_blocks(loop)
-        keep_idx = [sorted(orig_order.index(b) for b in g) for g in groups]
+        keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
 
         clones: List[LoopRegion] = []
         for gi, idxs in enumerate(keep_idx):
@@ -671,7 +673,7 @@ class LoopFission(ppl.Pass):
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             corder = _linear_blocks(clone)
-            keep = [corder[i] for i in idxs]
+            keep = [required(corder)[i] for i in idxs]
             for b in [b for b in clone.nodes() if b not in keep]:
                 clone.remove_node(b)
             for e in list(clone.edges()):

@@ -66,7 +66,8 @@ from dace import symbolic
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.subsets import Range, Subset
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_range, free_symbol_names
 
 
 class PerDimKind(enum.Enum):
@@ -202,7 +203,7 @@ def _direct_symbols(expr: sympy.Expr) -> set[str]:
         return set()
     result: set[str] = set()
     for arg in args:
-        result |= _direct_symbols(arg)
+        result |= _direct_symbols(as_expr(arg))
     return result
 
 
@@ -368,8 +369,9 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
                     for ie in scan_state.in_edges(producer):
                         if ie.dst_conn and ie.data is not None and ie.data.data is not None:
                             source = ie.data.data
-                            if ie.data.subset.free_symbols:  # keep ``idx[i]``: a bare ``idx`` looks lane-invariant
-                                source += f"[{', '.join(map(str, ie.data.subset.min_element()))}]"
+                            if required(ie.data.subset
+                                        ).free_symbols:  # keep ``idx[i]``: a bare ``idx`` looks lane-invariant
+                                source += f"[{', '.join(map(str, as_range(ie.data.subset).min_element()))}]"
                             rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(source)
                     if rename:
                         # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
@@ -750,7 +752,7 @@ def _gather_subscripts(expr: sympy.Expr) -> list[symbolic.Subscript]:
     args = expr.args if isinstance(expr, sympy.Basic) else ()
     if args:
         for arg in args:
-            result.extend(_gather_subscripts(arg))
+            result.extend(_gather_subscripts(as_expr(arg)))
     return result
 
 
@@ -832,7 +834,7 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
     if isinstance(divisor, (sympy.Float, float)):
         return None
     try:
-        k = int(divisor)
+        k = int(as_expr(divisor))
         if k <= 1:
             return None
     except (TypeError, ValueError):
@@ -842,8 +844,8 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
     # Dividend must be affine in ``var_name`` (regular replication -- ``int_floor(idx[i], 2)`` is
     # data-dependent → GATHER, not REPLICATE).
     # The contracted-box load is exact only for ``int_floor(var + c0, k)`` with ``c0 % k == 0``.
-    coeff = _affine_coeff_for(dividend, var_name)
-    offset = _affine_offset_for(dividend, var_name)
+    coeff = _affine_coeff_for(as_expr(dividend), var_name)
+    offset = _affine_offset_for(as_expr(dividend), var_name)
     if fname not in ("int_floor", "__int_floor") or coeff != 1 or offset is None or sympy.Mod(offset, k) != 0:
         return None
     return k
@@ -865,12 +867,12 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> int | None:
         return None
     dividend, divisor = expr.args
     try:
-        N = int(divisor)
+        N = int(as_expr(divisor))
     except (TypeError, ValueError):
         return None
     if N <= 1:
         return None
-    if _affine_coeff_for(dividend, var_name) is None:
+    if _affine_coeff_for(as_expr(dividend), var_name) is None:
         return None
     return N
 

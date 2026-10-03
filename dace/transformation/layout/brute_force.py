@@ -38,7 +38,7 @@ def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
 
 def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
     """Median GPU time (s) of ``fn`` via CUDA events on cupy's current stream; ``fn`` must be compiled inside :func:`single_default_stream`. Times the whole call, so small kernels are overhead-bound -- see :func:`compute_region_timer` for compute-only timing."""
-    import cupy  # GPU-only; keeps the module importable without a GPU
+    import cupy  # type: ignore[import-not-found]  # GPU-only; keeps the module importable without a GPU
 
     start = cupy.cuda.Event()
     stop = cupy.cuda.Event()

@@ -46,18 +46,21 @@ untouched.
 """
 import ast
 import copy
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from dace import SDFG, nodes, properties
+from dace.memlet import Memlet
 from dace.sdfg import SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.optionals import required
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
-FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
+FOLDABLE_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
 
 
 def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
@@ -74,7 +77,9 @@ def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
     return None
 
 
-def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
+def _chase_write_to_accum(
+    state: SDFGState, sdfg: SDFG, out_edge: MultiConnectorEdge[Memlet]
+) -> Optional[Tuple[nodes.AccessNode, List[nodes.AccessNode], List[nodes.Tasklet]]]:
     """From a binop's output edge, follow the staging chain forward to the
     AccessNode it ultimately writes. The frontend stages an accumulator write as
     ``binop -> tmp -> copy -> acc``; that copy is a copy TASKLET before
@@ -123,7 +128,9 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
 class _Step:
     """One ``acc[S] = acc[S] OP inc`` accumulation in the chain."""
 
-    def __init__(self, binop, acc_read_node, acc_read_edge, inc_edge, write_final, write_intermediates, write_copies):
+    def __init__(self, binop: nodes.Tasklet, acc_read_node: nodes.AccessNode, acc_read_edge: MultiConnectorEdge[Memlet],
+                 inc_edge: MultiConnectorEdge[Memlet], write_final: nodes.AccessNode,
+                 write_intermediates: List[nodes.AccessNode], write_copies: List[nodes.Tasklet]) -> None:
         self.binop = binop
         self.acc_read_node = acc_read_node  # AccessNode(acc) feeding the accumulator connector
         self.acc_read_edge = acc_read_edge  # acc_read_node -> binop (accumulator operand)
@@ -146,7 +153,7 @@ class FuseChainedScalarReductions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             # Not recursive: ``all_sdfgs_recursive`` already recurses; nesting here misplaces ``_fused_inc``.
@@ -300,7 +307,9 @@ class FuseChainedScalarReductions(ppl.Pass):
             fold_t = st.add_tasklet(f'_fuse_red_{idx}', dict.fromkeys(['__in1', '__in2']), dict.fromkeys(['__out']),
                                     f'__out = (__in1 {op_str} __in2)')
             if cur_scalar_node is None:
-                st.add_edge(left_edge.src, left_edge.src_conn, fold_t, '__in1', copy.deepcopy(left_edge.data))
+                st.add_edge(
+                    required(left_edge).src,
+                    required(left_edge).src_conn, fold_t, '__in1', copy.deepcopy(required(left_edge).data))
             else:
                 run = cur_scalar_node.data
                 st.add_edge(cur_scalar_node, None, fold_t, '__in1', Memlet.from_array(run, sdfg.arrays[run]))
@@ -313,7 +322,7 @@ class FuseChainedScalarReductions(ppl.Pass):
         # 2. Re-plug the first step's binop increment operand to the folded increment.
         inc_conn = first.inc_edge.dst_conn
         st.add_edge(cur_scalar_node, None, first.binop, inc_conn,
-                    Memlet.from_array(cur_scalar_node.data, sdfg.arrays[cur_scalar_node.data]))
+                    Memlet.from_array(required(cur_scalar_node).data, sdfg.arrays[required(cur_scalar_node).data]))
 
         # 3. Redirect the first step's write path to the terminal accumulator node.
         #    The first step's write_final node is an intermediate; splice it out and

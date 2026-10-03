@@ -24,13 +24,16 @@ from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
 class ExpandNorm2Pure(ExpandTransformation):
     """Pure expansion: WCR-summed squares + sqrt finalize."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

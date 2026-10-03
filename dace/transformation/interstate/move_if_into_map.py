@@ -20,6 +20,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.transformation import helpers as xfh
 from dace.ordered import OrderedSet
+from dace.optionals import required
 
 
 @transformation.explicit_cf_compatible
@@ -136,7 +137,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         pieces: List[Tuple[MapEntry, MapExit, NestedSDFG]] = []
         for map_entry, map_exit in map_pairs:
-            body = list(branch_state.all_nodes_between(map_entry, map_exit))
+            body = list(branch_state.all_nodes_between(map_entry, required(map_exit)))
             nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
             if len(nsdfgs) != 1:
                 return None
@@ -187,7 +188,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 continue
             return False
         for me in map_entries:
-            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            body = list(branch_state.all_nodes_between(me, required(branch_state.exit_node(me))))
             if not any(not isinstance(n, AccessNode) for n in body):
                 return False
         return True
@@ -206,7 +207,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         :param enclosing_sdfg: The SDFG that owns ``branch_state``.
         """
         for me in [n for n in branch_state.nodes() if isinstance(n, MapEntry)]:
-            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            body = list(branch_state.all_nodes_between(me, required(branch_state.exit_node(me))))
             nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
             non_access = [n for n in body if not isinstance(n, AccessNode)]
             if len(nsdfgs) == 1 and len(non_access) == 1:
@@ -440,7 +441,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # All siblings share the identical condition and moved assignments;
         # the union of arrays that needed piping is rewired below.
         arrays_to_pipe: Set[str] = set()
-        for _, _, inner_nsdfg in all_pieces:
+        for _, _, inner_nsdfg in required(all_pieces):
             arrays_to_pipe |= self._rewrite_inner_sdfg(cond_block, branch_cond, enclosing_sdfg, inner_nsdfg,
                                                        cond_free_syms, moved_assignments)
 
@@ -459,7 +460,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # its own MapEntry/NestedSDFG nodes; we look them up again.
         if arrays_to_pipe:
             copied_pieces = self._find_all_inner_map_pieces(new_branch_state)
-            for copied_entry, _, copied_nsdfg in copied_pieces:
+            for copied_entry, _, copied_nsdfg in required(copied_pieces):
                 for arr_name in arrays_to_pipe:
                     if arr_name not in copied_nsdfg.sdfg.arrays:
                         continue

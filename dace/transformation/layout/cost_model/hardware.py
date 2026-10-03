@@ -119,7 +119,7 @@ def host_dram_spec(dump_path: Optional[str] = None, sudo: bool = True) -> DramSp
 
 def gpu_peak_bytes_per_s(device: int = 0) -> float:
     """Peak GPU memory bandwidth from CUDA device properties: memory_clock x 2 (DDR) x bus_width / 8."""
-    import cupy  # only on the GPU path
+    import cupy  # type: ignore[import-not-found]  # only on the GPU path
 
     props = cupy.cuda.runtime.getDeviceProperties(device)
     clock_hz = props["memoryClockRate"] * 1e3  # reported in kHz

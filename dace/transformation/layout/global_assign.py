@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace.transformation.layout.apply_assignment import Layout
+from dace.optionals import required
 
 
 @dataclass
@@ -133,12 +134,12 @@ def per_array_dp(costs: AssignmentCosts,
                         else:
                             edge = 0.0
                         new_flag = flag or new_flag_base
-                        candidate = (dp[i][flag][0] + edge, dp[i][flag][1] + (j, ))
+                        candidate = (required(dp[i][flag])[0] + edge, required(dp[i][flag])[1] + (j, ))
                         if new_dp[j][new_flag] is None or candidate < new_dp[j][new_flag]:  # strict <
                             new_dp[j][new_flag] = candidate
                 for flag in (False, True):  # node cost is common to every path into (j, flag)
                     if new_dp[j][flag] is not None:
-                        new_dp[j][flag] = (new_dp[j][flag][0] + node(k, j), new_dp[j][flag][1])
+                        new_dp[j][flag] = (required(new_dp[j][flag])[0] + node(k, j), required(new_dp[j][flag])[1])
             dp = new_dp
         cost, path = min(dp[j][flag] for j in range(len(tags)) for flag in (False, True) if dp[j][flag] is not None)
         solution[array] = ArrayTrajectory(array, [tags[j] for j in path], cost)

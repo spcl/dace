@@ -17,7 +17,7 @@ read that ``AccessNode`` analysis cannot see -- but it runs in the vectorizer be
 the invisible read turns into a refusal.
 """
 import dataclasses
-from typing import Any
+from typing import Any, List, Type, Union
 
 from dace import SDFG
 from dace import properties
@@ -72,12 +72,12 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
                 found.names.update(str(s) for s in edge.data.free_symbols)
 
 
-def data_reading_assigned_symbols(sd: SDFG) -> OrderedSet:
+def data_reading_assigned_symbols(sd: SDFG) -> OrderedSet[str]:
     """Symbols ``sd``'s own interstate edges assign an expression that READS one of its arrays.
 
     Insertion-ordered, because the demotion it drives adds arrays to the SDFG.
     """
-    found: OrderedSet = OrderedSet()
+    found: OrderedSet[str] = OrderedSet()
     for edge in sd.all_interstate_edges():
         for name, rhs in edge.data.assignments.items():
             try:
@@ -106,8 +106,8 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""

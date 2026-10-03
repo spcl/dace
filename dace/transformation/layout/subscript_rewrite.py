@@ -20,6 +20,7 @@ from typing import Callable, Sequence, Tuple
 import sympy
 
 from dace import symbolic
+from dace.sdfg.narrowing import as_basic
 
 
 def rewrite_subscript_indices(
@@ -53,12 +54,12 @@ def rewrite_expression(
                           Sequence[symbolic.SymbolicType]]) -> symbolic.SymbolicType:
     """:func:`rewrite_subscript_indices` on a parsed expression. Bottom-up, so an access nested in
     another access' index is reindexed too."""
-    if not expr.args:
+    if not as_basic(expr).args:
         return expr
-    args = tuple(rewrite_expression(a, name, new_indices) for a in expr.args)
+    args = tuple(rewrite_expression(a, name, new_indices) for a in as_basic(expr).args)
     # the container is ``args[0]`` of a Subscript, never the function -- ``expr.func`` is ``Subscript``
     if isinstance(expr, symbolic.Subscript) and str(args[0]) == name:
         args = (args[0], ) + tuple(new_indices(args[1:]))
-    if args == expr.args:
+    if args == as_basic(expr).args:
         return expr
-    return expr.func(*args)
+    return as_basic(expr).func(*args)

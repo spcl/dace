@@ -6,6 +6,7 @@ from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indic
 from dataclasses import dataclass
 import copy
 from sympy import simplify
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -33,7 +34,7 @@ class SplitDimensions(ppl.Pass):
                 return dace.symbolic.pystr_to_symbolic(f"int_ceil({dim_expr}, {factor})")
         elif isinstance(dim_expr, dace.symbolic.SymExpr):
             # mirrors the Symbol branch above
-            divisible = simplify(dim_expr.expr % factor) == 0
+            divisible = simplify(as_expr(dim_expr.expr) % factor) == 0
             if divisible:
                 return dace.symbolic.SymExpr(f"int_floor({dim_expr}, {factor})")
             else:
@@ -47,7 +48,7 @@ class SplitDimensions(ppl.Pass):
                           factor: int, is_perfect_match: bool, inner_block_replacement_map: Dict[str, str]):
         step_expr = s / factor
         try:
-            int_step_expr = int(step_expr)
+            int_step_expr = int(as_expr(step_expr))
             if int_step_expr == 0:
                 int_step_expr += 1
             step_expr = int_step_expr
@@ -119,7 +120,7 @@ class SplitDimensions(ppl.Pass):
             if sym not in subs_dict:
                 subs_dict[sym] = 2**32 - 1
 
-        evaluated = [int(dace.symbolic.simplify(e.subs(subs_dict))) for e in range_exprs]
+        evaluated = [int(as_expr(dace.symbolic.simplify(e.subs(subs_dict)))) for e in range_exprs]
         b, e, s = evaluated
         return ((e + 1) - b), s == 1
 

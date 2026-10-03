@@ -37,7 +37,7 @@ assignment and emits a loud warning so the dropped opportunity is visible.
 """
 import copy
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import dace.symbolic
 from dace import Memlet, SDFG, subsets
@@ -49,6 +49,7 @@ from dace.sdfg import nodes, propagation
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
 
 
 def _written(region: ControlFlowRegion) -> set:
@@ -268,7 +269,7 @@ def body_may_overwrite(region: ControlFlowRegion, loop: LoopRegion, read: Memlet
                 if written is None:
                     return True
                 image = propagation.propagate_subset([Memlet(data=read.data, subset=written)], desc, params, rng)
-                if subsets.intersects(read.subset, image.subset) is not False:
+                if subsets.intersects(read.subset, required(image.subset)) is not False:
                     return True
     return False
 
@@ -460,8 +461,8 @@ class MoveIfIntoLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Repeatedly push guards into their loops until none remain.
@@ -505,13 +506,13 @@ class MoveIfIntoLoop(ppl.Pass):
         in_edges = list(parent.in_edges(cb))
         out_edges = list(parent.out_edges(cb))
         is_start = parent.start_block is cb
-        sunk = sinkable_prep(cb, region, _linear_order(region)[-1])
+        sunk = sinkable_prep(cb, region, required(_linear_order(region))[-1])
 
         # Splice the loop's body in place of the loop so the region becomes  prep... -> body...
         # ``cb`` is dropped below, so its branch region is rewritten in place rather than copied.
         rc = region
         order = _linear_order(rc)
-        loop_c = order[-1]
+        loop_c = required(order)[-1]
         edge_into_loop = next((e for e in rc.edges() if e.dst is loop_c), None)
 
         lb_blocks = list(loop_c.nodes())
@@ -526,7 +527,7 @@ class MoveIfIntoLoop(ppl.Pass):
             rc.add_edge(e.src, e.dst, copy.deepcopy(e.data))
         if edge_into_loop is not None:
             rc.add_edge(edge_into_loop.src, lb_start, copy.deepcopy(edge_into_loop.data))
-            keep_start_block(rc, order[0])
+            keep_start_block(rc, required(order)[0])
         else:
             keep_start_block(rc, lb_start)
 
@@ -572,7 +573,7 @@ class MoveIfIntoLoop(ppl.Pass):
         # ``_guarded_loop`` / ``_trivial_guarded_loop`` copy each block, and ``cb`` is dropped below.
         order = _linear_order(region)
         units = [(_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
-                 for b in order]
+                 for b in required(order)]
 
         for u in units:
             parent.add_node(u, ensure_unique_name=True)

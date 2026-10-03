@@ -18,6 +18,7 @@ API requires):
   reduction must surface, not be silently mis-lowered.
 """
 from copy import deepcopy as dcpy
+from typing import Callable, Dict, List, Tuple
 
 import dace
 import dace.library
@@ -31,12 +32,14 @@ from dace.libraries.standard.nodes.reduce import (
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import symstr
 from dace.transformation import transformation as pm
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 #: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
 #: primitive; value = op-token suffix used by ``horizontal_reduce.h``. Sub /
 #: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
-REDTYPE_TO_OP = {
+REDTYPE_TO_OP: Dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "add",
     dtypes.ReductionType.Product: "mul",
     dtypes.ReductionType.Max: "max",
@@ -46,14 +49,14 @@ REDTYPE_TO_OP = {
     dtypes.ReductionType.Bitwise_Xor: "bxor",
 }
 
-_VECTORIZED_SEQUENTIAL_SCHEDULES = (
+_VECTORIZED_SEQUENTIAL_SCHEDULES: Tuple[dtypes.ScheduleType, ...] = (
     dtypes.ScheduleType.Default,
     dtypes.ScheduleType.Sequential,
 )
 
 #: Per-op C++ binary fold ``OP(x, y)`` for the W-wide partials + scalar tail;
 #: paired with the identity element when ``Reduce`` carries no ``identity``.
-_OP_CXX = {
+_OP_CXX: Dict[str, Callable[[str, str], str]] = {
     "add": lambda x, y: f"(({x}) + ({y}))",
     "mul": lambda x, y: f"(({x}) * ({y}))",
     "max": lambda x, y: f"std::max(({x}), ({y}))",
@@ -62,7 +65,7 @@ _OP_CXX = {
     "bor": lambda x, y: f"(({x}) | ({y}))",
     "bxor": lambda x, y: f"(({x}) ^ ({y}))",
 }
-_OP_IDENTITY_CXX = {
+_OP_IDENTITY_CXX: Dict[str, str] = {
     "add": "({T})0",
     "mul": "({T})1",
     "max": "(-INFINITY)",
@@ -84,23 +87,23 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
     inedge = state.in_edges(node)[0]
     outedge = state.out_edges(node)[0]
     insubset = dcpy(inedge.data.subset)
-    isqdim = insubset.squeeze()
+    isqdim = as_range(insubset).squeeze()
     outsubset = dcpy(outedge.data.subset)
-    outsubset.squeeze()
-    input_data = sdfg.arrays[inedge.data.data]
-    output_data = sdfg.arrays[outedge.data.data]
+    as_range(outsubset).squeeze()
+    input_data = sdfg.arrays[required(inedge.data.data)]
+    output_data = sdfg.arrays[required(outedge.data.data)]
 
     axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
-    in_sizes = insubset.size()
+    in_sizes = as_range(insubset).size()
     out_elems = 1
-    for s in outsubset.size():
+    for s in as_range(outsubset).size():
         out_elems *= s
 
     # Only contiguous 1-D full-reduction-to-scalar. Non-unit step (strided input
     # ``a[0:2N:2]``) can't use the contiguous SIMD load ``__inp[_i + _l]`` below ->
     # fall back to pure/OpenMP (strided SIMD gather not worth it).
     if (len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1
-            or any(str(step) != "1" for (_, _, step) in insubset.ranges)):
+            or any(str(step) != "1" for (_, _, step) in as_range(insubset).ranges)):
         return None
 
     ctype = input_data.dtype.ctype
@@ -108,11 +111,11 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
 
     nsdfg = dace.SDFG("reduce_vectorized")
     nsdfg.add_array("_in",
-                    insubset.size(),
+                    as_range(insubset).size(),
                     input_data.dtype,
                     strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
                     storage=input_data.storage)
-    nsdfg.add_array("_out", outsubset.size(), output_data.dtype, storage=output_data.storage)
+    nsdfg.add_array("_out", as_range(outsubset).size(), output_data.dtype, storage=output_data.storage)
     nsdfg.append_global_code('#include "dace/horizontal_reduce.h"')
 
     inedge.dst_conn = "_in"
@@ -158,7 +161,7 @@ __out = _s;
 class ExpandReduceVectorized(pm.ExpandTransformation):
     """Schedule-aware ``"vectorized"`` expansion of a ``Reduce`` node."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: Reduce, state: SDFGState, sdfg: SDFG) -> SDFG:

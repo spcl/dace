@@ -9,6 +9,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.layout.block_aware_map_tiling import provably_indivisible
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -44,7 +45,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
                         continue
                     for p, sym in param_syms.items():
                         if base == sym:
-                            widths.setdefault(p, set()).add(int(modulus))
+                            widths.setdefault(p, set()).add(int(as_expr(modulus)))
         if len(widths) != len(me.map.params) or any(len(bs) != 1 for bs in widths.values()):
             return None
         return {p: next(iter(bs)) for p, bs in widths.items()}

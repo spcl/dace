@@ -80,7 +80,7 @@ never corrupt the real SDFG.
 """
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import sympy
 
@@ -89,7 +89,8 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
@@ -97,6 +98,7 @@ from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_t
 from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_with_state
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 class EinsumSpec(NamedTuple):
@@ -117,7 +119,7 @@ class TransposeSpec(NamedTuple):
     dst_subset: subsets.Subset
 
 
-def _is_single_element(desc) -> bool:
+def _is_single_element(desc: data.Data) -> bool:
     """A ``Scalar`` or a length-1 ``Array`` -- the frontend's per-read staging shape."""
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == '1' for s in desc.shape))
 
@@ -149,7 +151,7 @@ def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None
     return referenced, written, counts
 
 
-def _data_state_counts(cfg) -> Dict[str, int]:
+def _data_state_counts(cfg: ControlFlowRegion) -> Dict[str, int]:
     """Array name -> number of states in ``cfg`` holding an AccessNode for it."""
     counts: Dict[str, int] = {}
     for state in cfg.all_states():
@@ -181,7 +183,7 @@ def _has_loop_ancestor(loop: LoopRegion) -> bool:
     return False
 
 
-def _region_in_loop(region) -> bool:
+def _region_in_loop(region: Optional[AbstractControlFlowRegion]) -> bool:
     """True iff ``region`` sits inside a ``LoopRegion`` (so its states' maps are already
     covered by that loop's candidate)."""
     while region is not None and not isinstance(region, SDFG):
@@ -347,10 +349,17 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(probe, {})
 
 
-def _probe_compute_nodes(probe: SDFG):
+def _probe_compute_nodes(
+    probe: SDFG
+) -> Tuple[List[nodes.LibraryNode], List[nodes.Tasklet], List[nodes.MapEntry], List[nodes.LibraryNode],
+           List[nodes.NestedSDFG], List[LoopRegion]]:
     """(einsum_nodes, tasklets, map_entries, other_libnodes, nested) across the probe."""
     from dace.libraries.blas.nodes.einsum import Einsum
-    einsums, tasklets, maps, others, nested = [], [], [], [], []
+    einsums: List[nodes.LibraryNode] = []
+    tasklets: List[nodes.Tasklet] = []
+    maps: List[nodes.MapEntry] = []
+    others: List[nodes.LibraryNode] = []
+    nested: List[nodes.NestedSDFG] = []
     for n, _ in probe.all_nodes_recursive():
         if isinstance(n, Einsum):
             einsums.append(n)
@@ -481,11 +490,12 @@ def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Dat
         symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape))
 
 
-def _boundary_axis_order(edges, probe: SDFG, transient_ok: bool):
+def _boundary_axis_order(edges: List[MultiConnectorEdge[Memlet]], probe: SDFG,
+                         transient_ok: bool) -> Optional[Tuple[str, List[str], subsets.Range]]:
     """From a MapEntry's scope-side out-edges (or a MapExit's scope-side in-edges),
     the single non-transient boundary array touched, its per-axis index order, and
     a full-array subset. ``None`` unless exactly one such array is found."""
-    found = None
+    found: Optional[Tuple[str, List[str], subsets.Range]] = None
     for e in edges:
         if e.data is None or e.data.is_empty() or e.data.data is None:
             continue
@@ -548,7 +558,7 @@ def _plain_edges(region: ControlFlowRegion) -> bool:
     return True
 
 
-def _single_body_block(region: ControlFlowRegion):
+def _single_body_block(region: ControlFlowRegion) -> Optional[ControlFlowBlock]:
     """``region``'s one meaningful child block, or ``None``. Empty scaffold states --
     the connective ``..._for_inline_pre_state`` blocks the map->loop lowering leaves
     behind -- are ignored; anything else must be alone."""
@@ -649,7 +659,7 @@ def _point_index(memlet: Memlet, expect_data: Optional[str] = None) -> Optional[
     return memlet.data, idx
 
 
-def _tasklet_expr(tasklet: nodes.Tasklet):
+def _tasklet_expr(tasklet: nodes.Tasklet) -> Optional[symbolic.SymbolicType]:
     """The tasklet's single assigned expression as a sympy expression, or ``None``."""
     if tasklet.code.language != dtypes.Language.Python:
         return None
@@ -676,7 +686,7 @@ def _tasklet_expr(tasklet: nodes.Tasklet):
     return expr
 
 
-def _product_scale(tasklet: nodes.Tasklet):
+def _product_scale(tasklet: nodes.Tasklet) -> Optional[sympy.Basic]:
     """The numeric factor of a tasklet that multiplies ALL of its inputs together
     (``__out = 2.5 * __in2`` -> ``2.5``; ``__out = __in1 * __in2`` -> ``1``), else
     ``None``. Same test ``LiftEinsum`` applies to the fused tasklet, here applied per
@@ -691,7 +701,7 @@ def _product_scale(tasklet: nodes.Tasklet):
         ratio = symbolic.simplify(expr / expected)
     except (TypeError, ValueError, ZeroDivisionError):
         return None
-    return ratio if ratio.is_Number else None
+    return ratio if as_basic(ratio).is_Number else None
 
 
 def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
@@ -704,12 +714,13 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
     if expr is None:
         return False
     try:
-        return symbolic.simplify(expr - pystr_to_symbolic(conns[0]) - pystr_to_symbolic(conns[1])) == 0
+        return symbolic.simplify(expr - pystr_to_symbolic(conns[0]) - as_expr(pystr_to_symbolic(conns[1]))) == 0
     except (TypeError, ValueError):
         return False
 
 
-def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Dict) -> Optional[Union[_Leaf, _Product]]:
+def _resolve(state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
+             visited: Dict[nodes.Node, None]) -> Optional[Union[_Leaf, _Product]]:
     """The value flowing along ``edge``, chasing back through single-element transient
     staging scalars and product tasklets to the leaf array reads. ``visited`` collects
     every node consumed, so the caller can verify the body holds nothing else."""
@@ -739,7 +750,8 @@ def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Dict) -> Optional[Unio
     return None
 
 
-def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict) -> Optional[_Product]:
+def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict[nodes.Node,
+                                                                                         None]) -> Optional[_Product]:
     """``tasklet`` as a product of its resolved inputs, or ``None``. Single-consumer
     only: a re-used intermediate is not a tree and would be counted twice."""
     if tasklet in visited or state.out_degree(tasklet) != 1:
@@ -993,7 +1005,7 @@ def _may_hold_map_contraction(state: SDFGState) -> bool:
     return False
 
 
-def _match_nest(nest: Optional[_Nest], sdfg: SDFG):
+def _match_nest(nest: Optional[_Nest], sdfg: SDFG) -> Optional[Union[EinsumSpec, TransposeSpec]]:
     """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``."""
     if nest is None or len(nest.axes) < 2:
         return None
@@ -1023,7 +1035,7 @@ class LoopToEinsum(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = self._lift_loops(sdfg)
         count += self._lift_maps(sdfg)
         return count or None
@@ -1089,7 +1101,8 @@ class LoopToEinsum(ppl.Pass):
             count += 1
         return count
 
-    def _match(self, loop: LoopRegion, root: SDFG, root_counts: Dict[str, int]):
+    def _match(self, loop: LoopRegion, root: SDFG,
+               root_counts: Dict[str, int]) -> Optional[Union[EinsumSpec, TransposeSpec]]:
         """Match ``loop`` directly; on a decline fall back to the probe (and count it)."""
         referenced, written, inside = _loop_data_census(loop)
         if not referenced:
@@ -1106,7 +1119,7 @@ class LoopToEinsum(ppl.Pass):
         return spec
 
     def _probe(self, loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None],
-               written: Dict[str, None]):
+               written: Dict[str, None]) -> Optional[Union[EinsumSpec, TransposeSpec]]:
         """Copy the loop, run the lift pipeline on the copy, and return an
         ``EinsumSpec`` / ``TransposeSpec`` if it cleanly collapsed, else ``None``.
         Any probe failure is swallowed -- the lift is strictly opt-in."""

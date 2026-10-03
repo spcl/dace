@@ -10,15 +10,16 @@ same way. The substitution is value-preserving, so the SDFG result is
 unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
 """
 import copy
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 import dace
 import sympy
 
-from dace import properties
+from dace import properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps, tasklets_assign
@@ -37,7 +38,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
     CATEGORY: str = 'Canonicalization'
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Identity offset/begin: this pass overrides ``apply_pass`` entirely
         # and does not use the base shifting behavior.
         super().__init__(offset_expr="0", begin_expr=None)
@@ -48,8 +49,8 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str,
                                                                                str]) -> Optional[dace.memlet.Memlet]:
@@ -70,7 +71,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             return None
         sd = {dace.symbolic.pystr_to_symbolic(k): dace.symbolic.pystr_to_symbolic(v) for k, v in repldict.items()}
 
-        def _r(sub):
+        def _r(sub: Optional[Subset]) -> Optional[dace.subsets.Range]:
             if sub is None:
                 return None
             return dace.subsets.Range([
@@ -110,10 +111,10 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
         me.map.range = dace.subsets.Range(new_ranges)
 
-        def _subs(x):
+        def _subs(x: symbolic.SymbolicType) -> symbolic.SymbolicType:
             return x.subs(subsdict) if isinstance(x, sympy.Basic) else x
 
-        def subs_range(sub) -> dace.subsets.Range:
+        def subs_range(sub: Subset) -> dace.subsets.Range:
             return dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in sub.ndrange()])
 
         # Param-local: substitute only within this map's scope.
@@ -183,7 +184,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         loop.update_statement = CodeBlock(f"{var} = {var} + 1")
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Normalize every map and loop in ``sdfg`` (recursively).
 
         :param sdfg: The SDFG to normalize in place.
@@ -245,7 +246,7 @@ class NormalizeLoopBounds(NormalizeLoopsAndMaps):
         loop.update_statement = CodeBlock(f"{var} = {var} + ({step})")
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Rebase every loop counter to 0 (keeping stride); leave maps untouched."""
         count = 0
         for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -276,7 +277,7 @@ class NormalizeStridedMaps(NormalizeLoopsAndMaps):
     trip is nonnegative under the canon "symbols nonnegative" contract.
     """
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Normalize every map with a non-unit step; leave unit-step maps and
         all loops alone."""
         count = 0

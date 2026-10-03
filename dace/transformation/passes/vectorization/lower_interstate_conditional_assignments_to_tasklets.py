@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
-from typing import Any
+from typing import Any, List, Type, Union
 import dace
 from dace import dtypes, SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
@@ -8,6 +8,7 @@ from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
+from dace.sdfg.narrowing import as_basic
 
 
 @properties.make_properties
@@ -62,8 +63,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     @staticmethod
     def arm_bound_symbols(sd: SDFG) -> dict[str, 'dtypes.typeclass']:
@@ -151,7 +152,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     if (isinstance(node, nodes.Tasklet) and is_python_tasklet(node)
                             and node.label.startswith(self.conditional_assignment_tasklet_prefix)):
                         expr = symbolic.SymExpr(node.code.as_string.split(" = ")[-1])
-                        syms = expr.free_symbols
+                        syms = as_basic(expr).free_symbols
                         # If not in inconnectors then it is a symbol
                         all_free_syms = {str(s) for s in syms if str(s) not in node.in_connectors}
                         # Should be empty

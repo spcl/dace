@@ -6,6 +6,7 @@ import pathlib
 import shutil
 
 import dace.library
+from typing import Dict, List
 
 
 @dace.library.environment
@@ -13,19 +14,19 @@ class hipTensor:
     """Build/link configuration and per-node setup code for hipTensor-backed library nodes."""
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
     cmake_libraries = ["hiptensor"]
     # The HIP headers require a platform macro when the compiler is not hipcc.
     cmake_compile_flags = ["-D__HIP_PLATFORM_AMD__"]
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     headers = {'frame': ["dace/dace_hiptensor.h"], 'cuda': ["dace/dace_hiptensor.h"]}
     state_fields = ["dace::linalg::HipTensorHandle hiptensor_handle;"]
     init_code = ""
     finalize_code = ""
-    dependencies = []
+    dependencies: List[str] = []
 
     #: dtype -> (tensor data type, compute descriptor, C scalar type for alpha/beta). Same shape as
     #: :attr:`~dace.libraries.linalg.environments.cutensor.cuTensor.TYPE_MAP`, but SHORTER, and the

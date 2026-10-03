@@ -28,6 +28,7 @@ from dace.sdfg import nodes, InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.optionals import required
 
 
 @properties.make_properties
@@ -659,7 +660,7 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     variant_syms: Set[str] = set(me.map.params)
 
     mx = state.exit_node(me)
-    inside_nodes = state.all_nodes_between(me, mx)
+    inside_nodes = state.all_nodes_between(me, required(mx))
     if inside_nodes is None:
         return 0
 
@@ -697,7 +698,7 @@ def _find_one_map_invariant_tasklet(
     variant_data: Set[str],
 ) -> Optional[nodes.Tasklet]:
     mx = state.exit_node(me)
-    inside = state.all_nodes_between(me, mx) or set()
+    inside = state.all_nodes_between(me, required(mx)) or set()
     scope_dict = state.scope_dict()
     # State order: iterating the between-set follows node addresses and picks a run-dependent first hoist.
     for n in state.nodes():

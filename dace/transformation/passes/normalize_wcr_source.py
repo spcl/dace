@@ -58,7 +58,7 @@ The pass is idempotent: re-running it finds no WCR edges sourced from CodeNodes
 after a single iteration.
 """
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import numpy
 
@@ -85,8 +85,8 @@ class NormalizeWCRSource(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets))
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _output_descriptor(self, src: nodes.CodeNode, src_conn: str,
                            target_desc: Optional[data.Data]) -> Optional[data.Data]:

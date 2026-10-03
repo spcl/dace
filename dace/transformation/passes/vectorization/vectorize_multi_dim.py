@@ -22,12 +22,13 @@ Every other combo -> ``NotImplementedError``.
 import copy
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, List, Tuple, Type, Union
 
 import sympy
 
 import dace
 from dace import properties, symbolic
+from dace.sdfg.nodes import LibraryNode
 from dace.sdfg.state import ControlFlowRegion
 from dace.config import Config
 from dace.dtypes import DeviceType
@@ -106,10 +107,12 @@ from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
+from dace.optionals import required
+from dace.sdfg.narrowing import as_map_entry
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-TILE_NODE_TYPES = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen, TileITE, TileReduce, TileScatter,
-                   TileUnop)
+TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen,
+                                                  TileITE, TileReduce, TileScatter, TileUnop)
 
 #: Every node the emit stage can produce, including the two the selector above does not stamp.
 #: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
@@ -167,7 +170,7 @@ def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.Map
     if not inner:
         return False
     for e in inner:
-        idx_syms = {str(s) for s in e.data.subset.free_symbols}
+        idx_syms = {str(s) for s in required(e.data.subset).free_symbols}
         if not param_syms.issubset(idx_syms):
             # A map param is reduced over (absent from this write) -> cross-iteration reduction.
             return False
@@ -188,7 +191,7 @@ class _MultiOutputReductionMapFission(MapFission):
         map_exit = graph.exit_node(self.map_entry)
         # Count only genuine reductions. An injective per-element RMW WCR (s212 ``a[i] *= c[i]``) is
         # elementwise, and fissioning it detaches the write from its snapshot and miscompiles s212.
-        params = self.map_entry.map.params
+        params = as_map_entry(self.map_entry).map.params
         wcr_arrays = {
             e.data.data
             for e in graph.out_edges(map_exit) if e.data is not None and e.data.data is not None
@@ -213,7 +216,8 @@ _VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_ta
 #: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
 #: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
 #: A tuple, not a dict: membership must compare equal for both the enum member and its raw string.
-_BRANCHED_REMAINDER = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
+_BRANCHED_REMAINDER: Tuple[RemainderStrategy,
+                           ...] = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
@@ -401,10 +405,10 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Widen body-NSDFG boundary memlets, then repair the widened connectors.
 
         :returns: The number of widenings applied; ``0`` when nothing widened but the two
@@ -474,10 +478,10 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         violation = no_wcr_inside_nested_sdfgs(sdfg)
         if violation is not None:
             raise VectorizeUnsupported(f"unresolved WCR inside the body NSDFG before tiling: {violation}")
@@ -495,10 +499,10 @@ class _AssertNoBodyWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
             if violation is not None:
                 raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violation}")
@@ -520,10 +524,10 @@ class _AssertTileOpsLowered(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
         if violation is not None:
             raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {violation}")
@@ -585,10 +589,10 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Fuse, promote, then inline the branch-lowered body NestedSDFGs.
 
         :returns: The number of inlines applied; ``0`` when nothing inlined but the state
@@ -979,7 +983,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         self._validate_all = validate_all
         self._assume_even = assume_even
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
         The K-dim tile is taken over the last ``K`` params of one innermost map of the canonical
@@ -988,7 +992,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Carry-in from any enclosing pipeline.
-        :returns: Whatever the inner pipeline returned (count of rewrites).
+        :returns: Whatever the inner pipeline returned.
         """
         with equalized(sdfg):
             return self.vectorize(sdfg, pipeline_results)
@@ -1108,7 +1112,8 @@ class VectorizeMultiDim(ppl.Pipeline):
     #: ``ConvertTaskletsToTileOps`` completes. ``NestInnermostMapBodyIntoNSDFG`` is NOT
     #: listed: it clears the stale scalar-staging ``other_subset`` on its boundary edges, so
     #: it leaves a VALID SDFG. The final ``sdfg.validate()`` re-checks the end state.
-    _SKIP_VALIDATE_AFTER = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore, ConvertTaskletsToTileOps)
+    _SKIP_VALIDATE_AFTER: Tuple[Type[ppl.Pass], ...] = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore,
+                                                        ConvertTaskletsToTileOps)
 
     # ``Any``: a subpass result is whatever that pass returns; the base declares ``Optional[Any]``.
     def apply_subpass(self, sdfg: dace.SDFG, p: ppl.Pass, state: dict[str, Any]) -> Any:

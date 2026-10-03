@@ -94,6 +94,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE as NUM_THREADS_DTYPE
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import (WORKSHARED, HoistParallelRegion)
+from dace.optionals import required
 
 #: Parameter name of the band loop. One name, so the reshape can find the map it just made.
 BAND_PARAM = '__dace_band'
@@ -516,7 +517,7 @@ class BandCarriedLoops(HoistParallelRegion):
         if approved_loop is not loop:
             targets = bandable_maps(loop)  # asked out of order: recompute rather than trust a stale set
         self._approved = None
-        for _, map_entry in targets:
+        for _, map_entry in required(targets):
             # Narrowed BEFORE outlining, while the maps are still reachable from here: the parent's
             # hoist moves these states into a nested SDFG and the node handles would go stale.
             cut_into_bands(map_entry, BAND_SYMBOL)
@@ -542,7 +543,7 @@ class BandCarriedLoops(HoistParallelRegion):
         team.map.schedule = WORKSHARED
         # The narrowed maps sit inside the nested SDFG the outlining made, so the band parameter
         # has to be handed across that boundary like any other symbol.
-        for node in state.scope_subgraph(team).nodes():
+        for node in required(state).scope_subgraph(team).nodes():
             if isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
                 node.symbol_mapping[BAND_PARAM] = BAND_SYMBOL
                 if BAND_PARAM not in node.sdfg.symbols:

@@ -42,6 +42,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.map_interchange import MapInterchange
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Sentinel score for a parameter that never indexes any axis with a unit
 #: coefficient (it has no contiguous "home" and is sorted outermost).
@@ -109,7 +110,7 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
                 continue
             stride_val = sympy.Abs(pystr_to_symbolic(str(stride)))
             for vname, vsym in symbols_by_name.items():
-                coeff = index_expr.coeff(vsym, 1)
+                coeff = as_expr(index_expr).coeff(as_expr(vsym), 1)
                 if coeff == 0:
                     continue
                 others = {s: 0 for name, s in symbols_by_name.items() if name != vname}
@@ -139,17 +140,19 @@ def stride_difference_sign(a, b) -> int:
     :class:`UndecidableStride`, which leaves the nest untouched -- the behaviour this pass had for
     every symbolic shape before.
     """
-    diff = symbolic.simplify(pystr_to_symbolic(str(a)) - pystr_to_symbolic(str(b)))
+    diff = symbolic.simplify(as_expr(pystr_to_symbolic(str(a))) - as_expr(pystr_to_symbolic(str(b))))
     if diff == 0:
         return 0
-    if diff.is_number:
+    if as_basic(diff).is_number:
         return -1 if diff < 0 else 1
-    rebuilt = diff.subs({sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in diff.free_symbols})
+    rebuilt = diff.subs(
+        {sym: sympy.Symbol(sym.name, positive=True, integer=True)
+         for sym in as_basic(diff).free_symbols})
     # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
     # order, and reporting them as tied keeps the stable sort's current-order behaviour.
-    if rebuilt.is_nonpositive:
+    if as_basic(rebuilt).is_nonpositive:
         return -1
-    if rebuilt.is_nonnegative:
+    if as_basic(rebuilt).is_nonnegative:
         return 1
     raise UndecidableStride(f'{a} vs {b}')
 

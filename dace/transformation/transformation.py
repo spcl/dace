@@ -29,15 +29,18 @@ from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
-from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
+from typing import Any, Dict, Generic, List, Optional, Set, TYPE_CHECKING, Type, TypeVar, Union, Callable
 import pydoc
 import warnings
 from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
+#: The graph a pattern is matched in: a state for single-state patterns, a control-flow region for multi-state ones.
+GraphT = TypeVar('GraphT', bound=Union[ControlFlowRegion, SDFGState])
 
-def explicit_cf_compatible(cls: PassT) -> PassT:
+
+def explicit_cf_compatible(cls: Type[PassT]) -> Type[PassT]:
     cls.__explicit_cf_compatible__ = True
     return cls
 
@@ -99,7 +102,7 @@ class TransformationBase(ppl.Pass):
 
 
 @make_properties
-class PatternTransformation(TransformationBase):
+class PatternTransformation(TransformationBase, Generic[GraphT]):
     """
     Abstract class for pattern-matching transformations.
     Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
@@ -154,11 +157,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def can_be_applied(self,
-                       graph: Union[ControlFlowRegion, SDFGState],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: GraphT, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
 
@@ -173,7 +172,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[ControlFlowRegion, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: GraphT, sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
@@ -543,7 +542,7 @@ class PatternTransformation(TransformationBase):
 
 @make_properties
 @explicit_cf_compatible
-class SingleStateTransformation(PatternTransformation, abc.ABC):
+class SingleStateTransformation(PatternTransformation[SDFGState], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
     New transformations that extend this class must contain static ``PatternNode`` fields that represent the
@@ -599,7 +598,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
 
 
 @make_properties
-class MultiStateTransformation(PatternTransformation, abc.ABC):
+class MultiStateTransformation(PatternTransformation[ControlFlowRegion], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within an SDFG state machine.
     New transformations that extend this class must contain static ``PatternNode``-annotated fields that represent the
@@ -707,6 +706,13 @@ class PatternNode(Generic[T]):
         state: SDFGState = t_graph.node(state_id)
         return state.node(node_id)
 
+    if TYPE_CHECKING:
+        # Assigning a node on an instance shadows the descriptor (it defines no ``__set__`` at run time, so it stays
+        # a non-data descriptor); the checkers are told what such an assignment may carry.
+
+        def __set__(self, instance: PatternTransformation, value: T) -> None:
+            ...
+
 
 def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.CodeNode) -> None:
     """Add to ``expansion`` the wired connectors a pass added to ``node`` (e.g., a GPU stream).
@@ -756,7 +762,8 @@ class ExpandTransformation(PatternTransformation):
         return str(self._match_node)
 
     @staticmethod
-    def expansion(node: nd.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, *args, **kwargs):
+    def expansion(*args: Any, **kwargs: Any) -> Any:
+        # Open signature on purpose: every expansion takes its own node type (and its own extra keywords).
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod
@@ -1140,7 +1147,7 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
     raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
 
 
-def single_level_sdfg_only(cls: PassT) -> PassT:
+def single_level_sdfg_only(cls: Type[PassT]) -> Type[PassT]:
 
     for function_name in ['apply_pass', 'apply_to']:
         _make_function_blocksafe(cls, function_name, lambda *args: args[1])

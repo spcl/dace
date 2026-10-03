@@ -20,13 +20,16 @@ from dace import library, nodes, properties, symbolic
 from dace.codegen.common import global_code_id
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
+from typing import List
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 @library.expansion
 class ExpandSymmetrizePure(ExpandTransformation):
     """Parallel triangular copy: ``map[i] { map[j in i+off:hi] { X[mirror] = X[src] } }``."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -88,7 +91,7 @@ class ExpandSymmetrizeBoundingBox(ExpandTransformation):
     writes -- which is why the CPU keeps the triangular expansion.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -157,7 +160,8 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
                                                                               symbolic.pystr_to_symbolic(node.col_hi),
                                                                               rows, cols)
         return (symbolic.equal(rows, cols) is True and symbolic.equal(row_lo, 0) is True
-                and symbolic.equal(col_hi, cols) is True and symbolic.equal(row_hi, cols - node.col_offset) is True)
+                and symbolic.equal(col_hi, cols) is True and symbolic.equal(row_hi,
+                                                                            as_expr(cols) - node.col_offset) is True)
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
@@ -252,7 +256,7 @@ class Symmetrize(nodes.LibraryNode):
         if in_name != out_name:
             raise ValueError(f"{type(self).__name__} is in-place: '_in' ({in_name}) and '_out' ({out_name}) "
                              f"must be the same array.")
-        desc = sdfg.arrays[in_name]
+        desc = sdfg.arrays[required(in_name)]
         if len(desc.shape) != 2:
             raise ValueError(f"{type(self).__name__} target '{in_name}' must be 2-D; got shape {tuple(desc.shape)}.")
         return in_name, desc

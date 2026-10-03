@@ -17,6 +17,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
 from dace.ordered import OrderedSet
+from dace.optionals import required
 
 
 @library.expansion
@@ -90,12 +91,12 @@ class Gatherv(MPINode):
             if e.dst_conn == "_root":
                 root = sdfg.arrays[e.data.data]
 
-        if root.dtype.base_type != dtypes.int32:
+        if required(root).dtype.base_type != dtypes.int32:
             raise ValueError("Gatherv root must be an integer!")
         # MPI_Gatherv takes ``const int[]`` count/displacement arrays.
-        if recvcounts.dtype.base_type != dtypes.int32:
+        if required(recvcounts).dtype.base_type != dtypes.int32:
             raise ValueError("Gatherv _recvcounts must be an int32 array!")
-        if displs.dtype.base_type != dtypes.int32:
+        if required(displs).dtype.base_type != dtypes.int32:
             raise ValueError("Gatherv _displs must be an int32 array!")
 
         in_count_str = "XXX"

@@ -14,7 +14,7 @@ rewrites ``T`` (any state split off it is new) and thereby the contents of ``T``
 state holding that SDFG's own node reads; refusals on ``T`` and its ancestors are dropped.
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace.config import Config
@@ -90,8 +90,8 @@ class Walk:
             self.clean_states.pop(block, None)
 
 
-def accepts(xform: transformation.SingleStateTransformation, pattern_node: transformation.PatternNode, state: SDFGState,
-            node: nodes.NestedSDFG) -> bool:
+def accepts(xform: transformation.SingleStateTransformation, pattern_node: transformation.PatternNode[nodes.NestedSDFG],
+            state: SDFGState, node: nodes.NestedSDFG) -> bool:
     owner = state.sdfg
     # Bound by node OBJECT: ``PatternNode.__get__`` returns a non-int as-is, so no node index is resolved.
     xform.setup_match(owner, 0, -1, {pattern_node: node}, 0, override=True)
@@ -116,8 +116,8 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return PruneConnectors().should_reapply(modified) or InlineSDFG().should_reapply(modified)
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Prune and inline until neither transformation accepts a nested SDFG of ``sdfg``.

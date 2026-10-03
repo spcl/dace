@@ -12,7 +12,7 @@ from sympy import Float, Integer
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache, wraps
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Callable, Concatenate, Dict, Optional, ParamSpec, TYPE_CHECKING, TypeVar
 
 from dace.config import Config
 
@@ -1578,7 +1578,13 @@ def json_to_typeclass(obj, context=None):
         raise ValueError("Cannot resolve: {}".format(obj))
 
 
-def paramdec(dec):
+ParamsT = ParamSpec('ParamsT')
+ResultT = TypeVar('ResultT')
+
+
+def paramdec(
+    dec: Callable[Concatenate[Callable[..., Any], ParamsT], ResultT]
+) -> Callable[ParamsT, Callable[[Callable[..., Any]], ResultT]]:
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
 

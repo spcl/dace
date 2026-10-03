@@ -11,6 +11,7 @@ from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.optionals import required
 
 Write = Tuple[SDFGState, MultiConnectorEdge]
 
@@ -134,7 +135,7 @@ def constant_value(desc: dt.Data, writes: List[Write]) -> Optional[Any]:
             return None
         touched[tuple(index)] = True
         array[tuple(index)] = value
-    return desc.dtype.type(array.flat[0]) if isinstance(desc, dt.Scalar) else array
+    return required(desc.dtype.type)(array.flat[0]) if isinstance(desc, dt.Scalar) else array
 
 
 def remove_write(state: SDFGState, edge: MultiConnectorEdge):

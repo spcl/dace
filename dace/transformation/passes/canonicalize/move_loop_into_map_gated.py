@@ -67,7 +67,7 @@ The stride ranking reuses
 boundary that the map-only and loop-only stride passes cannot cross.
 """
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG, properties, symbolic
 from dace.sdfg.state import LoopRegion
@@ -76,6 +76,7 @@ from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tuple[float, float]] | None:
@@ -125,9 +126,9 @@ def launches_saved(loop: LoopRegion) -> float:
     if maps == 0 or start is None or end is None or step is None:
         return math.inf if maps else 0
     trips = symbolic.simplify((end - start) / step + 1)
-    if not trips.is_Number:
+    if not as_basic(trips).is_Number:
         return math.inf
-    return max(int(trips), 0) * maps - 1
+    return max(int(as_expr(trips)), 0) * maps - 1
 
 
 def single_iteration_lanes(loop: LoopRegion) -> bool:
@@ -171,7 +172,7 @@ class MoveLoopIntoMapGated(ppl.Pass):
         desc='Only consider loops whose maps all run one iteration (the offload wraps host-side work in '
         'such maps; the pass then runs on the offloaded graph)')
 
-    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False):
+    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False) -> None:
         super().__init__()
         self.target = target
         self.single_iteration_only = single_iteration_only
@@ -182,8 +183,8 @@ class MoveLoopIntoMapGated(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Interchange every approved loop<->map pair in ``sdfg``.

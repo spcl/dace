@@ -23,7 +23,7 @@ prefix params allowed); a pair whose bodies are not single fusable nested SDFGs 
 """
 import copy
 
-from typing import Any
+from typing import Any, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -34,10 +34,12 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER
 from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Tail markers this pass folds into the ``else`` arm. ``__masked_tail`` is a tile body placed as
 #: is; ``__scalar_tail`` is a step-1 body that needs the lane loop around it.
-_TAIL_MARKERS = (MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER)
+_TAIL_MARKERS: Tuple[str, ...] = (MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER)
 
 
 @properties.make_properties
@@ -142,7 +144,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         # out-edge writes nothing, which no ``__tile_main``/tail body does. Verified both ways on a body
         # carrying a write-only scratch scalar; see ``tile_mask_and_tail_fusion_see_write_only_sink_test.py``.
         exit_node = state.exit_node(entry)
-        body = [n for n in state.all_nodes_between(entry, exit_node)]
+        body = [n for n in state.all_nodes_between(entry, required(exit_node))]
         nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
         if len(nsdfgs) == 1 and len(body) == 1:
             return nsdfgs[0]
@@ -207,15 +209,15 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
         symbol_mapping = {s: symbolic.pystr_to_symbolic(s) for s in sorted(str(s) for s in fused_body.free_symbols)}
         fused_nsdfg = state.add_nested_sdfg(fused_body,
-                                            inputs=dict(main_nsdfg.in_connectors),
-                                            outputs=dict(main_nsdfg.out_connectors),
+                                            inputs=copy.deepcopy(main_nsdfg.in_connectors),
+                                            outputs=copy.deepcopy(main_nsdfg.out_connectors),
                                             symbol_mapping=symbol_mapping)
 
         # Detach the two original bodies + the whole remainder scope from the state.
         state.remove_node(main_nsdfg)
         state.remove_node(rem_nsdfg)
         state.remove_node(rem_entry)
-        state.remove_node(rem_exit)
+        state.remove_node(required(rem_exit))
 
         # Reuse the main map as the fused map, iterating the ORIGINAL element range strided by W:
         # extend the (already-original) innermost lower bound to the tail's upper bound ``ub`` so
@@ -246,7 +248,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         outer_data.update({e.src_conn: e.data.data for e in state.out_edges(main_nsdfg)})
         conn_arrays = dict.fromkeys(list(main_nsdfg.in_connectors) + list(main_nsdfg.out_connectors))
         for name in conn_arrays:
-            desc = copy.deepcopy(sd.arrays[outer_data[name]])
+            desc = copy.deepcopy(sd.arrays[required(outer_data[name])])
             desc.transient = False
             body.add_datadesc(name, desc)
 
@@ -289,7 +291,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
     @staticmethod
     def _full_tile_condition(tiled_param: str, W: int, ub: symbolic.SymbolicType) -> str:
         # Clean ``if``-branch predicate: a W-tile at start ``i`` is fully inside the extent.
-        bound = symbolic.simplify(symbolic.pystr_to_symbolic(str(ub)) - W + 1)
+        bound = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(ub))) - W + 1)
         return f"{tiled_param} <= {symbolic.symstr(bound)}"
 
     @staticmethod
@@ -297,9 +299,9 @@ class FuseBranchedTailRemainder(ppl.Pass):
         # Place a reused TILE body NSDFG (mask-free main, or masked tail) into a branch state.
         st = region.add_state(label, is_start_block=True)
         node = st.add_nested_sdfg(tile_nsdfg.sdfg,
-                                  inputs=dict(tile_nsdfg.in_connectors),
-                                  outputs=dict(tile_nsdfg.out_connectors),
-                                  symbol_mapping=dict(tile_nsdfg.symbol_mapping))
+                                  inputs=copy.deepcopy(tile_nsdfg.in_connectors),
+                                  outputs=copy.deepcopy(tile_nsdfg.out_connectors),
+                                  symbol_mapping=copy.deepcopy(tile_nsdfg.symbol_mapping))
         for conn in tile_nsdfg.in_connectors:
             an = st.add_access(conn)
             st.add_edge(an, None, node, conn, dace.Memlet.from_array(conn, body.arrays[conn]))
@@ -319,11 +321,11 @@ class FuseBranchedTailRemainder(ppl.Pass):
                             {loop_var: dace.subsets.Range([(loop_lb, symbolic.simplify(tail_ub), 1)])},
                             schedule=dace.dtypes.ScheduleType.Sequential)
         # Remap the scalar body's tiled iter-symbol to this loop var; every other mapping is kept.
-        sym_map = dict(rem_nsdfg.symbol_mapping)
+        sym_map = copy.deepcopy(rem_nsdfg.symbol_mapping)
         sym_map[tiled_param] = symbolic.pystr_to_symbolic(loop_var)
         node = st.add_nested_sdfg(rem_nsdfg.sdfg,
-                                  inputs=dict(rem_nsdfg.in_connectors),
-                                  outputs=dict(rem_nsdfg.out_connectors),
+                                  inputs=copy.deepcopy(rem_nsdfg.in_connectors),
+                                  outputs=copy.deepcopy(rem_nsdfg.out_connectors),
                                   symbol_mapping=sym_map)
         # No data edge to the entry/exit: an empty memlet keeps the node inside the scope.
         if not rem_nsdfg.in_connectors:

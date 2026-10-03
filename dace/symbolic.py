@@ -10,8 +10,8 @@ import pickle
 import re
 import types
 import weakref
-from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, Union,
-                    TYPE_CHECKING)
+from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TypeVar,
+                    Union, TYPE_CHECKING)
 import numpy
 import sympy.abc
 import sympy.parsing.sympy_parser
@@ -898,7 +898,10 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType = Union[sympy.Expr, SymExpr]
+
+#: A sympy object that keeps its own type through an operation that only renames symbols.
+SympyT = TypeVar('SympyT', bound=sympy.Basic)
 
 
 # http://stackoverflow.com/q/3844948/
@@ -1757,6 +1760,11 @@ _HEAD_META = DaceFunctionMeta if symbolic_engine.NATIVE_EXPR is not None else sy
 
 class DaceFunction(sympy.Function, metaclass=_HEAD_META):
     """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
+
+    if TYPE_CHECKING:
+
+        def __new__(cls, *args: Any, **options: Any) -> sympy.Expr:  # sympy's stub claims ``type[AppliedUndef]``
+            ...
 
 
 def split_divisible_terms(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
@@ -4852,7 +4860,7 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
     return a, b
 
 
-def equalize_symbols_across(*exprs: sympy.Expr) -> Tuple[sympy.Expr, ...]:
+def equalize_symbols_across(*exprs: SympyT) -> Tuple[SympyT, ...]:
     """The input expressions rewritten so every same-named free symbol is ONE instance across ALL of
     them, chosen by :func:`symbol_merge_key`.
 

@@ -24,13 +24,19 @@ silently drops a store the program needed, so the pass declines wherever it cann
 picture: one state, no nested SDFGs, no conditionals, no WCR, and every access to the array
 affine in the loop variable with matching non-scan indices.
 """
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
+
+import sympy
 
 from dace import SDFG, properties, symbolic
+from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 class CarriedStore(NamedTuple):
@@ -44,13 +50,13 @@ class CarriedStore(NamedTuple):
         iterations must be peeled off the tail to keep the stores the loop really makes.
     """
     name: str
-    dead_edge: Any
+    dead_edge: MultiConnectorEdge[Memlet]
     dead_offset: int
     kill_offset: int
     distance: int
 
 
-def symbol_named(expr, name: str):
+def symbol_named(expr: sympy.Basic, name: str) -> Optional[sympy.Symbol]:
     """The symbol OBJECT called ``name`` inside ``expr``, or ``None``.
 
     Never ``symbolic.symbol(name)``: a freshly minted symbol carries
@@ -63,7 +69,7 @@ def symbol_named(expr, name: str):
     return next((s for s in expr.free_symbols if str(s) == name), None)
 
 
-def constant_offset_on_axis(subset, loop_var: str) -> Optional[Tuple[int, int]]:
+def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int, int]]:
     """``(axis, offset)`` for a subset that is the single point ``i + offset`` on exactly one axis
     and loop-invariant everywhere else, else ``None``.
 
@@ -74,7 +80,9 @@ def constant_offset_on_axis(subset, loop_var: str) -> Optional[Tuple[int, int]]:
     found: Optional[Tuple[int, int]] = None
     for axis, (begin, end, step) in enumerate(subset.ndrange()):
         begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
-        if symbolic.simplify(end - begin) != 0 or symbolic.simplify(symbolic.pystr_to_symbolic(step) - 1) != 0:
+        if symbolic.simplify(as_expr(end) -
+                             as_expr(begin)) != 0 or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(step)) -
+                                                                       1) != 0:
             return None
         ivar = symbol_named(begin, loop_var)
         if ivar is None:
@@ -82,9 +90,9 @@ def constant_offset_on_axis(subset, loop_var: str) -> Optional[Tuple[int, int]]:
         if found is not None:
             return None  # the loop variable steers two axes; the overlap is not a shift
         offset = symbolic.simplify(begin - ivar)
-        if not offset.is_Integer:
+        if not as_basic(offset).is_Integer:
             return None
-        found = (axis, int(offset))
+        found = (axis, int(as_expr(offset)))
     return found
 
 
@@ -178,7 +186,7 @@ def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> O
 
 
 def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loop_var: str, axis: int, kill_off: int,
-                    dead_off: int, dead_edge) -> bool:
+                    dead_off: int, dead_edge: MultiConnectorEdge[Memlet]) -> bool:
     """No read of ``name`` observes the dead store -- in a later iteration, or in this one.
 
     Across iterations: a read at offset ``r`` in iteration ``i`` addresses what the dead store of
@@ -255,7 +263,7 @@ def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loo
     return not any(isinstance(n, nodes.AccessNode) and n.data == name for n in downstream)
 
 
-def reaches(state: SDFGState, start, target) -> bool:
+def reaches(state: SDFGState, start: nodes.Node, target: nodes.Node) -> bool:
     """``True`` iff ``target`` is ``start`` or lies downstream of it inside ``state``."""
     seen, frontier = {id(start)}, [start]
     while frontier:
@@ -269,7 +277,7 @@ def reaches(state: SDFGState, start, target) -> bool:
     return False
 
 
-def drop_store(state: SDFGState, edge) -> None:
+def drop_store(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> None:
     """Remove a write edge and everything that existed only to feed it.
 
     The producer is a Tasklet for a computed store and an AccessNode for a plain copy, so both are
@@ -319,8 +327,8 @@ class DeadCarriedStoreElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         from dace.transformation.interstate.loop_peeling import LoopPeeling
@@ -332,7 +340,7 @@ class DeadCarriedStoreElimination(ppl.Pass):
             stride = loop_analysis.get_loop_stride(loop)
             if stride is None or not symbolic.pystr_to_symbolic(stride).is_Integer:
                 continue
-            stride = int(symbolic.pystr_to_symbolic(stride))
+            stride = int(as_expr(symbolic.pystr_to_symbolic(stride)))
             if stride < 1:
                 continue  # a descending loop kills FORWARD; out of scope until something needs it
             body = body_is_analyzable(loop)

@@ -9,7 +9,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.frontend.python import memlet_parser
 import itertools
-from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
+from typing import AbstractSet, Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -21,7 +21,7 @@ class MemletReplacer(ast.NodeTransformer):
     def __init__(self,
                  arrays: Dict[str, data.Data],
                  process: Callable[[Memlet], Union[Memlet, None]],
-                 array_filter: Optional[Set[str]] = None) -> None:
+                 array_filter: Optional[AbstractSet[str]] = None) -> None:
         """
         Create a new memlet replacer.
 

@@ -10,6 +10,7 @@ from dace.sdfg.state import ControlFlowRegion, ReturnBlock
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg.utils import get_last_view_node
+from dace.optionals import required
 
 
 def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState]]) -> None:
@@ -52,7 +53,7 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
     traverse_IR(IR, collect)
     for node in entries:
         if IR.close not in node.next:
-            node.append_node(IR.close)
+            node.append_node(required(IR.close))
 
 
 # Scope Dict
@@ -205,7 +206,7 @@ def traverse_same_level(IR: OffloadingIRNode, method):  #DFS
 
         elif curr.is_open_node():
             method(curr)
-            queue += curr.close.next
+            queue += required(curr.close).next
 
         elif curr.type == OffloadingIRNode.CLOSE:
             break

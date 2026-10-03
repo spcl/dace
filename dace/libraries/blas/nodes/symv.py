@@ -18,6 +18,9 @@ from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
@@ -57,7 +60,8 @@ class ExpandSymvMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandSymvGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

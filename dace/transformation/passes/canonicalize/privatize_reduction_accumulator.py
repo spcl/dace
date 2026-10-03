@@ -31,13 +31,16 @@ original WCR semantics).
 The init's seed-read AND the writeback are unconditional, so this stays
 value-preserving even if zero iterations of the map run.
 """
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from dace import SDFG, data, memlet as mm, properties, subsets
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.optionals import required
+from dace.sdfg.narrowing import as_map_entry
 
 
 @properties.make_properties
@@ -52,7 +55,7 @@ class PrivatizeReductionAccumulator(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for state in list(sdfg.all_states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
@@ -65,7 +68,8 @@ class PrivatizeReductionAccumulator(ppl.Pass):
         return count or None
 
 
-def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, wcr_edge) -> bool:
+def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit,
+                                    wcr_edge: MultiConnectorEdge[mm.Memlet]) -> bool:
     """Rewrite a single Map's WCR-on-array-element write into WCR-on-scalar
     plus init + writeback.
 
@@ -111,7 +115,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
     # if the slot were a function of the map parameter this wouldn't be a
     # reduction.)
     map_entry = state.entry_node(map_exit)
-    map_param_set = dict.fromkeys(map_entry.map.params)
+    map_param_set = dict.fromkeys(as_map_entry(map_entry).map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
 
@@ -163,7 +167,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         state.add_edge(in_state_init_an, None, seed_an, None,
                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
         # The map's WCR accumulates onto the seed, so the seed must be written before the map starts.
-        state.add_nedge(seed_an, map_entry, mm.Memlet())
+        state.add_nedge(seed_an, required(map_entry), mm.Memlet())
         # The map's WCR output now goes to a fresh _priv_dot AN ...
         new_scalar_an = state.add_write(scalar_name)
         state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,

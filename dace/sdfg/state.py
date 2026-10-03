@@ -12,8 +12,8 @@ import sys
 import types
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
-                    overload)
+from typing import (TYPE_CHECKING, AbstractSet, Any, Literal, AnyStr, Callable, Dict, Iterable, Iterator, List, Mapping,
+                    Optional, Sequence, Set, Tuple, Union, overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -81,18 +81,27 @@ def caller_position(frame: types.FrameType) -> Tuple[int, str]:
     return position
 
 
-def _make_iterators(ndrange):
+#: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
+MapBound = Union[sympy.Basic, symbolic.SymExpr, int]
+MapDimension = Union[str, sbs.Subset, Tuple[MapBound, MapBound, MapBound]]
+#: The dimensions of a map by parameter name, as a mapping or as a list of pairs.
+MapRanges = Union[Mapping[str, MapDimension], Sequence[Tuple[str, MapDimension]]]
+
+
+def _make_iterators(ndrange: MapRanges):
     # Input can either be a dictionary or a list of pairs
-    if isinstance(ndrange, list):
+    dimensions: Mapping[str, MapDimension]
+    if isinstance(ndrange, collections.abc.Sequence):
         params = [k for k, _ in ndrange]
-        ndrange = {k: v for k, v in ndrange}
+        dimensions = {k: v for k, v in ndrange}
     else:
         params = list(ndrange.keys())
+        dimensions = ndrange
 
     # Parse each dimension separately
     ranges = []
     for p in params:
-        prange: Union[str, sbs.Subset, Tuple[symbolic.SymbolicType]] = ndrange[p]
+        prange: MapDimension = dimensions[p]
         if isinstance(prange, sbs.Subset):
             rng = prange.ndrange()[0]
         elif isinstance(prange, tuple):
@@ -638,9 +647,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
         return copy.copy(self._scope_leaves_cached)
 
+    @overload
     def scope_dict(self,
-                   return_ids: bool = False,
-                   validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node, None]]:
+                   return_ids: Literal[False] = False,
+                   validate: bool = True) -> Dict[nd.Node, Optional[nd.EntryNode]]:
+        ...
+
+    @overload
+    def scope_dict(self, return_ids: Literal[True], validate: bool = True) -> Dict[int, Optional[int]]:
+        ...
+
+    def scope_dict(self, return_ids: bool = False, validate: bool = True):
         """
         Return the scope dict, i.e. map every node inside the state to its enclosing scope or `None` if at global scope.
 
@@ -677,9 +694,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             return _scope_dict_to_ids(self, result)
         return result
 
+    @overload
     def scope_children(self,
-                       return_ids: bool = False,
-                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState', None], List[nd.Node]]:
+                       return_ids: Literal[False] = False,
+                       validate: bool = True) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
+        ...
+
+    @overload
+    def scope_children(self, return_ids: Literal[True], validate: bool = True) -> Dict[Optional[int], List[int]]:
+        ...
+
+    def scope_children(self, return_ids: bool = False, validate: bool = True):
         """For every scope node returns the list of nodes that are inside that scope.
 
         The global scope is denoted by `None`. It is essentially the inversion of `scope_dict`.
@@ -1991,8 +2016,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_tasklet(
         self,
         name: str,
-        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
-        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        inputs: Union[AbstractSet[str], Mapping[str, Optional[dtypes.typeclass]]],
+        outputs: Union[AbstractSet[str], Mapping[str, Optional[dtypes.typeclass]]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
         state_fields: Optional[List[str]] = None,
@@ -2124,7 +2149,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_map(
         self,
         name,
-        ndrange: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
+        ndrange: MapRanges,
         schedule=dtypes.ScheduleType.Default,
         unroll=False,
         debuginfo: Optional[dtypes.DebugInfo] = None,
@@ -2190,7 +2215,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_mapped_tasklet(
         self,
         name: str,
-        map_ranges: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
+        map_ranges: MapRanges,
         inputs: Dict[str, mm.Memlet],
         code: str,
         outputs: Dict[str, mm.Memlet],
@@ -3493,7 +3518,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return state
 
     def add_state_before(self,
-                         state: SDFGState,
+                         state: ControlFlowBlock,
                          label=None,
                          is_start_block=False,
                          condition: Optional[CodeBlock] = None,
@@ -3519,7 +3544,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return new_state
 
     def add_state_after(self,
-                        state: SDFGState,
+                        state: ControlFlowBlock,
                         label=None,
                         is_start_block=False,
                         condition: Optional[CodeBlock] = None,

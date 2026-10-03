@@ -1,11 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe's ``OrderedSet``: insertion-ordered iteration, but set equality."""
-from typing import Any, Iterable
+from typing import AbstractSet, Any, Iterable, Optional, TYPE_CHECKING, TypeGuard, TypeVar
 
 from ordered_set import OrderedSet as SequenceOrderedSet
 
+T = TypeVar('T')
+U = TypeVar('U')
 
-class OrderedSet(SequenceOrderedSet):
+
+class OrderedSet(SequenceOrderedSet[T]):
     """``ordered_set.OrderedSet`` with ``==`` comparing membership instead of order.
 
     Deterministic iteration is why DaCe uses this container everywhere: insertion order stands
@@ -19,14 +22,42 @@ class OrderedSet(SequenceOrderedSet):
     is ordered by nature, and code comparing against one is asking about order.
     """
 
+    def __init__(self, initial: Optional[Iterable[T]] = None) -> None:
+        # ordered_set annotates its ``None`` default as non-Optional, which flags every ``OrderedSet()``.
+        super().__init__(initial)  # type: ignore[arg-type]
+
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, SequenceOrderedSet):
             return len(self) == len(other) and all(item in self for item in other)
         return super().__eq__(other)
 
-    # Python clears the inherited `__hash__` on any class that defines `__eq__`; the base is
-    #  already unhashable (it is mutable), so state that rather than leaving it implicit.
-    __hash__ = None
+    if TYPE_CHECKING:
+        # The set operators come from ``collections.abc.Set``, which builds the result with ``type(self)``; only the
+        # annotation is wrong upstream (``AbstractSet``), so the checkers are told what is returned.
+
+        def __or__(self, other: AbstractSet[U]) -> 'OrderedSet[T | U]':
+            ...
+
+        def __sub__(self, other: AbstractSet[Any]) -> 'OrderedSet[T]':
+            ...
+
+        def __xor__(self, other: AbstractSet[U]) -> 'OrderedSet[T | U]':
+            ...
+
+        def __and__(self, other: Iterable[Any]) -> 'OrderedSet[T]':
+            ...
+
+        def copy(self) -> 'OrderedSet[T]':
+            ...
+
+        def union(self, *sets: Iterable[U]) -> 'OrderedSet[T | U]':
+            ...
+
+        def intersection(self, *sets: Iterable[Any]) -> 'OrderedSet[T]':
+            ...
+
+        def difference(self, *sets: Iterable[Any]) -> 'OrderedSet[T]':
+            ...
 
     def update(self, sequence: Iterable[Any]) -> int:
         """Upstream ``update`` (same order, same returned index) without a method call per element.
@@ -36,7 +67,7 @@ class OrderedSet(SequenceOrderedSet):
         other iterable takes one local loop instead of ``add`` per item."""
         mapping = self.map
         items = self.items
-        if type(sequence) in ORDERED_SET_TYPES:
+        if is_exact_ordered_set(sequence):
             if not sequence.items:
                 return 0
             if not items:
@@ -67,3 +98,8 @@ class OrderedSet(SequenceOrderedSet):
 #: base is an ABC, and its ``__instancecheck__`` costs more than the merge it guards. Other subclasses take the
 #: element loop, which is the same result.
 ORDERED_SET_TYPES = (OrderedSet, SequenceOrderedSet)
+
+
+def is_exact_ordered_set(sequence: Iterable[Any]) -> TypeGuard[SequenceOrderedSet[Any]]:
+    """Whether ``sequence`` is exactly one of :data:`ORDERED_SET_TYPES`, whose index map can be merged directly."""
+    return type(sequence) in ORDERED_SET_TYPES

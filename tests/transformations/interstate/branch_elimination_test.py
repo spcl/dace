@@ -1139,6 +1139,38 @@ def test_split_on_disjoint_subsets_nested():
     )
 
 
+def test_split_branches_substitutes_the_assignment_reaching_the_conditional():
+    """``_split_branches`` reads the interstate assignments that reach the conditional from its parent graph, as
+    ``apply`` does, so both halves are written over the assigned expression and not over the symbol it was
+    assigned to. Regression: the conditional itself was passed as the graph, which has no in-edges for itself,
+    so the lookup found nothing and the halves kept the raw symbol."""
+    sdfg = dace.SDFG('split_branches_reaching_assignment')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_symbol('flag', dace.int64)
+    sdfg.add_array('a', [2], dace.float64)
+    sdfg.add_array('b', [2], dace.float64)
+    start = sdfg.add_state('start', is_start_block=True)
+    cblock = ConditionalBlock('cblock', sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cblock)
+    sdfg.add_edge(start, cblock, InterstateEdge(assignments={'flag': 'N > 4'}))
+    for cond, name in ((CodeBlock('flag'), 'a'), (None, 'b')):
+        body = ControlFlowRegion(f'body_{name}', sdfg=sdfg)
+        state = body.add_state(f'write_{name}', is_start_block=True)
+        tasklet = state.add_tasklet(f'set_{name}', set(), {'o'}, 'o = 1.0')
+        state.add_edge(tasklet, 'o', state.add_access(name), None, dace.Memlet(f'{name}[0]'))
+        cblock.add_branch(cond, body)
+    end = sdfg.add_state('end')
+    sdfg.add_edge(cblock, end, InterstateEdge())
+
+    xform = branch_elimination.BranchElimination()
+    xform.conditional = cblock
+    first_if, second_if = xform._split_branches(cblock.parent_graph, cblock)
+
+    sdfg.validate()
+    assert [cond.as_string for cond, _ in first_if.branches] == ['(N > 4)']
+    assert [cond.as_string for cond, _ in second_if.branches] == ['((N > 4) == 0)']
+
+
 @dace.program
 def write_to_transient(
     a: dace.float64[N, N],
@@ -2559,6 +2591,19 @@ def test_lowering_a_guard_assignment_never_registers_the_enclosing_iterator():
     assert 'i' not in sdfg.symbols
 
 
+def test_symbol_read_check_handles_while_loop_without_init_or_update():
+    """A while-style LoopRegion has no init / update statement; the symbol-read scan must skip them, not crash."""
+    sdfg = dace.SDFG("while_loop_symbol_read")
+    sdfg.add_symbol("limit", dace.int64)
+    loop = LoopRegion("while_loop", condition_expr="limit > 0")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    assert loop.init_statement is None and loop.update_statement is None
+    be = branch_elimination.BranchElimination()
+    assert be._symbol_appears_as_read(sdfg, "limit")
+    assert not be._symbol_appears_as_read(sdfg, "other")
+
+
 if __name__ == "__main__":
     test_s1161()
     test_top_level_if()
@@ -2592,6 +2637,7 @@ if __name__ == "__main__":
     test_non_trivial_subset_after_combine_tasklet()
     test_split_on_disjoint_subsets()
     test_split_on_disjoint_subsets_nested()
+    test_split_branches_substitutes_the_assignment_reaching_the_conditional()
     test_write_to_transient()
     test_write_to_transient_two()
     test_double_empty_state()
@@ -2607,5 +2653,6 @@ if __name__ == "__main__":
     test_nested_if()
     test_tasklets_in_if()
     test_disjoint_subsets()
+    test_symbol_read_check_handles_while_loop_without_init_or_update()
     for use_pass_flag in [True, False]:
         test_multi_state_branch_body(use_pass_flag)

@@ -40,6 +40,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.helpers import redirect_edge
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import statically_narrower_than_warp
+from dace.optionals import required
 
 SERIAL_OR_DEVICE = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
 SINKABLE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -52,13 +53,13 @@ def unit_stride_param(state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, inner
     for edge in state.scope_subgraph(inner).edges():
         if edge.data.is_empty():
             continue
-        desc = sdfg.arrays[edge.data.data]
+        desc = sdfg.arrays[required(edge.data.data)]
         if not isinstance(desc, data.Array) or desc.storage == dtypes.StorageType.Register:
             continue
         for dim, stride in enumerate(desc.strides):
             if stride != 1:
                 continue
-            names = OrderedSet(str(s) for s in symbolic.symlist(edge.data.subset[dim]))
+            names = OrderedSet(str(s) for s in symbolic.symlist(required(edge.data.subset)[dim]))
             if names & outer_params:
                 return None
             found |= names & inner_params
@@ -119,7 +120,8 @@ def sink_edges_legal(state: SDFGState, node: nodes.Node, members: List[nodes.Nod
             return False
         if edge.src is not outer or edge.data.is_empty():
             continue
-        if edge.data.data in written or not isinstance(node, nodes.Tasklet) or edge.data.subset.num_elements() != 1:
+        if edge.data.data in written or not isinstance(node, nodes.Tasklet) or required(
+                edge.data.subset).num_elements() != 1:
             return False
     for edge in state.out_edges(node):
         if edge.data.wcr is not None:

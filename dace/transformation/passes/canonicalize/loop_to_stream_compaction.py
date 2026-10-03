@@ -144,7 +144,7 @@ Refusals -- each names the miscompile it prevents:
 
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import dace
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
@@ -154,6 +154,8 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Prefixes for the transients and symbol this pass introduces.
 MASK_PREFIX = 'compaction_mask_'
@@ -228,8 +230,8 @@ class LoopToStreamCompaction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict[type, ppl.Pass]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         lifted = 0
@@ -304,7 +306,7 @@ class LoopToStreamCompaction(ppl.Pass):
         """Stale-snapshot guard: an earlier rewrite in this sweep may have detached a whole nest."""
         cur: Optional[AbstractControlFlowRegion] = region
         while cur is not sdfg:
-            parent = cur.parent_graph
+            parent = required(cur).parent_graph
             if parent is None or cur not in parent.nodes():
                 return False
             cur = parent
@@ -446,7 +448,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 expr, sym = symbolic.equalize_symbols_across(expr, sym)
                 if sym not in expr.free_symbols:
                     continue
-                bumps.append((name, symbolic.simplify(expr - sym), inside))
+                bumps.append((name, symbolic.simplify(as_expr(expr) - as_expr(sym)), inside))
         if len(bumps) != 1:
             return None  # zero or several carried cursors -> no single closed form
         name, step, inside = bumps[0]
@@ -457,7 +459,7 @@ class LoopToStreamCompaction(ppl.Pass):
         if step == 0:
             return None  # a zero bump is not an append cursor
         invariant = {*(level.loop.loop_variable for level in levels), *assigned}
-        if any(str(s) in invariant for s in step.free_symbols):
+        if any(str(s) in invariant for s in as_basic(step).free_symbols):
             return None  # a data-dependent or iteration-dependent step breaks c_in + K*rank[i]
         return name, step
 
@@ -466,8 +468,9 @@ class LoopToStreamCompaction(ppl.Pass):
         meta = [cond_str]
         for level in levels:
             meta += [
-                level.loop.loop_condition.as_string, level.loop.init_statement.as_string,
-                level.loop.update_statement.as_string
+                level.loop.loop_condition.as_string,
+                required(level.loop.init_statement).as_string,
+                required(level.loop.update_statement).as_string
             ]
         for code in meta:
             if cursor in self.expression_names(code):
@@ -494,7 +497,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
                 name = edge.data.data
-                uses_cursor = cursor in {str(s) for s in edge.data.subset.free_symbols}
+                uses_cursor = cursor in {str(s) for s in required(edge.data.subset).free_symbols}
                 writes = isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
                 target = (cursor_written if uses_cursor else plain_written) if writes else (
                     cursor_read if uses_cursor else read)
@@ -502,7 +505,7 @@ class LoopToStreamCompaction(ppl.Pass):
         # Interstate edges and branch conditions read data too; a compaction whose source read is
         # bound to a symbol (``t = Z[i]``) aliases its target exactly as a dataflow read would.
         for memlet in self.meta_reads(loop, sdfg):
-            uses_cursor = cursor in {str(s) for s in memlet.subset.free_symbols}
+            uses_cursor = cursor in {str(s) for s in required(memlet.subset).free_symbols}
             target = cursor_read if uses_cursor else read
             target[memlet.data] = target.get(memlet.data, 0) + 1
         for name in cursor_written:
@@ -579,7 +582,7 @@ class LoopToStreamCompaction(ppl.Pass):
             lead = begin.coeff(here[0], 1)
             if symbolic.simplify(begin - (lead * here[0] + begin.coeff(here[0], 0))) != 0:
                 return False  # non-affine in the loop variable
-            if not lead.is_Integer or lead == 0:
+            if not required(lead).is_Integer or lead == 0:
                 return False
             carried.append(here[0])
         # by name: carried holds equalized instances, loop_vars the originals

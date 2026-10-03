@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Rebuild every scope-summary memlet in an SDFG from its body."""
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace.sdfg import SDFG
 from dace.sdfg.propagation import propagate_memlets_scope
@@ -45,8 +45,8 @@ class PropagateMemlets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set[Any]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         for nested in sdfg.all_sdfgs_recursive():

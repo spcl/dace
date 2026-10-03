@@ -7,6 +7,7 @@ per name. The expansion stages an initial cBLAS / cuBLAS ``copy`` into
 the output buffers then performs the actual ``swap`` on those.
 """
 import copy
+from typing import List, TYPE_CHECKING
 import warnings
 
 import dace.library
@@ -19,13 +20,15 @@ from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
 class ExpandSwapPure(ExpandTransformation):
     """``_xout, _yout := _yin, _xin`` via a mapped tasklet (no library calls)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
@@ -87,7 +90,8 @@ class ExpandSwapMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandSwapGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

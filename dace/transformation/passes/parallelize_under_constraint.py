@@ -44,6 +44,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass(slots=True)
@@ -223,9 +225,9 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     if {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
                         return None
                     continue
-                coeff = expr.coeff(lvar)
+                coeff = as_expr(expr).coeff(as_expr(lvar))
                 # Symbolic (not provably numeric) nonzero coefficient only.
-                if coeff == 0 or not coeff.free_symbols:
+                if coeff == 0 or not required(coeff).free_symbols:
                     continue
                 # Keyed by SPELLING: two writes can carry the same coefficient as two symbol
                 # instances (one stamped with assumptions, one not), and a set of objects would

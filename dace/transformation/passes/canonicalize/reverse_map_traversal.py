@@ -29,15 +29,18 @@ Direction, then order: this runs before
 belongs innermost by scoring unit coefficients. Orienting first means it scores the coefficients
 the emitted code will actually use.
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import sympy
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.optionals import required
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> Optional[List[Optional[int]]]:
@@ -56,19 +59,20 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
         if edge.data is None or edge.data.is_empty():
             continue
         for subset in (edge.data.subset, edge.data.other_subset):
-            if subset is None:
+            if not isinstance(subset, Range):
                 continue
-            for rng in getattr(subset, 'ranges', ()):
+            for rng in subset.ranges:
                 for expr in rng:
                     if not isinstance(expr, sympy.Basic) or sym not in expr.free_symbols:
                         continue
-                    coeff = expr.coeff(sym, 1)
+                    coeff = as_expr(expr).coeff(as_expr(sym), 1)
                     # Affine iff removing the linear term leaves the parameter behind entirely.
-                    if sym in coeff.free_symbols or sym in symbolic.simplify(expr - coeff * sym).free_symbols:
+                    if sym in required(coeff).free_symbols or sym in as_basic(
+                            symbolic.simplify(expr - coeff * sym)).free_symbols:
                         return None
-                    if coeff.is_negative:
+                    if required(coeff).is_negative:
                         signs.append(-1)
-                    elif coeff.is_positive:
+                    elif required(coeff).is_positive:
                         signs.append(1)
                     else:
                         return None  # a sign we cannot decide is not a direction we may flip
@@ -90,7 +94,7 @@ def reverse_descending_maps(sdfg: SDFG) -> Optional[int]:
                     if symbolic.simplify(step - 1) != 0:
                         continue  # lo + hi - p only re-covers the range at unit stride
                     signs = access_coefficients(state, entry, param)
-                    if not signs or any(s > 0 for s in signs):
+                    if not signs or any(required(s) > 0 for s in signs):
                         continue
                     state.scope_subgraph(entry).replace(param, f'({begin} + {end} - {param})')
                     flipped += 1
@@ -113,5 +117,5 @@ class ReverseMapTraversal(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         return reverse_descending_maps(sdfg)

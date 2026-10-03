@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -32,9 +33,9 @@ class UnblockDimensions(ppl.Pass):
         """Invert Block's per-dimension division to recover the original extent: unwraps ``int_ceil``/``int_floor(E, factor)`` to ``E`` exactly, falling back to ``count * factor`` for a folded integer count."""
         expr = dace.symbolic.pystr_to_symbolic(blocked_dim)
         if type(expr).__name__ in ('int_ceil', 'int_floor') and len(
-                expr.args) == 2 and dace.symbolic.simplify(expr.args[1] - factor) == 0:
+                expr.args) == 2 and dace.symbolic.simplify(as_expr(expr.args[1]) - factor) == 0:
             return expr.args[0]
-        return dace.symbolic.simplify(expr * factor)
+        return dace.symbolic.simplify(as_expr(expr) * factor)
 
     def _unblocked_shape(self, blocked_shape, masks: List[bool], factors: List[int]) -> List:
         new_shape = []

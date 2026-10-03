@@ -31,13 +31,16 @@ from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from typing import Tuple
+from dace.sdfg.narrowing import as_expr, as_map_entry, as_range
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
 #: associative; a ``Custom`` (non-reassociable) WCR keeps the strict "no loose WCR" refusal.
-_ASSOCIATIVE_REDUCTIONS = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
-                           ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
-                           ReductionType.Logical_And, ReductionType.Logical_Or)
+_ASSOCIATIVE_REDUCTIONS: Tuple[ReductionType,
+                               ...] = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
+                                       ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
+                                       ReductionType.Logical_And, ReductionType.Logical_Or)
 
 
 def assert_invariant(violation: str | None, pass_name: str, description: str) -> None:
@@ -79,9 +82,9 @@ def no_memlet_dim_mismatch(scope: SDFG | SDFGState) -> str | None:
             # Map entry/exit pass-through edges: out of scope (see docstring)
             if isinstance(edge.src, (MapEntry, MapExit)) or isinstance(edge.dst, (MapEntry, MapExit)):
                 continue
-            if len(mem.subset.size()) != len(mem.other_subset.size()):
-                return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(mem.subset.size())} "
-                        f"!= other_subset dim={len(mem.other_subset.size())}")
+            if len(as_range(mem.subset).size()) != len(as_range(mem.other_subset).size()):
+                return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(as_range(mem.subset).size())} "
+                        f"!= other_subset dim={len(as_range(mem.other_subset).size())}")
     return None
 
 
@@ -108,13 +111,14 @@ def no_transient_scalar_stores(scope: SDFG | SDFGState) -> str | None:
             if mem is None or mem.subset is None:
                 continue
             try:
-                multi_element = any(bool(dace.symbolic.simplify(sz - 1) != 0) for sz in mem.subset.size())
+                multi_element = any(bool(dace.symbolic.simplify(sz - 1) != 0) for sz in as_range(mem.subset).size())
             except Exception:  # noqa: BLE001 -- symbolic / non-Range subset: treat as scalar (skip)
                 multi_element = False
             if multi_element:
-                return (f"{sd.name}.{state.label}: tile (multi-element {tuple(mem.subset.size())}) stored into "
-                        f"transient Scalar ``{dst.data}`` -- widen the transient to a tile "
-                        f"(scalar stores are only allowed to a non-transient program output)")
+                return (
+                    f"{sd.name}.{state.label}: tile (multi-element {tuple(as_range(mem.subset).size())}) stored into "
+                    f"transient Scalar ``{dst.data}`` -- widen the transient to a tile "
+                    f"(scalar stores are only allowed to a non-transient program output)")
     return None
 
 
@@ -223,11 +227,11 @@ def memlet_subset_matches_descriptor(scope: SDFG | SDFGState) -> str | None:
             desc = sd.arrays.get(mem.data)
             if desc is None:
                 continue
-            if len(mem.subset.size()) != len(desc.shape):
+            if len(as_range(mem.subset).size()) != len(desc.shape):
                 src = edge.src.label
                 dst = edge.dst.label
                 return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset rank "
-                        f"{len(mem.subset.size())} != descriptor rank {len(desc.shape)} "
+                        f"{len(as_range(mem.subset).size())} != descriptor rank {len(desc.shape)} "
                         f"(shape {tuple(desc.shape)}) on edge {src} -> {dst}")
     return None
 
@@ -412,7 +416,7 @@ def _is_lifted_reduction_wcr(sdfg: SDFG, state: SDFGState, edge: MultiConnectorE
     if detect_reduction_type(origin.data.wcr) not in _ASSOCIATIVE_REDUCTIONS:
         return False
     map_entry = state.entry_node(origin.dst)
-    if map_entry is None or not map_entry.map.params:
+    if map_entry is None or not as_map_entry(map_entry).map.params:
         return False
     # The accumulator array must not also be READ inside the map: lu's ``A[i, j] (+)= -A[i, k] *
     # A[k, j]`` routes reads and the reduction write through ONE connector, so the body is a
@@ -422,7 +426,7 @@ def _is_lifted_reduction_wcr(sdfg: SDFG, state: SDFGState, edge: MultiConnectorE
     if any(e.data is not None and e.data.data == sink.data for e in state.out_edges(map_entry)):
         return False
     syms = {str(s) for s in subset.free_symbols}
-    if map_entry.map.params[-1] in syms:
+    if as_map_entry(map_entry).map.params[-1] in syms:
         return False
     return syms <= _iteration_symbols_in_scope(sdfg, state)
 
@@ -525,7 +529,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     if inner is None:
                         continue
                     try:
-                        collapsed = int(inner.total_size) == 1
+                        collapsed = int(as_expr(inner.total_size)) == 1
                     except (TypeError, ValueError):
                         collapsed = False
                     if collapsed:

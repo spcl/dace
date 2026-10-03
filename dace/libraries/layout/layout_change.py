@@ -50,7 +50,7 @@ def _build_transpose_sdfg(label, in_desc, out_desc, axes, impl) -> dace.SDFG:
 class ExpandPure(ExpandTransformation):
     """Materialize the whole op sequence as one mapped-tasklet relayout copy."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -62,7 +62,7 @@ class ExpandPure(ExpandTransformation):
 class ExpandCuTensor(ExpandTransformation):
     """Pure permutation -> ``cutensorPermute`` (GPU); anything else -> ``pure``."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -83,7 +83,7 @@ class ExpandHipTensor(ExpandTransformation):
     cuTENSOR expansion does, so the vendor choice is a name passed down and not a second body.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -100,7 +100,7 @@ class ExpandHipTensor(ExpandTransformation):
 class ExpandHPTT(ExpandTransformation):
     """Pure permutation -> HPTT tensor transpose (CPU); anything else -> ``pure``."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):

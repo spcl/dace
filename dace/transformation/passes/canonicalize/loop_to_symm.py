@@ -49,7 +49,7 @@ already fused, so the pass is scheduled a second time next to ``loop_to_rank_k_u
 the polybench orientation (``side='L'``, ``uplo='L'``) is recognised; other
 orientations fall through untouched.
 """
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
@@ -57,6 +57,7 @@ from dace import SDFG, SDFGState, data, dtypes, memlet as mm, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
@@ -68,6 +69,8 @@ from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, Sta
                                                                   single_body_state, sink_write_subset, written_arrays)
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Stand-ins for the two slice indices while a body state's value expression is resolved:
 #: the row inside the ``C[0:i, j]`` scatter, and the column inside the ``C[i, 0:N]`` finalize.
@@ -79,26 +82,26 @@ SLICE_COL = sympy.Symbol("__symm_q")
 MAX_STAGING_HOPS = 4
 
 
-def _axes(subset) -> Optional[List[Tuple[object, object, object]]]:
+def _axes(subset: Optional[subsets.Subset]) -> Optional[List[Tuple[object, object, object]]]:
     """The ``(begin, end, step)`` tuple of every axis of a 2-D ``Range``, else None."""
     if not isinstance(subset, Range) or len(subset) != 2:
         return None
     return list(subset.ndrange())
 
 
-def _is_point(axis, p) -> bool:
+def _is_point(axis: Tuple[object, object, object], p: object) -> bool:
     """Axis is the single point ``p`` (``begin == end == p``, unit step)."""
     b, e, s = axis
     return equals(b, p) and equals(e, p) and equals(s, 1)
 
 
-def _is_lower_tri(axis, p) -> bool:
+def _is_lower_tri(axis: Tuple[object, object, object], p: object) -> bool:
     """Axis is the half-open triangular range ``0:p`` (``begin 0``, ``end p-1``)."""
     b, e, s = axis
-    return equals(b, 0) and equals(e, symbolic.pystr_to_symbolic(str(p)) - 1) and equals(s, 1)
+    return equals(b, 0) and equals(e, as_expr(symbolic.pystr_to_symbolic(str(p))) - 1) and equals(s, 1)
 
 
-def _is_scalar_point(subset) -> bool:
+def _is_scalar_point(subset: subsets.Subset) -> bool:
     """Subset is a single element of a length-1 array (a scalar coefficient read)."""
     if not isinstance(subset, Range):
         return False
@@ -108,7 +111,7 @@ def _is_scalar_point(subset) -> bool:
 class SymmMatch:
     """Extracted operands of a recognised ``symm`` nest."""
 
-    def __init__(self, a: str, b: str, c: str, alpha: str, beta: str):
+    def __init__(self, a: str, b: str, c: str, alpha: str, beta: str) -> None:
         self.a, self.b, self.c, self.alpha, self.beta = a, b, c, alpha, beta
 
 
@@ -335,7 +338,7 @@ class LoopToSymm(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in list(sd.states()):
@@ -366,7 +369,7 @@ class LoopToSymm(ppl.Pass):
         # scope node with no out-edge, but such a node is an EXTRA one beside the NestedSDFG, so the true
         # scope is >=2 and both spellings refuse. A body of one NestedSDFG that itself writes nothing empties
         # the walk too, and membership would then fall through to the ``len(outs) != 1`` refusal below.
-        body = state.all_nodes_between(me, mx)
+        body = state.all_nodes_between(me, required(mx))
         if body is None or len(body) != 1:
             return None
         # ``all_nodes_between`` returns a SET; the len==1 guard above makes this pick unambiguous today, but
@@ -376,7 +379,7 @@ class LoopToSymm(ppl.Pass):
             return None
 
         # Group the NestedSDFG's boundary memlets (in map-parameter terms) by array.
-        ins: Dict[str, List] = {}
+        ins: Dict[str, List[subsets.Subset]] = {}
         for e in state.in_edges(nsdfg):
             if e.data is not None and e.data.data is not None:
                 ins.setdefault(e.data.data, []).append(e.data.subset)
@@ -421,7 +424,8 @@ class LoopToSymm(ppl.Pass):
             return None
         # C is also read point-wise at [p_row, p_col].
         if c not in ins or not any(
-                _axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in ins[c]):
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in ins[c]):
             return None
 
         # Symmetric operand A: read on its lower triangle [p_row, 0:p_row] and its
@@ -447,24 +451,32 @@ class LoopToSymm(ppl.Pass):
             return None
         return match
 
-    def _find_symmetric(self, ins: Dict[str, List], p_row: str, exclude) -> Optional[str]:
+    def _find_symmetric(self, ins: Dict[str, List[subsets.Subset]], p_row: str, exclude: Dict[str,
+                                                                                              None]) -> Optional[str]:
         for name, subs in ins.items():
             if name in exclude:
                 continue
-            has_diag = any(_axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_row) for s in subs)
+            has_diag = any(
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_row)
+                for s in subs)
             has_tri = any(
-                _axes(s) and _is_point(_axes(s)[0], p_row) and _is_lower_tri(_axes(s)[1], p_row) for s in subs)
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_lower_tri(required(_axes(s))[1], p_row)
+                for s in subs)
             if has_diag and has_tri:
                 return name
         return None
 
-    def _find_b(self, ins: Dict[str, List], p_row: str, p_col: str, exclude) -> Optional[str]:
+    def _find_b(self, ins: Dict[str, List[subsets.Subset]], p_row: str, p_col: str,
+                exclude: Dict[str, None]) -> Optional[str]:
         for name, subs in ins.items():
             if name in exclude:
                 continue
-            has_pt = any(_axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in subs)
+            has_pt = any(
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in subs)
             has_col = any(
-                _axes(s) and _is_lower_tri(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in subs)
+                _axes(s) and _is_lower_tri(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in subs)
             if has_pt and has_col:
                 return name
         return None
@@ -488,7 +500,7 @@ class LoopToSymm(ppl.Pass):
     def _replace(self, sdfg: SDFG, state: SDFGState, me: nodes.MapEntry, match: SymmMatch) -> None:
         from dace.libraries.blas.nodes.symm import Symm
         mx = state.exit_node(me)
-        nsdfg = min(state.all_nodes_between(me, mx), key=state.node_id)  # set -> stable pick (see _match)
+        nsdfg = min(state.all_nodes_between(me, required(mx)), key=state.node_id)  # set -> stable pick (see _match)
         # One read AccessNode per array feeding the map; the frontend may stage the
         # same array through several duplicate read nodes -- keep one, drop the rest.
         reads = {e.data.data: e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)}
@@ -510,14 +522,14 @@ class LoopToSymm(ppl.Pass):
 
         state.remove_node(nsdfg)
         state.remove_node(me)
-        state.remove_node(mx)
+        state.remove_node(required(mx))
         # Drop any boundary read/write node the map alone kept alive.
         for an in boundary:
             if an in state.nodes() and state.degree(an) == 0:
                 state.remove_node(an)
 
 
-def _boundary_in(sdfg: SDFG, nsdfg: nodes.NestedSDFG):
+def _boundary_in(sdfg: SDFG, nsdfg: nodes.NestedSDFG) -> List[MultiConnectorEdge[mm.Memlet]]:
     for st in sdfg.states():
         if nsdfg in st.nodes():
             return st.in_edges(nsdfg)
@@ -551,27 +563,27 @@ class SymmSliceMatch(NamedTuple):
     temp: str
 
 
-def col_slice(subset, rows, col) -> bool:
+def col_slice(subset: Optional[subsets.Subset], rows: object, col: object) -> bool:
     """``subset`` is the column prefix ``[0:rows, col]``."""
     if subset is None or len(subset) != 2:
         return False
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
     return (equals(rb, 0) and equals(re_,
-                                     symbolic.pystr_to_symbolic(str(rows)) - 1) and equals(rs, 1) and equals(cb, col)
-            and equals(ce, col) and equals(cs, 1))
+                                     as_expr(symbolic.pystr_to_symbolic(str(rows))) - 1) and equals(rs, 1)
+            and equals(cb, col) and equals(ce, col) and equals(cs, 1))
 
 
-def row_slice(subset, row, cols) -> bool:
+def row_slice(subset: Optional[subsets.Subset], row: object, cols: object) -> bool:
     """``subset`` is the row prefix ``[row, 0:cols]``."""
     if subset is None or len(subset) != 2:
         return False
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
     return (equals(rb, row) and equals(re_, row) and equals(rs, 1) and equals(cb, 0)
             and equals(ce,
-                       symbolic.pystr_to_symbolic(str(cols)) - 1) and equals(cs, 1))
+                       as_expr(symbolic.pystr_to_symbolic(str(cols))) - 1) and equals(cs, 1))
 
 
-def point_of(subset, index) -> bool:
+def point_of(subset: Optional[subsets.Subset], index: object) -> bool:
     """``subset`` is the single 1-D element ``[index]``."""
     if subset is None or len(subset) != 1:
         return False
@@ -652,7 +664,8 @@ def library_operand_reads(state: SDFGState, sdfg: SDFG,
     return out
 
 
-def match_finalize_state(state: SDFGState, root: SDFG, i: str, n, c: str) -> Optional[Tuple[str, str, str, str]]:
+def match_finalize_state(state: SDFGState, root: SDFG, i: str, n: symbolic.SymbolicType,
+                         c: str) -> Optional[Tuple[str, str, str, str]]:
     """Match ``C[i, 0:N] += alpha[0]*B[i, 0:N]*A[i, i] + alpha[0]*t[0:N]``.
 
     :returns: ``(a, b, alpha, t)`` -- the symmetric operand, the second matrix, the
@@ -705,7 +718,7 @@ def match_finalize_state(state: SDFGState, root: SDFG, i: str, n, c: str) -> Opt
             return None
     if c_leaf is None or alpha is None or a is None or b is None or t is None or a == b:
         return None
-    if not expressions_equal(value, c_leaf + alpha_sym * b_sym * a_sym + alpha_sym * t_sym):
+    if not expressions_equal(value, c_leaf + required(alpha_sym) * b_sym * a_sym + required(alpha_sym) * t_sym):
         return None
     return a, b, alpha, t
 
@@ -793,7 +806,7 @@ def transient_dead_outside(loop: LoopRegion, root: SDFG, name: str) -> bool:
     return True
 
 
-def shape_is(root: SDFG, name: str, rows, cols) -> bool:
+def shape_is(root: SDFG, name: str, rows: symbolic.SymbolicType, cols: symbolic.SymbolicType) -> bool:
     """Whether ``name`` is the 2-D array ``rows x cols``."""
     desc = root.arrays.get(name)
     if desc is None or len(desc.shape) != 2:

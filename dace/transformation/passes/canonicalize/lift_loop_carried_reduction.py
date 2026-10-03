@@ -100,19 +100,22 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 substituted) with a small inner map is the case that still lifts.
 """
 import ast
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from dace import SDFG, nodes, properties, symbolic
+from dace.memlet import Memlet
 from dace.sdfg import SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.optionals import required
 
 #: Python AST op -> WCR operator symbol for the associative/commutative reductions.
-REDUCTION_OPS = {ast.Add: '+', ast.Mult: '*'}
+REDUCTION_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
 #: min / max reductions arrive as a 2-argument Call.
-REDUCTION_FUNCS = ('min', 'max')
+REDUCTION_FUNCS: Tuple[str, ...] = ('min', 'max')
 
 
 def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast.AST, ast.AST]]]:
@@ -163,7 +166,7 @@ def _copy_input_connector(tasklet: nodes.Tasklet) -> Optional[str]:
     return None
 
 
-def _trace_to_reduction(st: SDFGState, mx_in) -> Optional[nodes.Tasklet]:
+def _trace_to_reduction(st: SDFGState, mx_in: MultiConnectorEdge[Memlet]) -> Optional[nodes.Tasklet]:
     """The reduction tasklet writing the accumulator through ``mx_in`` (the edge
     feeding the map-exit input connector). Handles the DIRECT shape -- the
     reduction tasklet writes the map exit itself (the cleaned contour shape) --
@@ -199,8 +202,10 @@ def _increment_ast(tasklet: nodes.Tasklet, acc_conn: str) -> ast.AST:
 class _AccumulatorCandidate:
     """A matched in-place reduction into ``array`` inside one map, ready to lift."""
 
-    def __init__(self, state, map_entry, map_exit, tasklet, array, op, acc_conn, read_edge, entry_out_edge,
-                 tasklet_out_edge, exit_out_edge):
+    def __init__(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, tasklet: nodes.Tasklet,
+                 array: str, op: str, acc_conn: str, read_edge: MultiConnectorEdge[Memlet],
+                 entry_out_edge: MultiConnectorEdge[Memlet], tasklet_out_edge: MultiConnectorEdge[Memlet],
+                 exit_out_edge: MultiConnectorEdge[Memlet]) -> None:
         self.state = state
         self.map_entry = map_entry
         self.map_exit = map_exit
@@ -228,7 +233,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         lifted = 0
         for sd in sdfg.all_sdfgs_recursive():
             for loop in [n for n in sd.all_control_flow_regions(recursive=True) if isinstance(n, LoopRegion)]:
@@ -288,15 +293,15 @@ class LiftLoopCarriedReduction(ppl.Pass):
                     array = exit_out.dst.data
                     if exit_out.data.wcr is not None or exit_out.data.data != array:
                         continue
-                    if itervar in (str(s) for s in exit_out.data.subset.free_symbols):
+                    if itervar in (str(s) for s in required(exit_out.data.subset).free_symbols):
                         continue  # write subset must be invariant over the loop variable
                     cand = self._match_reduction(st, me, mx, exit_out, array)
                     if cand is not None:
                         out.append(cand)
         return out
 
-    def _match_reduction(self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit, exit_out,
-                         array: str) -> Optional[_AccumulatorCandidate]:
+    def _match_reduction(self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
+                         exit_out: MultiConnectorEdge[Memlet], array: str) -> Optional[_AccumulatorCandidate]:
         # The edge feeding this map-exit input connector carries the per-iteration
         # accumulator write; its subset is the element written each iteration.
         conn = exit_out.src_conn  # OUT_x
@@ -343,9 +348,9 @@ class LiftLoopCarriedReduction(ppl.Pass):
         return _AccumulatorCandidate(st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in,
                                      exit_out)
 
-    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict]:
+    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict[MultiConnectorEdge[Memlet], None]]:
         """Every ``AccessNode(A) -> *`` read edge of each array A across the loop body."""
-        reads: Dict[str, Dict] = {}
+        reads: Dict[str, Dict[MultiConnectorEdge[Memlet], None]] = {}
         for st in body_states:
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode):

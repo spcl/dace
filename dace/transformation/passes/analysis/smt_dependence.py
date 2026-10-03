@@ -12,6 +12,7 @@ import sympy as sp
 
 from dace import symbolic
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
+from dace.optionals import required
 
 try:
     import z3
@@ -33,7 +34,7 @@ DEFAULT_RLIMIT = 50_000_000
 
 def bounded_solver(rlimit: int = DEFAULT_RLIMIT) -> Any:
     """A z3 solver limited to ``rlimit`` resource units, with no wall-clock limit."""
-    solver = z3.Solver()
+    solver = required(z3).Solver()
     solver.set('rlimit', rlimit)
     return solver
 
@@ -41,16 +42,16 @@ def bounded_solver(rlimit: int = DEFAULT_RLIMIT) -> Any:
 def _z3_int(expr):
     """Wrap an expression so z3 treats it as an integer."""
     if isinstance(expr, int):
-        return z3.IntVal(expr)
+        return required(z3).IntVal(expr)
     return expr
 
 
 def _pow_to_mul(base, exp):
     """Turn an integer power into a product so z3's integer solver can see it."""
     if exp == 0:
-        return z3.IntVal(1)
+        return required(z3).IntVal(1)
     if exp < 0:
-        return z3.IntVal(0)  # unsupported negative exponent; conservative
+        return required(z3).IntVal(0)  # unsupported negative exponent; conservative
     out = base
     for _ in range(exp - 1):
         out = out * base
@@ -63,7 +64,7 @@ def _array_rank(arr: Any) -> int:
     sort = arr.sort()
     # ``z3.is_array_sort`` takes an EXPRESSION and reads its sort; handed a sort it raises
     # ``ast is not an expression``. The sort itself is what has to be classified here.
-    while isinstance(sort, z3.ArraySortRef):
+    while isinstance(sort, required(z3).ArraySortRef):
         rank += 1
         sort = sort.range()
     return rank
@@ -80,12 +81,12 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
         return None
 
     if isinstance(expr, (int, sp.Integer)):
-        return z3.IntVal(int(expr))
+        return required(z3).IntVal(int(expr))
 
     if isinstance(expr, sp.Symbol):
         name = str(expr)
         if name not in sym_cache:
-            sym_cache[name] = z3.Int(name)
+            sym_cache[name] = required(z3).Int(name)
         return sym_cache[name]
 
     if isinstance(expr, sp.Indexed):
@@ -94,14 +95,14 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
             return None
         arr_name = str(base)
         if arr_name not in arr_cache:
-            arr_cache[arr_name] = z3.Array(arr_name, z3.IntSort(), z3.IntSort())
+            arr_cache[arr_name] = required(z3).Array(arr_name, required(z3).IntSort(), required(z3).IntSort())
         arr = arr_cache[arr_name]
         if len(expr.indices) != 1:
             return None
         idx = _sympy_to_z3(expr.indices[0], sym_cache, arr_cache)
         if idx is None:
             return None
-        return z3.Select(arr, _z3_int(idx))
+        return required(z3).Select(arr, _z3_int(idx))
 
     if isinstance(expr, symbolic.Subscript):
         arr_name = str(expr.args[0])
@@ -110,10 +111,10 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
             return None
         if arr_name not in arr_cache:
             # Build a nested array type of the right rank; rank 1 is the common case.
-            range_sort = z3.IntSort()
+            range_sort = required(z3).IntSort()
             for _ in range(rank - 1):
-                range_sort = z3.ArraySort(z3.IntSort(), range_sort)
-            arr_cache[arr_name] = z3.Array(arr_name, z3.IntSort(), range_sort)
+                range_sort = required(z3).ArraySort(required(z3).IntSort(), range_sort)
+            arr_cache[arr_name] = required(z3).Array(arr_name, required(z3).IntSort(), range_sort)
         arr = arr_cache[arr_name]
         # The cache is keyed by NAME, so the same array read at two different ranks would apply
         # this rank's Select chain to the other's sort. z3 does not reject the ill-sorted term --
@@ -127,7 +128,7 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
             idx = _sympy_to_z3(idx_expr, sym_cache, arr_cache)
             if idx is None:
                 return None
-            cur = z3.Select(cur, _z3_int(idx))
+            cur = required(z3).Select(cur, _z3_int(idx))
         return cur
 
     if isinstance(expr, sp.Pow):
@@ -163,7 +164,7 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
             return None
         out = args[0]
         for a in args[1:]:
-            out = z3.If(a > out, a, out)
+            out = required(z3).If(a > out, a, out)
         return out
 
     if isinstance(expr, sp.Min):
@@ -172,7 +173,7 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
             return None
         out = args[0]
         for a in args[1:]:
-            out = z3.If(a < out, a, out)
+            out = required(z3).If(a < out, a, out)
         return out
 
     if isinstance(expr, sp.floor):
@@ -230,7 +231,7 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
         args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
         if any(a is None for a in args):
             return None
-        joiner = z3.And if func == 'AND' else z3.Or
+        joiner = required(z3).And if func == 'AND' else required(z3).Or
         out = args[0]
         for a in args[1:]:
             out = joiner(out, a)
@@ -238,7 +239,7 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
 
     if func == 'NOT':
         arg = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
-        return None if arg is None else z3.Not(arg)
+        return None if arg is None else required(z3).Not(arg)
 
     if isinstance(expr, sp.And):
         args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
@@ -246,7 +247,7 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
             return None
         out = args[0]
         for a in args[1:]:
-            out = z3.And(out, a)
+            out = required(z3).And(out, a)
         return out
 
     if isinstance(expr, sp.Or):
@@ -255,14 +256,14 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
             return None
         out = args[0]
         for a in args[1:]:
-            out = z3.Or(out, a)
+            out = required(z3).Or(out, a)
         return out
 
     if isinstance(expr, sp.Not):
         arg = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
         if arg is None:
             return None
-        return z3.Not(arg)
+        return required(z3).Not(arg)
 
     return None
 
@@ -270,17 +271,17 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
 def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
     """z3 constraints that put ``i`` inside the strided iteration domain."""
     if isinstance(start, (int, sp.Integer)):
-        start_z = z3.IntVal(int(start))
+        start_z = required(z3).IntVal(int(start))
     else:
         start_z = _sympy_to_z3(start, {}, {})
     if isinstance(end, (int, sp.Integer)):
-        end_z = z3.IntVal(int(end))
+        end_z = required(z3).IntVal(int(end))
     else:
         end_z = _sympy_to_z3(end, {}, {})
     # Both bounds must be INTEGER terms. A bound that translated to an array read (or anything
     # else non-arithmetic) builds an ill-sorted ``i >= start``, and z3 answers that by aborting the
     # process inside ``Z3_solver_assert`` rather than raising -- so it has to be caught here.
-    if start_z is None or end_z is None or not z3.is_int(start_z) or not z3.is_int(end_z):
+    if start_z is None or end_z is None or not required(z3).is_int(start_z) or not required(z3).is_int(end_z):
         return []
     try:
         step_v = int(symbolic.evaluate(step, {}))
@@ -302,7 +303,7 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
         # Int term, so it silently lost this constraint and every strided loop was reasoned about
         # as if it stepped by one. ``%`` is SMT-LIB ``mod``; the magnitude is what is asked for
         # because divisibility does not care which way the loop travels.
-        cons.append((i - start_z) % z3.IntVal(abs(step_v)) == 0)
+        cons.append((i - start_z) % required(z3).IntVal(abs(step_v)) == 0)
     return cons
 
 
@@ -313,16 +314,16 @@ def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) 
     # An ill-sorted term reaches z3 as a process ABORT, not an exception, so every query is
     # sort-checked before the solver sees it. Callers build these from translated sympy, where a
     # single untranslatable subterm can leave a non-boolean behind.
-    if not (z3.is_bool(antecedent) and z3.is_bool(consequent)):
+    if not (required(z3).is_bool(antecedent) and required(z3).is_bool(consequent)):
         return None
     s = bounded_solver(rlimit)
     s.add(antecedent)
-    s.add(z3.Not(consequent))
+    s.add(required(z3).Not(consequent))
     try:
         r = s.check()
-        if r == z3.unsat:
+        if r == required(z3).unsat:
             return True
-        if r == z3.sat:
+        if r == required(z3).sat:
             return False
         return None
     except Exception:
@@ -364,8 +365,8 @@ def prove_injective_write(write_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i1 = z3.Int(f'{itervar}_1')
-    i2 = z3.Int(f'{itervar}_2')
+    i1 = required(z3).Int(f'{itervar}_1')
+    i2 = required(z3).Int(f'{itervar}_2')
     sym_cache[itervar] = i1
     w1 = _sympy_to_z3(write_expr, sym_cache, arr_cache)
     sym_cache[itervar] = i2
@@ -377,11 +378,11 @@ def prove_injective_write(write_expr: sp.Basic,
     if not bounds:
         return None
 
-    antecedent = z3.And(i1 != i2, *bounds)
+    antecedent = required(z3).And(i1 != i2, *bounds)
     if domain_assumptions is not None:
         dom = _bool_to_z3(domain_assumptions, {}, {})
         if dom is not None:
-            antecedent = z3.And(antecedent, dom)
+            antecedent = required(z3).And(antecedent, dom)
 
     consequent = w1 != w2
     return prove_unsat(antecedent, consequent, rlimit)
@@ -418,8 +419,8 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i1 = z3.Int(f'{itervar}_1')
-    i2 = z3.Int(f'{itervar}_2')
+    i1 = required(z3).Int(f'{itervar}_1')
+    i2 = required(z3).Int(f'{itervar}_2')
     sym_cache[itervar] = i1
     lo1 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
     hi1 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
@@ -433,13 +434,13 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
     if not bounds:
         return None
 
-    antecedent = z3.And(i1 != i2, *bounds)
+    antecedent = required(z3).And(i1 != i2, *bounds)
     if domain_assumptions is not None:
         dom = _bool_to_z3(domain_assumptions, {}, {})
         if dom is not None:
-            antecedent = z3.And(antecedent, dom)
+            antecedent = required(z3).And(antecedent, dom)
 
-    consequent = z3.Not(z3.And(lo1 <= hi2, lo2 <= hi1))
+    consequent = required(z3).Not(required(z3).And(lo1 <= hi2, lo2 <= hi1))
     return prove_unsat(antecedent, consequent, rlimit)
 
 
@@ -492,8 +493,8 @@ def prove_disjoint_access_boxes(box1: List[Any],
     # z3 constant on both sides -- a per-call cache would compare two unrelated uninterpreted terms.
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
-    i1 = z3.Int(f'{itervar}_1')
-    i2 = z3.Int(f'{itervar}_2')
+    i1 = required(z3).Int(f'{itervar}_1')
+    i2 = required(z3).Int(f'{itervar}_2')
     intersects = []
     for (lo1, hi1), (lo2, hi2) in zip(box1, box2):
         sym_cache[itervar] = i1
@@ -505,7 +506,7 @@ def prove_disjoint_access_boxes(box1: List[Any],
         # Every bound must be an INTEGER term. A partially-applied array read comes back as an
         # array, and comparing one with ``<=`` builds an ill-sorted term that segfaults z3 rather
         # than raising, so the check has to happen before the term is built, not inside the solver.
-        if any(t is None or not z3.is_int(t) for t in (a1, b1, a2, b2)):
+        if any(t is None or not required(z3).is_int(t) for t in (a1, b1, a2, b2)):
             return None
         intersects += [a1 <= b2, a2 <= b1]
 
@@ -513,13 +514,13 @@ def prove_disjoint_access_boxes(box1: List[Any],
     if not bounds:
         return None
 
-    antecedent = z3.And(i1 != i2, *bounds)
+    antecedent = required(z3).And(i1 != i2, *bounds)
     if domain_assumptions is not None:
         dom = _bool_to_z3(domain_assumptions, {}, {})
         if dom is not None:
-            antecedent = z3.And(antecedent, dom)
+            antecedent = required(z3).And(antecedent, dom)
 
-    return prove_unsat(antecedent, z3.Not(z3.And(*intersects)), rlimit)
+    return prove_unsat(antecedent, required(z3).Not(required(z3).And(*intersects)), rlimit)
 
 
 def _overlap_pair(write_expr: sp.Basic,
@@ -541,8 +542,8 @@ def _overlap_pair(write_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i_w = z3.Int(f'{itervar}_w')
-    i_r = z3.Int(f'{itervar}_r')
+    i_w = required(z3).Int(f'{itervar}_w')
+    i_r = required(z3).Int(f'{itervar}_r')
     sym_cache[itervar] = i_w
     wz = _sympy_to_z3(write_expr, sym_cache, arr_cache)
     sym_cache[itervar] = i_r
@@ -561,11 +562,11 @@ def _overlap_pair(write_expr: sp.Basic,
         order_cons = i_w <= i_r
     else:
         order_cons = i_w > i_r
-    antecedent = z3.And(order_cons, *bounds, gz)
+    antecedent = required(z3).And(order_cons, *bounds, gz)
     if domain_assumptions is not None:
         dom = _bool_to_z3(domain_assumptions, {}, {})
         if dom is not None:
-            antecedent = z3.And(antecedent, dom)
+            antecedent = required(z3).And(antecedent, dom)
 
     consequent = wz != rz
     return prove_unsat(antecedent, consequent, rlimit=DEFAULT_RLIMIT)

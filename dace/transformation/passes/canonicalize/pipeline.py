@@ -6,7 +6,7 @@ vectorization, scheduling, equivalence checks) observe one shape per
 computation.
 """
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 from dace import SDFG, data, symbolic, properties
 from dace.ordered import OrderedSet
@@ -197,8 +197,8 @@ class PropagateAndPrune(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         changed = 0
@@ -238,8 +238,8 @@ class StructuralCleanup(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def units(self) -> List[ppl.Pass]:
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
@@ -521,8 +521,8 @@ class _PrivatizeScalarsStage(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def privatizer(self) -> ppl.Pipeline:
         """The privatization pipeline this stage adapts.
@@ -1394,7 +1394,7 @@ CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [(label, _stage_factory(st
                                                        for label, start, stop in _stage_runs()]
 
 
-def _assert_self_contained(unit: ppl.Pass):
+def _assert_self_contained(unit: ppl.Pass) -> None:
     """Guard the empty-``pipeline_results`` invariant.
 
     Every unit is applied with an empty results dict, so it must either have
@@ -1589,7 +1589,7 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
                  dump_dir: Optional[str] = None,
-                 stages: Optional[Sequence[str]] = None):
+                 stages: Optional[Sequence[str]] = None) -> None:
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -1637,8 +1637,8 @@ class CanonicalizationPipeline(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def build_stages(self) -> List[Tuple[str, ppl.Pass]]:
         """Build this pipeline's flat recipe, honoring every knob property.
@@ -1707,7 +1707,7 @@ class CanonicalizationPipeline(ppl.Pass):
             # A Pipeline validates its own members when asked, so scope validation to the
             # sub-pass that actually changed something instead of re-walking the whole SDFG here.
             is_pipeline = isinstance(unit, ppl.Pipeline)
-            if self.validate_all and is_pipeline:
+            if self.validate_all and isinstance(unit, ppl.Pipeline):
                 unit.validate_subpasses = True
             result = unit.apply_pass(sdfg, {})
             if is_cleanup:
@@ -1860,24 +1860,24 @@ def canonicalize(sdfg: SDFG,
 
 
 def canonicalize_under_authority(sdfg: SDFG,
-                                 validate,
-                                 validate_all,
-                                 unroll_limit,
-                                 peel_limit,
-                                 break_anti_dependence,
-                                 target,
-                                 interchange_carry_with_map,
-                                 scatter_to_guarded_maps,
-                                 privatize_scatter_reductions,
-                                 reconstruct_wavefront_nest,
-                                 normalize_loop_and_map_origin,
-                                 assume_parallel_guards,
-                                 perfect_loop_nesting,
-                                 specialize_constants,
-                                 lift,
-                                 lift_copy,
-                                 semantic_lifting,
-                                 dump_dir,
+                                 validate: bool,
+                                 validate_all: bool,
+                                 unroll_limit: int,
+                                 peel_limit: Optional[int],
+                                 break_anti_dependence: Optional[bool],
+                                 target: str,
+                                 interchange_carry_with_map: Optional[bool],
+                                 scatter_to_guarded_maps: Optional[bool],
+                                 privatize_scatter_reductions: Optional[bool],
+                                 reconstruct_wavefront_nest: Optional[bool],
+                                 normalize_loop_and_map_origin: Optional[bool],
+                                 assume_parallel_guards: bool,
+                                 perfect_loop_nesting: bool,
+                                 specialize_constants: Optional[Dict[str, int]],
+                                 lift: bool,
+                                 lift_copy: bool,
+                                 semantic_lifting: bool,
+                                 dump_dir: Optional[str],
                                  stages: Optional[Sequence[str]] = None) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(validate=validate,

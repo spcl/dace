@@ -42,7 +42,7 @@ identity map to a loop and before the ITE-lowering passes rewrite its
 ``semantic_lifting`` knob, so the vectorizer path leaves ``solve(A, I)`` intact.
 """
 import ast
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import symbolic
@@ -53,14 +53,15 @@ from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_expr, as_map_entry
 
 
-def full_range(desc) -> Range:
+def full_range(desc: dace.data.Data) -> Range:
     """A fresh full-array :class:`Range` for ``desc`` (one per edge, never shared)."""
     return Range([(0, s - 1, 1) for s in desc.shape])
 
 
-def is_square_matrix(desc, dtype=None) -> bool:
+def is_square_matrix(desc: dace.data.Data, dtype: Optional[dace.dtypes.typeclass] = None) -> bool:
     """``desc`` is a 2-D array whose two axes have equal length (and, when
     ``dtype`` is given, whose base dtype matches ``dtype``)."""
     if not isinstance(desc, dace.data.Array) or len(desc.shape) != 2:
@@ -110,7 +111,7 @@ def is_identity_tasklet(tasklet: nodes.Tasklet, params: List[str]) -> bool:
         return False
     p0 = symbolic.pystr_to_symbolic(params[0], simplify=False)
     p1 = symbolic.pystr_to_symbolic(params[1], simplify=False)
-    diff = left - right
+    diff = as_expr(left) - as_expr(right)
     # ``p == q`` (offset 0) is the true identity; ``p == q - k`` (k != 0) is a
     # shifted diagonal (numpy.eye's k argument) and must be refused.
     return symbolic.simplify(diff - (p0 - p1)) == 0 or symbolic.simplify(diff - (p1 - p0)) == 0
@@ -128,7 +129,7 @@ class LiftInv(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         # Solve is imported inside the method: the linalg library nodes import
         # dace.transformation.transformation (ExpandTransformation), so a
         # top-level import here would form a cycle -- the same reason the sibling
@@ -213,7 +214,8 @@ class LiftInv(ppl.Pass):
                       b_name)
         return True
 
-    def _identity_producer(self, state: SDFGState, b_node: nodes.AccessNode, n):
+    def _identity_producer(self, state: SDFGState, b_node: nodes.AccessNode,
+                           n: symbolic.SymbolicType) -> Optional[Tuple[nodes.MapEntry, nodes.MapExit, nodes.Tasklet]]:
         """If ``b_node`` is written, in ``state``, by exactly one identity map --
         two parameters over ``[0:n, 0:n]``, no map inputs, a single input-less
         ``out = 1 if p == q else 0`` tasklet, writing the whole array -- return
@@ -239,10 +241,10 @@ class LiftInv(ppl.Pass):
         map_entry = state.entry_node(map_exit)
         if map_entry is None:
             return None
-        params = map_entry.map.params
+        params = as_map_entry(map_entry).map.params
         if len(params) != 2:
             return None
-        for (lo, hi, st) in map_entry.map.range.ndrange():
+        for (lo, hi, st) in as_map_entry(map_entry).map.range.ndrange():
             # The map range is reparsed from the lifted loop while ``n`` carries the descriptor's
             # declared assumptions: one name, two sympy instances, no cancellation.
             end, extent = symbolic.equalize_symbols_across(hi, n)
@@ -270,7 +272,8 @@ class LiftInv(ppl.Pass):
 
     def _replace(self, sdfg: dace.SDFG, state: SDFGState, solve: nodes.LibraryNode, ain_node: nodes.AccessNode,
                  out_node: nodes.AccessNode, b_node: nodes.AccessNode, map_entry: nodes.MapEntry,
-                 map_exit: nodes.MapExit, tasklet: nodes.Tasklet, a_desc, out_desc, b_name: str) -> None:
+                 map_exit: nodes.MapExit, tasklet: nodes.Tasklet, a_desc: dace.data.Data, out_desc: dace.data.Data,
+                 b_name: str) -> None:
         """Replace the ``Solve`` + identity map with a single ``Inv`` node wired
         ``A -> _ain`` / ``_aout -> out`` (mirroring the frontend's ``Inv``
         wiring), then remove the identity subgraph and its transient."""

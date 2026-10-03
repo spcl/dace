@@ -10,6 +10,7 @@ from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.optionals import required
 
 
 @library.expansion
@@ -114,7 +115,8 @@ class TileMaskGen(TileOp):
         out_edges = {edge.src_conn: edge for edge in state.out_edges(self) if edge.src_conn is not None}
         if "_o" not in out_edges:
             raise ValueError(f"{self.label}: required output '_o' not connected")
-        validate_mask_descriptor_lock(self.label, "_o", sdfg.arrays[out_edges["_o"].data.data], tuple(self.widths))
+        validate_mask_descriptor_lock(self.label, "_o", sdfg.arrays[required(out_edges["_o"].data.data)],
+                                      tuple(self.widths))
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         # The headers build the mask from the bounds alone and would drop the guard, running every lane.

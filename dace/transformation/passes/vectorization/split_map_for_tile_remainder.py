@@ -33,7 +33,7 @@ original) and on step-1 maps (before :class:`StrideMapByTileWidths`). A dim
 provably divisible by ``W`` is not split -> a fully-divisible map yields just
 the mask-free interior, no remainder.
 """
-from typing import Any
+from typing import Any, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -44,6 +44,7 @@ from dace.transformation.helpers import replicate_scope
 from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
                                                                            map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
+from dace.sdfg.narrowing import as_basic, as_expr
 
 # Label suffix: boundary region is a plain step-1 scalar loop (scalar_postamble); every tile prep
 # pass skips it.
@@ -57,7 +58,7 @@ MASKED_TAIL_MARKER = "__masked_tail"
 TILE_K1_TAIL_MARKER = "__tile_k1_tail"
 
 #: Every suffix this pass appends to a region's map label.
-REGION_MARKERS = (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, MASKED_TAIL_MARKER, TILE_K1_TAIL_MARKER)
+REGION_MARKERS: Tuple[str, ...] = (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, MASKED_TAIL_MARKER, TILE_K1_TAIL_MARKER)
 
 
 def source_map_label(label: str) -> str:
@@ -75,7 +76,8 @@ def source_map_label(label: str) -> str:
 # Storage classes whose base address the tile codegen is willing to assume anything about
 # (``tileops.alignment.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
 # an unconsumed fact is a runtime abort bought for nothing.
-_DEVICE_STORAGE = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
+_DEVICE_STORAGE: Tuple[dace.dtypes.StorageType,
+                       ...] = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
 
 
 @properties.make_properties
@@ -192,12 +194,12 @@ class SplitMapForTileRemainder(ppl.Pass):
             return 'divisible'
         trip = symbolic.simplify(ub - lb + 1)
         try:
-            t = int(trip)
+            t = int(as_expr(trip))
         except (TypeError, ValueError):
             # Symbolic, not provably divisible: a remainder that reduces to a nonzero CONSTANT is a
             # provable violation; an undecidable remainder falls through to a runtime guard.
             try:
-                if int(symbolic.simplify(trip % W)) != 0:
+                if int(as_expr(symbolic.simplify(trip % W))) != 0:
                     return 'nondivisible'
             except (TypeError, ValueError):
                 pass
@@ -319,7 +321,7 @@ class SplitMapForTileRemainder(ppl.Pass):
                 simplified = symbolic.simplify(stride)
                 # A bare symbol is exactly the undecidable case: a constant needs no promise and a
                 # compound expression has no single symbol a runtime check could pin.
-                if simplified.is_Symbol:
+                if as_basic(simplified).is_Symbol:
                     self._stride_checks.append((sdfg, str(simplified), chunk))
 
     def _emit_range_checks(self) -> None:

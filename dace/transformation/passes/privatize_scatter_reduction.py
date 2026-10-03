@@ -84,13 +84,14 @@ for the rest, so Strategy B is documented but intentionally not built here (YAGN
 the refuse path keeps the non-reducible cases correct.
 """
 import ast
-from typing import Optional, Set
+from typing import List, Optional, Set, Type, Union
 
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.sdfg.narrowing import as_expr
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
@@ -136,7 +137,7 @@ def _is_single_element(desc: data.Data) -> bool:
     if isinstance(desc, data.Scalar):
         return True
     try:
-        return int(desc.total_size) <= 1
+        return int(as_expr(desc.total_size)) <= 1
     except (TypeError, ValueError):
         return False  # symbolic size -> a genuine bounded array (e.g. ``bins``)
 
@@ -257,8 +258,8 @@ class PrivatizeScatterReduction(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         """Surface every eligible scatter reduction in ``sdfg`` (and nested SDFGs).

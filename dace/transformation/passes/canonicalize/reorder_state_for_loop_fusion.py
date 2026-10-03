@@ -56,13 +56,13 @@ mutates the real SDFG. The pass itself never fuses; it only restores adjacency a
 ``FuseLoops``/``LoopFusion``, the same division of labour ``SinkStateIntoLoop`` uses.
 """
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace import data as dt
 from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.analysis.analysis import AccessSets
@@ -73,10 +73,10 @@ Candidate = Tuple[LoopRegion, SDFGState, LoopRegion]
 
 #: Block types whose presence means control can leave ``loop2`` somewhere other than its normal
 #: successor edge -- see checklist item 7.
-ESCAPE_BLOCKS = (ReturnBlock, BreakBlock, ContinueBlock)
+ESCAPE_BLOCKS: Tuple[Type[ControlFlowBlock], ...] = (ReturnBlock, BreakBlock, ContinueBlock)
 
 #: Descriptor types for which two different names can name the same memory -- see checklist item 4.
-ALIASING_TYPES = (dt.View, dt.Reference)
+ALIASING_TYPES: Tuple[type, ...] = (dt.View, dt.Reference)
 
 
 @transformation.explicit_cf_compatible
@@ -95,7 +95,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def depends_on(self) -> List[type]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return [AccessSets]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
@@ -116,7 +116,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
                     # `sd`, not the top SDFG: the throwaway copy in `would_fuse` only has to carry the
                     # SDFG the candidate actually lives in, and LoopFusion is handed that same scope.
-                    if self.reorder_one(sd, cfg, access_sets):
+                    if isinstance(cfg, ControlFlowRegion) and self.reorder_one(sd, cfg, access_sets):
                         reordered += 1
                         changed = True
                         break

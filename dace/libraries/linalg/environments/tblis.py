@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from dace import config, library
+from typing import Dict, List
 
 
 @library.environment
@@ -12,17 +13,17 @@ class TBLIS:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_compile_flags = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_compile_flags: List[str] = []
     cmake_link_flags = ["-lpthread"]
-    cmake_files = []
+    cmake_files: List[str] = []
 
     headers = ["tblis/tblis.h"]
-    state_fields = []
+    state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies = []
+    dependencies: List[str] = []
 
     @staticmethod
     def cmake_includes():
@@ -34,8 +35,8 @@ class TBLIS:
     def cmake_libraries():
         # libtci is TBLIS's threading-runtime companion; both ship from the same build.
         if 'TBLIS_ROOT' in os.environ:
-            prefix = config.Config.get('compiler', 'library_prefix')
-            suffix = config.Config.get('compiler', 'library_extension')
+            prefix = str(config.Config.get('compiler', 'library_prefix'))
+            suffix = str(config.Config.get('compiler', 'library_extension'))
             libdir = os.path.join(os.environ['TBLIS_ROOT'], 'lib')
             libs = []
             for name in ('tblis', 'tci'):

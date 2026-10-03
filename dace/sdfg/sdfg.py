@@ -14,7 +14,7 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
 import sympy
@@ -332,7 +332,7 @@ class InterstateEdge(object):
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
-                 assignments: Optional[Dict[str, str | ast.AST]] = None):
+                 assignments: Optional[Mapping[str, str | ast.AST]] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -450,7 +450,7 @@ class InterstateEdge(object):
         assert all([isinstance(s, str) for s in real_symbol_names])
         return real_symbol_names
 
-    def used_arrays(self, arrays: Dict[str, dt.Data], union_lhs_symbols: bool = False) -> Set[str]:
+    def used_arrays(self, arrays: Mapping[str, dt.Data], union_lhs_symbols: bool = False) -> Set[str]:
         """
         Returns a set of arrays used in this edge's properties (i.e., condition and assignments).
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
@@ -556,7 +556,7 @@ class InterstateEdge(object):
                 lhs_symbols[lhs] = None
         return lhs_symbols
 
-    def get_read_memlets(self, arrays: Dict[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Mapping[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.

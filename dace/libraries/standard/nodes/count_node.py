@@ -20,9 +20,10 @@ Expansions:
 """
 
 import dace
-from dace import library, nodes, properties
+from dace import library, nodes, properties, subsets
 from dace.transformation.transformation import ExpandTransformation
 from .reduce import Reduce
+from typing import Dict, List, Union
 
 # Outer connector names this libnode publishes. Republished as
 # ``CountLibraryNode.INPUT_CONNECTOR_NAME`` / ``.OUTPUT_CONNECTOR_NAME``
@@ -91,7 +92,7 @@ class ExpandPure(ExpandTransformation):
     explicit cast tasklet narrows non-integer mask dtypes to ``int32``;
     DaCe's simplification folds it for already-integer masks.
     """
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
@@ -122,7 +123,7 @@ class ExpandPure(ExpandTransformation):
         # State 1: int cast.  Mapped tasklet writing the int32 mask.
         cast_state = sdfg.add_state(f"{node.label}_cast", is_start_block=True)
         params = [f"__i{i}" for i in range(len(mask_shape))]
-        rng = {p: f"0:{s}" for p, s in zip(params, mask_shape)}
+        rng: Dict[str, Union[str, subsets.Subset]] = {p: f"0:{s}" for p, s in zip(params, mask_shape)}
         idx = ", ".join(params)
         cast_state.add_mapped_tasklet(
             f"{node.label}_cast_tasklet",

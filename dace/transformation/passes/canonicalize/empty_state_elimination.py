@@ -18,7 +18,7 @@ fusion -- so merging rather than refusing is what makes this a fusion-prep
 pass. The merge is only performed when it is provably value-preserving (see
 ``_merge_assignments``); anything else is left untouched.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG, symbolic
 from dace.sdfg.sdfg import InterstateEdge
@@ -115,8 +115,8 @@ class EmptyStateElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Splice out empty boundary states until none remain.

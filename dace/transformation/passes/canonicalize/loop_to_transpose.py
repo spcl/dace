@@ -42,7 +42,7 @@ is not the full array the operands are routed through strided Views (whose strid
 encode the per-axis step) so the library node still sees a dense operand. Only when
 every axis covers its whole array are plain full-array memlets emitted.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import sympy
 
@@ -50,20 +50,22 @@ import dace
 from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def _const_pos_int(value) -> Optional[int]:
+def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
     """``value`` as a positive Python ``int`` if constant, else ``None``."""
     try:
         s = symbolic.simplify(symbolic.pystr_to_symbolic(str(value)))
     except Exception:
         return None
-    return int(s) if s.is_Integer and int(s) > 0 else None
+    return int(as_expr(s)) if as_basic(s).is_Integer and int(as_expr(s)) > 0 else None
 
 
 def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
@@ -114,7 +116,7 @@ def _descend_perfect_nest(outer: LoopRegion) -> Tuple[Optional[List[LoopRegion]]
     return loops, body
 
 
-def _is_copy_tasklet(node) -> bool:
+def _is_copy_tasklet(node: nodes.Node) -> bool:
     """Whether ``node`` is a single-input pure-copy tasklet ``__out = __inp``."""
     if not isinstance(node, nodes.Tasklet):
         return False
@@ -126,7 +128,7 @@ def _is_copy_tasklet(node) -> bool:
         lhs in node.out_connectors
 
 
-def _node_side_subset(state, edge, node):
+def _node_side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], node: nodes.Node) -> Optional[subsets.Subset]:
     """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
 
     Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
@@ -137,7 +139,8 @@ def _node_side_subset(state, edge, node):
     return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
-def single_source_and_sink(state: SDFGState, access: List[nodes.AccessNode]):
+def single_source_and_sink(state: SDFGState,
+                           access: List[nodes.AccessNode]) -> Optional[Tuple[nodes.AccessNode, nodes.AccessNode]]:
     """The unique ``(source, sink)`` pair among ``access`` (in-degree 0 / out-degree 0), else ``None``."""
     sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
     sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
@@ -146,7 +149,9 @@ def single_source_and_sink(state: SDFGState, access: List[nodes.AccessNode]):
     return sources[0], sinks[0]
 
 
-def match_copy_chain(state: SDFGState):
+def match_copy_chain(
+    state: SDFGState
+) -> Optional[Tuple[nodes.AccessNode, nodes.AccessNode, Optional[subsets.Subset], Optional[subsets.Subset]]]:
     """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
     only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
 
@@ -175,7 +180,7 @@ def match_copy_chain(state: SDFGState):
     return src, sink, _node_side_subset(state, src_oes[0], src), _node_side_subset(state, sink_ies[0], sink)
 
 
-def _extract_permutation_copy(state: SDFGState):
+def _extract_permutation_copy(state: SDFGState) -> Optional[Tuple[str, str, subsets.Subset, subsets.Subset]]:
     """Match a pure copy chain from one ``d``-D array to a DISTINCT one, both at a single point.
 
     :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
@@ -191,7 +196,8 @@ def _extract_permutation_copy(state: SDFGState):
     return src.data, sink.data, read_subset, write_subset
 
 
-def _axis_affine(idx, loop_var_syms):
+def _axis_affine(idx: symbolic.SymbolicType,
+                 loop_var_syms: Sequence[sympy.Symbol]) -> Optional[Tuple[sympy.Symbol, int, symbolic.SymbolicType]]:
     """Classify a single-point index expression ``idx``. Returns
     ``(loop_var_sym, coeff, off)`` if ``idx`` is affine in EXACTLY one loop
     variable (``coeff*v + off``, ``coeff`` a positive integer constant, ``off``
@@ -209,14 +215,16 @@ def _axis_affine(idx, loop_var_syms):
         off = symbolic.simplify(idx - coeff * v)
     except Exception:
         return None
-    if not (coeff.is_Integer and int(coeff) > 0):
+    if not (as_basic(coeff).is_Integer and int(as_expr(coeff)) > 0):
         return None
-    if any(lv in off.free_symbols for lv in loop_var_syms):
+    if any(lv in as_basic(off).free_symbols for lv in loop_var_syms):
         return None
-    return v, int(coeff), off
+    return v, int(as_expr(coeff)), off
 
 
-def _classify_side(subset, loop_var_syms, ndims: int):
+def _classify_side(
+    subset: subsets.Subset, loop_var_syms: Sequence[sympy.Symbol], ndims: int
+) -> Optional[Tuple[Dict[sympy.Symbol, int], Dict[sympy.Symbol, int], Dict[sympy.Symbol, symbolic.SymbolicType]]]:
     """Match every axis of ``subset`` (a point subset of ``ndims`` axes) to one
     loop variable. Returns ``(axis_of_var, coeff_of_var, off_of_var)`` -- dicts
     keyed by loop-variable symbol -- forming a bijection loop-var <-> axis, or
@@ -225,9 +233,9 @@ def _classify_side(subset, loop_var_syms, ndims: int):
     ndr = list(subset.ndrange())
     if len(ndr) != ndims:
         return None
-    axis_of_var: Dict[object, int] = {}
-    coeff_of_var: Dict[object, int] = {}
-    off_of_var: Dict[object, object] = {}
+    axis_of_var: Dict[sympy.Symbol, int] = {}
+    coeff_of_var: Dict[sympy.Symbol, int] = {}
+    off_of_var: Dict[sympy.Symbol, symbolic.SymbolicType] = {}
     for axis, (lo, hi, st) in enumerate(ndr):
         if symbolic.simplify(lo - hi) != 0 or symbolic.simplify(st - 1) != 0:
             return None  # not a single point
@@ -248,7 +256,8 @@ def _classify_side(subset, loop_var_syms, ndims: int):
 class _Plan:
     """Everything needed to emit the transpose libnode for a matched nest."""
 
-    def __init__(self, in_array, out_array, axes, read_range, write_range, in_full, out_full):
+    def __init__(self, in_array: str, out_array: str, axes: List[int], read_range: subsets.Range,
+                 write_range: subsets.Range, in_full: bool, out_full: bool) -> None:
         self.in_array = in_array
         self.out_array = out_array
         self.axes = axes
@@ -270,7 +279,7 @@ class LoopToTranspose(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions()):
@@ -293,8 +302,8 @@ class LoopToTranspose(ppl.Pass):
             return False
 
         # Per-loop (init, last-inclusive, stride); stride must be a positive int constant.
-        ranges: Dict[object, Tuple[object, object, int]] = {}
-        loop_var_syms: List[object] = []
+        ranges: Dict[sympy.Symbol, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, int]] = {}
+        loop_var_syms: List[sympy.Symbol] = []
         for loop in loops:
             if not loop.loop_variable:
                 return False
@@ -317,7 +326,7 @@ class LoopToTranspose(ppl.Pass):
         # free symbol (`for j in range(i+1, M)` -> `B[..., _loop_it_0 + 1:M]`).
         nest_syms = set(loop_var_syms)
         for lo, last, _ in ranges.values():
-            if (lo.free_symbols | last.free_symbols) & nest_syms:
+            if (as_basic(lo).free_symbols | as_basic(last).free_symbols) & nest_syms:
                 return False
 
         d = len(loops)
@@ -350,9 +359,13 @@ class LoopToTranspose(ppl.Pass):
             return False  # identity permutation -- a plain copy, not a transpose
 
         # Per-axis accessed ranges (the exact lo:hi:inc sub-grid, incl. affine coeff/off).
-        def _side_ranges(axis_of_var, coeff_of_var, off_of_var, ndims):
+        def _side_ranges(
+                axis_of_var: Dict[sympy.Symbol, int], coeff_of_var: Dict[sympy.Symbol,
+                                                                         int], off_of_var: Dict[sympy.Symbol,
+                                                                                                symbolic.SymbolicType],
+                ndims: int) -> List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
             var_at_axis = {a: v for v, a in axis_of_var.items()}
-            out = []
+            out: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]] = []
             for a in range(ndims):
                 v = var_at_axis[a]
                 c, off = coeff_of_var[v], off_of_var[v]
@@ -364,7 +377,8 @@ class LoopToTranspose(ppl.Pass):
         in_ranges = _side_ranges(in_axis, in_coeff, in_off, d)
         out_ranges = _side_ranges(out_axis, out_coeff, out_off, d)
 
-        def _is_full(rng_list, desc) -> bool:
+        def _is_full(rng_list: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]],
+                     desc: dace.data.Data) -> bool:
             for (lo, hi, st), sz in zip(rng_list, desc.shape):
                 # Bounds are rebuilt from the loop's reparsed ranges, the shape carries the declared
                 # assumptions: two instances of one name that never cancel.
@@ -379,8 +393,8 @@ class LoopToTranspose(ppl.Pass):
         self._replace(cfg, outer, sdfg, plan, in_desc, out_desc, d)
         return True
 
-    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG, plan: _Plan, in_desc, out_desc,
-                 d: int) -> None:
+    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG, plan: _Plan, in_desc: dace.data.Data,
+                 out_desc: dace.data.Data, d: int) -> None:
         """Splice ``outer`` out, replacing the nest with a state holding the
         transpose library node wired to the operand arrays (directly for a
         full-array access, via strided Views otherwise)."""

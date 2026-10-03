@@ -64,6 +64,7 @@ from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def _subset_key(subset):
@@ -340,8 +341,8 @@ class BreakAntiDependence(ppl.Pass):
             if bindings:
                 rb = _index_under_bindings(rb, bindings)
                 wb = _index_under_bindings(wb, bindings)
-            r_has = isym in rb.free_symbols
-            w_has = isym in wb.free_symbols
+            r_has = isym in as_basic(rb).free_symbols
+            w_has = isym in as_basic(wb).free_symbols
             if not r_has and not w_has:
                 if not _is_identically_zero(rb - wb):
                     return ('none', None)  # different fixed index -> never alias
@@ -357,12 +358,14 @@ class BreakAntiDependence(ppl.Pass):
             # ``simplify`` never introduces a free symbol that was not already there,
             # so an ``isym`` the raw (already term-collected) difference has dropped
             # stays dropped -- test that first and only simplify when it has not.
-            wb_minus_i = wb - isym
-            if isym not in wb_minus_i.free_symbols or isym not in symbolic.simplify(wb_minus_i).free_symbols:
+            wb_minus_i = wb - as_expr(isym)
+            if isym not in as_basic(wb_minus_i).free_symbols or isym not in as_basic(
+                    symbolic.simplify(wb_minus_i)).free_symbols:
                 alpha = 1
             else:
-                wb_plus_i = wb + isym
-                if isym not in wb_plus_i.free_symbols or isym not in symbolic.simplify(wb_plus_i).free_symbols:
+                wb_plus_i = wb + as_expr(isym)
+                if isym not in as_basic(wb_plus_i).free_symbols or isym not in as_basic(
+                        symbolic.simplify(wb_plus_i)).free_symbols:
                     alpha = -1
                 else:
                     return ('complex', None)
@@ -389,7 +392,7 @@ class BreakAntiDependence(ppl.Pass):
             # location. Not a carried anti-dependence, so not our case -- but it is an alias, which
             # ``'none'`` would deny to callers who need to know.
             return ('invariant', None)
-        if carried_offset.is_number:
+        if as_basic(carried_offset).is_number:
             if carried_offset > 0:
                 return ('WAR', None)
             if carried_offset < 0:
@@ -407,7 +410,7 @@ class BreakAntiDependence(ppl.Pass):
         #       indirection array name. Caller emits a per-element array guard.
         #
         #   (c) ``isym`` is present and resolution fails  -> conservative complex.
-        if isym not in carried_offset.free_symbols:
+        if isym not in as_basic(carried_offset).free_symbols:
             # Read-ahead (offset >= 0) is a renamable WAR; anything else is a true
             # recurrence (read-behind) or an offset whose sign we cannot establish,
             # both of which must stay sequential -> RAW. Canonicalization assumes
@@ -478,7 +481,7 @@ class BreakAntiDependence(ppl.Pass):
             bindings = consistent_bindings(sdfg)
         exprs = [resolve_bindings(e, sdfg, expand_data_reads=True, bindings=bindings) for e in (rb, wb, guard)]
         for e in exprs:
-            if ({str(sym) for sym in e.free_symbols} - {ivar}) & internal_syms:
+            if ({str(sym) for sym in as_basic(e).free_symbols} - {ivar}) & internal_syms:
                 return ('complex', None)
             if referenced_arrays(e) & written:
                 return ('complex', None)
@@ -1162,7 +1165,7 @@ class BreakAntiDependence(ppl.Pass):
                     if not (kinds and all(k in ('WAR', 'WAR_symbolic') for k in kinds)):
                         continue
                     guards = {p for k, p in verdicts if k == 'WAR_symbolic'}
-                    if any(str(s) in internal_syms for g in guards for s in g.free_symbols):
+                    if any(str(s) in internal_syms for g in guards for s in as_basic(g).free_symbols):
                         continue
                     sym_guards |= guards
                     fwd_edges.append((n, e))

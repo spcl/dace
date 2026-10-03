@@ -44,7 +44,7 @@ makes the answer independent of how the range was split. The ``_in`` index
 is slice-local (``0 .. N-1``); the lift adds the slice base to recover the
 original-array position.
 """
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import dace
 from dace import library, properties, symbolic
@@ -55,6 +55,8 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_range
 
 _OP_CPP = {'max': '>', 'min': '<'}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
@@ -124,17 +126,17 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
     idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
 
-    in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
-    idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+    in_dtype = required(parent_sdfg.arrays[required(in_edge.data.data)]).dtype
+    idx_dtype = required(parent_sdfg.arrays[required(idx_edge.data.data)]).dtype
     sub = in_edge.data.subset
 
     # Stride of the (1-D) input slice. ``_in`` points at the slice base, so a strided slice
     # ``a[lo:hi:s]`` reads element ``j`` at ``_in[j*s]``. A unit-stride slice gets the bare
     # subscript rather than a multiply by one, so the common case reads as what it is; a
     # compile-time-constant stride folds away, a symbolic one stays a runtime multiply.
-    step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+    step = as_range(sub).ranges[0][2] if len(as_range(sub).ranges) == 1 else 1
     try:
-        unit_stride = (int(symbolic.simplify(step)) == 1)
+        unit_stride = (int(as_expr(symbolic.simplify(step))) == 1)
     except (TypeError, ValueError):
         unit_stride = False
     step_str = sym2cpp(step)
@@ -177,7 +179,7 @@ class ExpandArgReducePure(ExpandTransformation):
     """The sequential scan as SDFG components: seed from element 0, a loop keeping the first extreme, and a
     write-back of whichever results are wired."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -232,7 +234,7 @@ class ExpandArgReduceCPU(ExpandTransformation):
     than a different order of work -- which is not what this lowering is for.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -273,7 +275,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -286,14 +288,14 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
         val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
         idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
-        in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
-        idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+        in_dtype = required(parent_sdfg.arrays[required(in_edge.data.data)]).dtype
+        idx_dtype = required(parent_sdfg.arrays[required(idx_edge.data.data)]).dtype
 
         # A raw pointer only when the read is PROVABLY contiguous and untransformed -- that is the
         # shape CUB can issue vectorised loads for. ``symbolic.equal`` is tri-valued, and a stride it
         # cannot decide (s318's ``inc``) has to take the iterator, which is correct either way.
         sub = in_edge.data.subset
-        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        step = as_range(sub).ranges[0][2] if len(as_range(sub).ranges) == 1 else 1
         gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
         idstr = global_code_id(parent_sdfg, parent_state, node)
@@ -341,7 +343,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ExpandArgReduceAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
