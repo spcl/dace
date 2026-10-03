@@ -12,7 +12,7 @@ raised as ``std::runtime_error`` by the expansion itself, so no caller can read 
 were never computed. On the device that check costs one stream synchronization.
 """
 import copy
-from typing import Any
+from typing import Any, List
 
 import dace.library
 import dace.properties
@@ -80,7 +80,7 @@ class ExpandSyevdGPUSolver(ExpandTransformation):
     once the stream has drained.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @classmethod
     def expansion(cls, node: 'Syevd', parent_state: SDFGState, parent_sdfg: SDFG,

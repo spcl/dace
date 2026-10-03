@@ -37,7 +37,7 @@ from typing import TypeVar
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
 
-def explicit_cf_compatible(cls: PassT) -> PassT:
+def explicit_cf_compatible(cls: Type[PassT]) -> Type[PassT]:
     cls.__explicit_cf_compatible__ = True
     return cls
 
@@ -756,7 +756,8 @@ class ExpandTransformation(PatternTransformation):
         return str(self._match_node)
 
     @staticmethod
-    def expansion(node: nd.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, *args, **kwargs):
+    def expansion(*args: Any, **kwargs: Any) -> Any:
+        # Open signature on purpose: every expansion takes its own node type (and its own extra keywords).
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod
@@ -1140,7 +1141,7 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
     raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
 
 
-def single_level_sdfg_only(cls: PassT) -> PassT:
+def single_level_sdfg_only(cls: Type[PassT]) -> Type[PassT]:
 
     for function_name in ['apply_pass', 'apply_to']:
         _make_function_blocksafe(cls, function_name, lambda *args: args[1])

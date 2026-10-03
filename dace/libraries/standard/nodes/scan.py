@@ -43,7 +43,7 @@ op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
 
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy
 
@@ -956,7 +956,7 @@ class ExpandPure(ExpandTransformation):
     that read the SDFG rather than compile it. Slower than :class:`ExpandSequential`, so nothing picks it for
     speed."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> Union[nodes.Tasklet, dace.SDFG]:
@@ -1213,7 +1213,7 @@ class ExpandCUDABlock(ExpandTransformation):
     all fall through to another expansion instead of being silently lowered as something else.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -1280,7 +1280,7 @@ class ExpandCUDA(ExpandTransformation):
     """
 
     # Populated lazily in :meth:`expansion` (and below) to dodge the sort<->standard cycle.
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -1431,7 +1431,7 @@ class ExpandCUDA(ExpandTransformation):
 class ExpandAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG):

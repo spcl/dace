@@ -18,6 +18,7 @@ import dace.properties
 import dace
 from dace import nodes, SDFG, SDFGState, dtypes, Memlet
 from dace import transformation as xf
+from typing import List
 
 
 @dace.library.node
@@ -161,7 +162,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
     resampled signal matches the un-aliased continuum interpolant.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: 'FFTInterpolate', parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:

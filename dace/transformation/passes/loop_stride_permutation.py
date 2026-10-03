@@ -58,7 +58,7 @@ bodies (which need :class:`LoopFission` to run first) are still out of scope --
 the innermost body must be a single statement for the oracle.
 """
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 import sympy
 
@@ -94,8 +94,8 @@ class LoopStridePermutation(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, object]) -> Optional[int]:
         """Interchange every eligible perfect loop nest in ``sdfg`` so a

@@ -20,13 +20,14 @@ from dace import library, nodes, properties, symbolic
 from dace.codegen.common import global_code_id
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
+from typing import List
 
 
 @library.expansion
 class ExpandSymmetrizePure(ExpandTransformation):
     """Parallel triangular copy: ``map[i] { map[j in i+off:hi] { X[mirror] = X[src] } }``."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -88,7 +89,7 @@ class ExpandSymmetrizeBoundingBox(ExpandTransformation):
     writes -- which is why the CPU keeps the triangular expansion.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:

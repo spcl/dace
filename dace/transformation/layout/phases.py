@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List
 
 from dace import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowBlock
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock
 
 
 @dataclass
@@ -24,6 +24,7 @@ class Phase:
         """The states this phase contains (itself if a plain state; the whole body if a region -- not sub-phased)."""
         if isinstance(self.block, SDFGState):
             return [self.block]
+        assert isinstance(self.block, AbstractControlFlowRegion), "a phase is a state or a control-flow region"
         return list(self.block.all_states())
 
 

@@ -8,6 +8,7 @@ declares the include and inherits the standard CUDA environment for the runtime.
 import dace.library
 from dace.codegen import common
 from dace.libraries.standard.environments.cuda import CUDA
+from typing import Dict, List
 
 
 @dace.library.environment
@@ -26,8 +27,8 @@ class CUB:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
 
     @staticmethod
     def cmake_includes():
@@ -42,10 +43,10 @@ class CUB:
             return []
         return ['${CUDAToolkit_INCLUDE_DIRS}', '${CUDAToolkit_INCLUDE_DIRS}/cccl']
 
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     # cub/cub.cuh does not compile under a host compiler from CCCL 3 (CUDA 13) on, so only the
     # host-safe scratch header goes to the frame; the wrappers that call CUB live in the .cu.
@@ -56,7 +57,7 @@ class CUB:
         'frame': ['dace/cub_scratch.cuh'],
         'cuda': ['dace/cuda/gpucub.cuh', 'dace/cub_scratch.cuh', 'dace/cub_compat.cuh'],
     }
-    state_fields = []
+    state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
     dependencies = [CUDA]
@@ -79,16 +80,16 @@ class SortScratch:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
-    headers = {'frame': []}
-    state_fields = []
+    headers: Dict[str, List[str]] = {'frame': []}
+    state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::SortTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::SortTag>();"
     dependencies = [CUB]
@@ -103,20 +104,20 @@ class ScanScratch:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     #: CUDA unit only: the affine expansion's kernels and its map monoid, and the residue-class
     #: kernels the strided path launches. The host translation unit never sees either -- both
     #: carry ``__global__`` symbols, and the affine header includes ``cub/cub.cuh``, which the
     #: host compiler cannot parse.
     headers = {'frame': [], 'cuda': ['dace/cuda/scan_affine.cuh', 'dace/cuda/scan.cuh']}
-    state_fields = []
+    state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::ScanTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ScanTag>();"
     dependencies = [CUB]
@@ -133,18 +134,18 @@ class BlockCollectives:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     #: CUDA unit only, for the same reason ScanScratch gives: the header includes ``cub/cub.cuh``,
     #: which the host compiler cannot parse.
     headers = {'frame': [], 'cuda': ['dace/cuda/scan.cuh']}
-    state_fields = []
+    state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
     dependencies = [CUB]
@@ -160,16 +161,16 @@ class ReduceScratch:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
-    headers = {'frame': []}
-    state_fields = []
+    headers: Dict[str, List[str]] = {'frame': []}
+    state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::ReduceTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ReduceTag>();"
     dependencies = [CUB]
@@ -193,16 +194,16 @@ class DetectScratch:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     headers = {'frame': [], 'cuda': ['dace/cuda/detect.cuh']}
-    state_fields = []
+    state_fields: List[str] = []
     init_code = "::dace::cub::get_scratch<::dace::cub::DetectFlagTag>(sizeof(unsigned long long), 0);"
     finalize_code = ("::dace::cub::release_scratch<::dace::cub::DetectFlagTag>();\n"
                      "::dace::cub::release_scratch<::dace::cub::DetectOwnerTag>();")

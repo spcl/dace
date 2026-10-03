@@ -18,6 +18,7 @@ from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
 from dace.symbolic import equal_valued
 from dace.ordered import OrderedSet
+from typing import List
 
 
 @dace.library.expansion
@@ -59,7 +60,18 @@ class ExpandPotrsMKL(ExpandTransformation):
 class ExpandPotrsGPUSolver(ExpandTransformation):
     """Cholesky solve on a vendor GPU solver; the two differ only in the vocabulary below."""
 
-    environments = []
+    environments: List[type] = []
+
+    @classmethod
+    def fill_enum(cls, lower: bool) -> str:
+        """The vendor spelling of the triangle selector."""
+        raise NotImplementedError
+
+    @classmethod
+    def call(cls, func: str, ctype: str, uplo: str, n_a: symbolic.SymbolicType, nrhs: symbolic.SymbolicType,
+             lda: symbolic.SymbolicType, ldb: symbolic.SymbolicType) -> str:
+        """The vendor call, spelled by the cuSOLVER / rocSOLVER subclass."""
+        raise NotImplementedError
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

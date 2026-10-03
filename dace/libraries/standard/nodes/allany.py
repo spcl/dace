@@ -40,6 +40,7 @@ vs parallelisability).
 import dace
 from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
+from typing import List
 
 _INPUT_CONNECTOR_NAME = "_mask"
 _OUTPUT_CONNECTOR_NAME = "_out"
@@ -175,7 +176,7 @@ def _sequential_sdfg(node, parent_state, parent_sdfg, is_all):
 
 @library.expansion
 class ExpandAllReduction(ExpandTransformation):
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -184,7 +185,7 @@ class ExpandAllReduction(ExpandTransformation):
 
 @library.expansion
 class ExpandAllSequential(ExpandTransformation):
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -193,7 +194,7 @@ class ExpandAllSequential(ExpandTransformation):
 
 @library.expansion
 class ExpandAnyReduction(ExpandTransformation):
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -202,7 +203,7 @@ class ExpandAnyReduction(ExpandTransformation):
 
 @library.expansion
 class ExpandAnySequential(ExpandTransformation):
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):

@@ -2,7 +2,7 @@
 """UnzipArrays -- inverse of ZipArrays: splits a fused array back into its component field arrays. Run after ``prepare_for_layout``; ``ZipArrays`` then ``UnzipArrays`` with matching fields is a no-op roundtrip."""
 import ast
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import dace
 from dace.frontend.python import astutils
@@ -29,7 +29,7 @@ class StructMemberReverter(ast.NodeTransformer):
 class UnzipArrays(ppl.Pass):
     """Inverse of ZipArrays: splits a fused array back into its component field arrays."""
 
-    def __init__(self, unzip_map: Dict[str, List[str]], field_axis: int = None):
+    def __init__(self, unzip_map: Dict[str, List[str]], field_axis: Optional[int] = None):
         self._unzip_map = unzip_map
         self._field_axis = field_axis
 

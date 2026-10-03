@@ -14,7 +14,7 @@ is a correct reference lowering, and ``MKL`` / ``OpenBLAS`` / ``cuBLAS`` /
 ``rocBLAS`` dispatch to the vendor ``dsymm`` / ``cublasDsymm`` kernels.
 """
 from copy import deepcopy as dc
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import dace.library
 import dace.sdfg.nodes
@@ -54,7 +54,7 @@ class ExpandSymmPure(ExpandTransformation):
     """Reference lowering: materialize the full symmetric ``A`` from its ``uplo``
     triangle, then ``C = beta*C + alpha * (A@B | B@A)`` as a WCR contraction."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG) -> SDFG:
@@ -158,7 +158,7 @@ class _ExpandSymmCBLAS(ExpandTransformation):
     """CBLAS ``cblas_?symm`` (row-major): handles the DaCe row-major layout
     directly, so no operand transpose trick is needed (unlike the GPU path)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -261,7 +261,7 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
     ``C = alpha*A*B + beta*C`` (row-major) ``<=> C^T = alpha*B^T*A + beta*C^T``
     (A symmetric): a ``side`` flip, a ``uplo`` flip, and swapped ``m``/``n``."""
 
-    environments = []
+    environments: List[type] = []
     backend = "cu"
 
     @classmethod

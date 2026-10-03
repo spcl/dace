@@ -13,12 +13,13 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
 from dace.ordered import OrderedSet
+from typing import List
 
 
 @dace.library.expansion
@@ -58,7 +59,13 @@ class ExpandGeqrfMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandGeqrfGPUSolver(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
+
+    @classmethod
+    def call(cls, func: str, ctype: str, m: symbolic.SymbolicType, n: symbolic.SymbolicType,
+             lda: symbolic.SymbolicType) -> str:
+        """The vendor call, spelled by the cuSOLVER / rocSOLVER subclass."""
+        raise NotImplementedError
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

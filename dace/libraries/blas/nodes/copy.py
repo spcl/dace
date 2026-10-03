@@ -9,6 +9,7 @@ so the Fortran frontend can recognise an explicit ``DCOPY`` call and
 preserve the user's intent.
 """
 import copy
+from typing import List, TYPE_CHECKING
 import warnings
 
 import dace.library
@@ -20,13 +21,15 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
 class ExpandCopyPure(ExpandTransformation):
     """Backend-agnostic: ``y[i] := x[i]`` as a mapped tasklet."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -85,7 +88,7 @@ class ExpandCopyMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandCopyGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):

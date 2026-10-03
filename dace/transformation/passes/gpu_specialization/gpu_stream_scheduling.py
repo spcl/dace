@@ -45,9 +45,9 @@ class GPUStreamSchedulingStrategy(ppl.Pass):
     :meth:`insert_sync_tasklets` (called by :class:`GPUStreamWiring`, not from here).
     """
 
-    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         # Without the implicit-copy lift, GPU transfers are invisible to the strategy.
-        return {InsertExplicitCopies}
+        return [InsertExplicitCopies]
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -556,12 +556,12 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             return self._synchronize_on_exit
         return bool(Config.get('compiler', 'cuda', 'synchronize_on_exit'))
 
-    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         # ``SplitStateByGPUClass`` preps for this strategy: it lifts CPU-only WCCs / prefixes out
         # of mixed states so the classifier sees pure states, reducing per-component fallbacks. Local
         # import breaks the circular dependency (split pass imports ``classify_node`` / ``NodeKind``).
         from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import (SplitStateByGPUClass)
-        return super().depends_on() | {SplitStateByGPUClass}
+        return [*super().depends_on(), SplitStateByGPUClass]
 
     def assign_streams(self, sdfg: SDFG) -> Dict[nodes.Node, int]:
         self._per_component_fallback = None

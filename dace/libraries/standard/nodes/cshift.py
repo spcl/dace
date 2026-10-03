@@ -32,6 +32,9 @@ from dace import SDFG, SDFGState, memlet as mm, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 import enum
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 class ShiftDirection(enum.Enum):
@@ -62,7 +65,7 @@ class ExpandCShiftPure(ExpandTransformation):
     entirely in the source memlet's subset, so no runtime helper is
     needed.
     """
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

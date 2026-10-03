@@ -23,6 +23,7 @@ import dace
 from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
 from .reduce import Reduce
+from typing import List
 
 # Outer connector names this libnode publishes. Republished as
 # ``CountLibraryNode.INPUT_CONNECTOR_NAME`` / ``.OUTPUT_CONNECTOR_NAME``
@@ -91,7 +92,7 @@ class ExpandPure(ExpandTransformation):
     explicit cast tasklet narrows non-integer mask dtypes to ``int32``;
     DaCe's simplification folds it for already-integer masks.
     """
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):

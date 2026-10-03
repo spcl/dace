@@ -84,7 +84,7 @@ for the rest, so Strategy B is documented but intentionally not built here (YAGN
 the refuse path keeps the non-reducible cases correct.
 """
 import ast
-from typing import Optional, Set
+from typing import List, Optional, Set, Type, Union
 
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import SDFGState, nodes
@@ -257,8 +257,8 @@ class PrivatizeScatterReduction(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         """Surface every eligible scatter reduction in ``sdfg`` (and nested SDFGs).

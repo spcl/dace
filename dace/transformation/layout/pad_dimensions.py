@@ -122,7 +122,9 @@ class PadZeroFill(ppl.Pass):
                     raise ValueError(f"PadZeroFill: '{arr}' dim {dim} extent {desc.shape[dim]} != original "
                                      f"{orig[dim]} + pad {p}; the shape was not grown by this pad_map.")
                 if init is None:
-                    init = sdfg.add_state_before(sdfg.start_state, "pad_zero_fill")
+                    start = sdfg.start_state
+                    assert isinstance(start, dace.SDFGState), "PadZeroFill: the SDFG must start with a plain state"
+                    init = sdfg.add_state_before(start, "pad_zero_fill")
                 self._zero_slab(init, arr, list(desc.shape), dim, orig[dim])
         return 0
 
@@ -157,8 +159,9 @@ class PadZeroFill(ppl.Pass):
                         continue
                     ndim = len(sdfg.arrays[arr].shape)
                     reduced = set(range(ndim)) if node.axes is None else set(node.axes)
-                    if padded[arr] & reduced and detect_reduction_type(node.wcr) != ReductionType.Sum:
+                    reduction = detect_reduction_type(node.wcr)
+                    if padded[arr] & reduced and reduction != ReductionType.Sum:
                         raise NotImplementedError(
                             f"PadZeroFill: '{arr}' is padded on a dimension reduced by a non-sum reduction "
-                            f"({detect_reduction_type(node.wcr).name}); zero-fill is legal only for a sum "
+                            f"({reduction.name if reduction is not None else node.wcr}); zero-fill is legal only for a sum "
                             f"reduction. Pad a free dimension instead, or do not pad this array.")

@@ -6,6 +6,7 @@ inputs ``?NRM2`` returns a real value (``SCNRM2`` / ``DZNRM2``), so the
 output descriptor's dtype is allowed to be the real base type of a
 complex input.
 """
+from typing import List, TYPE_CHECKING
 import warnings
 
 import dace.library
@@ -17,13 +18,15 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
 class ExpandNrm2Pure(ExpandTransformation):
     """``sqrt(sum(x_i * conj(x_i)))`` as an init state + WCR sum + sqrt finalizer."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -99,7 +102,7 @@ class ExpandNrm2MKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandNrm2GPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):

@@ -26,6 +26,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
 from .. import environments
+from typing import List
 
 # Input connectors carrying a matrix operand, in BLAS argument order.
 OPERANDS = ("_a", )
@@ -45,7 +46,7 @@ class ExpandSyrkPure(ExpandTransformation):
     accumulate ``alpha * (A A^T | A^T A)`` onto it as a WCR contraction over ``k``.
     Only the ``uplo`` triangle is ever touched."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Syrk", state: SDFGState, sdfg: SDFG) -> SDFG:
@@ -93,7 +94,7 @@ class ExpandSyrkCBLAS(ExpandTransformation):
     """CBLAS ``cblas_?syrk`` (row-major): handles the DaCe row-major layout directly,
     so no operand transpose trick is needed (unlike the GPU path)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "Syrk", state: SDFGState, sdfg: SDFG):
@@ -133,7 +134,7 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
     ``C_cm := alpha*A_cm^T*A_cm + beta*C_cm`` (column-major). That is a ``trans`` flip
     and a ``uplo`` flip, with ``n`` / ``k`` unchanged."""
 
-    environments = []
+    environments: List[type] = []
     backend = "cu"
 
     @classmethod

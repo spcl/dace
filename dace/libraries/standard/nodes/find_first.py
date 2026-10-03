@@ -94,7 +94,7 @@ class ExpandFindFirstCPU(ExpandTransformation):
     re-entered by an enclosing parallel scope or loop, runs the chunk loop on one thread: still
     blocked, ``simd``-scanned and cancelling between chunks."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -112,7 +112,7 @@ class ExpandFindFirstCPU(ExpandTransformation):
 class ExpandFindFirstAuto(ExpandTransformation):
     """Picks ``CPU`` or ``CUDA`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG):
@@ -149,7 +149,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
     what puts the kernel launch in the ``.cu`` while the tasklet stays host code."""
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:

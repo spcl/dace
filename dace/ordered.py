@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe's ``OrderedSet``: insertion-ordered iteration, but set equality."""
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional, TypeVar
 
 from ordered_set import OrderedSet as SequenceOrderedSet
 
+T = TypeVar('T')
 
-class OrderedSet(SequenceOrderedSet):
+
+class OrderedSet(SequenceOrderedSet[T]):
     """``ordered_set.OrderedSet`` with ``==`` comparing membership instead of order.
 
     Deterministic iteration is why DaCe uses this container everywhere: insertion order stands
@@ -18,6 +20,10 @@ class OrderedSet(SequenceOrderedSet):
     Comparison against a genuine sequence keeps the upstream order-sensitive meaning: a ``list``
     is ordered by nature, and code comparing against one is asking about order.
     """
+
+    def __init__(self, initial: Optional[Iterable[T]] = None) -> None:
+        # ordered_set annotates its ``None`` default as non-Optional, which flags every ``OrderedSet()``.
+        super().__init__(initial)  # type: ignore[arg-type]
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, SequenceOrderedSet):

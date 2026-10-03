@@ -38,6 +38,9 @@ class FortranIONode(nodes.LibraryNode):
     dead code even when, like ``WRITE``, they have no output connectors.
     """
 
+    #: Number of connected items; each concrete node declares it as a ``Property``.
+    num_items: int
+
     def has_side_effects(self, sdfg) -> bool:
         return True
 

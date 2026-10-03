@@ -2,7 +2,7 @@
 """Wires the streams a :class:`GPUStreamSchedulingStrategy` assigned: allocates ``gpu_streams``, connects each
 consumer to ``gpu_streams[i]`` and has the strategy insert its syncs. Applied once: see :func:`is_stream_wiring_applied`.
 """
-from typing import Any, Dict, Optional, Set, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -22,8 +22,8 @@ class GPUStreamWiring(ppl.Pass):
             raise TypeError(f"strategy must be a GPUStreamSchedulingStrategy, got {type(strategy).__name__}.")
         self._strategy = strategy
 
-    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {type(self._strategy)}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return [type(self._strategy)]
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets

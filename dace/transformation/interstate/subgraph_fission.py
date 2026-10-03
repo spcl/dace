@@ -18,7 +18,7 @@ def drop_uninitialized_inputs(body: sd.SDFG) -> None:
     ``nest_sdfg_subgraph`` makes an input of every container a nest reads, including one it writes first; read from
     outside, such a transient is uninitialized.
     """
-    written = OrderedSet()
+    written: OrderedSet[str] = OrderedSet()
     for state in sdutil.dfs_topological_sort(body):
         for nest in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
             for edge in state.in_edges(nest):

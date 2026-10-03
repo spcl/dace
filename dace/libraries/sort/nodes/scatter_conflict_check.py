@@ -28,7 +28,7 @@ its size):
 - ``CUDA`` -- the same tagged-write + verify run ON the device (``gpucub::BlockReduce`` fold, one
   atomic per block), with only the resulting flag copied back.
 """
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import dace
 from dace import dtypes, library, nodes, symbolic
@@ -162,7 +162,7 @@ class ExpandPure(ExpandTransformation):
     """The serial tagged-write + verify as SDFG components: tag every in-range slot with the last position that
     names it, then flag a position whose slot carries another position's tag."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -199,7 +199,7 @@ class ExpandCPU(ExpandTransformation):
     """Tagged-write + verify, OpenMP-parallel (2 passes ~= 2x the scatter's own cost). A ``Sequential``
     node, or one re-entered by an enclosing parallel scope or loop, runs both passes on one thread."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -235,7 +235,7 @@ class ExpandCUDA(ExpandTransformation):
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -276,7 +276,7 @@ class ExpandCUDA(ExpandTransformation):
 class ExpandAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG):

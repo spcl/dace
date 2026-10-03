@@ -7,7 +7,7 @@ the triangle named by ``lower`` is read, as numpy's ``UPLO`` does. The vendor ex
 Jacobi sweep for a build with no LAPACK at all.
 """
 import copy
-from typing import Any, NamedTuple
+from typing import Any, List, NamedTuple
 
 import numpy as np
 
@@ -210,7 +210,7 @@ class ExpandEighPure(ExpandTransformation):
     eigenvector columns permuted with them. A build with LAPACK or a GPU solver takes those instead.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:

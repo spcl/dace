@@ -44,7 +44,7 @@ makes the answer independent of how the range was split. The ``_in`` index
 is slice-local (``0 .. N-1``); the lift adds the slice base to recover the
 original-array position.
 """
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import dace
 from dace import library, properties, symbolic
@@ -177,7 +177,7 @@ class ExpandArgReducePure(ExpandTransformation):
     """The sequential scan as SDFG components: seed from element 0, a loop keeping the first extreme, and a
     write-back of whichever results are wired."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -232,7 +232,7 @@ class ExpandArgReduceCPU(ExpandTransformation):
     than a different order of work -- which is not what this lowering is for.
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -273,7 +273,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -341,7 +341,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ExpandArgReduceAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):

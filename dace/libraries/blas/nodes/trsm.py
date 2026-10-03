@@ -17,6 +17,9 @@ from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
+from typing import List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 def _cblas_flags(node):
@@ -76,7 +79,7 @@ class ExpandTrsmMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandTrsmGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

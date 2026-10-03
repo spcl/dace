@@ -79,7 +79,7 @@ plain memlets. NestedSDFG-mediated accesses to the same array are not considered
 import contextlib
 import copy
 import io
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 from dace import graphlib as nx
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
@@ -223,8 +223,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # stays refused on the same shape. Re-runs only repeat the speculative work.
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Dict[str, List[str]]]:
         """Promote ``(arr, c)`` slots for loops that ``LoopToMap`` refuses, in ``sdfg`` and nested.

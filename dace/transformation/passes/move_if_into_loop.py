@@ -37,7 +37,7 @@ assignment and emits a loud warning so the dropped opportunity is visible.
 """
 import copy
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import dace.symbolic
 from dace import Memlet, SDFG, subsets
@@ -460,8 +460,8 @@ class MoveIfIntoLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Repeatedly push guards into their loops until none remain.

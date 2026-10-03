@@ -9,6 +9,7 @@ of :class:`~dace.libraries.sort.nodes.integer_sort.IntegerSort` can declare an
 No extra CMake packages, libraries, or flags are needed -- it is header-only.
 """
 import dace.library
+from typing import Dict, List
 
 
 @dace.library.environment
@@ -16,16 +17,16 @@ class SkaSort:
     """Pulls in the bundled ``dace/ska_sort.hpp`` header. No external deps."""
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: List[str] = []
+    cmake_variables: Dict[str, str] = {}
+    cmake_includes: List[str] = []
+    cmake_libraries: List[str] = []
+    cmake_compile_flags: List[str] = []
+    cmake_link_flags: List[str] = []
+    cmake_files: List[str] = []
 
     headers = {'frame': ['dace/ska_sort.hpp']}
-    state_fields = []
+    state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies = []
+    dependencies: List[str] = []

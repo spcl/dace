@@ -7,6 +7,7 @@ here write a ``dace.int32`` result in cBLAS convention (0-indexed). If
 the calling Fortran code needs the 1-indexed value, add the +1 at the
 call site.
 """
+from typing import List, TYPE_CHECKING
 import warnings
 
 import dace.library
@@ -18,6 +19,8 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
@@ -28,7 +31,7 @@ class ExpandIamaxPure(ExpandTransformation):
     WCR for argmax (WCR would need both the max value and its index).
     """
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -111,7 +114,7 @@ class ExpandIamaxMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandIamaxGPUBLAS(ExpandTransformation):
 
-    environments = []
+    environments: List[type] = []
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
