@@ -26,7 +26,7 @@ import dace
 from dace.codegen import codegen
 from dace.config import Config
 
-from tests.codegen.readable.conftest import gpu_available, to_host
+from tests.codegen.readable.conftest import to_host
 
 #: Force the experimental ("new") cuda generator for every SDFG this file builds.
 NEW_CUDA = "experimental"
@@ -217,8 +217,6 @@ def test_external_call_emitted(require_external_tu):
 def test_two_siblings_run_matches_single_tu(require_external_tu, build_mode):
     """The split library must LINK (child extern-C entry points resolve in-binary) and compute exactly
     what the single-TU build computes -- under both the cmake and native builders."""
-    if not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
     rng = np.random.default_rng(0)
     A = rng.random(256)
     outputs = {}
@@ -240,8 +238,6 @@ def test_two_siblings_run_matches_single_tu(require_external_tu, build_mode):
 @pytest.mark.parametrize("build_mode", ["cmake", "native"])
 def test_loop_nested_run(require_external_tu, build_mode):
     """The lifted loop-child must link + run: final value is the last iteration (t=3), matching single-TU."""
-    if not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
     rng = np.random.default_rng(1)
     A = rng.random(256)
     outs = {}
@@ -262,8 +258,6 @@ def test_loop_nested_run(require_external_tu, build_mode):
 def test_hybrid_run(require_external_tu, build_mode):
     """Hybrid host+device program links + runs: the host (CPU) map and the lifted GPU child both
     compute, and both match the single-TU build, under either builder."""
-    if not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
     rng = np.random.default_rng(2)
     A = rng.random(256)
     C = rng.random(256)

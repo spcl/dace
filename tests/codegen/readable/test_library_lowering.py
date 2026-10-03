@@ -115,7 +115,7 @@ def test_blas_cpu_lowering(label, program, inputs_fn, require_experimental):
 
 
 @pytest.mark.gpu
-def test_blas_gpu_cublas_lowering(require_experimental, require_gpu):
+def test_blas_gpu_cublas_lowering(require_experimental):
     """cuBLAS ``matmul`` lowering matches between the two generators."""
     inputs, symbols = matmul_inputs()
     legacy = expand_and_run(blas_matmul, inputs, symbols, LEGACY, "cuBLAS", gpu=True)
@@ -158,7 +158,7 @@ def expand_and_run_gpu_libnode(build_sdfg, inputs, implementation):
 
 
 @pytest.mark.gpu
-def test_copy_libnode_gpu_lowering(require_experimental, require_gpu):
+def test_copy_libnode_gpu_lowering(require_experimental):
     """``CopyLibraryNode`` on GPU lowers identically under both generators."""
     import cupy as cp
     inputs = {"src": cp.asarray(np.random.default_rng(0).random(64)), "dst": cp.zeros(64, dtype=cp.float64)}
@@ -168,7 +168,7 @@ def test_copy_libnode_gpu_lowering(require_experimental, require_gpu):
 
 
 @pytest.mark.gpu
-def test_memset_libnode_gpu_lowering(require_experimental, require_gpu):
+def test_memset_libnode_gpu_lowering(require_experimental):
     """``FillLibraryNode`` on GPU lowers identically under both generators."""
     import cupy as cp
     inputs = {"B": cp.ones(200, dtype=cp.float64)}

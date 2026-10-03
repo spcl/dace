@@ -101,6 +101,28 @@ class GPUTransformMap(transformation.SingleStateTransformation):
         # which is the only offloader there is: it decides placement from the control flow and
         # copies where the location changes.
         ppl.Pipeline([OffloadToAccelerator()]).apply_pass(nsdfg_node.sdfg, {})
+        if not self.sequential_innermaps:
+            unschedule_maps_inside_kernels(nsdfg_node.sdfg)
 
         # Inline back as necessary
         sdfg.simplify()
+
+
+def unschedule_maps_inside_kernels(sdfg: SDFG) -> None:
+    """Return the maps inside every ``GPU_Device`` map of ``sdfg`` to ``Default``.
+
+    The offloading schedules a kernel's body ``Sequential``; a map transformed on its own keeps its inner maps
+    for schedule inference instead, so the outermost of them becomes the thread block -- the shape a body that
+    stages tiles in ``GPU_Shared`` memory is written for.
+    """
+    for state in sdfg.all_states():
+        for kernel in state.nodes():
+            if not (isinstance(kernel, nodes.MapEntry) and kernel.map.schedule == dtypes.ScheduleType.GPU_Device):
+                continue
+            for node in state.scope_subgraph(kernel, include_entry=False, include_exit=False).nodes():
+                if isinstance(node, nodes.MapEntry):
+                    node.map.schedule = dtypes.ScheduleType.Default
+                elif isinstance(node, nodes.NestedSDFG):
+                    for inner, _ in node.sdfg.all_nodes_recursive():
+                        if isinstance(inner, nodes.MapEntry):
+                            inner.map.schedule = dtypes.ScheduleType.Default

@@ -20,7 +20,7 @@ import pytest
 
 import dace
 from dace.codegen.compiler import CLANG_TIDY_CHECKS
-from tests.codegen.readable.conftest import EXPERIMENTAL, gpu_available, use_implementation
+from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation
 
 
 def test_clang_tidy_excludes_unsafe_checks():
@@ -64,7 +64,7 @@ def reference(data, bin_edges):
 
 
 @pytest.mark.gpu
-def test_gpu_scatter_accumulator_compiles(require_experimental, require_gpu):
+def test_gpu_scatter_accumulator_compiles(require_experimental):
     """The scatter accumulator compiles and runs correctly under the experimental
     GPU pipeline (which tidies the ``.cu`` in place). Without the
     ``readability-non-const-parameter`` exclusion this fails to compile with a
@@ -90,6 +90,6 @@ def test_gpu_scatter_accumulator_compiles(require_experimental, require_gpu):
 if __name__ == '__main__':
     test_clang_tidy_excludes_unsafe_checks()
     from tests.codegen.readable.conftest import experimental_available
-    if experimental_available() and gpu_available():
-        test_gpu_scatter_accumulator_compiles(None, None)
+    if experimental_available():
+        test_gpu_scatter_accumulator_compiles(None)
     print('ok')

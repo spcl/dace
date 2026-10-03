@@ -212,7 +212,7 @@ def test_cpu_compiles_and_matches_legacy(require_experimental, family, name):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("family,name", GPU_KERNELS, ids=[name for _, name in GPU_KERNELS])
-def test_gpu_compiles_and_matches_legacy(require_experimental, require_gpu, family, name):
+def test_gpu_compiles_and_matches_legacy(require_experimental, family, name):
     """Experimental GPU-target codegen (device tasklets via the CPU generator) compiles and
     matches legacy. CUDA and ``os.fork`` are incompatible, so these run in-process.
 

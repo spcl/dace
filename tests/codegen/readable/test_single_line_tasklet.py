@@ -20,6 +20,7 @@ CPU generator instance -- inside ``__global__`` kernels.
 """
 import copy
 
+
 import numpy as np
 import pytest
 
@@ -160,7 +161,7 @@ def test_wcr_reduction_bit_exact(require_experimental, target):
 
 
 @pytest.mark.gpu
-def test_single_line_inside_kernel(require_experimental, require_gpu):
+def test_single_line_inside_kernel(require_experimental):
     """The connector-free single-line tasklet appears inside the ``__global__``
     kernel: the CUDA generator emits device tasklets through the shared CPU
     generator, so the readable form flows into device code too."""
@@ -172,7 +173,7 @@ def test_single_line_inside_kernel(require_experimental, require_gpu):
 
 
 if __name__ == '__main__':
-    from tests.codegen.readable.conftest import experimental_available, gpu_available
+    from tests.codegen.readable.conftest import experimental_available
     if not experimental_available():
         print('experimental readable codegen not ready; skipping')
     else:
@@ -180,8 +181,7 @@ if __name__ == '__main__':
         test_wcr_tasklet_keeps_block(None)
         test_single_line_bit_exact(None, 'cpu')
         test_wcr_reduction_bit_exact(None, 'cpu')
-        if gpu_available():
-            test_single_line_bit_exact(None, 'gpu')
-            test_wcr_reduction_bit_exact(None, 'gpu')
-            test_single_line_inside_kernel(None, None)
+        test_single_line_bit_exact(None, 'gpu')
+        test_wcr_reduction_bit_exact(None, 'gpu')
+        test_single_line_inside_kernel(None)
         print('ok')

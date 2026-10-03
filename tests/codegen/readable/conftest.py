@@ -7,9 +7,7 @@ with a tolerance, as their reduction and atomic order is not reproducible.
 """
 import functools
 import os
-import shutil
 import signal
-import subprocess
 import tempfile
 
 # Steer Open MPI off UCX before dace's lazy MPI import can stall; setdefault defers to external config.
@@ -83,30 +81,6 @@ def experimental_available():
     with use_implementation(EXPERIMENTAL):
         experimental_code = generated_code(sdfg)
     return experimental_code != legacy_code
-
-
-def without_fma_contraction():
-    """Builds without fused multiply-add contraction. The two generators nest the same computation differently, so
-    the compiler contracts different multiply-adds and an accumulating kernel drifts by far more than 1 ULP."""
-    return set_temporary(*CPU_ARGS_KEY, value=f"{Config.get(*CPU_ARGS_KEY)} -ffp-contract=off")
-
-
-@functools.lru_cache(maxsize=1, typed=True)
-def gpu_available():
-    """True iff a CUDA device is usable (cupy device count, else ``nvidia-smi -L``)."""
-    try:
-        import cupy
-        return cupy.cuda.runtime.getDeviceCount() > 0
-    except Exception:  # noqa: BLE001 - cupy missing / no driver
-        pass
-    smi = shutil.which("nvidia-smi")
-    if not smi:
-        return False
-    try:
-        proc = subprocess.run([smi, "-L"], capture_output=True, text=True, timeout=15)
-        return proc.returncode == 0 and "GPU" in proc.stdout
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def to_host(value):
@@ -237,21 +211,12 @@ def require_experimental():
         "the readable CPU generator produced byte-identical output to legacy -- it is not wired up")
 
 
-@pytest.fixture
-def require_gpu():
-    """Skip the test unless a CUDA device is present."""
-    if not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
-
-
 @pytest.fixture(params=[
     pytest.param("cpu", id="cpu"),
     pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
 ])
 def target(request):
-    """Codegen target ("cpu"/"gpu"); the GPU variant carries ``@pytest.mark.gpu`` and skips without CUDA."""
-    if request.param == "gpu" and not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
+    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with ``-m gpu``)."""
     return request.param
 
 
