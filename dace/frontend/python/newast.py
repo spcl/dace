@@ -34,7 +34,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
-from dace.utils import until
+from dace.utils import until, find_new_name
 
 import numpy
 import sympy
@@ -4086,6 +4086,37 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result[0]
         return result
 
+    def parse_window_argument(self, arg: ast.AST, written: bool):
+        """One argument of a call to a replacement that takes windows.
+
+        An array, or a slice of one, becomes the pair ``(container, subset)``: the container in the SDFG being built that
+        holds the data, which is a connector of it when the array lives outside this scope, and the range of the
+        container the argument names. Any other argument is parsed as usual.
+
+        :param arg: The argument of the call.
+        :param written: Whether the replacement writes the argument.
+        """
+        subscripted = isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name)
+        if not subscripted and not isinstance(arg, ast.Name):
+            return self._parse_function_arg(arg)
+        name = rname(arg)
+        true_name = {**self.variables, **self.scope_vars}.get(name, name)
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
+        if not isinstance(defined_arrays.get(true_name), data.Array):
+            return self._parse_function_arg(arg)
+        true_node = copy.deepcopy(arg)
+        (true_node.value if subscripted else true_node).id = true_name
+        expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
+                                       self._parse_subscript_slice(arg.slice) if subscripted else None)
+        subset = expr.subset
+        if isinstance(subset, subsets.Indices):
+            subset = subsets.Range.from_indices(subset)
+        if expr.arrdims:
+            raise DaceSyntaxError(self, arg, 'A window passed to a call cannot be indexed by an array')
+        access = self._add_write_access if written else self._add_read_access
+        container, local_subset = access(name, subset, arg)
+        return container, subset if local_subset is None else local_subset
+
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
         for state in sdfg.states():
@@ -4987,14 +5018,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Function "%s" is not registered with an SDFG '
                                       'implementation' % funcname)
 
-        # NOTE: Temporary fix for MPI library-node replacements
         # Parsing the arguments with `_parse_function_arg` will generate
-        # slices even for the output arguments.
+        # slices even for the output arguments. A replacement that wires the
+        # slices itself (see `oprepo.replaces_windows`) gets the containers and
+        # the ranges accessed instead, and writes the output arguments.
+        window_outputs = oprepo.Replacements.window_outputs(funcname)
+        if window_outputs is not None:
+            args.extend(
+                self.parse_window_argument(arg, written=index in window_outputs) for index, arg in enumerate(node.args))
+        # NOTE: Temporary fix for MPI library-node replacements
         # We make a special exception for MPI calls (`dace.comm` namespace)
         # and we pass instead the array names and the ranges accessed.
         # The replacement functions are responsible for generating the correct
         # subgraph/memlets.
-        if funcname.startswith("dace.comm"):
+        elif funcname.startswith("dace.comm"):
             mpi_args = []
             for arg in node.args:
                 # We are only looking for subscripts on arrays of the current SDFG.
@@ -5531,6 +5568,46 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
+        """
+        Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
+
+        :param scalar: Name of the scalar data descriptor to read.
+        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
+        :param fresh: Mint a new suffixed symbol instead of reusing a cached one, so two shapes
+                      sized from the same reassigned scalar keep their own values.
+        :return: The symbol carrying the scalar's value.
+        """
+        key = key if key is not None else scalar
+        desc = self.sdfg.arrays[scalar]
+        sym = None if fresh else self.indirections.get(key)
+        if sym is None:
+            base = f'__sym_{scalar}'
+            if fresh:
+                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
+                # reuses; a later index on the same scalar would otherwise re-bind the extent.
+                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
+                name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
+            else:
+                name = base
+                try:
+                    self.sdfg.add_symbol(name, desc.dtype)
+                except FileExistsError:
+                    pass  # A cached promotion may re-add an existing symbol.
+            sym = dace.symbol(name, dtype=desc.dtype)
+            if not fresh:
+                self.indirections[key] = sym
+            else:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in
+                # ``globals``. Subscript promotions must stay out: they shadow names there.
+                self.globals[str(sym)] = sym
+        state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+        edge = state.parent_graph.in_edges(state)[0]
+        # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
+        rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
+        edge.data.assignments = {str(sym): rhs}
+        return sym
+
     def _parse_subscript_slice(self,
                                s: ast.AST,
                                multidim: bool = False) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
@@ -5540,29 +5617,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
-            sym = None
-            if node_str in self.indirections:
-                sym = self.indirections[node_str]
             if isinstance(node, str):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
-                desc = self.sdfg.arrays[scalar]
-                if isinstance(desc, data.Scalar):
-                    if not sym:
-                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
-                        self.indirections[node_str] = sym
-                        try:
-                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
-                        except FileExistsError:
-                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
-                            # `not sym` returns True. This exception is benign.
-                            pass
-                    state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-                    edge = state.parent_graph.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
-                    return sym
+                if isinstance(self.sdfg.arrays[scalar], data.Scalar):
+                    return self.promote_scalar_to_symbol(scalar, key=node_str)
             return scalar
 
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):

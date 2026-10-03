@@ -3,12 +3,45 @@ import dace as dp
 import numpy as np
 import os
 import pytest
+from dace.codegen import common
+
+#: The vendor BLAS of the configured GPU backend: cuBLAS on CUDA, rocBLAS on HIP (same dgemm argument order)
+GPU_BLAS = {
+    'cuda':
+    dict(header='#include <cublas_v2.h>',
+         handle_type='cublasHandle_t',
+         create='cublasCreate(&handle);',
+         destroy='cublasDestroy(handle);',
+         set_stream='cublasSetStream',
+         dgemm='cublasDgemm',
+         no_transpose='CUBLAS_OP_N',
+         library='cublas'),
+    'hip':
+    dict(header='#include <rocblas/rocblas.h>',
+         handle_type='rocblas_handle',
+         create='rocblas_create_handle(&handle);',
+         destroy='rocblas_destroy_handle(handle);',
+         set_stream='rocblas_set_stream',
+         dgemm='rocblas_dgemm',
+         no_transpose='rocblas_operation_none',
+         library='rocblas'),
+}[common.get_gpu_backend()]
+
+GEMM_CODE = """
+    double alpha = 1.0, beta = 0.0;
+    {set_stream}(handle, __dace_current_stream);
+    {dgemm}(handle, {no_transpose}, {no_transpose},
+                N, N, N, &alpha,
+                a, N, b, N,
+                &beta,
+                c, N);
+    """.format(**GPU_BLAS)
 
 # Create symbols
 N = dp.symbol('N')
 
 # Create a GPU SDFG with a custom C++ tasklet
-sdfg = dp.SDFG('cublas_multistream_test')
+sdfg = dp.SDFG('gpu_blas_multistream_test')
 state = sdfg.add_state()
 
 # Add arrays
@@ -30,31 +63,11 @@ tasklet = state.add_tasklet(
     inputs={'a', 'b'},
     outputs={'c'},
     # Custom code (on invocation)
-    code='''
-    double alpha = 1.0, beta = 0.0;
-    cublasSetStream(handle, __dace_current_stream);
-    cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha,
-                a, N, b, N,
-                &beta,
-                c, N);
-    ''',
+    code=GEMM_CODE,
     # Language (C++ in this case)
     language=dp.Language.CPP)
 
-tasklet2 = state.add_tasklet(name='gemm2',
-                             inputs={'a', 'b'},
-                             outputs={'c'},
-                             code='''
-    double alpha = 1.0, beta = 0.0;
-    cublasSetStream(handle, __dace_current_stream);
-    cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha,
-                a, N, b, N,
-                &beta,
-                c, N);
-    ''',
-                             language=dp.Language.CPP)
+tasklet2 = state.add_tasklet(name='gemm2', inputs={'a', 'b'}, outputs={'c'}, code=GEMM_CODE, language=dp.Language.CPP)
 
 # Add CPU arrays, GPU arrays, and connect to tasklet
 A = state.add_read('A')
@@ -81,14 +94,14 @@ state.add_nedge(A, gA, dp.Memlet.simple('gA', '0:N, 0:N'))
 state.add_nedge(B, gB, dp.Memlet.simple('gB', '0:N, 0:N'))
 state.add_nedge(gC, C, dp.Memlet.simple('gC', '0:N, 0:N'))
 
-# Add CUBLAS initialization and teardown code
+# Add vendor BLAS initialization and teardown code
 # Global code (top of file, can be used for includes and global variables)
-sdfg.append_global_code('''#include <cublas_v2.h>
-cublasHandle_t handle;''')
+sdfg.append_global_code(f'''{GPU_BLAS["header"]}
+{GPU_BLAS["handle_type"]} handle;''')
 # Initialization code (called in __dace_init())
-sdfg.append_init_code('cublasCreate(&handle);')
+sdfg.append_init_code(GPU_BLAS['create'])
 # Teardown code (called in __dace_exit())
-sdfg.append_exit_code('cublasDestroy(handle);')
+sdfg.append_exit_code(GPU_BLAS['destroy'])
 
 ######################################################################
 
@@ -101,14 +114,12 @@ sdfg.validate()
 @pytest.mark.gpu
 def test_multistream_custom():
     N = 27
-    # First, add libraries to link (CUBLAS) to configuration
+    # First, add the vendor BLAS library to link to the configuration
     oldconf = dp.Config.get('compiler', 'cpu', 'libs')
-    if os.name == 'nt':
-        dp.Config.append('compiler', 'cpu', 'libs', value='cublas.lib')
-    else:
-        dp.Config.append('compiler', 'cpu', 'libs', value='libcublas.so')
+    library = GPU_BLAS['library']
+    dp.Config.append('compiler', 'cpu', 'libs', value=f'{library}.lib' if os.name == 'nt' else f'lib{library}.so')
 
-    # Initialize arrays. We are using column-major order to support CUBLAS!
+    # Initialize arrays. We are using column-major order to support the vendor BLAS!
     A = np.ndarray([N, N], dtype=np.float64, order='F')
     B = np.ndarray([N, N], dtype=np.float64, order='F')
     C = np.ndarray([N, N], dtype=np.float64, order='F')

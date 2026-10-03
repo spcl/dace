@@ -33,6 +33,7 @@ class Replacements(object):
     _ufunc_rep: Dict[str, MethodType] = {}
     _method_rep: Dict[Tuple[str, str], MethodType] = {}
     _attr_rep: Dict[Tuple[str, str], MethodType] = {}
+    window_outputs_of: Dict[str, Tuple[int, ...]] = {}
 
     @staticmethod
     def get(name: str):
@@ -40,6 +41,14 @@ class Replacements(object):
         if name not in Replacements._rep:
             return None
         return Replacements._rep[name]
+
+    @staticmethod
+    def window_outputs(name: str) -> Optional[Tuple[int, ...]]:
+        """
+        Returns the positions of the arguments that a replacement registered with :func:`replaces_windows` writes, or
+        ``None`` if the function does not take windows.
+        """
+        return Replacements.window_outputs_of.get(name)
 
     @staticmethod
     def getop(class_or_name: Union[str, Type], optype: str, otherclass: Union[str, Type, None] = None):
@@ -93,6 +102,25 @@ def replaces(func: Callable[..., Tuple[str]], name: str):
         :param name: Full name (pydoc-compliant, including package) of function to replace.
     """
     Replacements._rep[name] = func
+    return func
+
+
+@paramdec
+def replaces_windows(func: Callable[..., Tuple[str]], name: str, outputs: Tuple[int, ...] = ()):
+    """ Registers a replacement for a function whose array slices it wires itself.
+
+        An argument of the form ``A[i:i + 8]`` reaches the replacement as the pair ``(container, subset)`` instead of
+        a copy of the slice, where ``container`` is the data container of the SDFG the call is parsed into and
+        ``subset`` the range of it that the slice names. The arguments at the positions in ``outputs`` are written by
+        the replacement.
+
+        :param func: A function that receives a ProgramVisitor, an SDFG, an SDFGState, and the original function
+                     arguments.
+        :param name: Full name (pydoc-compliant, including package) of function to replace.
+        :param outputs: Positions of the arguments the function writes.
+    """
+    Replacements._rep[name] = func
+    Replacements.window_outputs_of[name] = tuple(outputs)
     return func
 
 

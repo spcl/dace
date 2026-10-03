@@ -51,7 +51,8 @@ def register_node(node_cls, library):
     if not hasattr(node_cls, "_dace_library_node"):
         raise ValueError("Library node class {} must be decorated "
                          "with @dace.library.node.".format(node_cls.__name__))
-    if (hasattr(node_cls, "_dace_library_name") and node_cls._dace_library_name != library.__name__):
+    # The name of the library the class itself was registered with; a subclass of a node of another library inherits it.
+    if ("_dace_library_name" in vars(node_cls) and node_cls._dace_library_name != library.__name__):
         raise ValueError("Node class {} registered with multiple libraries: {} and {}".format(
             node_cls.__name__, node_cls._dace_library_name, library.__name__))
     if node_cls not in library._dace_library_nodes:

@@ -30,7 +30,9 @@ build_cscs_gh200:
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   needs: []
 
-test_cscs_gh200:
+# Hidden template shared by both codegen variants. Each concrete job below sets
+# DACE_compiler_cuda_implementation to pin the codegen under test.
+.test_cscs_gh200_base:
   stage: test
   extends:
     - .container-runner-daint-gh200
@@ -75,3 +77,13 @@ test_cscs_gh200:
     - else
     -   echo "Codecov.io is unreachable"
     - fi
+
+test_cscs_gh200_legacy:
+  extends: .test_cscs_gh200_base
+  variables:
+    DACE_compiler_cuda_implementation: legacy
+
+test_cscs_gh200_experimental:
+  extends: .test_cscs_gh200_base
+  variables:
+    DACE_compiler_cuda_implementation: experimental

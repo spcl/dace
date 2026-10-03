@@ -94,6 +94,7 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
     GPU_Persistent = auto()
+    GPU_Warp = auto()
 
     Snitch = auto()
     Snitch_Multicore = auto()
@@ -105,6 +106,21 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+]
+
+# Schedules the experimental CUDA code generator emits.
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
+# Storages a GPU kernel can address. Register is deliberately absent: outside a kernel it is a CPU
+# stack array. A list, like GPU_SCHEDULES above, because the codegen dispatchers register per list.
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
 ]
 
 # A subset of CPU schedule types
@@ -207,7 +223,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -224,7 +241,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -1235,6 +1253,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1263,7 +1282,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
-
+    gpuStream_t = opaque('gpuStream_t')
 _bool = bool
 
 
@@ -1572,7 +1591,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
     ]:
-        return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
+        return storage in GPU_KERNEL_ACCESSIBLE_STORAGES
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal

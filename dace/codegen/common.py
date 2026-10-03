@@ -9,6 +9,7 @@ from dace.codegen import cppunparse
 from dace.codegen.tools import gpu_runtime
 from functools import lru_cache
 from io import StringIO
+import numpy as np
 import os
 import subprocess
 from typing import Dict, List, Optional, Set, Union
@@ -51,9 +52,14 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
                        user-functions back to array expressions.
     :return: C++-compilable expression or list thereof.
     """
-    if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
-    return [sym2cpp(d, arrayexprs) for d in s]
+    if isinstance(s, list):
+        return [sym2cpp(d, arrayexprs) for d in s]
+    # Literal kinds symstr cannot carry: a bool prints as Python 'True', a complex loses its width.
+    if isinstance(s, (bool, np.bool_)):
+        return 'true' if s else 'false'
+    if isinstance(s, (complex, np.complexfloating)):
+        return f'{dtypes.dtype_to_typeclass(type(s))}({s.real}, {s.imag})'
+    return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
 
 
 def codeblock_to_cpp(cb: CodeBlock):
@@ -237,8 +243,10 @@ def gpu_thread_id_type() -> dtypes.typeclass:
     return tidtype
 
 
-def gpu_map_index_types(sdfg: SDFG, state: 'sd.SDFGState',
-                        map_entry: 'sd.nodes.MapEntry') -> Dict[str, dtypes.typeclass]:
+def gpu_map_index_types(sdfg: SDFG,
+                        state: 'sd.SDFGState',
+                        map_entry: 'sd.nodes.MapEntry',
+                        defined: Optional[Dict[str, dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
     """
     Returns the type to declare each parameter of a GPU map with.
 
@@ -249,10 +257,11 @@ def gpu_map_index_types(sdfg: SDFG, state: 'sd.SDFGState',
     :param sdfg: The SDFG that contains the map.
     :param state: The state that contains the map.
     :param map_entry: The entry node of the map.
+    :param defined: The symbols defined at the map, if the caller has them (code generation asks its frame).
     :return: A dictionary mapping each map parameter to its type.
     """
     tidtype = gpu_thread_id_type()
-    inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry))
+    inferred = map_entry.new_symbols(sdfg, state, state.symbols_defined_at(map_entry) if defined is None else defined)
     result = {}
     for param in map_entry.map.params:
         dtype = inferred.get(param)

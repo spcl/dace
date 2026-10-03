@@ -319,9 +319,13 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         outer_loops = len(axes) != input_dims
 
+        # ``collapse(1)`` is a no-op (the default); only emit the clause when it collapses >1 loop.
+        def collapse_clause(ndims):
+            return 'collapse(%d) ' % ndims if ndims > 1 else ''
+
         # Create OpenMP clause
         if outer_loops:
-            code = '#pragma omp parallel for collapse({cdim})\n'.format(cdim=output_dims)
+            code = ('#pragma omp parallel for ' + collapse_clause(output_dims)).rstrip() + '\n'
         else:
             code = ''
 
@@ -342,10 +346,9 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         if node.identity is not None:
             code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
-        # Reduction OpenMP clause
-        code += '#pragma omp parallel for collapse({cdim}) ' \
-          'reduction({rtype}: {oexpr})\n'.format(cdim=len(axes), rtype=omptype,
-            oexpr=outexpr)
+        # Reduction OpenMP clause (``collapse(1)`` is the no-op default, so drop it for a single axis)
+        code += ('#pragma omp parallel for ' + collapse_clause(len(axes)) +
+                 'reduction({rtype}: {oexpr})\n'.format(rtype=omptype, oexpr=outexpr))
 
         # Reduction loops
         for i, axis in enumerate(sorted(axes)):
@@ -440,7 +443,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
         if node.out_connectors:
-            dtype = next(node.out_connectors.values())
+            dtype = next(iter(node.out_connectors.values())).base_type
         else:
             dtype = sdfg.arrays[output_memlet.data].dtype
 
@@ -663,7 +666,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         output_memlet = output_edge.data
 
         if node.out_connectors:
-            dtype = next(node.out_connectors.values())
+            dtype = next(iter(node.out_connectors.values())).base_type
         else:
             dtype = sdfg.arrays[output_memlet.data].dtype
         output_type = dtype.ctype

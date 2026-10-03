@@ -3,6 +3,7 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import dtypes
 
 from dace import Memlet
 from dace.libraries.lapack import Potrf
@@ -10,6 +11,14 @@ from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
+
+
+def input_edges(state, node, connector: str) -> list:
+    return [e for e in state.in_edges(node) if e.dst_conn == connector]
+
+
+def output_edges(state, node, connector: str) -> list:
+    return [e for e in state.out_edges(node) if e.src_conn == connector]
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -42,7 +51,14 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
                                          external_edges=True)
 
     ain = state.add_read('_a')
+    info = state.add_access('_info')
     if implementation == 'cuSolverDn':
+        # cuSolverDn writes the info code through a device pointer; it is copied back to the host.
+        info_host_arr = sdfg.add_array('_info_host', [1],
+                                       dtype=dace.int32,
+                                       transient=True,
+                                       storage=dtypes.StorageType.CPU_Heap)
+        state.add_nedge(info, state.add_write('_info_host'), Memlet.from_array(*info_host_arr))
         binout1 = state.add_access('_bt')
         binout2 = state.add_access('_bt')
         binout3 = state.in_edges(me)[0].src
@@ -60,8 +76,6 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         binout2 = state.in_edges(me)[0].src
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
-
-    info = state.add_write('_info')
 
     state.add_memlet_path(binout1, potrf_node, dst_conn="_xin", memlet=Memlet.from_array(*binout_arr))
     state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
@@ -132,15 +146,29 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         }, **kwargs)
         self.lower = lower
 
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
+        # Storage-aware auto-pick: the alphabetical default picks OpenBLAS for a GPU-resident
+        # matrix, which then writes GPU-storage ``_info`` from a CPU library and fails validation.
+        state = state_or_impl if isinstance(state_or_sdfg, dace.SDFG) else state_or_sdfg
+        if self.implementation is None:
+            in_edges = input_edges(state, self, "_a")
+            if in_edges:
+                outer = state.memlet_path(in_edges[0])[0].src
+                if (isinstance(outer, dace.sdfg.nodes.AccessNode)
+                        and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global):
+                    self.implementation = 'cuSolverDn'
+        return super().expand(state_or_sdfg, state_or_impl, **kwargs)
+
     def validate(self, sdfg, state):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        in_edges = state.in_edges(self)
+        # Filter on the data connector: the GPU stream pipeline attaches a non-dataflow in-edge.
+        in_edges = input_edges(state, self, "_a")
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = state.out_edges(self)
+        out_edges = output_edges(state, self, "_b")
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data
