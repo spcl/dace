@@ -1206,7 +1206,7 @@ class InsertTileLoadStore(ppl.Pass):
             for e in inner_state.in_edges(node):
                 if e.data is None:
                     continue
-                src_desc = sdfg.arrays.get(required(e.data.data))
+                src_desc = sdfg.arrays.get(e.data.data)
                 if not isinstance(src_desc, data.Array):
                     continue
                 src_shape = tuple(src_desc.shape)

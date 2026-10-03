@@ -43,7 +43,6 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.sdfg.narrowing import as_expr
-from dace.optionals import required
 
 
 def _const_int(value: symbolic.SymbolicType | int) -> Optional[int]:
@@ -558,7 +557,7 @@ class RerollUnrolledLoops(ppl.Pass):
             ops = dict.fromkeys(self._carried_accumulator_op(st, name) for name, st in acc.values())
             if len(ops) != 1 or next(iter(ops)) is None:
                 return False
-            if not self._accumulators_folded_once(loop, names, required(next(iter(ops)))):
+            if not self._accumulators_folded_once(loop, names, next(iter(ops))):
                 return False
 
         # Re-roll: drop every lane but offset 0 -- its unique nodes in each state,

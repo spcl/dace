@@ -779,7 +779,7 @@ def matches_inner_product(state: SDFGState, root: SDFG, i: str, j: str, match: S
     lib = staged_library_node(state, tw)
     if not isinstance(lib, (Dot, MatMul)):
         return False
-    operands = library_operand_reads(state, root, required(lib))
+    operands = library_operand_reads(state, root, lib)
     if operands is None or len(operands) != 2:
         return False
     column = [s for name, s in operands if name == match.b and col_slice(s, i, j)]

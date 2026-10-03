@@ -36,7 +36,6 @@ from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
 from dace.sdfg.narrowing import as_expr, as_range
-from dace.optionals import required
 
 
 class _RenameLoadName(ast.NodeTransformer):
@@ -418,8 +417,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             # (a whole row) instead of ``I[__i0, __i1]`` -- dropping every trailing map dim.
             if not apply_offset:
                 return symbolic.Subscript(base, *uncollapsed_indices(args[1:], offset_dims, collapsed_dims))
-            return symbolic.Subscript(
-                base, *outer_indices(args[1:], offset_dims, collapsed_dims, required(step_dims), inner_shape))
+            return symbolic.Subscript(base, *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims,
+                                                           inner_shape))
         # Not our target: rebuild the original Subscript verbatim.
         return symbolic.Subscript(*args)
 
@@ -520,8 +519,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             if str(args[0]) == inner_name and not apply_offset:
                 return symbolic.Subscript(outer_sym, *args[1:])
             if str(args[0]) == inner_name:
-                return symbolic.Subscript(
-                    outer_sym, *outer_indices(args[1:], offset_dims, collapsed_dims, required(step_dims), inner_shape))
+                return symbolic.Subscript(outer_sym,
+                                          *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims, inner_shape))
             return symbolic.Subscript(*args)
 
         def _rw_index_expr(expr):

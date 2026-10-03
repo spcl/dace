@@ -399,11 +399,11 @@ class PermuteDimensions(ppl.Pass):
                     # nested SDFG names permuted only when the full array is passed, not a scalar slice
                     # TODO: views, do they need any changes?
                     for ie in state.in_edges(node):
-                        inner = _nested_inner_permutation(sdfg, node, required(ie.data.data), ie.dst_conn, permute_map)
+                        inner = _nested_inner_permutation(sdfg, node, ie.data.data, ie.dst_conn, permute_map)
                         if inner is not None:
                             new_permute_map[ie.dst_conn] = inner
                     for oe in state.out_edges(node):
-                        inner = _nested_inner_permutation(sdfg, node, required(oe.data.data), oe.src_conn, permute_map)
+                        inner = _nested_inner_permutation(sdfg, node, oe.data.data, oe.src_conn, permute_map)
                         if inner is not None:
                             new_permute_map[oe.src_conn] = inner
 

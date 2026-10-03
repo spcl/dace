@@ -50,7 +50,6 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.narrowing import as_expr
-from dace.optionals import required
 
 _PASS = 'RemoveViews'
 _DEBUGPRINT = config.Config.get('debugprint') in (True, '1', 'true', 'yes')
@@ -1039,16 +1038,14 @@ class RemoveViews(ppl.Pass):
                         return False
                 m = te.data
                 if m.data == vnode.data and m.subset is not None:
-                    if _reshape_subset(m.subset, required(vstrides), required(view_shape), required(astrides),
-                                       required(array_shape)) is None:
+                    if _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape) is None:
                         if _DEBUGPRINT:
                             print(f'[{_PASS}]     {strat_name}: cannot'
                                   f' reshape subset {m.data}[{m.subset}]'
                                   f' -- aborting')
                         return False
                 if m.data != vnode.data and m.other_subset is not None:
-                    if _reshape_subset(m.other_subset, required(vstrides), required(view_shape), required(astrides),
-                                       required(array_shape)) is None:
+                    if _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape) is None:
                         if _DEBUGPRINT:
                             print(f'[{_PASS}]     {strat_name}: cannot'
                                   f' reshape other_subset {m.other_subset}'
@@ -1080,8 +1077,7 @@ class RemoveViews(ppl.Pass):
                     old = f'{m.data}[{m.subset}]'
                     m.data = viewed_node.data
                     if m.subset is not None:
-                        m.subset = _reshape_subset(m.subset, required(vstrides), required(view_shape),
-                                                   required(astrides), required(array_shape))
+                        m.subset = _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape)
                     else:
                         m.subset = subsets.Range.from_array(adesc)
                     if _DEBUGPRINT:
@@ -1089,8 +1085,7 @@ class RemoveViews(ppl.Pass):
                               f' -> {m.data}[{m.subset}]')
                 elif m.data != vnode.data and m.other_subset is not None:
                     old_other = f'{m.other_subset}'
-                    m.other_subset = _reshape_subset(m.other_subset, required(vstrides), required(view_shape),
-                                                     required(astrides), required(array_shape))
+                    m.other_subset = _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape)
                     if _DEBUGPRINT:
                         print(f'[{_PASS}]       memlet {m.data}:'
                               f' other_subset={old_other}'

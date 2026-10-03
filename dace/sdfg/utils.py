@@ -24,7 +24,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Dict, Generator, List, Mapping, Optional, Set, Sequence, Tuple, Type, Union
 
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
@@ -2963,7 +2963,7 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     specialize_scalars(sdfg, {scalar_name: scalar_val})
 
 
-def specialize_scalars(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, str]]):
+def specialize_scalars(sdfg: 'dace.SDFG', values: Mapping[str, Union[float, int, str]]):
     """Bake scalar data containers to constant values, recursively through nested SDFGs.
 
     Folds each scalar's reads into the reading tasklets, drops its edges/connectors and rewrites loop

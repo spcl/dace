@@ -9,7 +9,8 @@ over Tile/Scalar/Symbol operands.
 """
 import copy
 import re
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from enum import Enum
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import numpy as np
 
@@ -271,6 +272,67 @@ def lane_dependent_through_interstate_assignment(inner_state: SDFGState, expr: s
     return None
 
 
+class SymbolSide(Enum):
+    """Which operand of a binary operation is the symbol or literal; the other one is the in-connector."""
+    LEFT = 'a'
+    RIGHT = 'b'
+
+
+class BinopMatch(NamedTuple):
+    """A binary-operation tasklet ``out_conn = a_conn op b_conn``."""
+    out_conn: str
+    a_conn: str
+    b_conn: str
+    op: str
+
+
+class FmaMatch(NamedTuple):
+    """A fused multiply-add tasklet ``out_conn = a_conn * b_conn + c_conn``."""
+    out_conn: str
+    a_conn: str
+    b_conn: str
+    c_conn: str
+
+
+class SymbolBinopMatch(NamedTuple):
+    """A binary-operation tasklet with one in-connector and one symbolic operand on ``symbol_side``."""
+    out_conn: str
+    a_conn: str
+    op: str
+    symbol_side: SymbolSide
+    symbol_expr: str
+
+
+class TwoSymbolsBinopMatch(NamedTuple):
+    """A binary-operation tasklet whose two operands are both symbolic expressions."""
+    out_conn: str
+    op: str
+    expr_a: str
+    expr_b: str
+
+
+class ConditionalWriteMatch(NamedTuple):
+    """A tasklet writing ``val_arg`` to ``out_conn`` when ``cond_arg`` holds."""
+    out_conn: str
+    cond_arg: str
+    val_arg: str
+    val_is_symbol: bool
+
+
+class IteMatch(NamedTuple):
+    """A ternary if-then-else tasklet: ``out_conn = cond ? then_arg : else_arg``.
+
+    The ``*_is_symbol`` flags tell an argument that is a symbol or literal from one that is an in-connector.
+    """
+    out_conn: str
+    cond: str
+    then_arg: str
+    else_arg: str
+    then_is_symbol: bool
+    else_is_symbol: bool
+    cond_is_symbol: bool
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ConvertTaskletsToTileOps(ppl.Pass):
@@ -420,7 +482,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", combined, None, dace.Memlet(f"{name}[{subset}]"))
         return combined
 
-    def _detect_binop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+    def _detect_binop(self, tasklet: Tasklet) -> Optional[BinopMatch]:
         # If ``tasklet`` is a simple binary ``_out = _a <op> _b`` body, return ``(out_conn, a_conn, b_conn, op)``.
         if len(tasklet.out_connectors) != 1:
             return None
@@ -437,7 +499,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     continue
                 for form in (f"{out_conn} = {a_conn} {op} {a_conn}", f"{out_conn} = ({a_conn} {op} {a_conn})"):
                     if body == form:
-                        return out_conn, a_conn, a_conn, op
+                        return BinopMatch(out_conn, a_conn, a_conn, op)
             return None
         if len(tasklet.in_connectors) != 2:
             return None
@@ -461,10 +523,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 else:
                     forms = (f"{out_conn} = {a} {op} {b}", f"{out_conn} = ({a} {op} {b})")
                 if body in forms:
-                    return out_conn, a, b, op
+                    return BinopMatch(out_conn, a, b, op)
         return None
 
-    def _detect_fma(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+    def _detect_fma(self, tasklet: Tasklet) -> Optional[FmaMatch]:
         # If ``tasklet`` is a fused multiply-add ``__out = fma(__a, __b, __c)`` over three data connectors, return
         # ``(out_conn, a_conn, b_conn, c_conn)`` (``a*b + c``); else ``None``.
         if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 3:
@@ -481,9 +543,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         o, a, b, c = m.groups()
         if o != out_conn or {a, b, c} != set(tasklet.in_connectors):
             return None
-        return out_conn, a, b, c
+        return FmaMatch(out_conn, a, b, c)
 
-    def _detect_binop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
+    def _detect_binop_with_symbol(self, tasklet: Tasklet) -> Optional[SymbolBinopMatch]:
         # Detect a binop with ONE Tile/Scalar operand and ONE Symbol operand.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
@@ -502,8 +564,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             if op in _FUNCTION_FORM_BINOPS:
                 # min(_a, expr) / min(expr, _a) -- both orderings, every accepted spelling.
                 for name in _call_spellings(op):
-                    for sym_side in ("b", "a"):
-                        if sym_side == "b":
+                    for sym_side in (SymbolSide.RIGHT, SymbolSide.LEFT):
+                        if sym_side is SymbolSide.RIGHT:
                             prefix, sep = f"{name}({a_conn}, ", ")"
                         else:
                             prefix, sep = f"{name}(", f", {a_conn})"
@@ -511,7 +573,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                             expr = rhs[len(prefix):-len(sep)] if sep else rhs[len(prefix):]
                             expr = expr.strip()
                             if expr and a_conn not in expr.split():
-                                return out_conn, a_conn, op, sym_side, expr
+                                return SymbolBinopMatch(out_conn, a_conn, op, sym_side, expr)
             else:
                 sep = f" {op} "
                 if sep not in rhs:
@@ -521,15 +583,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     # Form ``_a <op> <expr>``; symbol on side b.
                     expr = rhs_part.strip()
                     if expr and a_conn not in expr.split():
-                        return out_conn, a_conn, op, "b", expr
+                        return SymbolBinopMatch(out_conn, a_conn, op, SymbolSide.RIGHT, expr)
                 if rhs_part.strip() == a_conn:
                     # Form ``<expr> <op> _a``; symbol on side a.
                     expr = lhs_part.strip()
                     if expr and a_conn not in expr.split():
-                        return out_conn, a_conn, op, "a", expr
+                        return SymbolBinopMatch(out_conn, a_conn, op, SymbolSide.LEFT, expr)
         return None
 
-    def _detect_affine_unit_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
+    def _detect_affine_unit_with_symbol(self, tasklet: Tasklet) -> Optional[SymbolBinopMatch]:
         # Detect a 1-tile-operand body AFFINE in that operand with unit coefficient.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
@@ -552,9 +614,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if coeff is None or offset is None:
             return None
         if coeff == 1:
-            return out_conn, a_conn, "+", "b", str(offset)
+            return SymbolBinopMatch(out_conn, a_conn, "+", SymbolSide.RIGHT, str(offset))
         if coeff == -1:
-            return out_conn, a_conn, "-", "a", str(offset)
+            return SymbolBinopMatch(out_conn, a_conn, "-", SymbolSide.LEFT, str(offset))
         return None  # |coeff| != 1 needs a multiply too -- deferred
 
     def _detect_const_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
@@ -698,7 +760,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         return out_conn, op, expr
         return None
 
-    def _detect_binop_with_two_symbols(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
+    def _detect_binop_with_two_symbols(self, tasklet: Tasklet) -> Optional[TwoSymbolsBinopMatch]:
         # If ``tasklet`` is a 0-in-connector binary symbol body (``_o = <expr_a> <op> <expr_b>`` or ``_o =
         # <op>(<expr_a>, <expr_b>)``), return ``(out_conn, op, expr_a, expr_b)``; else ``None``.
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
@@ -729,7 +791,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         expr_a = inner[:split_idx].strip()
                         expr_b = inner[split_idx + 1:].strip()
                         if expr_a and expr_b:
-                            return out_conn, op, expr_a, expr_b
+                            return TwoSymbolsBinopMatch(out_conn, op, expr_a, expr_b)
             else:
                 sep = f" {op} "
                 if sep not in rhs:
@@ -750,7 +812,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     expr_a = rhs[:split_idx].strip()
                     expr_b = rhs[split_idx + token_len:].strip()
                     if expr_a and expr_b:
-                        return out_conn, op, expr_a, expr_b
+                        return TwoSymbolsBinopMatch(out_conn, op, expr_a, expr_b)
         return None
 
     def _detect_unop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
@@ -875,7 +937,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         def _elems(edge: MultiConnectorEdge[Memlet]) -> Optional[int]:
             # Element count of an edge's memlet subset (the widened tile / scalar).
-            desc = inner_state.sdfg.arrays.get(required(edge.data.data))
+            desc = inner_state.sdfg.arrays.get(edge.data.data)
             if desc is None:
                 return None
             sub = edge.data.subset
@@ -897,7 +959,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return a, b, matched_op
         return None
 
-    def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, bool, bool, bool]]:
+    def _detect_ite(self, tasklet: Tasklet) -> Optional[IteMatch]:
         # If ``tasklet`` is a ternary if-then-else, return ``(out_conn, cond, t, e, has_t_sym, has_e_sym,
         # has_cond_sym)``; else ``None``.
         n_in = len(tasklet.in_connectors)
@@ -915,7 +977,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             for t, cond, e in permutations(in_conns, 3):
                 for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
                     if body == form:
-                        return out_conn, cond, t, e, False, False, False
+                        return IteMatch(out_conn, cond, t, e, False, False, False)
         # ITE(cond, t, e) function form: 3-in-conn and the 2-in-conn-with-symbol cases.
         rhs = body[len(f"{out_conn} = "):].strip()
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -933,7 +995,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 is_e_conn = e_arg in in_conns
                 # cond may be a loop-invariant Symbol (CloudSC ``ITE(llfall_index_2_0, _new, _old)``); TileITE
                 # inlines it via ``kind_mask='Symbol'``. ``_convert_ite`` still refuses a per-lane symbol.
-                return (out_conn, cond_arg, t_arg, e_arg, not is_t_conn, not is_e_conn, not is_cond_conn)
+                return IteMatch(out_conn, cond_arg, t_arg, e_arg, not is_t_conn, not is_e_conn, not is_cond_conn)
         return None
 
     def _split_top_level_commas(self, s: str, expected_parts: int) -> Optional[List[str]]:
@@ -1000,8 +1062,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Lower a trivial assign with a scalar SOURCE and ``widths``-shaped tile DEST to a
         # ``TileGather(src_kind="Scalar")`` broadcast (single value splat across lanes).
         sdfg = inner_state.sdfg
-        src_desc = sdfg.arrays.get(required(a_edge.data.data)) if a_edge.data is not None else None
-        dst_desc = sdfg.arrays.get(required(out_edge.data.data)) if out_edge.data is not None else None
+        src_desc = sdfg.arrays.get(a_edge.data.data) if a_edge.data is not None else None
+        dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
         if src_desc is None or dst_desc is None:
             return False
         widths = tuple(self.body_widths)
@@ -1012,7 +1074,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         # ``_src`` <- the scalar source (keep its scalar memlet); ``_dst`` -> the full tile.
         tl = splat_scalar_to_tile(inner_state, f"{tasklet.label}_bcast", a_edge.src, a_edge.src_conn, a_edge.data,
-                                  out_edge.dst, out_edge.dst_conn, required(out_edge.data.data), widths)
+                                  out_edge.dst, out_edge.dst_conn, out_edge.data.data, widths)
         inner_state.remove_edge(a_edge)
         inner_state.remove_edge(out_edge)
         reanchor_order_edges(inner_state, tasklet, tl)
@@ -1047,7 +1109,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         widths = tuple(self.body_widths)
         arr_desc = sdfg.arrays.get(arr_edge.data.data)
         idx_desc = sdfg.arrays.get(idx_edge.data.data)
-        out_desc = sdfg.arrays.get(required(out_edge.data.data))
+        out_desc = sdfg.arrays.get(out_edge.data.data)
         if not (isinstance(arr_desc, dace.data.Array) and len(arr_desc.shape) == 1):
             return False  # multi-dim indirection base: not a 1-D per-lane gather
         if not (isinstance(idx_desc, dace.data.Array) and tuple(idx_desc.shape) == widths):
@@ -1072,7 +1134,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         dst_subset = ", ".join(f"0:{w}" for w in widths)
         inner_state.add_edge(load, "_dst", out_edge.dst, out_edge.dst_conn,
                              dace.Memlet(data=out_edge.data.data, subset=dst_subset))
-        self._wire_mask(inner_state, load, required(mask_an))
+        self._wire_mask(inner_state, load, mask_an)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         reanchor_order_edges(inner_state, tasklet, load)
@@ -1171,7 +1233,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                  op=op,
                                  has_mask=mask_an is not None)
         inner_state.add_node(reduce_node)
-        self._wire_mask(inner_state, reduce_node, required(mask_an))
+        self._wire_mask(inner_state, reduce_node, mask_an)
         # TileReduce connectors: _src (tile input) -> _dst (scalar accumulator). The acc-input
         # edge dangles -- TileReduce folds the whole tile in one shot, reading no separate
         # scalar accumulator; the new _dst edge writes the result on top.
@@ -1190,10 +1252,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.remove_node(acc_src)
         return True
 
-    def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet,
-                     detected: Tuple[str, str, str, str, bool, bool, bool], iter_vars: Tuple[str, ...]) -> bool:
+    def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected: IteMatch, iter_vars: Tuple[str,
+                                                                                                          ...]) -> bool:
         # Convert a ternary tasklet to a TileITE lib node.
-        out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym, cond_is_sym = detected
+        out_conn, cond_arg, t_arg, e_arg = detected.out_conn, detected.cond, detected.then_arg, detected.else_arg
+        t_is_sym, e_is_sym, cond_is_sym = detected.then_is_symbol, detected.else_is_symbol, detected.cond_is_symbol
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
@@ -1264,7 +1327,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 if cond_edge.data is not None and cond_edge.data.data:
                     self._lock_mask_storage(inner_state.sdfg, cond_edge.data.data)
                 inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
-                                     dace.Memlet.from_memlet(required(cond_edge.data)))
+                                     dace.Memlet.from_memlet(cond_edge.data))
         # Wire the materialised arms (an inline Symbol arm carries no connector).
         if wire_t is not None:
             inner_state.add_edge(wire_t[0], wire_t[1], ite, "_t", wire_t[2])
@@ -1282,7 +1345,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
-    def _detect_conditional_write(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, bool]]:
+    def _detect_conditional_write(self, tasklet: Tasklet) -> Optional[ConditionalWriteMatch]:
         # If ``tasklet`` is a masked write ``_o = IT(cond, val)``, return ``(out_conn, cond_conn, val_arg,
         # val_is_sym)``; else ``None``.
         if len(tasklet.out_connectors) != 1:
@@ -1304,9 +1367,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         in_conns = list(tasklet.in_connectors)
         if cond_arg not in in_conns:
             return None
-        return out_conn, cond_arg, val_arg, val_arg not in in_conns
+        return ConditionalWriteMatch(out_conn, cond_arg, val_arg, val_arg not in in_conns)
 
-    def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected: Tuple[str, str, str, bool],
+    def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected: ConditionalWriteMatch,
                                    iter_vars: Tuple[str, ...]) -> bool:
         # Lower ``_o = IT(cond, val)`` to a masked store + a plain value copy.
         out_conn, cond_conn, val_arg, _val_is_sym = detected
@@ -1421,7 +1484,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         sdfg = inner_state.sdfg
         widths = tuple(int(w) for w in self.body_widths)
         # Pick element dtype from the OUTPUT edge's array (the ITE's output dtype).
-        out_desc = sdfg.arrays.get(required(out_edge.data.data))
+        out_desc = sdfg.arrays.get(out_edge.data.data)
         dtype = out_desc.dtype if out_desc is not None else dace.float64
         arr_name, _ = sdfg.add_array("_ite_sym_tile",
                                      shape=widths,
@@ -1442,7 +1505,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
         return arr_name
 
-    def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected: Tuple[str, str, str, str]) -> bool:
+    def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected: BinopMatch) -> bool:
         out_conn, a_conn, b_conn, op = detected
         # A two-tile power ``a ** b`` has a per-lane (runtime) exponent -- not a provable
         # integer -- so it lowers to ``std::pow``. (``pow(a, b)`` call form likewise.)
@@ -1485,7 +1548,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                           kind_b=kind_b,
                           has_mask=mask_an is not None)
         inner_state.add_node(binop)
-        self._wire_mask(inner_state, binop, required(mask_an))
+        self._wire_mask(inner_state, binop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
@@ -1507,7 +1570,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
-    def _convert_fma(self, inner_state: SDFGState, tasklet: Tasklet, detected: Tuple[str, str, str, str]) -> bool:
+    def _convert_fma(self, inner_state: SDFGState, tasklet: Tasklet, detected: FmaMatch) -> bool:
         # Replace a ``__out = fma(__a, __b, __c)`` tasklet with a :class:`TileFMA` node (``a*b + c``).
         from dace.libraries.tileops import TileFMA
         out_conn, a_conn, b_conn, c_conn = detected
@@ -1539,7 +1602,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                       kind_c=kind_c,
                       has_mask=mask_an is not None)
         inner_state.add_node(fma)
-        self._wire_mask(inner_state, fma, required(mask_an))
+        self._wire_mask(inner_state, fma, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, fma, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, fma, "_b", dace.Memlet.from_memlet(b_edge.data))
         inner_state.add_edge(c_edge.src, c_edge.src_conn, fma, "_c", dace.Memlet.from_memlet(c_edge.data))
@@ -1556,14 +1619,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
-    def _classify_power_op(self, inner_state: SDFGState, op: str, symbol_side: str, exponent_expr: str,
+    def _classify_power_op(self, inner_state: SDFGState, op: str, symbol_side: SymbolSide, exponent_expr: str,
                            base_edge: MultiConnectorEdge[Memlet]) -> str:
         # Resolve a power operator to its concrete tile op from the base dtype and exponent.
         if op not in ("**", "pow"):
             return op
         # The tile operand must be the BASE (symbol on side b = exponent); otherwise the
         # exponent is the runtime tile -> std::pow.
-        if symbol_side != "b":
+        if symbol_side is not SymbolSide.RIGHT:
             return "pow"
         base_dtype = (inner_state.sdfg.arrays[base_edge.data.data].dtype
                       if base_edge.data is not None and base_edge.data.data is not None else None)
@@ -1580,8 +1643,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return "pow"
         return "ipow" if exponent_relaxes_to_ipow(exponent, root) else "pow"
 
-    def _convert_binop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet,
-                                   detected: Tuple[str, str, str, str, str], iter_vars: Tuple[str, ...]) -> bool:
+    def _convert_binop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected: SymbolBinopMatch,
+                                   iter_vars: Tuple[str, ...]) -> bool:
         # Emit a TileBinop whose second operand is a Symbol expr: loop-invariant -> ``kind=Symbol`` + ``expr_*`` (no
         # connector, broadcast at expansion); lane-id-dependent -> per-lane tile (:meth:`_materialise_lane_id_tile`),
         # ``kind=Tile``.
@@ -1600,7 +1663,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         sym_kind, sym_expr, sym_an_name = self._resolve_symbol_operand(inner_state, symbol_expr, iter_vars)
         # Mask-when-partial.
         mask_an = self._find_mask_an(inner_state)
-        if symbol_side == "b":
+        if symbol_side is SymbolSide.RIGHT:
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
                               widths=tuple(self.body_widths),
                               op=op,
@@ -1611,7 +1674,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
             if sym_kind == "Tile":
-                self._wire_materialised_tile(inner_state, binop, "_b", required(sym_an_name))
+                self._wire_materialised_tile(inner_state, binop, "_b", sym_an_name)
         else:
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
                               widths=tuple(self.body_widths),
@@ -1623,8 +1686,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(a_edge.data))
             if sym_kind == "Tile":
-                self._wire_materialised_tile(inner_state, binop, "_a", required(sym_an_name))
-        self._wire_mask(inner_state, binop, required(mask_an))
+                self._wire_materialised_tile(inner_state, binop, "_a", sym_an_name)
+        self._wire_mask(inner_state, binop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
 
         if _was_widened:
@@ -1735,8 +1798,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         has_mask=mask_an is not None)
         inner_state.add_node(unop)
         if sym_kind == "Tile":
-            self._wire_materialised_tile(inner_state, unop, "_a", required(sym_an_name))
-        self._wire_mask(inner_state, unop, required(mask_an))
+            self._wire_materialised_tile(inner_state, unop, "_a", sym_an_name)
+        self._wire_mask(inner_state, unop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
 
         if _was_widened:
@@ -1756,8 +1819,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.remove_node(tasklet)
         return True
 
-    def _convert_binop_with_two_symbols(self, inner_state: SDFGState, tasklet: Tasklet,
-                                        detected: Tuple[str, str, str, str], iter_vars: Tuple[str, ...]) -> bool:
+    def _convert_binop_with_two_symbols(self, inner_state: SDFGState, tasklet: Tasklet, detected: TwoSymbolsBinopMatch,
+                                        iter_vars: Tuple[str, ...]) -> bool:
         # 0-in-conn binary: ``_o = <expr_a> <op> <expr_b>``.
         out_conn, op, expr_a_str, expr_b_str = detected
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1778,10 +1841,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                           has_mask=mask_an is not None)
         inner_state.add_node(binop)
         if kind_a == "Tile":
-            self._wire_materialised_tile(inner_state, binop, "_a", required(an_a))
+            self._wire_materialised_tile(inner_state, binop, "_a", an_a)
         if kind_b == "Tile":
-            self._wire_materialised_tile(inner_state, binop, "_b", required(an_b))
-        self._wire_mask(inner_state, binop, required(mask_an))
+            self._wire_materialised_tile(inner_state, binop, "_b", an_b)
+        self._wire_mask(inner_state, binop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
 
         if _was_widened:
@@ -1819,7 +1882,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         kind_a=kind_a,
                         has_mask=mask_an is not None)
         inner_state.add_node(unop)
-        self._wire_mask(inner_state, unop, required(mask_an))
+        self._wire_mask(inner_state, unop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
         _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
 

@@ -104,7 +104,6 @@ class OffloadToAccelerator(ppl.Pass):
         self._host_only_loops: dict = {}
         #: Containers :meth:`place_single_sided_data` duplicated at entry: valid on both sides all run.
         self._read_only_duplicates: OrderedSet = OrderedSet()
-        self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -498,7 +497,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         for _ in range(3):
             # step 2: copy analysis -> IR stores analysis results
-            self.hybrid_states = OrderedSet()
+            self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
             sdfgIR = self.sdfg_to_IR(sdfg)
 
             # step 3: resolve hybrid states
@@ -1035,7 +1034,7 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             input_and_output = get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry) | get_data_used_by_outgoing_access_nodes(sdfg, state,
-                                                                                 required(state.exit_node(map_entry)))
+                                                                                 state.exit_node(map_entry))
             if is_taskloop:
                 pass  # transparent for now, resolved below once the body has spoken
             elif is_gpu:
@@ -1218,7 +1217,7 @@ class OffloadToAccelerator(ppl.Pass):
             if not memlet:
                 continue
             data_name = memlet.data
-            if memlet.data in sdfg.arrays and is_array(required(data_name), sdfg):
+            if memlet.data in sdfg.arrays and is_array(data_name, sdfg):
                 cpu_set.add(memlet.data)
 
         # add array accesses in branches
@@ -1678,8 +1677,7 @@ class OffloadToAccelerator(ppl.Pass):
                 if is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._insert_copy_names_in_block(sdfg, required(node.block), rename_dict,
-                                             node.type == OffloadingIRNode.EDGE)
+            self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
 
         traverse_IR(IR, _insert_copy_names_in_node)
 

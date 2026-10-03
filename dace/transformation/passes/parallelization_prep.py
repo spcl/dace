@@ -25,21 +25,20 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Set
 import sympy
 
 from dace import properties, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState,
                              enclosing_region_symbols)
 from dace.transformation import pass_pipeline as ppl
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.narrowing import as_basic, as_expr, config_int
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
-DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit')
-DEFAULT_UNROLL_TASKLET_BUDGET = Config.get('optimizer', 'canonicalization', 'unroll_tasklet_budget')
+DEFAULT_UNROLL_LIMIT = config_int('optimizer', 'canonicalization', 'unroll_limit')
+DEFAULT_UNROLL_TASKLET_BUDGET = config_int('optimizer', 'canonicalization', 'unroll_tasklet_budget')
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
-DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
+DEFAULT_PEEL_LIMIT = config_int('optimizer', 'canonicalization', 'peel_limit')
 #: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
 _MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'ftn_modulo', 'CMod'})
 #: "not built yet", distinct from a built-but-absent value.

@@ -80,7 +80,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.sdfg.narrowing import as_range
-from dace.optionals import required
 
 #: AST binop class -> associative reduction operator string.
 BINOP_TO_OP: Dict[type, str] = {
@@ -110,7 +109,7 @@ def _identity_value(op_str: str, dtype: dtypes.typeclass) -> Any:
     accumulator unchanged -- exactly the sequential semantics of the original
     guarded update. Returns ``None`` if the op has no known identity."""
     redtype = operations.detect_reduction_type(OP_TO_WCR[op_str])
-    ident = dtypes.reduction_identity(dtype, required(redtype))
+    ident = dtypes.reduction_identity(dtype, redtype)
     if ident is None:
         return None
     return ident.item() if isinstance(ident, np.generic) else ident

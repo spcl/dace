@@ -86,7 +86,6 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
 from dace.sdfg.narrowing import as_basic, as_expr, as_range
-from dace.optionals import required
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = '_untile_k_'
@@ -495,7 +494,7 @@ def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_va
                        K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
     """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
     extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
-    arr = sdfg.arrays.get(required(memlet.data))
+    arr = sdfg.arrays.get(memlet.data)
     ranges = as_range(memlet.subset).ranges
     rank = len(ranges)
     if arr is None or rank < 2 or len(arr.shape) != rank:

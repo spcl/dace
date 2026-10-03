@@ -39,10 +39,9 @@ def symbol_cond_tasklet() -> nodes.Tasklet:
 def test_a_symbol_condition_is_reported_rather_than_declined():
     detected = ConvertTaskletsToTileOps(widths=WIDTHS)._detect_ite(symbol_cond_tasklet())
     assert detected is not None, 'a symbol-conditioned ITE was not recognised at all'
-    out_conn, cond, t, e, t_sym, e_sym, cond_sym = detected
-    assert (out_conn, cond, t, e) == ('_o', 'flag_sym', '_t', '_e')
-    assert cond_sym is True, 'the condition was reported as a connector'
-    assert (t_sym, e_sym) == (False, False), 'both arms ARE connectors here'
+    assert (detected.out_conn, detected.cond, detected.then_arg, detected.else_arg) == ('_o', 'flag_sym', '_t', '_e')
+    assert detected.cond_is_symbol is True, 'the condition was reported as a connector'
+    assert (detected.then_is_symbol, detected.else_is_symbol) == (False, False), 'both arms ARE connectors here'
 
 
 def test_a_connector_condition_still_reports_as_one():
@@ -50,7 +49,7 @@ def test_a_connector_condition_still_reports_as_one():
     tasklet = nodes.Tasklet('sel', {'_c', '_t', '_e'}, {'_o'}, '_o = ITE(_c, _t, _e)')
     detected = ConvertTaskletsToTileOps(widths=WIDTHS)._detect_ite(tasklet)
     assert detected is not None
-    assert detected[6] is False, 'a connector condition was reported as a symbol'
+    assert detected.cond_is_symbol is False, 'a connector condition was reported as a symbol'
 
 
 @pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])

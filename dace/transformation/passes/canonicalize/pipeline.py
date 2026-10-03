@@ -1707,7 +1707,7 @@ class CanonicalizationPipeline(ppl.Pass):
             # A Pipeline validates its own members when asked, so scope validation to the
             # sub-pass that actually changed something instead of re-walking the whole SDFG here.
             is_pipeline = isinstance(unit, ppl.Pipeline)
-            if self.validate_all and is_pipeline:
+            if self.validate_all and isinstance(unit, ppl.Pipeline):
                 unit.validate_subpasses = True
             result = unit.apply_pass(sdfg, {})
             if is_cleanup:

@@ -1662,7 +1662,7 @@ class ArgMaxLift(ppl.Pass):
         #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
         if m.carrier_kind == 'symbol':
             numeric_type = sdfg.arrays[m.input_array].dtype.type
-            identity = neutral_extreme(required(numeric_type), m.op)
+            identity = neutral_extreme(numeric_type, m.op)
         else:
             identity = None
         node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=identity)
@@ -1833,7 +1833,7 @@ class ArgMaxLift(ppl.Pass):
         read = reduce_state.add_read(buf)
         write = reduce_state.add_write(out_name)
         wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
-        identity = neutral_extreme(required(arr_dtype.type), m.op)
+        identity = neutral_extreme(arr_dtype.type, m.op)
         node = Reduce(name=f'{m.loop.label}_argf_reduce', wcr=wcr_str, axes=[0], identity=identity)
         node.add_in_connector('_in')
         node.add_out_connector('_out')
@@ -1936,7 +1936,7 @@ class ArgMaxLift(ppl.Pass):
             # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
             # unresolved. The iteration count is known here exactly.
             in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
-            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=required(m.transform))
+            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=m.transform)
         argmax_state.add_node(node)
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))

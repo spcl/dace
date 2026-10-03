@@ -1055,7 +1055,7 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
             if oe.data is None or oe.data.is_empty():
                 continue
             axis, k, others, coef = _classify_subset(oe.data.subset, loop_var)
-            if (axis != info.scan_axis or coef != info.coef or symbolic.equal(required(k), info.k_r) is False
+            if (axis != info.scan_axis or coef != info.coef or symbolic.equal(k, info.k_r) is False
                     or not _same_other_indices(others, info.other_indices)):
                 return False
     return True
@@ -3333,7 +3333,7 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
     for info in matched:
         # This slot's own write AN: walk forward from its scan-update tasklet
         # (ambiguity-free) rather than the by-name lookup.
-        chain = _collect_output_chain(info.body_state, required(info.scan_update_tasklet), info.out_conn)
+        chain = _collect_output_chain(info.body_state, info.scan_update_tasklet, info.out_conn)
         write_an = chain[-1] if chain else None
         delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{out_name}', [trip],
                                       out_desc.dtype,

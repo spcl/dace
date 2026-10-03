@@ -509,7 +509,7 @@ class BranchNormalization(ppl.Pass):
         subset_str = self.representative_write_subset(cb)
         parent = cb.parent_graph
         guard_state = parent.add_state_before(cb, label=f"{cb.label}_guard", is_start_block=parent.start_block is cb)
-        resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, required(subset_str), skip_cb=cb)
+        resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, subset_str, skip_cb=cb)
         if resolved is None:
             raise NotImplementedError(f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
                                       f"({cond_text!r}) although its arms write data it reads; "

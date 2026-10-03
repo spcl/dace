@@ -165,7 +165,7 @@ def ascending_sort(dtype: dtypes.typeclass, wtype: dtypes.typeclass, n: symbolic
 
 def jacobi_program(dtype: dtypes.typeclass, wtype: dtypes.typeclass, n: symbolic.SymbolicType, lower: bool) -> Any:
     """``eigh`` of an ``n`` x ``n`` matrix by cyclic Jacobi, as a program over ``_a``, ``_w``, ``_v``."""
-    tolerance = float(np.finfo(required(wtype.type)).eps)**2
+    tolerance = float(np.finfo(wtype.type).eps)**2
     rotate = jacobi_rotation(dtype, n)
     sort_ascending = ascending_sort(dtype, wtype, n)
 

@@ -391,12 +391,12 @@ class MoveArrayOutOfKernel(ppl.Pass):
         """Route the array from its access nearest the kernel exit out through every map exit, one slice per edge."""
         desc = plan.desc
         exit_node = state.exit_node(kernel)
-        source = self.get_nearest_access_node([node for node, _ in plan.accesses], required(exit_node), state)
+        source = self.get_nearest_access_node([node for node, _ in plan.accesses], exit_node, state)
         entries = [entry for entry, _ in enclosing_maps(state, source)]
         exits = [state.exit_node(entry) for entry in entries[:entries.index(kernel) + 1]]
         whole = subsets.Range.from_array(desc).ndrange()
         for src, dst in zip([source, *exits[:-1]], exits, strict=True):
-            prefix = lift_prefix(plan.levels, state, required(src))
+            prefix = lift_prefix(plan.levels, state, src)
             required(dst).add_in_connector(f'IN_{name}')
             required(dst).add_out_connector(f'OUT_{name}')
             state.add_edge(src, None if src is source else f'OUT_{name}', dst, f'IN_{name}',

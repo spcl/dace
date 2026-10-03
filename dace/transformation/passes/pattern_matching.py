@@ -13,12 +13,12 @@ from dace.sdfg import graph as gr, nodes as nd
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion
 from dace import graphlib as nx
 from dace.graphlib import isomorphism as iso
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, ClassVar, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
 from dace.sdfg.validation import InvalidSDFGError, validate_state
 from dace.transformation import transformation as xf, pass_pipeline as ppl
 
 
-@dataclass
+@dataclass(init=False)
 @properties.make_properties
 class PatternMatchAndApply(ppl.Pass):
     """
@@ -26,7 +26,7 @@ class PatternMatchAndApply(ppl.Pass):
     pattern in the SDFG and applies it.
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: ClassVar[str] = 'Helper'
 
     transformations = properties.ListProperty(element_type=xf.PatternTransformation,
                                               default=[],
@@ -171,7 +171,7 @@ class PatternMatchAndApply(ppl.Pass):
         return applied_transformations
 
 
-@dataclass
+@dataclass(init=False)
 @properties.make_properties
 class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     """
@@ -180,7 +180,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     ``order_by_transformation``).
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: ClassVar[str] = 'Helper'
 
     order_by_transformation = properties.Property(dtype=bool,
                                                   default=False,
@@ -402,7 +402,7 @@ def child_regions(region: ControlFlowRegion) -> List[ControlFlowRegion]:
     return children
 
 
-@dataclass
+@dataclass(init=False)
 @properties.make_properties
 class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     """
@@ -411,7 +411,7 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     applied on that location.
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: ClassVar[str] = 'Helper'
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)

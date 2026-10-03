@@ -57,7 +57,6 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.optionals import required
 
 
 def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
@@ -331,7 +330,7 @@ class LoopToTranspose(ppl.Pass):
                 return False
 
         d = len(loops)
-        extracted = _extract_permutation_copy(required(body))
+        extracted = _extract_permutation_copy(body)
         if extracted is None:
             return False
         in_array, out_array, read_subset, write_subset = extracted

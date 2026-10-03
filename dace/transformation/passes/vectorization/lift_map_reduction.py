@@ -165,10 +165,10 @@ def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, m
     # (else it is an indexed scatter / recurrence, not a scalar fold).
     if param in {str(s) for s in required(write_edge.data.subset).free_symbols}:
         return None
-    desc = state.sdfg.arrays.get(required(acc))
+    desc = state.sdfg.arrays.get(acc)
     if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
         return None
-    op = _REDTYPE_OP.get(required(detect_reduction_type(write_edge.data.wcr)))
+    op = _REDTYPE_OP.get(detect_reduction_type(write_edge.data.wcr))
     if op is None or op not in IDENTITY:
         return None
     # Pure WCR: accumulator NOT read at map entry (else loop-carried RMW) and

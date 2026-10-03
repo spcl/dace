@@ -399,7 +399,7 @@ class SplitArray(ppl.Pass):
             canonical_access, all_access_exprs = self._has_non_integer_access(sdfg, state, split_map)
 
             if canonical_access is not None:
-                dims = self._get_non_int_access_dims(state, split_map, required(all_access_exprs), canonical_access)
+                dims = self._get_non_int_access_dims(state, split_map, all_access_exprs, canonical_access)
                 assert len(dims) == 1
                 dim = dims.pop()
                 extent = self._symbol_map[dim]
