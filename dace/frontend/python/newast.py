@@ -34,7 +34,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
-from dace.utils import until
+from dace.utils import until, find_new_name
 
 import numpy
 import sympy
@@ -5531,6 +5531,40 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
+        """
+        Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
+
+        :param scalar: Name of the scalar data descriptor to read.
+        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key a new
+                    symbol is minted, so two shapes sized from the same reassigned scalar keep their own values.
+        :return: The symbol carrying the scalar's value.
+        """
+        desc = self.sdfg.arrays[scalar]
+        base = f'__sym_{scalar}'
+        sym = self.indirections.get(key) if key is not None else None
+        if sym is None:
+            # A minted shape symbol never takes the bare name the cached subscript promotion reuses
+            name = base if key is not None else find_new_name(
+                base,
+                self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
+                | {base})
+            if name not in self.sdfg.symbols:
+                self.sdfg.add_symbol(name, desc.dtype)
+            sym = dace.symbol(name, dtype=desc.dtype)
+            if key is not None:
+                self.indirections[key] = sym
+            else:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in ``globals``.
+                # Subscript promotions stay out: they shadow names there.
+                self.globals[name] = sym
+        state = self._add_state(f'promote_{scalar}_to_{sym}')
+        edge = state.parent_graph.in_edges(state)[0]
+        # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
+        rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
+        edge.data.assignments = {str(sym): rhs}
+        return sym
+
     def _parse_subscript_slice(self,
                                s: ast.AST,
                                multidim: bool = False) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
@@ -5540,29 +5574,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
-            sym = None
-            if node_str in self.indirections:
-                sym = self.indirections[node_str]
             if isinstance(node, str):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
-                desc = self.sdfg.arrays[scalar]
-                if isinstance(desc, data.Scalar):
-                    if not sym:
-                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
-                        self.indirections[node_str] = sym
-                        try:
-                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
-                        except FileExistsError:
-                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
-                            # `not sym` returns True. This exception is benign.
-                            pass
-                    state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-                    edge = state.parent_graph.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
-                    return sym
+                if isinstance(self.sdfg.arrays[scalar], data.Scalar):
+                    return self.promote_scalar_to_symbol(scalar, key=node_str)
             return scalar
 
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):

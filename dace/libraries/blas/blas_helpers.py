@@ -1,7 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+from copy import deepcopy as dc
 from dace import dtypes, data
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
+
+
+def matrix_view(subset) -> Tuple[List[Any], List[int]]:
+    """
+    Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
+
+    Squeezing unconditionally rejects a genuine ``(N, 1)`` column as "not a matrix"; not squeezing at
+    all rejects an ``(NQ, 1, NP)`` reshape. Callers that read a size, a stride or a dimension index
+    must all use this view, or they disagree about which dimensions the operand has.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view, and the subset dimensions it kept.
+    """
+    size = subset.size()
+    if len(size) == 2:
+        return size, list(range(len(size)))
+    squeezed = dc(subset)
+    dims = squeezed.squeeze()
+    return squeezed.size(), dims
 
 
 def to_blastype(dtype):
