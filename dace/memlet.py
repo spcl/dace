@@ -35,10 +35,23 @@ class Memlet(object):
                        dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
-    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
-    other_subset = SubsetProperty(allow_none=True,
-                                  desc='Subset of elements after reindexing to the data not attached '
-                                  'to this edge (e.g., for offsets and reshaping).')
+    if TYPE_CHECKING:
+        # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
+        # yapf: disable
+        @property
+        def subset(self) -> Optional[subsets.Subset]: ...
+        @subset.setter
+        def subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
+        @property
+        def other_subset(self) -> Optional[subsets.Subset]: ...
+        @other_subset.setter
+        def other_subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
+        # yapf: enable
+    else:
+        subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
+        other_subset = SubsetProperty(allow_none=True,
+                                      desc='Subset of elements after reindexing to the data not attached '
+                                      'to this edge (e.g., for offsets and reshaping).')
     data = DataProperty(desc='Data descriptor attached to this memlet')
     wcr = LambdaProperty(allow_none=True,
                          desc='If set, defines a write-conflict resolution '

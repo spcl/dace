@@ -32,7 +32,7 @@ in the corpus; the origin mismatch is a rebase for whichever step converts the M
 reason to refuse here) -- checked here without paying for a conversion or a deepcopy, and only
 then (3) the reconstruction is tried on a throwaway deepcopy and kept only if
 ``WavefrontSkew``'s own gate chain (``extract_two_level_nest`` + a legal ``tau``) accepts the
-result -- reusing ``WavefrontSkew._try_skew`` itself, so this pass can never drift from what
+result -- reusing ``WavefrontSkew.try_skew`` itself, so this pass can never drift from what
 the very next pipeline stage decides. A candidate that does not demonstrably unlock a skew
 leaves the SDFG untouched.
 """
@@ -203,14 +203,14 @@ def _locate_loop(sdfg: SDFG, target: LoopRegion) -> Optional[LoopRegion]:
 
 def _probe_unlocks_skew(sdfg: SDFG, outer: LoopRegion) -> bool:
     """Try the reconstruction on a throwaway deepcopy; ``True`` iff the result is a shape
-    ``WavefrontSkew`` itself would then skew. Reuses ``WavefrontSkew._try_skew`` -- the
+    ``WavefrontSkew`` itself would then skew. Reuses ``WavefrontSkew.try_skew`` -- the
     pass's own gate chain, not reimplemented here -- so this probe can never drift from what
     the very next pipeline stage decides. Never mutates ``sdfg``."""
     trial_sdfg = copy.deepcopy(sdfg)
     trial_outer = _locate_loop(trial_sdfg, outer)
     if trial_outer is None or not _reconstruct_body(trial_sdfg, trial_outer):
         return False
-    return WavefrontSkew()._try_skew(trial_outer, trial_sdfg)
+    return WavefrontSkew().try_skew(trial_outer, trial_sdfg)
 
 
 @transformation.explicit_cf_compatible

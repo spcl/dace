@@ -25,23 +25,21 @@ expression <-> ISL rendering, integer set construction, emptiness queries, and
 constraint extraction -- lives in
 :mod:`dace.sdfg.analysis.polyhedral_isl` so any pass can reuse it. This module
 re-exports the names :class:`WavefrontSkew` reaches through the ``poly`` alias.
-``islpy`` is an optional dependency: when it is absent :data:`HAVE_ISL` is
-``False`` and the pass degrades to a no-op (loops stay sequential; the
-``pinned_sequential`` safety net preserves the never-slower-than-auto_optimize
-guarantee).
 """
 from typing import Any, List, Optional, Sequence, Tuple
 
+import islpy as isl
 import sympy as sp
 
 from dace import symbolic
+from dace.sdfg.narrowing import as_expr, simplified
 # noqa: F401 -- re-exports reached as poly.<name> from wavefront_skew; ruff cannot see that use.
-from dace.sdfg.analysis.polyhedral_isl import HAVE_ISL, is_domain_empty  # noqa: F401
-from dace.sdfg.analysis.polyhedral_isl import (isl, classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
+from dace.sdfg.analysis.polyhedral_isl import is_domain_empty  # noqa: F401
+from dace.sdfg.analysis.polyhedral_isl import (classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
                                                make_set, pwaff_bound, subs_by_name)
 
 
-def constraints_from_condition(cond: Any) -> Optional[List[symbolic.SymbolicType]]:
+def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
     """``cond`` rendered as a list of expressions each meant ``>= 0``, or ``None``.
 
     A read that only executes under a branch guard carries a dependence only where that guard
@@ -62,7 +60,7 @@ def constraints_from_condition(cond: Any) -> Optional[List[symbolic.SymbolicType
     # sympy's connectives, so matching only ``sp.And`` would miss every parsed guard.
     func = str(cond.func) if isinstance(cond, sp.Basic) else ''
     if isinstance(cond, sp.And) or func == 'AND':
-        out: List[symbolic.SymbolicType] = []
+        out: List[sp.Expr] = []
         for arg in cond.args:
             part = constraints_from_condition(arg)
             if part is None:
@@ -72,15 +70,15 @@ def constraints_from_condition(cond: Any) -> Optional[List[symbolic.SymbolicType
     if func == 'NOT':
         return constraints_from_condition(symbolic.refold_booleans(sp.Not(cond.args[0])))
     if isinstance(cond, sp.StrictLessThan):  # a < b
-        return [symbolic.simplify(cond.rhs - cond.lhs - 1)]
+        return [simplified(as_expr(cond.rhs) - as_expr(cond.lhs) - 1)]
     if isinstance(cond, sp.LessThan):  # a <= b
-        return [symbolic.simplify(cond.rhs - cond.lhs)]
+        return [simplified(as_expr(cond.rhs) - as_expr(cond.lhs))]
     if isinstance(cond, sp.StrictGreaterThan):  # a > b
-        return [symbolic.simplify(cond.lhs - cond.rhs - 1)]
+        return [simplified(as_expr(cond.lhs) - as_expr(cond.rhs) - 1)]
     if isinstance(cond, sp.GreaterThan):  # a >= b
-        return [symbolic.simplify(cond.lhs - cond.rhs)]
+        return [simplified(as_expr(cond.lhs) - as_expr(cond.rhs))]
     if isinstance(cond, sp.Equality):  # a == b, as the two inequalities
-        return [symbolic.simplify(cond.lhs - cond.rhs), symbolic.simplify(cond.rhs - cond.lhs)]
+        return [simplified(as_expr(cond.lhs) - as_expr(cond.rhs)), simplified(as_expr(cond.rhs) - as_expr(cond.lhs))]
     return None
 
 
@@ -90,8 +88,8 @@ class SkewBounds:
     ``[max(p_lo_terms), min(p_hi_terms)]``. The pass renders these to loop
     bounds."""
 
-    def __init__(self, t_lo_terms: List[symbolic.SymbolicType], t_hi_terms: List[symbolic.SymbolicType],
-                 p_lo_terms: List[symbolic.SymbolicType], p_hi_terms: List[symbolic.SymbolicType]) -> None:
+    def __init__(self, t_lo_terms: List[sp.Expr], t_hi_terms: List[sp.Expr], p_lo_terms: List[sp.Expr],
+                 p_hi_terms: List[sp.Expr]) -> None:
         self.t_lo_terms = t_lo_terms
         self.t_hi_terms = t_hi_terms
         self.p_lo_terms = p_lo_terms
@@ -100,11 +98,11 @@ class SkewBounds:
 
 def skew_bounds(dims: Tuple[str, str],
                 params: Sequence[str],
-                domain_constraints: Sequence[symbolic.SymbolicType],
+                domain_constraints: Sequence[sp.Expr],
                 tau: Tuple[int, int],
                 t_name: str,
                 p_name: str,
-                t_range: Optional[Tuple[object, object]] = None) -> Optional[SkewBounds]:
+                t_range: Optional[Tuple[sp.Expr, sp.Expr]] = None) -> Optional[SkewBounds]:
     """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
     back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
     ``p`` is the coordinate whose complement inverts over the integers:
@@ -127,8 +125,8 @@ def skew_bounds(dims: Tuple[str, str],
     the real region comes out EMPTY and runs no iterations."""
     u, v = dims
     a, b = tau
-    tsym = symbolic.pystr_to_symbolic(t_name)
-    psym = symbolic.pystr_to_symbolic(p_name)
+    tsym = as_expr(t_name)
+    psym = as_expr(p_name)
     if abs(a) == 1:
         subs = {u: a * (tsym - b * psym), v: psym}  # a in {1,-1} => 1/a == a
     elif abs(b) == 1:
@@ -147,8 +145,8 @@ def skew_bounds(dims: Tuple[str, str],
     # p-range at fixed t (parametric in t): read directly from the skewed set. A
     # steep skew scales p by |a| > 1, which ``classify_dim`` turns into an exact
     # int_ceil / int_floor bound.
-    p_lo_terms: List[symbolic.SymbolicType] = []
-    p_hi_terms: List[symbolic.SymbolicType] = []
+    p_lo_terms: List[sp.Expr] = []
+    p_hi_terms: List[sp.Expr] = []
     for b_set in collect_basic_sets(s_set):
         for c in b_set.get_constraints():
             e = constraint_to_sympy(c, safe_dims, safe_params, inv)
@@ -158,7 +156,7 @@ def skew_bounds(dims: Tuple[str, str],
             p_lo_terms += lo
             p_hi_terms += hi
             if c.is_equality():
-                lo2, hi2, ok2 = classify_dim(symbolic.simplify(-e), psym)
+                lo2, hi2, ok2 = classify_dim(simplified(-e), psym)
                 if not ok2:
                     return None
                 p_lo_terms += lo2

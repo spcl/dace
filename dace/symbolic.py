@@ -1758,6 +1758,11 @@ _HEAD_META = DaceFunctionMeta if symbolic_engine.NATIVE_EXPR is not None else sy
 class DaceFunction(sympy.Function, metaclass=_HEAD_META):
     """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
 
+    if TYPE_CHECKING:
+
+        def __new__(cls, *args: Any, **options: Any) -> sympy.Expr:  # sympy's stub claims ``type[AppliedUndef]``
+            ...
+
 
 def split_divisible_terms(x, y) -> Optional[Tuple[sympy.Basic, sympy.Basic]]:
     """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder``, ``quotient``

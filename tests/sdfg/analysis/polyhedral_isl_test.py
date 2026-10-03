@@ -3,11 +3,8 @@
 ISL polyhedral layer. No SDFG is built -- that is the point of the module: its inputs
 are :mod:`dace.symbolic` expressions plus variable-name strings, so the polyhedral core
 is exercised directly."""
-import pytest
-
-pytest.importorskip('islpy')  # HAVE_ISL gate: skip the whole module without islpy.
-
 import islpy as isl
+import pytest
 
 from dace import symbolic
 from dace.sdfg.analysis import polyhedral_isl as poly

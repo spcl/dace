@@ -9,7 +9,7 @@ import networkx as nx
 from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Sequence, TYPE_CHECKING, TypeVar, Union
 from dace.ordered import OrderedSet
 
 
@@ -843,6 +843,11 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         del self._nodes[edge.dst][0][edge]
         self._nx.remove_edge(edge.src, edge.dst, edge.key)
 
+    if TYPE_CHECKING:
+        # Type-only: the runtime edges are MultiEdge objects; no override, so no extra call per query.
+        def edges(self) -> List[MultiEdge[EdgeT]]:
+            ...
+
     def in_edges(self, node) -> List[MultiEdge[EdgeT]]:
         return super().in_edges(node)
 
@@ -898,6 +903,14 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
             e.reverse()
         for n, (in_edges, out_edges) in self._nodes.items():
             self._nodes[n] = (out_edges, in_edges)
+
+    if TYPE_CHECKING:
+        # Type-only: the runtime edges are MultiConnectorEdge objects; no override, so no extra call per query.
+        # yapf: disable
+        def edges(self) -> List[MultiConnectorEdge[EdgeT]]: ...
+        def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
+        def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
+        # yapf: enable
 
     def in_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().in_edges(node)

@@ -3493,7 +3493,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return state
 
     def add_state_before(self,
-                         state: SDFGState,
+                         state: ControlFlowBlock,
                          label=None,
                          is_start_block=False,
                          condition: Optional[CodeBlock] = None,
@@ -3519,7 +3519,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return new_state
 
     def add_state_after(self,
-                        state: SDFGState,
+                        state: ControlFlowBlock,
                         label=None,
                         is_start_block=False,
                         condition: Optional[CodeBlock] = None,
