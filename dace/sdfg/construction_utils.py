@@ -533,9 +533,9 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             dim_expr = dace.symbolic.SymExpr(dim)
             stride_expr = dace.symbolic.SymExpr(stride)
             if not isinstance(stride_expr, int):
-                data_free_syms |= as_expr(stride_expr).free_symbols
+                data_free_syms |= as_basic(stride_expr).free_symbols
             if not isinstance(dim_expr, int):
-                data_free_syms |= as_expr(dim_expr).free_symbols
+                data_free_syms |= as_basic(dim_expr).free_symbols
         new_symbols |= data_free_syms
 
     defined_syms = parent_graph.symbols_defined_at(nsdfg_node)
@@ -854,7 +854,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 _TOKEN_SPLIT_RE = re.compile(r'[()\[\]\s,+\-*/%<>!=&|^~?:]+')
 

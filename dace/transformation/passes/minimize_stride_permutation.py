@@ -42,7 +42,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.map_interchange import MapInterchange
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Sentinel score for a parameter that never indexes any axis with a unit
 #: coefficient (it has no contiguous "home" and is sorted outermost).
@@ -143,16 +143,16 @@ def stride_difference_sign(a, b) -> int:
     diff = symbolic.simplify(as_expr(pystr_to_symbolic(str(a))) - as_expr(pystr_to_symbolic(str(b))))
     if diff == 0:
         return 0
-    if as_expr(diff).is_number:
+    if as_basic(diff).is_number:
         return -1 if diff < 0 else 1
     rebuilt = diff.subs(
         {sym: sympy.Symbol(sym.name, positive=True, integer=True)
-         for sym in as_expr(diff).free_symbols})
+         for sym in as_basic(diff).free_symbols})
     # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
     # order, and reporting them as tied keeps the stable sort's current-order behaviour.
-    if as_expr(rebuilt).is_nonpositive:
+    if as_basic(rebuilt).is_nonpositive:
         return -1
-    if as_expr(rebuilt).is_nonnegative:
+    if as_basic(rebuilt).is_nonnegative:
         return 1
     raise UndecidableStride(f'{a} vs {b}')
 

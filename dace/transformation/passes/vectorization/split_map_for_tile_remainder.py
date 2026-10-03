@@ -44,7 +44,7 @@ from dace.transformation.helpers import replicate_scope
 from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
                                                                            map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 # Label suffix: boundary region is a plain step-1 scalar loop (scalar_postamble); every tile prep
 # pass skips it.
@@ -321,7 +321,7 @@ class SplitMapForTileRemainder(ppl.Pass):
                 simplified = symbolic.simplify(stride)
                 # A bare symbol is exactly the undecidable case: a constant needs no promise and a
                 # compound expression has no single symbol a runtime check could pin.
-                if as_expr(simplified).is_Symbol:
+                if as_basic(simplified).is_Symbol:
                     self._stride_checks.append((sdfg, str(simplified), chunk))
 
     def _emit_range_checks(self) -> None:

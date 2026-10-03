@@ -9,7 +9,7 @@ import dace
 from dace import symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, ...]) -> bool:
@@ -18,7 +18,7 @@ def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, 
         extent = symbolic.simplify(
             as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(begin)) + 1)
         remainder = symbolic.simplify(sympy.Mod(extent, tile))
-        if as_expr(remainder).is_number and remainder != 0:
+        if as_basic(remainder).is_number and remainder != 0:
             return True
     return False
 

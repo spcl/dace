@@ -7,7 +7,7 @@ RHSs, loop and conditional-block conditions), round-tripped through ``ast.unpars
 import dace
 from dace.symbolic import DaceSympyPrinter
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic
 
 
 def offset_symbol_in_expression(expr_str: str,
@@ -29,7 +29,7 @@ def offset_symbol_in_expression(expr_str: str,
         raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
-    for free_sym in as_expr(expr).free_symbols:
+    for free_sym in as_basic(expr).free_symbols:
         if str(free_sym) == symbol_to_offset:
             sym_to_change = free_sym
             break
@@ -63,7 +63,7 @@ def use_laneid_symbol_in_expression(expr_str: str,
         raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
-    for free_sym in as_expr(expr).free_symbols:
+    for free_sym in as_basic(expr).free_symbols:
         if str(free_sym) == symbol_to_offset:
             sym_to_change = free_sym
             break

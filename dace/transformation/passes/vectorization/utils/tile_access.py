@@ -371,7 +371,7 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
                             source = ie.data.data
                             if required(ie.data.subset
                                         ).free_symbols:  # keep ``idx[i]``: a bare ``idx`` looks lane-invariant
-                                source += f"[{', '.join(map(str, required(as_range(ie.data.subset)).min_element()))}]"
+                                source += f"[{', '.join(map(str, as_range(ie.data.subset).min_element()))}]"
                             rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(source)
                     if rename:
                         # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to

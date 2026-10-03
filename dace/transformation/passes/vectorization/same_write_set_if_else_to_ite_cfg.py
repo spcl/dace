@@ -32,7 +32,7 @@ from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.ordered import OrderedSet
 from dace.symbolic_engine import to_sympy
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
@@ -185,7 +185,7 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
     if expr.is_number:
         return bool(as_expr(expr) >= 0)
     positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
-    return as_expr(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
+    return as_basic(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
 
 
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:

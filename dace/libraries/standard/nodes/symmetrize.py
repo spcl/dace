@@ -22,7 +22,6 @@ from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 from typing import List
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 
 @library.expansion
@@ -155,9 +154,10 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
         # comparable expressions (sympy refuses a bare str).
         # Reparsing loses the assumptions and dtype the shape carries, so the window bound and the
         # extent become two sympy instances of one name that ``equal`` then calls undecidable.
-        row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(
-            as_expr(symbolic.pystr_to_symbolic(node.row_lo)), as_expr(symbolic.pystr_to_symbolic(node.row_hi)),
-            as_expr(symbolic.pystr_to_symbolic(node.col_hi)), rows, cols)
+        row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(node.row_lo),
+                                                                              symbolic.pystr_to_symbolic(node.row_hi),
+                                                                              symbolic.pystr_to_symbolic(node.col_hi),
+                                                                              rows, cols)
         return (symbolic.equal(rows, cols) is True and symbolic.equal(row_lo, 0) is True
                 and symbolic.equal(col_hi, cols) is True and symbolic.equal(row_hi, cols - node.col_offset) is True)
 

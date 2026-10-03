@@ -76,7 +76,7 @@ from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tuple[float, float]] | None:
@@ -126,7 +126,7 @@ def launches_saved(loop: LoopRegion) -> float:
     if maps == 0 or start is None or end is None or step is None:
         return math.inf if maps else 0
     trips = symbolic.simplify((end - start) / step + 1)
-    if not as_expr(trips).is_Number:
+    if not as_basic(trips).is_Number:
         return math.inf
     return max(int(as_expr(trips)), 0) * maps - 1
 

@@ -155,7 +155,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic
 
 #: Prefixes for the transients and symbol this pass introduces.
 MASK_PREFIX = 'compaction_mask_'
@@ -445,7 +445,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 expr = symbolic.pystr_to_symbolic(rhs)
                 sym = symbolic.pystr_to_symbolic(name)
                 # membership and the subtraction both go through identity, so equalize first
-                expr, sym = symbolic.equalize_symbols_across(as_expr(expr), as_expr(sym))
+                expr, sym = symbolic.equalize_symbols_across(expr, sym)
                 if sym not in expr.free_symbols:
                     continue
                 bumps.append((name, symbolic.simplify(expr - sym), inside))
@@ -459,7 +459,7 @@ class LoopToStreamCompaction(ppl.Pass):
         if step == 0:
             return None  # a zero bump is not an append cursor
         invariant = {*(level.loop.loop_variable for level in levels), *assigned}
-        if any(str(s) in invariant for s in as_expr(step).free_symbols):
+        if any(str(s) in invariant for s in as_basic(step).free_symbols):
             return None  # a data-dependent or iteration-dependent step breaks c_in + K*rank[i]
         return name, step
 

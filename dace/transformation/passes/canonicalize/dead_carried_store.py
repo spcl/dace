@@ -36,7 +36,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 class CarriedStore(NamedTuple):
@@ -90,7 +90,7 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
         if found is not None:
             return None  # the loop variable steers two axes; the overlap is not a shift
         offset = symbolic.simplify(begin - ivar)
-        if not as_expr(offset).is_Integer:
+        if not as_basic(offset).is_Integer:
             return None
         found = (axis, int(as_expr(offset)))
     return found

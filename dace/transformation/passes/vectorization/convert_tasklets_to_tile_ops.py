@@ -33,7 +33,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Binary ops -> :class:`TileBinop`. Comparisons produce bool tile outputs -> :class:`TileITE`
 #: cond input. ``pow``/``ipow`` are the function-form power spellings; ``**`` stays for any
@@ -315,7 +315,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _is_lane_id_dependent(self, expr: str, iter_vars: Tuple[str, ...]) -> bool:
         # True if ``expr`` references any tile iter_var (lane-id-dependent Symbol).
         try:
-            tokens = set(as_expr(dace.symbolic.SymExpr(expr)).free_symbols)
+            tokens = set(as_basic(dace.symbolic.SymExpr(expr)).free_symbols)
         except Exception:  # noqa: BLE001
             tokens = set()
         for s in tokens:

@@ -287,10 +287,10 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
             found = set()
 
             # 1. Free symbols (simple variables like a, b, i, N, etc.)
-            found |= {str(s) for s in as_expr(sym_expr).free_symbols}
+            found |= {str(s) for s in as_basic(sym_expr).free_symbols}
 
             # 2. Function names + symbols inside arguments
-            for func in as_expr(sym_expr).atoms(sympy.Function):
+            for func in as_basic(sym_expr).atoms(sympy.Function):
                 # Add function name
                 found.add(str(func.func))
 
@@ -1224,7 +1224,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
 
 import ast
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic
 
 
 class FuncToOp(ast.NodeTransformer):

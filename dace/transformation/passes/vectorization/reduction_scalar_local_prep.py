@@ -26,7 +26,6 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
     privatize_reduction_accumulator, )
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
-from dace.optionals import required
 from dace.sdfg.narrowing import as_map_entry
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
@@ -107,7 +106,7 @@ class PrepareReductionForWidening(ppl.Pass):
         write_subset = iedge.data.subset
         if write_subset is None or write_subset.num_elements() != 1:
             return False
-        map_param_set = set(required(as_map_entry(state.entry_node(map_exit))).map.params)
+        map_param_set = set(as_map_entry(state.entry_node(map_exit)).map.params)
         if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
             return False
         # A read of the accumulator inside the map scope would make this a cross-iteration

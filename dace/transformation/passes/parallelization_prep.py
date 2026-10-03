@@ -31,7 +31,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, Lo
                              enclosing_region_symbols)
 from dace.transformation import pass_pipeline as ppl
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
@@ -780,7 +780,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             if any(symbolic.free_symbol_like(t, ivar) is not None for t in (aw, ar, bw, br)):
                 return ()  # not affine in the loop variable
             den, num = symbolic.simplify(required(aw) - ar), br - bw
-            if not as_expr(den).is_Integer or den == 0:
+            if not as_basic(den).is_Integer or den == 0:
                 return ()  # equal (or non-integer) slopes -> no integer crossover to split at
             if den < 0:
                 den, num = -den, -num
@@ -1282,7 +1282,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         """Whether ``x`` is provably ``>= 0`` -- a concrete non-negative number once
         simplified (the deciding differences of a range bound reduce to numbers)."""
         s = symbolic.simplify(x)
-        return as_expr(s).is_number and s >= 0
+        return as_basic(s).is_number and s >= 0
 
     @staticmethod
     def _provably_nonneg_symbolic(x) -> bool:
@@ -1321,7 +1321,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         needs ``o < m``), then checked at the smallest admissible ``m``."""
         import sympy
         s = symbolic.simplify(x)
-        if as_expr(s).is_number:
+        if as_basic(s).is_number:
             return frozenset() if s >= 0 else None
         if not isinstance(m, sympy.Symbol):
             return None
@@ -1335,7 +1335,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             coeffs[sym] = c
             rem = rem - c * sym
         c0 = symbolic.simplify(rem)
-        if not as_expr(c0).is_number:
+        if not as_basic(c0).is_number:
             return None  # a free symbol we have no bound for remains
         # Fold each offset into the worst-case (C1*m + C0): a negative coefficient is
         # worst at o = m - 1 (contributing c*m - c, and needing o < m); a non-negative
@@ -1348,7 +1348,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 C1 += coeffs[o]
                 C0 -= coeffs[o]
                 relied.add(o)
-        if not (C1.is_number and as_expr(C0).is_number):
+        if not (C1.is_number and as_basic(C0).is_number):
             return None
         if C1 < 0:
             return None  # decreasing in m -> not bounded below as m grows

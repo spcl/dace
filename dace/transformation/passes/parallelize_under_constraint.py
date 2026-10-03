@@ -45,7 +45,6 @@ from dace.transformation.passes.loop_specialization import specialize_loop_under
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 
 @dataclass(slots=True)
@@ -207,8 +206,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # ``in free_symbols`` and ``coeff`` go through symbol IDENTITY, and the subset's
                 # instances come from a different source than the reparsed loop variable -- one
                 # name, several instances, and both operations then quietly answer "not there".
-                expr, lvar = symbolic.equalize_symbols_across(as_expr(symbolic.pystr_to_symbolic(rb)),
-                                                              as_expr(loop_var))
+                expr, lvar = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(rb), loop_var)
                 if lvar not in expr.free_symbols:
                     # The loop variable may be hidden behind a promoted index symbol
                     # (``a[__sym_i_times_inc]``), which SymbolPropagation binds but deliberately
@@ -218,7 +216,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     if not {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
                         continue
                     expr, lvar = symbolic.equalize_symbols_across(
-                        resolve_bindings(expr, sdfg, bindings=facts.binding_table()), as_expr(loop_var))
+                        resolve_bindings(expr, sdfg, bindings=facts.binding_table()), loop_var)
                 if lvar not in expr.free_symbols:
                     # Fail closed. A write whose index still carries a symbol this pass cannot
                     # relate to the loop variable is NOT known to be loop-invariant -- it may well

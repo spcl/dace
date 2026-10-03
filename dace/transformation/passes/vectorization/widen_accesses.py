@@ -45,7 +45,7 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
                                                                         classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_expr, as_range
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
@@ -253,7 +253,7 @@ class WidenAccesses(ppl.Pass):
             if not is_single:
                 continue
             try:
-                beg_syms = as_expr(dace.symbolic.SymExpr(str(beg))).free_symbols
+                beg_syms = as_basic(dace.symbolic.SymExpr(str(beg))).free_symbols
             except Exception:  # noqa: BLE001
                 beg_syms = set()
             dominating_k = None
@@ -286,11 +286,11 @@ class WidenAccesses(ppl.Pass):
         # fresh ``symbol(name)`` carries different sympy assumptions / dtype, so ``subs`` and
         # ``in free_symbols`` answer against the wrong object and the stride silently reads as
         # "not affine" (see the symbol-identity rule in dace/symbolic.py).
-        iv = next((sym for sym in as_expr(beg).free_symbols if str(sym) == iter_var), None)
+        iv = next((sym for sym in as_basic(beg).free_symbols if str(sym) == iter_var), None)
         if iv is None:
             return None
         step = dace.symbolic.simplify(beg.subs(iv, as_expr(iv) + 1) - beg)
-        if any(str(sym) == iter_var for sym in as_expr(step).free_symbols) or as_expr(step).is_negative:
+        if any(str(sym) == iter_var for sym in as_basic(step).free_symbols) or as_basic(step).is_negative:
             return None
         return step
 

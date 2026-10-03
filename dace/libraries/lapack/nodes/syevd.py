@@ -192,11 +192,11 @@ class Syevd(dace.sdfg.nodes.LibraryNode):
         if len(edges) != 1:
             raise ValueError("syevd expects exactly one _xin input")
         subset = copy.deepcopy(edges[0].data.subset)
-        dims = required(as_range(subset)).squeeze()
+        dims = as_range(subset).squeeze()
         desc = sdfg.arrays[required(edges[0].data.data)]
-        if len(required(as_range(subset)).size()) != 2:
+        if len(as_range(subset).size()) != 2:
             raise ValueError("syevd only supports 2-dimensional matrices")
-        n, cols = required(as_range(subset)).size()
+        n, cols = as_range(subset).size()
         if symbolic.equal(n, cols) is False:
             raise ValueError("syevd needs a square matrix")
         if desc.dtype.veclen > 1:

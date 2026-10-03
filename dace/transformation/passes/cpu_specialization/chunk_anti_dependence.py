@@ -50,7 +50,7 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr, as_map_entry
+from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
 
 #: Schedules that lower through the CPU path. A GPU-scheduled map never matches.
 _CPU_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
@@ -199,7 +199,7 @@ class ChunkAntiDependence(ppl.Pass):
             if _diff(beg, end) != 0:
                 continue  # a scope-level range, not a point access
             off = _diff(beg, param)
-            if param in {str(s) for s in as_expr(off).free_symbols}:
+            if param in {str(s) for s in as_basic(off).free_symbols}:
                 continue  # not an affine point access in the iterator: a scope range
             if e.data.data == snap:
                 if off != 1:
@@ -259,7 +259,7 @@ class ChunkAntiDependence(ppl.Pass):
                            save=False,
                            verify=False)
         outer = state.entry_node(me)
-        required(as_map_entry(outer)).map.schedule = dtypes.ScheduleType.CPU_Multicore
+        as_map_entry(outer).map.schedule = dtypes.ScheduleType.CPU_Multicore
         # Sequential inner, parallel outer. The differing schedules also stop MapCollapse
         # from fusing the two back into one parallel map, which would race the seam.
         me.map.schedule = dtypes.ScheduleType.Sequential

@@ -94,8 +94,7 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         # The two expressions come from different sources (two memlets, a subset against a reparsed
         # bound), so a shared name can carry two symbol instances with different dtypes. Subtraction
         # goes through identity, not name, and would leave ``i - i`` uncancelled.
-        pa, pb = symbolic.equalize_symbols_across(as_expr(symbolic.pystr_to_symbolic(a)),
-                                                  as_expr(symbolic.pystr_to_symbolic(b)))
+        pa, pb = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
         diff = symbolic.simplify(pa - pb)
         if diff == 0:
             return True

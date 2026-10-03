@@ -76,7 +76,7 @@ from dace.transformation.passes.canonicalize.dead_carried_store import reaches
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
@@ -721,7 +721,7 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                             as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs)))
                     except Exception:
                         continue
-                    if as_expr(delta).is_number:
+                    if as_basic(delta).is_number:
                         incs.setdefault(lhs, []).append((e, delta))
             return incs
 
@@ -855,7 +855,7 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
     if len(vals) != 1:
         return None
     (val, ) = vals
-    if loop.loop_variable in (str(s) for s in as_expr(val).free_symbols):
+    if loop.loop_variable in (str(s) for s in as_basic(val).free_symbols):
         return None  # references the loop variable, which is undefined before the loop
     return val
 
@@ -1026,9 +1026,9 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             continue
         # A numeric literal is always admissible; anything else must pass the IV-vs-reduction
         # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
-        if not as_expr(diff).is_number:
-            if not as_expr(diff).free_symbols or not step_is_loop_invariant(
-                    as_expr(diff).free_symbols, loop, sdfg, sdfg_free_symbols):
+        if not as_basic(diff).is_number:
+            if not as_basic(diff).free_symbols or not step_is_loop_invariant(
+                    as_basic(diff).free_symbols, loop, sdfg, sdfg_free_symbols):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:

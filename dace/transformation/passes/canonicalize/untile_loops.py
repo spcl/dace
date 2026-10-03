@@ -85,8 +85,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr, as_range
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = '_untile_k_'
@@ -181,7 +180,7 @@ def _is_constant_positive_int(expr: symbolic.SymbolicType) -> Optional[int]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if not as_expr(s).is_number or not as_expr(s).is_Integer:
+    if not as_basic(s).is_number or not as_basic(s).is_Integer:
         return None
     v = int(as_expr(s))
     return v if v > 0 else None
@@ -192,7 +191,7 @@ def _is_zero(expr: symbolic.SymbolicType) -> bool:
         s = symbolic.simplify(expr)
     except Exception:
         return False
-    return as_expr(s).is_number and s == 0
+    return as_basic(s).is_number and s == 0
 
 
 def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
@@ -207,8 +206,8 @@ def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicT
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if as_expr(s).is_number:
-        if not as_expr(s).is_Integer:
+    if as_basic(s).is_number:
+        if not as_basic(s).is_Integer:
             return None
         v = int(as_expr(s))
         if v <= 1:
@@ -282,9 +281,9 @@ def tiles_a_parent_window(outer: LoopRegion, start: symbolic.SymbolicType, span:
         if isinstance(graph, LoopRegion) and graph.loop_variable:
             enclosing[graph.loop_variable] = None
         graph = graph.parent_graph
-    if not enclosing or not any(str(s) in enclosing for s in as_expr(start).free_symbols):
+    if not enclosing or not any(str(s) in enclosing for s in as_basic(start).free_symbols):
         return False
-    return not any(str(s) in enclosing for s in as_expr(span).free_symbols)
+    return not any(str(s) in enclosing for s in as_basic(span).free_symbols)
 
 
 def count_loops(sdfg: SDFG) -> int:
@@ -410,7 +409,7 @@ def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
         diff = symbolic.simplify(a - b)
     except Exception:
         return False
-    if as_expr(diff).is_number:
+    if as_basic(diff).is_number:
         try:
             return int(as_expr(diff)) == 0
         except (TypeError, ValueError):
@@ -453,7 +452,7 @@ def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symb
         # diff goes through symbol IDENTITY: a loop var minted from its name differentiates to 0
         # against an expression carrying another instance, which reads as "equal partials" and
         # lets the rewrite through. Equalize so the partials are taken w.r.t. what ex holds.
-        ex, i_sym, ii_sym = symbolic.equalize_symbols_across(as_expr(ex), i_sym, ii_sym)
+        ex, i_sym, ii_sym = symbolic.equalize_symbols_across(ex, i_sym, ii_sym)
         return symbolic.simplify(sympy.diff(ex, i_sym) - sympy.diff(ex, ii_sym)) == 0
     except (TypeError, ValueError, AttributeError, NotImplementedError):
         return False
@@ -496,7 +495,7 @@ def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_va
     """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
     extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
     arr = sdfg.arrays.get(memlet.data)
-    ranges = required(as_range(memlet.subset)).ranges
+    ranges = as_range(memlet.subset).ranges
     rank = len(ranges)
     if arr is None or rank < 2 or len(arr.shape) != rank:
         return None
@@ -876,7 +875,7 @@ class UntileLoops(ppl.Pass):
             tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
             if _diff_is_zero(
                     tiles_end,
-                    span) or as_expr(tiles_end).is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
+                    span) or as_basic(tiles_end).is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
                 N_excl = symbolic.simplify(outer_start_sym + tiles_end)
             else:
                 record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))

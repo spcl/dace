@@ -7,7 +7,7 @@ import numpy
 import sympy as sp
 
 from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def average_blocks_touched(
@@ -59,7 +59,7 @@ def average_blocks_touched(
             # A name reparsed from a string is a different instance than the one in the subset. subs
             # matches by name but Add cancels by identity, so an unequalized delta stays as
             # N*(i - i + 1) and the affine guard below rejects an index that is plainly affine.
-            eq_addr, psym, step = equalize_symbols_across(addr, as_expr(psym), as_expr(step))
+            eq_addr, psym, step = equalize_symbols_across(addr, psym, step)
             # byte-address movement per step
             stride = sp.simplify(eq_addr.subs(psym, psym + step) - eq_addr)
             # affine in psym <=> the step delta is free of psym; '//' and '%' indices are not, and would
@@ -81,7 +81,7 @@ def average_blocks_touched(
         # The per-step guard above only sees one parameter at a time, so a cross-parameter index like
         # A[i*j] clears it twice and still leaks both into the average. Catch it on the result, where
         # the caller's float() would otherwise fail naming neither the array nor the index.
-        leaked = sorted({str(s) for s in as_expr(average).free_symbols} & set(params))
+        leaked = sorted({str(s) for s in as_basic(average).free_symbols} & set(params))
         if leaked:
             raise ValueError(f"array {arr!r}: index {subset} is not affine in {leaked} together (e.g. a "
                              f"product of two loop parameters), so the per-iteration block average "

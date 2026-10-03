@@ -87,23 +87,23 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
     inedge = state.in_edges(node)[0]
     outedge = state.out_edges(node)[0]
     insubset = dcpy(inedge.data.subset)
-    isqdim = required(as_range(insubset)).squeeze()
+    isqdim = as_range(insubset).squeeze()
     outsubset = dcpy(outedge.data.subset)
-    required(as_range(outsubset)).squeeze()
+    as_range(outsubset).squeeze()
     input_data = sdfg.arrays[required(inedge.data.data)]
     output_data = sdfg.arrays[required(outedge.data.data)]
 
     axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
-    in_sizes = required(as_range(insubset)).size()
+    in_sizes = as_range(insubset).size()
     out_elems = 1
-    for s in required(as_range(outsubset)).size():
+    for s in as_range(outsubset).size():
         out_elems *= s
 
     # Only contiguous 1-D full-reduction-to-scalar. Non-unit step (strided input
     # ``a[0:2N:2]``) can't use the contiguous SIMD load ``__inp[_i + _l]`` below ->
     # fall back to pure/OpenMP (strided SIMD gather not worth it).
     if (len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1
-            or any(str(step) != "1" for (_, _, step) in required(as_range(insubset)).ranges)):
+            or any(str(step) != "1" for (_, _, step) in as_range(insubset).ranges)):
         return None
 
     ctype = input_data.dtype.ctype
@@ -111,11 +111,11 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
 
     nsdfg = dace.SDFG("reduce_vectorized")
     nsdfg.add_array("_in",
-                    required(as_range(insubset)).size(),
+                    as_range(insubset).size(),
                     input_data.dtype,
                     strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
                     storage=input_data.storage)
-    nsdfg.add_array("_out", required(as_range(outsubset)).size(), output_data.dtype, storage=output_data.storage)
+    nsdfg.add_array("_out", as_range(outsubset).size(), output_data.dtype, storage=output_data.storage)
     nsdfg.append_global_code('#include "dace/horizontal_reduce.h"')
 
     inedge.dst_conn = "_in"

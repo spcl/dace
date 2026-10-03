@@ -35,7 +35,6 @@ from dace.transformation.passes.analysis import scopes
 from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
-from dace.optionals import required
 from dace.sdfg.narrowing import as_expr, as_range
 
 
@@ -283,7 +282,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
             if memlet.data != inner_name:
                 widen_far_side_of_copy(state, edge, inner_name, inner_shape, outer_ranges)
                 continue
-            new_range_list, inner_is_full_rank = outer_ranges(required(as_range(memlet.subset)).ranges)
+            new_range_list, inner_is_full_rank = outer_ranges(as_range(memlet.subset).ranges)
             if not inner_is_full_rank:
                 remap_reduce_axes(edge.dst, collapsed_dims)
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
@@ -696,7 +695,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             # inner [N,N]).
             inner_desc = inner_sdfg.arrays[in_conn]
             collapsed_dims = []
-            for (b, e, s) in required(as_range(iedge.data.subset)).ranges:
+            for (b, e, s) in as_range(iedge.data.subset).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:
@@ -716,7 +715,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             inner_desc = inner_sdfg.arrays[out_conn]
             collapsed_dims = []
-            for (b, e, s) in required(as_range(oedge.data.subset)).ranges:
+            for (b, e, s) in as_range(oedge.data.subset).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:

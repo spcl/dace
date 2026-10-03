@@ -134,7 +134,7 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     # ``a[lo:hi:s]`` reads element ``j`` at ``_in[j*s]``. A unit-stride slice gets the bare
     # subscript rather than a multiply by one, so the common case reads as what it is; a
     # compile-time-constant stride folds away, a symbolic one stays a runtime multiply.
-    step = required(as_range(sub)).ranges[0][2] if len(required(as_range(sub)).ranges) == 1 else 1
+    step = as_range(sub).ranges[0][2] if len(as_range(sub).ranges) == 1 else 1
     try:
         unit_stride = (int(as_expr(symbolic.simplify(step))) == 1)
     except (TypeError, ValueError):
@@ -295,7 +295,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         # shape CUB can issue vectorised loads for. ``symbolic.equal`` is tri-valued, and a stride it
         # cannot decide (s318's ``inc``) has to take the iterator, which is correct either way.
         sub = in_edge.data.subset
-        step = required(as_range(sub)).ranges[0][2] if len(required(as_range(sub)).ranges) == 1 else 1
+        step = as_range(sub).ranges[0][2] if len(as_range(sub).ranges) == 1 else 1
         gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
         idstr = global_code_id(parent_sdfg, parent_state, node)

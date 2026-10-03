@@ -115,7 +115,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit,
     # if the slot were a function of the map parameter this wouldn't be a
     # reduction.)
     map_entry = state.entry_node(map_exit)
-    map_param_set = dict.fromkeys(required(as_map_entry(map_entry)).map.params)
+    map_param_set = dict.fromkeys(as_map_entry(map_entry).map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
 

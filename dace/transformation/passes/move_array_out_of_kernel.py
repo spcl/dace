@@ -21,7 +21,7 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
             diff = symbolic.simplify(arg - min_elem)
-            if as_expr(diff).is_Integer and diff >= 0:
+            if as_basic(diff).is_Integer and diff >= 0:
                 return diff + 1
     return max_elem + 1 - min_elem
 

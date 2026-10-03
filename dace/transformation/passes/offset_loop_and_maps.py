@@ -15,7 +15,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.replace import replace_in_codeblock
 import ast
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.optionals import required
 
 
@@ -355,13 +355,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     self.begin_expr):
                                 has_matches = True
 
-                                b_expr = as_expr(
+                                b_expr = as_basic(
                                     dace.symbolic.SymExpr(
                                         symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
-                                e_expr = as_expr(
+                                e_expr = as_basic(
                                     dace.symbolic.SymExpr(
                                         symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
-                                s_expr = as_expr(dace.symbolic.SymExpr(symstr(s))).simplify()
+                                s_expr = as_basic(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
                                     loop_len = e_expr + 1 - b_expr
@@ -429,7 +429,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         opens = lhs.count("(")
         exits = lhs.count(")")
         rhs = "(" * (opens - exits) + rhs
-        expr_str = lhs + op_to_split + symstr(as_expr(dace.symbolic.SymExpr(rhs)).simplify()) + (")" * (opens - exits))
+        expr_str = lhs + op_to_split + symstr(as_basic(dace.symbolic.SymExpr(rhs)).simplify()) + (")" * (opens - exits))
         return expr_str
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:

@@ -40,7 +40,7 @@ from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> Optional[List[Optional[int]]]:
@@ -67,7 +67,7 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
                         continue
                     coeff = as_expr(expr).coeff(as_expr(sym), 1)
                     # Affine iff removing the linear term leaves the parameter behind entirely.
-                    if sym in required(coeff).free_symbols or sym in as_expr(
+                    if sym in required(coeff).free_symbols or sym in as_basic(
                             symbolic.simplify(expr - coeff * sym)).free_symbols:
                         return None
                     if required(coeff).is_negative:

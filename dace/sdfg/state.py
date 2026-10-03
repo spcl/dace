@@ -82,7 +82,7 @@ def caller_position(frame: types.FrameType) -> Tuple[int, str]:
 
 
 #: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
-MapBound = Union[symbolic.SymbolicType, int]
+MapBound = Union[sympy.Basic, symbolic.SymExpr, int]
 MapDimension = Union[str, sbs.Subset, Tuple[MapBound, MapBound, MapBound]]
 #: The dimensions of a map by parameter name, as a mapping or as a list of pairs.
 MapRanges = Union[Mapping[str, MapDimension], Sequence[Tuple[str, MapDimension]]]

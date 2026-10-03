@@ -29,7 +29,7 @@ from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
-from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
+from typing import Any, Dict, Generic, List, Optional, Set, TYPE_CHECKING, Type, TypeVar, Union, Callable
 import pydoc
 import warnings
 from typing import TypeVar
@@ -705,6 +705,13 @@ class PatternNode(Generic[T]):
         # Single-state transformation
         state: SDFGState = t_graph.node(state_id)
         return state.node(node_id)
+
+    if TYPE_CHECKING:
+        # Assigning a node on an instance shadows the descriptor (it defines no ``__set__`` at run time, so it stays
+        # a non-data descriptor); the checkers are told what such an assignment may carry.
+
+        def __set__(self, instance: PatternTransformation, value: T) -> None:
+            ...
 
 
 def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.CodeNode) -> None:

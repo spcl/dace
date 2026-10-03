@@ -41,9 +41,9 @@ def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
     if a is None or b is None or c is None:
         raise ValueError("Symm: expected _a, _b inputs and a _c output")
     ad, bd, cd = (sdfg.arrays[required(e.data.data)] for e in (a, b, c))
-    return (ad, required(as_range(a.data.subset)).size(),
-            ad.strides), (bd, required(as_range(b.data.subset)).size(),
-                          bd.strides), (cd, required(as_range(c.data.subset)).size(), cd.strides)
+    return (ad, as_range(a.data.subset).size(), ad.strides), (bd, as_range(b.data.subset).size(),
+                                                              bd.strides), (cd, as_range(c.data.subset).size(),
+                                                                            cd.strides)
 
 
 def _scalar_conn_descs(node: "Symm", state: SDFGState, sdfg: SDFG) -> dict:

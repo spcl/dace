@@ -275,7 +275,7 @@ class TileScatter(TileOp):
             # innermost K dims in order.
             dims = list(self.dst_dims) if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape)))
             try:
-                subset_sizes = tuple(required(as_range(dst_subset)).size())
+                subset_sizes = tuple(as_range(dst_subset).size())
             except Exception:
                 subset_sizes = None
             if subset_sizes is not None:

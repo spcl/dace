@@ -40,7 +40,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
 POS_ITER_PREFIX = '_loop_pos_'
@@ -52,7 +52,7 @@ def _is_negative(value: symbolic.SymbolicType) -> bool:
         s = symbolic.simplify(value)
     except Exception:
         return False
-    return as_expr(s).is_number and as_expr(s).is_negative
+    return as_basic(s).is_number and as_basic(s).is_negative
 
 
 @properties.make_properties

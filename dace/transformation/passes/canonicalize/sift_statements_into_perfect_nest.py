@@ -56,7 +56,7 @@ from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 from dace.transformation.passes.move_if_into_loop import _linear_order
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.optionals import required
 
 
@@ -80,7 +80,7 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
         diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(init)) - as_expr(symbolic.pystr_to_symbolic(end)))
     else:
         return False
-    return as_expr(diff).is_nonnegative is True
+    return as_basic(diff).is_nonnegative is True
 
 
 def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
@@ -125,7 +125,7 @@ def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
                 return True  # unparseable -> assume the worst
             # Equalized: e is reparsed here while iv_sym is minted from the name, so membership by
             # identity misses the dependence and reports the index as independent of the loop.
-            e, iv = symbolic.equalize_symbols_across(as_expr(e), as_expr(iv_sym))
+            e, iv = symbolic.equalize_symbols_across(e, iv_sym)
             if iv in e.free_symbols:
                 if symbolic.simplify(e - iv) != 0:
                     return True

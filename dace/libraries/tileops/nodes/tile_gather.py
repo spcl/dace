@@ -104,7 +104,7 @@ def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
             if Dfac is None:
                 continue  # no replicate
             # symbolic divisor -> can't prove W % D == 0 -> phase-aware
-        begin = required(as_range(src_edge.data.subset)).ranges[dims[d]][0]
+        begin = as_range(src_edge.data.subset).ranges[dims[d]][0]
         fname = type(begin).__name__
         if fname not in ("int_floor", "__int_floor"):
             raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "

@@ -34,12 +34,12 @@ def operand_info(node, state: SDFGState, sdfg: SDFG, connectors: Tuple[str,
         if edge is None:
             raise ValueError(f"{node.name}: expected a '{conn}' input")
         desc = sdfg.arrays[required(edge.data.data)]
-        info[conn] = (desc, required(as_range(edge.data.subset)).size(), desc.strides)
+        info[conn] = (desc, as_range(edge.data.subset).size(), desc.strides)
     out = next((e for e in state.out_edges(node) if e.src_conn == "_c"), None)
     if out is None:
         raise ValueError(f"{node.name}: expected a '_c' output")
     cdesc = sdfg.arrays[required(out.data.data)]
-    info["_c"] = (cdesc, required(as_range(out.data.subset)).size(), cdesc.strides)
+    info["_c"] = (cdesc, as_range(out.data.subset).size(), cdesc.strides)
     return info
 
 

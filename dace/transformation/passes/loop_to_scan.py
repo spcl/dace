@@ -39,7 +39,7 @@ on any other carried writes to non-transient arrays.
 """
 import ast
 import copy
-from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
 import numpy
 import sympy
@@ -49,7 +49,7 @@ from dace.frontend.python import astutils
 from dace import memlet as mm
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -61,7 +61,7 @@ from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NA
                                                 init_connector)
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr, as_loop, as_state, free_symbols
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {
@@ -127,11 +127,11 @@ class _Scan(NamedTuple):
     iter_start: Any
     iter_end: Any
     body_state: SDFGState
-    scan_update_tasklet: nodes.Tasklet
+    scan_update_tasklet: Optional[nodes.Tasklet]
     carry_in_conn: str
     delta_in_conn: Optional[str]
     out_conn: str
-    carry_anchor: nodes.AccessNode
+    carry_anchor: nodes.Node
     literal_delta: Optional[str] = None
     # Nested-body extension: when set, the body is wrapped in this inner LoopRegion
     # (data-parallel column loop in the cloudsc ``for_1133`` shape). The rewrite
@@ -186,7 +186,7 @@ class _CompositeBodyScan(NamedTuple):
     iter_end: Any
     carry_copy_state: SDFGState
     carry_copy_tasklet: nodes.Tasklet
-    carry_copy_carry_anchor: nodes.AccessNode
+    carry_copy_carry_anchor: nodes.Node
     carry_copy_in_conn: str
     carry_copy_out_conn: str
     accumulate_states: List[SDFGState] = []
@@ -436,7 +436,8 @@ class LoopToScan(ppl.Pass):
             # ``symrepl`` with ``replace_keys=False``: the carry distance need not be a bare name
             # (a symbolic one reaches here as ``-int_floor(LEN_1D, 2)``), and a name is the only
             # thing the string-keyed form can mint a symbol from.
-            zero_loop.replace_dict({}, symrepl={info.stride: symbolic.pystr_to_symbolic('0')}, replace_keys=False)
+            zero_repl: dict[symbolic.SymbolicType, symbolic.SymbolicType] = {info.stride: as_expr('0')}
+            zero_loop.replace_dict({}, symrepl=zero_repl, replace_keys=False)
 
         # The negative arm is what is left after the two guards, and it is left as the sequential
         # loop it was: BreakAntiDependence is a separate pass, and the canonicalize pipeline runs
@@ -613,7 +614,7 @@ def _collect_loops(sdfg: SDFG):
     return out
 
 
-def _descend_to_content_state(loop: LoopRegion):
+def _descend_to_content_state(loop: ControlFlowRegion):
     """Find one candidate flat content state inside ``loop``'s body. Convenience
     wrapper around :func:`_descend_to_content_state_candidates` -- returns the
     first candidate, kept for callers that don't need to enumerate.
@@ -622,7 +623,7 @@ def _descend_to_content_state(loop: LoopRegion):
     return cands[0] if cands else (None, None)
 
 
-def _descend_to_content_state_candidates(loop: LoopRegion):
+def _descend_to_content_state_candidates(loop: ControlFlowRegion):
     """Enumerate all flat content states inside ``loop``'s body that could host
     the scan-update tasklet.
 
@@ -646,7 +647,7 @@ def _descend_to_content_state_candidates(loop: LoopRegion):
     if others:
         return []
     content_states = [s for s in states if len(s.nodes()) > 0]
-    candidates = []
+    candidates: list[tuple[SDFGState, Optional[LoopRegion]]] = []
     # Flat candidates at the outer body level: every content state is itself
     # a possible scan-update host (v5 case).
     if not inner_loop_regions and not cond_blocks:
@@ -714,12 +715,13 @@ def _fuse_body_states(loop: LoopRegion) -> int:
         blocks = loop.nodes()
         if not all(isinstance(b, SDFGState) for b in blocks):
             return n_fused
+        states = [as_state(b) for b in blocks]
         # Find a fusion candidate: a pair (s1, s2) with one s1->s2 edge, both
         # states non-empty, and the ``StateFusionExtended`` matcher's checks
         # all green. The matcher takes the parent CFG region as ``graph`` and
         # the owning SDFG separately.
         cand = None
-        for s1 in blocks:
+        for s1 in states:
             outs = loop.out_edges(s1)
             if len(outs) != 1:
                 continue
@@ -854,7 +856,7 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
             # Try the multi-slot path first (same carrier, distinct constant-only
             # slots). If it returns a non-empty list, treat each slot as its own
             # ``_Scan`` -- one ``Scan`` libnode per slot in the rewrite.
-            multi = _match_multi_slot(loop, sdfg, state, out_name, start, end)
+            multi = _match_multi_slot(loop.loop_variable, sdfg, state, out_name, start, end)
             if multi:
                 for info in multi:
                     if inner_loop is not None:
@@ -866,10 +868,11 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
                 if cand_failed:
                     break
                 continue
-            info = _match_one_carrier(loop, sdfg, state, out_name, start, end)
-            if info is None:
+            carrier_info = _match_one_carrier(loop.loop_variable, sdfg, state, out_name, start, end)
+            if carrier_info is None:
                 cand_failed = True
                 break
+            info = carrier_info
             if inner_loop is not None:
                 info = info._replace(inner_loop=inner_loop)
                 if not _other_indices_match_inner(info.other_indices, inner_loop.loop_variable):
@@ -918,10 +921,12 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     if parent is not None and not seed_captured:
         sibling_blocks = [b for b in parent.nodes() if b is not loop]
         for sb in sibling_blocks:
-            states = list(sb.all_states()) if isinstance(sb, (ControlFlowRegion, LoopRegion)) else [sb]
-            for st in states:
-                if not isinstance(st, SDFGState):
+            sb_blocks: Sequence[ControlFlowBlock] = list(sb.all_states()) if isinstance(
+                sb, (ControlFlowRegion, LoopRegion)) else [sb]
+            for sb_block in sb_blocks:
+                if not isinstance(sb_block, SDFGState):
                     continue
+                st = sb_block
                 for node in st.data_nodes():
                     if st.in_degree(node) == 0:
                         continue
@@ -1050,7 +1055,7 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
             if oe.data is None or oe.data.is_empty():
                 continue
             axis, k, others, coef = _classify_subset(oe.data.subset, loop_var)
-            if (axis != info.scan_axis or coef != info.coef or symbolic.equal(k, info.k_r) is False
+            if (axis != info.scan_axis or coef != info.coef or symbolic.equal(required(k), info.k_r) is False
                     or not _same_other_indices(others, info.other_indices)):
                 return False
     return True
@@ -1104,7 +1109,7 @@ def _other_indices_match_inner(other_indices: List[Any], inner_var: str) -> bool
     return inner_count == 1
 
 
-def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: str, iter_start: Any,
+def _match_one_carrier(loop_variable: str, sdfg: SDFG, state: SDFGState, out_name: str, iter_start: Any,
                        iter_end: Any) -> Optional[_Scan]:
     """Match the scan recurrence for a single carrier ``out_name``.
 
@@ -1118,10 +1123,10 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
     for write_edge in _iter_write_edges(state, out_name):
         if write_edge.data is None or write_edge.data.subset is None:
             continue
-        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop.loop_variable)
-        if write_axis is None:
+        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_variable)
+        if write_axis is None or k_w is None or write_others is None:
             continue
-        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w,
+        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop_variable, write_axis, write_others, k_w,
                                          write_coef)
         if cand is None:
             continue
@@ -1139,8 +1144,7 @@ def _match_one_carrier(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name:
         if not _stores_scan_result(state, write_edge, tasklet, op):
             continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
-        if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
-                                        write_coef):
+        if not carrier_reads_admissible(state, out_name, loop_variable, write_axis, write_others, k_w, k_r, write_coef):
             continue
         candidates.append(
             _Scan(
@@ -1208,7 +1212,7 @@ def _multi_slot_compatible(candidates) -> bool:
     return True
 
 
-def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: str, iter_start: Any,
+def _match_multi_slot(loop_variable: str, sdfg: SDFG, state: SDFGState, out_name: str, iter_start: Any,
                       iter_end: Any) -> List[_Scan]:
     """Same matching as :func:`_match_one_carrier` but returns ALL slot candidates
     when the carrier is written at multiple distinct constant slots. Returns an
@@ -1219,10 +1223,10 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
     for write_edge in _iter_write_edges(state, out_name):
         if write_edge.data is None or write_edge.data.subset is None:
             continue
-        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop.loop_variable)
-        if write_axis is None:
+        write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_variable)
+        if write_axis is None or k_w is None or write_others is None:
             continue
-        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop.loop_variable, write_axis, write_others, k_w,
+        cand = _find_scan_update_tasklet(state, sdfg, out_name, loop_variable, write_axis, write_others, k_w,
                                          write_coef)
         if cand is None:
             continue
@@ -1240,8 +1244,7 @@ def _match_multi_slot(loop: LoopRegion, sdfg: SDFG, state: SDFGState, out_name: 
         if not _stores_scan_result(state, write_edge, tasklet, op):
             continue
         k_r = symbolic.simplify(k_w - scan_stride if write_coef == 1 else k_w + scan_stride)
-        if not carrier_reads_admissible(state, out_name, loop.loop_variable, write_axis, write_others, k_w, k_r,
-                                        write_coef):
+        if not carrier_reads_admissible(state, out_name, loop_variable, write_axis, write_others, k_w, k_r, write_coef):
             continue
         candidates.append(
             _Scan(
@@ -1377,8 +1380,8 @@ def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[
         return None
     inner_carrier_name = inner_carriers[0]
     # 7. Match the scan-update pattern on the inner state using the inner alias.
-    inner_match = _match_one_carrier(_InterchangeFakeLoop(inner_carry_name, iter_start, iter_end), inner_sdfg,
-                                     inner_state, inner_carrier_name, iter_start, iter_end)
+    inner_match = _match_one_carrier(inner_carry_name, inner_sdfg, inner_state, inner_carrier_name, iter_start,
+                                     iter_end)
     if inner_match is None:
         return None
     return _CarryMapShape(loop=loop,
@@ -1390,17 +1393,6 @@ def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[
                           inner_state=inner_state,
                           inner_scan=inner_match,
                           inner_carry_name=inner_carry_name)
-
-
-class _InterchangeFakeLoop:
-    """Thin shim so :func:`_match_one_carrier` can be called on the inner
-    state without instantiating a real LoopRegion -- only the ``loop_variable``
-    attribute is read from the loop parameter inside the matcher path used."""
-
-    def __init__(self, loop_variable: str, iter_start, iter_end):
-        self.loop_variable = loop_variable
-        self._iter_start = iter_start
-        self._iter_end = iter_end
 
 
 def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Optional[LoopRegion]:
@@ -1769,7 +1761,7 @@ def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion, info: _
     if inner_info is None:
         return False
     inner_var, inner_start, inner_end = inner_info
-    inner_size = symbolic.simplify(inner_end - inner_start + 1)
+    inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
 
     out_desc = sdfg.arrays[info.out_name]
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
@@ -1863,7 +1855,7 @@ def _find_composite_inner_loop_range(info: _CompositeBodyScan):
             stride = loop_analysis.get_loop_stride(cur)
             if start is not None and end is not None and stride == 1:
                 return cur.loop_variable, start, end
-        cur = getattr(cur, 'parent_graph', None)
+        cur = cur.parent_graph
     return None
 
 
@@ -1902,9 +1894,7 @@ def _composite_replace_carry_copy(info: _CompositeBodyScan, delta_buf: str, oute
     # nodes that become orphaned.
     src = write_in.src
     if isinstance(src, nodes.Tasklet):
-        state.remove_node(src)
-        # Continue pruning upstream of the tasklet.
-        upstream_edges = []  # noop -- tasklet remove cascades via remove_node
+        state.remove_node(src)  # the removal cascades to everything feeding the tasklet
     while isinstance(src, nodes.AccessNode):
         if state.out_degree(src) > 0:
             break
@@ -2082,7 +2072,7 @@ def _match_one_scalar_carry(loop: LoopRegion, sdfg: SDFG, state: SDFGState, acc_
 
     # Walk back from the WRITE AN through copy chain to find the RMW tasklet.
     tasklet, acc_in_conn, delta_in_conn, out_conn, op = _trace_back_to_rmw_tasklet(state, write_an, acc_name)
-    if tasklet is None:
+    if tasklet is None or acc_in_conn is None or delta_in_conn is None or out_conn is None or op is None:
         return None
 
     # The acc_in_conn's source must trace back (through copies) to the READ AN.
@@ -2101,6 +2091,8 @@ def _match_one_scalar_carry(loop: LoopRegion, sdfg: SDFG, state: SDFGState, acc_
     if delta_info is None:
         return None
     delta_name, delta_axis, delta_offset, delta_others = delta_info
+    if delta_others is None:
+        return None
 
     # The WRITE AN's out-edges feed exactly one per-iter array write.
     write_out_edges = list(state.out_edges(write_an))
@@ -2185,7 +2177,10 @@ def _trace_back_to_rmw_tasklet(state: SDFGState, write_an: nodes.AccessNode, acc
         op = _CALL_TO_SCAN_OP.get(rhs.func.id)
         if op is None or not all(isinstance(a, ast.Name) for a in rhs.args):
             return None, None, None, None, None
-        name_a, name_b = rhs.args[0].id, rhs.args[1].id
+        first, second = rhs.args
+        if not (isinstance(first, ast.Name) and isinstance(second, ast.Name)):
+            return None, None, None, None, None
+        name_a, name_b = first.id, second.id
     else:
         return None, None, None, None, None
 
@@ -2568,7 +2563,7 @@ def _provably_nonpositive(expr) -> bool:
         s:
         sympy.Symbol(s.name, positive=True, integer=True)
         if s in divisors else sympy.Symbol(s.name, nonnegative=True, integer=True)
-        for s in expr.free_symbols
+        for s in free_symbols(as_expr(expr))
     })
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_floor), lambda n: sympy.floor(n.args[0] / n.args[1]))
     rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_ceil),
@@ -2828,7 +2823,7 @@ def _find_scan_update_tasklet(state: SDFGState,
         # v1/v2 must have a data delta edge; v3 has a literal delta instead.
         if delta_edge is None and literal_delta is None:
             continue
-        return node, carry_edge, delta_edge, op, carry_anchor, scan_stride, literal_delta
+        return node, carry_edge, delta_edge, op, required(carry_anchor), scan_stride, literal_delta
     return None
 
 
@@ -3009,7 +3004,7 @@ def _subset_uses(subset: subsets.Subset, loop_var: str) -> bool:
     return False
 
 
-def _classify_subset(subset: subsets.Subset, loop_var: str):
+def _classify_subset(subset: Optional[subsets.Subset], loop_var: str):
     """Return ``(scan_axis, offset, non_scan_indices, coef)`` for ``subset``, or
     ``(None, None, None, 0)`` if the subset doesn't fit the v1 shape.
 
@@ -3044,7 +3039,7 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
                 off_pos = symbolic.simplify(as_expr(lo_sym) - as_expr(loop_var_sym))
             except Exception:
                 off_pos = None
-            if off_pos is not None and loop_var_sym not in as_expr(off_pos).free_symbols:
+            if off_pos is not None and loop_var_sym not in as_basic(off_pos).free_symbols:
                 scan_axis = axis_idx
                 offset = off_pos
                 coef = 1
@@ -3054,7 +3049,7 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
                 off_neg = symbolic.simplify(lo_sym + loop_var_sym)
             except Exception:
                 off_neg = None
-            if off_neg is not None and loop_var_sym not in as_expr(off_neg).free_symbols:
+            if off_neg is not None and loop_var_sym not in as_basic(off_neg).free_symbols:
                 scan_axis = axis_idx
                 offset = off_neg
                 coef = -1
@@ -3146,7 +3141,7 @@ def _identity_for_op(op: ScanOp, dtype: dtypes.typeclass) -> Optional[Union[int,
     if numpy.issubdtype(nptype, numpy.floating):
         return float('inf') if op == ScanOp.MIN else float('-inf')
     if numpy.issubdtype(nptype, numpy.integer):
-        info = numpy.iinfo(nptype)
+        info = numpy.iinfo(nptype.name)
         return int(info.max) if op == ScanOp.MIN else int(info.min)
     return None
 
@@ -3338,7 +3333,7 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
     for info in matched:
         # This slot's own write AN: walk forward from its scan-update tasklet
         # (ambiguity-free) rather than the by-name lookup.
-        chain = _collect_output_chain(info.body_state, info.scan_update_tasklet, info.out_conn)
+        chain = _collect_output_chain(info.body_state, required(info.scan_update_tasklet), info.out_conn)
         write_an = chain[-1] if chain else None
         delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{out_name}', [trip],
                                       out_desc.dtype,
@@ -3355,7 +3350,7 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
     groups: Dict[ScanOp, List[tuple]] = {}
     for info, delta_buf in slots:
         groups.setdefault(info.op, []).append((info, delta_buf))
-    prev = loop
+    prev: ControlFlowBlock = loop
     for group in groups.values():
         s_scan = parent.add_state(loop.label + '_scan')
         parent.add_edge(prev, s_scan, dace.InterstateEdge())
@@ -3379,14 +3374,14 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
     seed-add ``Map`` over the (outer-iter, inner-iter) product.
     """
     import dace
-    inner = info.inner_loop
-    inner_var = required(inner).loop_variable
+    inner = required(info.inner_loop)
+    inner_var = inner.loop_variable
     inner_start = loop_analysis.get_init_assignment(inner)
     inner_end = loop_analysis.get_loop_end(inner)
     inner_stride = loop_analysis.get_loop_stride(inner)
     if inner_start is None or inner_end is None or inner_stride is None or inner_stride != 1:
         return
-    inner_size = symbolic.simplify(inner_end - inner_start + 1)
+    inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
 
     out_desc = sdfg.arrays[info.out_name]
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
@@ -3489,11 +3484,11 @@ def _mutate_body_to_delta_buffer_nested(info: _Scan, delta_buf: str, inner_start
     parent of the parent-graph.
     """
     state = info.body_state
-    tasklet = info.scan_update_tasklet
+    tasklet = required(info.scan_update_tasklet)
     inner_region = state.parent_graph
     outer_region = inner_region.parent_graph
-    outer_var = outer_region.loop_variable
-    inner_var = inner_region.loop_variable
+    outer_var = as_loop(outer_region).loop_variable
+    inner_var = as_loop(inner_region).loop_variable
 
     _disconnect_carry_chain(state, tasklet, info.carry_in_conn, info.carry_anchor)
     if info.literal_delta is not None:
@@ -3528,7 +3523,7 @@ def _emit_scan_nested(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str,
     residue-class semantics then run ``inner_size * scan_stride`` independent interleaved
     streams, one per ``(j, i mod scan_stride)`` pair. No Map wrap.
     """
-    inner_size = symbolic.simplify(inner_end - inner_start + 1)
+    inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
     delta_read = state.add_read(delta_buf)
     scan_write = state.add_write(scan_buf)
     node = Scan(name=f'{state.label}_op', op=info.op, exclusive=False)
@@ -3575,7 +3570,7 @@ def _emit_seed_add_nested(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: s
     me.add_out_connector('OUT_scan')
     mx.add_in_connector('IN_o')
     mx.add_out_connector('OUT_o')
-    inner_size = symbolic.simplify(inner_end - inner_start + 1)
+    inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
     buf_j_local = symbolic.simplify(symbolic.pystr_to_symbolic(map_j) - inner_start)
     map_j_sym = symbolic.pystr_to_symbolic(map_j)
     # ``out`` carrier may have additional loop-invariant axes (e.g. ``[species,
@@ -3708,7 +3703,7 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str, write_an: Optional
     several slots of the same array are written in one body.
     """
     state = info.body_state
-    tasklet = info.scan_update_tasklet
+    tasklet = required(info.scan_update_tasklet)
 
     # 1. Sever the carry input chain (orphan transients pruned).
     _disconnect_carry_chain(state, tasklet, info.carry_in_conn, info.carry_anchor)
@@ -3741,10 +3736,10 @@ def _mutate_body_to_delta_buffer(info: _Scan, delta_buf: str, write_an: Optional
     # ``state -> branch (ControlFlowRegion) -> ConditionalBlock -> LoopRegion``.
     cur = info.body_state.parent_graph
     while cur is not None and not (isinstance(cur, LoopRegion) and cur.loop_variable):
-        cur = getattr(cur, 'parent_graph', None)
+        cur = cur.parent_graph
     if cur is None:
         return
-    loop_var = cur.loop_variable
+    loop_var = as_loop(cur).loop_variable
     idx_expr = symbolic.simplify(symbolic.pystr_to_symbolic(loop_var) - info.iter_start)
     buf_an = state.add_write(delta_buf)
     state.add_edge(final_edge.src, final_edge.src_conn, buf_an, None,
@@ -3829,7 +3824,7 @@ def _find_carried_write_an(state: SDFGState, name: str) -> Optional[nodes.Access
     return found
 
 
-def _disconnect_carry_chain(state: SDFGState, tasklet: nodes.Tasklet, conn: str, anchor: nodes.AccessNode):
+def _disconnect_carry_chain(state: SDFGState, tasklet: nodes.Tasklet, conn: str, anchor: nodes.Node):
     """Remove the tasklet's carry-input edge and the now-dead chain that fed it.
 
     The feeding chain is either a pure slice-copy (``out_read -> tmp ->`` carry)
@@ -3881,8 +3876,8 @@ def _collect_output_chain(state: SDFGState, tasklet: nodes.Tasklet, out_conn: st
     intermediates -- the rewrite re-routes the tasklet's output to ``delta_buf``).
     """
     chain: List[nodes.AccessNode] = []
-    cur = tasklet
-    cur_conn = out_conn
+    cur: nodes.Node = tasklet
+    cur_conn: Optional[str] = out_conn
     while True:
         out_edges = [e for e in state.out_edges(cur) if e.src_conn == cur_conn]
         if len(out_edges) != 1:
@@ -4496,10 +4491,10 @@ def _sign_query(expr) -> Tuple[Any, Dict[str, FrozenSet[str]]]:
     divisors: Set[str] = set()
     for node in sympy.preorder_traversal(expr):
         if isinstance(node, sympy.Pow) and node.exp.is_negative:
-            divisors.update(sym.name for sym in node.base.free_symbols)
+            divisors.update(sym.name for sym in free_symbols(as_expr(node.base)))
     facts = {
         sym.name: frozenset({'integer', 'positive'} if sym.name in divisors else {'integer', 'nonnegative'})
-        for sym in expr.free_symbols
+        for sym in free_symbols(as_expr(expr))
     }
     return expr, facts
 
@@ -4811,7 +4806,7 @@ def direct_operand(info: '_AffineScan', code: str, sdfg: SDFG) -> Optional[Tuple
     subset = leaf.memlet.subset if leaf.memlet.data == name else leaf.memlet.other_subset
     if subset is None:
         return None
-    axis, offset, others, coef = _classify_subset(subset, info.body_state.parent_graph.loop_variable)
+    axis, offset, others, coef = _classify_subset(subset, as_loop(info.body_state.parent_graph).loop_variable)
     if axis != 0 or coef != 1 or others or offset is None:
         return None
     return name, offset
@@ -4826,7 +4821,7 @@ def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: Optional[str], c
     inputs, minus the carry.
     """
     state = info.body_state
-    idx = symbolic.simplify(symbolic.pystr_to_symbolic(state.parent_graph.loop_variable) - info.iter_start)
+    idx = symbolic.simplify(symbolic.pystr_to_symbolic(as_loop(state.parent_graph).loop_variable) - info.iter_start)
 
     if coef_buf is not None:
         emit_affine_build_tasklet(state, info, 'affine_coef', info.coef_code, coef_buf, idx)
@@ -4884,7 +4879,8 @@ def emit_affine_scan(state: SDFGState,
                                        out_desc.dtype,
                                        transient=True,
                                        find_new_name=True)
-        seed_last, seed_hi = seed_axis, 0
+        seed_last = seed_axis
+        seed_hi: symbolic.SymbolicType | int = 0
     else:
         seed_name, _ = sdfg.add_array(f'{_SEED_SCALAR_PREFIX}{info.out_name}', (info.stride, ),
                                       out_desc.dtype,

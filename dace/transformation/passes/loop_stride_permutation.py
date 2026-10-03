@@ -73,7 +73,7 @@ from dace.symbolic import symstr
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Loop-control properties swapped to realize an interchange.
 _LOOP_META_ATTRS = ('loop_variable', 'init_statement', 'loop_condition', 'update_statement', 'inverted')
@@ -277,9 +277,9 @@ class LoopStridePermutation(ppl.Pass):
             return False
 
         osym = pystr_to_symbolic(ovar)
-        c = required(as_expr(i0)).coeff(as_expr(osym), 1)
+        c = as_expr(i0).coeff(as_expr(osym), 1)
         d = dace.symbolic.simplify(i0 - required(c) * osym)
-        if osym in as_expr(d).free_symbols or not required(c).is_integer or not required(c).is_positive:
+        if osym in as_basic(d).free_symbols or not required(c).is_integer or not required(c).is_positive:
             return False
         # ``int_floor`` is a floor division: a negative numerator would round the wrong way, so the
         # rewrite is only taken where the new outer loop starts at or above ``d``.

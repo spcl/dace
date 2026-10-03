@@ -13,7 +13,7 @@ import sympy
 from dace import dtypes, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: Anything a subset bound, loop bound or parsed expression can be (``sympy.Basic`` also covers sympy's own stubs,
 #: which declare ``Basic`` where an ``Expr`` is returned).
@@ -32,6 +32,24 @@ def as_expr(value: SymbolicLike) -> sympy.Expr:
         expr = symbolic.pystr_to_symbolic(expr)
     if not isinstance(expr, sympy.Expr):
         raise TypeError(f'{expr!r} is not a sympy expression')
+    return expr
+
+
+def as_basic(value: SymbolicLike) -> sympy.Basic:
+    """``value`` as a sympy ``Basic``; a :class:`~dace.symbolic.SymExpr` contributes its main expression.
+
+    Unlike :func:`as_expr` this keeps relationals and booleans (``a < b``, ``Eq(a, b)``, ``True``), which carry
+    ``free_symbols``, ``args`` and ``atoms`` but are no ``Expr``.
+
+    :param value: A symbolic expression, boolean expression, Python number or expression string.
+    :returns: The sympy object.
+    :raises TypeError: If ``value`` is none of those.
+    """
+    expr = value.expr if isinstance(value, symbolic.SymExpr) else value
+    if isinstance(expr, (int, float, str)):
+        expr = symbolic.pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        raise TypeError(f'{expr!r} is not a sympy object')
     return expr
 
 
@@ -123,6 +141,13 @@ def as_state(block: ControlFlowBlock) -> SDFGState:
     if not isinstance(block, SDFGState):
         raise TypeError(f'expected an SDFGState, got {type(block).__name__}')
     return block
+
+
+def as_loop(region: ControlFlowRegion | ControlFlowBlock | None) -> LoopRegion:
+    """``region`` as a :class:`~dace.sdfg.state.LoopRegion`; parent-graph walks answer with the abstract region."""
+    if not isinstance(region, LoopRegion):
+        raise TypeError(f'expected a LoopRegion, got {type(region).__name__}')
+    return region
 
 
 def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
