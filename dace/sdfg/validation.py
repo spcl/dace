@@ -313,7 +313,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         elif '__return' in sdfg._arrays:
             tuple_return_args = {'__return'}
         elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
-            raise InvalidSDFGError('Tuple return values are not consecutively named')
+            raise InvalidSDFGError('Tuple return values are not consecutively named', sdfg, None)
         for ret_name_to_check in tuple_return_args:
             ret_desc = sdfg._arrays[ret_name_to_check]
             if ret_desc.transient:
