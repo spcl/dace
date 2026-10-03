@@ -2,12 +2,13 @@
 import re
 
 import dace
+from dace.codegen import common
 import pytest
 
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:
-    """``cudaFreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
-    return len(re.findall(rf'cudaFreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)', code))
+    """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
+    return len(re.findall(rf'{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)', code))
 
 
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)
@@ -37,8 +38,8 @@ def test_memory_pool():
     assert sdfg.number_of_nodes() >= 2
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 2
-    assert code.count('cudaFreeAsync') == 2
+    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 2
+    assert code.count(f'{common.get_gpu_backend()}FreeAsync') == 2
 
     # Test code
     import cupy as cp
@@ -72,8 +73,8 @@ def test_memory_pool_state():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFree') == 1
+    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
+    assert code.count(f'{common.get_gpu_backend()}Free') == 1
 
     # Test code
     import cupy as cp
@@ -110,8 +111,8 @@ def test_memory_pool_tasklet():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFreeAsync') == 1
+    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
+    assert code.count(f'{common.get_gpu_backend()}FreeAsync') == 1
 
     # Test code
     import cupy as cp
@@ -151,7 +152,7 @@ def test_memory_pool_multistate():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
+    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
     assert count_frees_on_stream_zero(code, 'pooled') == 1
 
     # Test code
@@ -205,7 +206,7 @@ def test_memory_pool_if_states(cnd):
 
     sdfg.validate()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
+    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
     assert count_frees_on_stream_zero(code, tmp) == 1
 
     # Test code
