@@ -553,8 +553,8 @@ def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
     cp = state.add_tasklet('copy_A_to_B', {in_conn: None}, {out_conn: None},
-                           f'cudaMemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), '
-                           'cudaMemcpyDeviceToDevice, __dace_current_stream);',
+                           f'{common.get_gpu_backend()}MemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), '
+                           f'{common.get_gpu_backend()}MemcpyDeviceToDevice, __dace_current_stream);',
                            language=dace.Language.CPP)
     cp.in_connectors = {in_conn: dace.pointer(dace.uint32)}
     cp.out_connectors = {out_conn: dace.pointer(dace.uint32)}
