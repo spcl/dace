@@ -129,6 +129,11 @@ class ControlFlowRaising(ppl.Pass):
             # connect unnecessarily, thus preventing lifting.
             non_return_sinks = [s for s in region.sink_nodes() if not isinstance(s, ReturnBlock)]
             sinks = non_return_sinks if len(non_return_sinks) > 0 else region.sink_nodes()
+            if len(sinks) <= 1 and all(len(region.out_edges(block)) <= 1 for block in region.nodes()):
+                # Without branches there is nothing to lift, so the (costly) dominator analysis is skipped. The start
+                # block is still queried to fail on an ambiguous start block as the analysis would.
+                region.start_block
+                continue
             dummy_exit = None
             if len(sinks) > 1:
                 dummy_exit = region.add_state('__DACE_DUMMY')
