@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Correctness gate for the graph-backend benchmark (see graph_backend_cloudsc_bench.py):
-running simplify() and then specializing kidia/kfdia/nclv ("config-prop") and fully
-unrolling the resulting constant-bounded loops must stay numerically faithful to the
-un-transformed CloudSC reference, under EITHER graph backend. This is what makes the
-benchmark's timings trustworthy -- a backend that produced a wrong SDFG faster would not
-be a real win.
+"""Graph-backend correctness on CloudSC: running simplify() and then specializing kidia/kfdia/nclv
+("config-prop") and fully unrolling the resulting constant-bounded loops must stay numerically faithful
+to the un-transformed CloudSC reference, under EITHER graph backend.
 """
 import copy
 import importlib.util

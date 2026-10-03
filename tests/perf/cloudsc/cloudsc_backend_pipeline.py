@@ -1,14 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared pipeline for the graph-backend (networkx vs rustworkx) benchmark and its
-correctness test: given a fresh (un-transformed) CloudSC SDFG, specialize a handful of
+"""Pipeline for the graph-backend (networkx vs rustworkx) correctness test: given a fresh (un-transformed) CloudSC SDFG, specialize a handful of
 scalars/symbols and fully unroll the now-constant-bounded loops this creates.
 
 Kept out of the SDFG-shape symbols (``klev``/``klon``): those bound the kernel's large
 outer loops, and specializing them would make ``LoopUnroll`` fully unroll 32-iteration
 loops nested inside other 32-iteration loops -- an intractable amount of generated code
-for a benchmark. ``nclv``/``ncldq*`` (the cloud-species count/indices, 5-wide) and
+for a test. ``nclv``/``ncldq*`` (the cloud-species count/indices, 5-wide) and
 ``kidia``/``kfdia`` (the horizontal tile bounds, exercised via ``specialize_scalar``
-specifically since that is the function this benchmark is meant to cover) are small and
+specifically since that is the function this test is meant to cover) are small and
 representative without exploding compile time.
 """
 import time
@@ -60,11 +59,8 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
 
 
 def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
-    """The full benchmarked pipeline, in the order it is reported: simplify -> config-prop
-    (specialize_scalar/SDFG.specialize) + LoopUnroll -> (codegen/compile/serialize/deserialize
-    are timed by the caller, which needs the intermediate SDFG for each). Mutates ``sdfg`` in
-    place and returns the two front-end phase timings; see graph_backend_cloudsc_bench.py for
-    the remaining phases.
+    """Simplify, then config-prop (specialize_scalar/SDFG.specialize) and LoopUnroll. Mutates ``sdfg``
+    in place and returns the two phase timings.
 
     :param sdfg: The SDFG to transform (mutated in place).
     :param backend: ``'networkx'`` or ``'rustworkx'``.
