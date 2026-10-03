@@ -7,9 +7,6 @@ from dace.sdfg import nodes as dace_nodes
 import pytest
 import re
 
-# this test requires cupy module
-cp = pytest.importorskip("cupy")
-
 
 def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):
     """Count top-level nodes of ``node_type``.
@@ -68,6 +65,7 @@ def _make_2d_gpu_copy_sdfg(c_order: bool, ) -> dace.SDFG:
 def test_2d_gpu_copy(c_order: bool):
     """Check 2D strided copies are handled by the `Memcpy2D` family.
     """
+    import cupy as cp
     sdfg = _make_2d_gpu_copy_sdfg(c_order=c_order)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -145,6 +143,7 @@ def test_1d_gpu_copy(
     src_row: bool,
     dst_row: bool,
 ):
+    import cupy as cp
     sdfg = _make_1d_gpu_copy(src_row=src_row, dst_row=dst_row)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -218,6 +217,7 @@ def _make_pseudo_1d_copy_sdfg(c_order: bool, ) -> dace.SDFG:
 @pytest.mark.gpu
 @pytest.mark.parametrize("c_order", [True, False])
 def test_pseudo_1d_copy_test(c_order: bool):
+    import cupy as cp
     sdfg = _make_pseudo_1d_copy_sdfg(c_order=c_order)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -264,6 +264,7 @@ def test_gpu_shared_to_global_1D():
     redundantly writes the same destination -- correct, slower than the old
     ``SharedToGlobal1D`` block-cooperative template). Lifting Shared
     copies to ``SharedMemoryCollective`` is gated on a codegen-scope fix."""
+    import cupy as cp
     M = 32
     N = dace.symbol('N')
 
@@ -298,6 +299,7 @@ def test_gpu_shared_to_global_1D():
 
 @pytest.mark.gpu
 def test_gpu_shared_to_global_1D_accumulate():
+    import cupy as cp
     M = 32
     N = dace.symbol('N')
 
@@ -326,6 +328,7 @@ def test_gpu_shared_to_global_1D_accumulate():
 
 @pytest.mark.gpu
 def test_gpu_1d_copy():
+    import cupy as cp
     sdfg = dace.SDFG("gpu_1d_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
@@ -372,6 +375,7 @@ def test_gpu_strided_2D_copy():
     The copy should be performed using ``Memcpy2DAsync``.
     Test adapted from vertical advection benchmark in NPBench.
     """
+    import cupy as cp
     sdfg = dace.SDFG("gpu_strided_2d_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
 

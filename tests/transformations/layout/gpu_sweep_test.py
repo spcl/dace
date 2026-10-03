@@ -14,8 +14,6 @@ import dace
 from dace.transformation.layout.brute_force import sweep, best, time_cpu, time_gpu, single_default_stream
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
-cupy = pytest.importorskip("cupy")
-
 # Deliberately tiny: 48x32 float64 is 12 KiB per array (~36 KiB with the permuted transient). The
 # sweep only has to VERIFY and produce a finite time; a big buffer would buy nothing and cost memory.
 M, N = 48, 32
@@ -40,9 +38,6 @@ def _gpu_candidate(perm):
 
 @pytest.mark.gpu
 def test_gpu_sweep_permute_times_and_verifies():
-    if cupy.cuda.runtime.getDeviceCount() < 1:
-        pytest.skip("no CUDA device")
-
     host_a = numpy.random.rand(M, N)
     reference = {"C": host_a + 1.0}
 
@@ -72,9 +67,6 @@ def test_time_gpu_records_on_the_stream_dace_runs_on():
     under ``single_default_stream`` -- the single-stream event window spans the same whole call the
     wall clock sees (both include dace's per-call marshalling), so the two agree to within a small
     factor. This pins the contract in :func:`time_gpu`'s docstring."""
-    if cupy.cuda.runtime.getDeviceCount() < 1:
-        pytest.skip("no CUDA device")
-
     host_a = numpy.random.rand(M, N)
 
     def run(sdfg):

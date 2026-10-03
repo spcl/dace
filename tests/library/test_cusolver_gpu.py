@@ -29,18 +29,12 @@ from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 
-from tests.codegen.readable.conftest import gpu_available
 from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench
 
 pytestmark = pytest.mark.gpu
 
 CODEGENS = ["legacy", "experimental"]
-
-
-def _require_gpu():
-    if not gpu_available():
-        pytest.skip("No CUDA device available")
 
 
 def _cpu_pipeline(sdfg):
@@ -92,7 +86,6 @@ def _make_cholesky_sdfg(dtype):
 
 @pytest.mark.parametrize("dtype", [dace.float32, dace.float64])
 def test_cholesky_libnode_gpu(dtype):
-    _require_gpu()
     sdfg = _make_cholesky_sdfg(dtype)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
@@ -127,7 +120,6 @@ def _make_solve_sdfg(dtype):
 
 @pytest.mark.parametrize("dtype", [dace.float32, dace.float64])
 def test_solve_libnode_gpu(dtype):
-    _require_gpu()
     sdfg = _make_solve_sdfg(dtype)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
@@ -155,7 +147,6 @@ def test_solve_libnode_gpu(dtype):
 
 @pytest.mark.parametrize("codegen", CODEGENS)
 def test_polybench_cholesky_gpu(codegen):
-    _require_gpu()
     kernel = polybench.collect("cholesky")[0]
     arrays, psize = polybench.make_inputs(kernel)
 
@@ -176,7 +167,6 @@ def test_polybench_cholesky_gpu(codegen):
 
 @pytest.mark.parametrize("codegen", CODEGENS)
 def test_npbench_cholesky2_gpu(codegen):
-    _require_gpu()
     descriptor = npbench.collect("cholesky2")[0]
     arrays, params = npbench.make_inputs(descriptor)
 
