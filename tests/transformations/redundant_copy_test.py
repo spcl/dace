@@ -729,13 +729,16 @@ def test_redundant_second_array_across_map_exit():
     sdfg.apply_transformations_repeated(MapFusionVertical)
 
     before = unit_transients(sdfg)
-    assert len(unit_transient_copies(sdfg)) == 1
+    # How many such copies fusion leaves depends on the order its matches are applied in, which follows the
+    # networkx version's VF2 candidate order; each one must go, and each takes exactly one transient with it.
+    copies = unit_transient_copies(sdfg)
+    assert copies
 
     sdfg.simplify()
     sdfg.validate()
 
     assert unit_transient_copies(sdfg) == []
-    assert len(unit_transients(sdfg)) == len(before) - 1
+    assert len(unit_transients(sdfg)) == len(before) - len(copies)
 
     n, steps = 10, 20
     idx = np.arange(n, dtype=np.float64)

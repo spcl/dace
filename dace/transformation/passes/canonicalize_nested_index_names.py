@@ -21,6 +21,8 @@ from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
+RETURN_NAMESPACE = '__return'
+
 
 class CanonicalizeNestedIndexNames(ppl.Pass):
     """Rename nested-SDFG arrays so each data name owns a single ``(ndim, strides, offset)`` signature."""
@@ -50,9 +52,10 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
         return names
 
     def _unique(self, base: str, used: Set[str]) -> str:
-        # ``__return_<i>`` names tuple return values, so a renamed ``__return`` must leave that prefix
-        if base.startswith('__return'):
-            base = base.lstrip('_')
+        # ``__return`` and ``__return_<i>`` are the names SDFG validation reads as the program's return values, so a
+        # derived ``__return_v0`` would be read as a tuple element that is not consecutively numbered.
+        if base.startswith(RETURN_NAMESPACE):
+            base = 'nested' + base
         i = 0
         while True:
             cand = '%s_v%d' % (base, i)

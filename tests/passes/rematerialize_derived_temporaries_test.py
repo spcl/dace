@@ -71,6 +71,16 @@ def arrays(sdfg: dace.SDFG):
     return {name for name, desc in sdfg.arrays.items() if desc.transient and desc.total_size != 1}
 
 
+def stranded_by_fusion(sdfg: dace.SDFG):
+    """The temporaries fusion forced across a map boundary: every array except ``A_slice``, the copy-out buffer of
+    the frontend's slice assignment, which is no derived temporary and which array elimination keeps.
+
+    How many of them fusion leaves depends on the order its matches are applied in, which follows the networkx
+    version's VF2 candidate order, so the tests count against this set and not against a literal.
+    """
+    return arrays(sdfg) - {'A_slice'}
+
+
 def candidate(sdfg: dace.SDFG):
     """The transient the pass would act on: written by a map exit, read by a map entry."""
     for state in sdfg.states():
@@ -255,9 +265,11 @@ def test_nothing_still_names_the_deleted_temporary():
     than here."""
     sdfg = heat3d_after_loop_to_map_and_fusion()
     before = arrays(sdfg)
-    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
+    stranded = stranded_by_fusion(sdfg)
+    assert len(stranded) == 3, stranded
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
     gone = before - arrays(sdfg)
-    assert len(gone) == 3
+    assert gone == stranded
     named = {e.data.data for state in sdfg.states() for e in state.edges()}
     named |= {node.data for state in sdfg.states() for node in state.data_nodes()}
     assert not (named & gone), named & gone
@@ -362,11 +374,11 @@ def heat3d_after_loop_to_map_and_fusion() -> dace.SDFG:
 
 def test_heat3d_after_loop_to_map_and_fusion_drops_transients():
     sdfg = heat3d_after_loop_to_map_and_fusion()
-    before = arrays(sdfg)
+    stranded = stranded_by_fusion(sdfg)
     # Guard against a vacuous test: fusion must actually have stranded the three temporaries.
-    assert len(before) == 4, before
-    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
-    assert len(arrays(sdfg)) == 1
+    assert len(stranded) == 3, stranded
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
+    assert arrays(sdfg) == {'A_slice'}
     sdfg.validate()
 
 
@@ -381,7 +393,8 @@ def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
     for apply_pass in (False, True):
         sdfg = heat3d_after_loop_to_map_and_fusion()
         if apply_pass:
-            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 3
+            stranded = stranded_by_fusion(sdfg)
+            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
         sdfg.name = 'heat3d_remat' if apply_pass else 'heat3d_fused_ref'
         a, b = base_a.copy(), base_b.copy()
         sdfg.compile()(TSTEPS=tsteps, A=a, B=b, N=size)
