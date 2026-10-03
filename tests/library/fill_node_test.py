@@ -620,9 +620,8 @@ def test_fill_dynamic_value_rejects_dtype_mismatch():
         sdfg.validate()
 
 
-@pytest.mark.gpu
-def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
-    """A dynamic <=32-bit value on a contiguous GPU subset lowers to ``<backend>MemsetAsync``."""
+def test_fill_dynamic_value_gpu_routes_to_pure():
+    """A runtime value cannot be split into the one byte ``<backend>MemsetAsync`` writes, so it fills by kernel."""
     sdfg = make_dynamic_fill_sdfg((100, ),
                                   "0:100",
                                   gpu=True,
@@ -631,10 +630,26 @@ def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
                                   name="fill_dyn_gpu_f32")
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
-    assert select_fill_implementation(node, sdfg.start_state) == 'CUDA'
-    sdfg.expand_library_nodes()
-    code = _generated_code(sdfg)
-    assert_reads_the_dynamic_value(code, 'MemsetAsync')
+    assert select_fill_implementation(node, sdfg.start_state) == 'pure'
+    node.implementation = 'CUDA'
+    with pytest.raises(ValueError, match="dynamic value"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+def test_fill_dynamic_value_gpu_runs_and_writes_value():
+    """A dynamic GPU fill writes the supplied value, including one whose bytes differ (1.5f is 0x3fc00000)."""
+    import cupy as cp
+    sdfg = make_dynamic_fill_sdfg((100, ),
+                                  "0:100",
+                                  gpu=True,
+                                  dtype=dace.float32,
+                                  value_dtype=dace.float32,
+                                  name="fill_dyn_gpu_run")
+    gpuB = cp.ones((100, ), dtype=cp.float32)
+    V = np.array([1.5], dtype=np.float32)
+    sdfg(gpuB=gpuB, V=V)
+    np.testing.assert_array_equal(cp.asnumpy(gpuB), np.full(100, 1.5, dtype=np.float32))
 
 
 if __name__ == '__main__':
@@ -670,4 +685,5 @@ if __name__ == '__main__':
     test_fill_cuda_3d_gpu()
     test_fill_cuda_rejects_cpu_storage()
     test_fill_cuda_rejects_non_contiguous_subset()
-    test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit()
+    test_fill_dynamic_value_gpu_routes_to_pure()
+    test_fill_dynamic_value_gpu_runs_and_writes_value()
