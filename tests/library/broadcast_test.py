@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the :class:`Broadcast` library node: Fortran ``SPREAD`` and the right-aligned NumPy rule."""
 import itertools
+import os
 
 import numpy as np
 import pytest
@@ -10,13 +11,14 @@ from dace.libraries.standard.nodes import Broadcast
 
 N = dace.symbol('N', dace.int64, nonnegative=True)
 
-#: One compiled library per built SDFG: a reused name would load the previous case's library.
+#: One compiled library per built SDFG and process: a reused name would load the previous case's library,
+#: and pytest-xdist workers share the build folder.
 BUILD_IDS = itertools.count()
 
 
 def build(src_shape, dst_shape, dim, src_dtype=dace.float64, dst_dtype=dace.float64, src_memlet=None, **desc):
     """One Broadcast from ``src`` to ``dst``; the memlets cover the whole arrays unless ``src_memlet`` is given."""
-    sdfg = dace.SDFG(f'broadcast_{next(BUILD_IDS)}')
+    sdfg = dace.SDFG(f'broadcast_{os.getpid()}_{next(BUILD_IDS)}')
     sdfg.add_array('src', list(src_shape), src_dtype, **desc.get('src', {}))
     sdfg.add_array('dst', list(dst_shape), dst_dtype, **desc.get('dst', {}))
     state = sdfg.add_state()
@@ -133,6 +135,19 @@ def test_broadcast_to_in_a_program():
     np.testing.assert_array_equal(out, np.broadcast_to(a, (3, 4)))
 
 
+def test_the_library_call_in_a_program_keeps_its_dim():
+
+    @dace.program
+    def program(a: dace.float64[3], out: dace.float64[3, 4]):
+        dace.libraries.standard.broadcast(a, out, dim=2)
+
+    assert [n.dim for n, _ in program.to_sdfg(simplify=False).all_nodes_recursive() if isinstance(n, Broadcast)] == [2]
+    a = np.arange(3.0)
+    out = np.zeros((3, 4))
+    program(a=a, out=out)
+    np.testing.assert_array_equal(out, spread(a, 2, 4))
+
+
 if __name__ == '__main__':
     for case in SPREAD_CASES:
         test_spread_inserts_the_axis_at_dim(*case)
@@ -146,3 +161,4 @@ if __name__ == '__main__':
     test_a_sliced_source_with_a_lower_bound_offset()
     test_the_destination_type_converts()
     test_broadcast_to_in_a_program()
+    test_the_library_call_in_a_program_keeps_its_dim()
