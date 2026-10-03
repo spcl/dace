@@ -57,7 +57,7 @@ class ExpandDotPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if dace.dtypes.can_access(dace.dtypes.ScheduleType.CPU_Multicore, desc_res.storage):
+        if dace.dtypes.can_access(dace.dtypes.ScheduleType.CPU_Multicore, sdfg.arrays["_result"].storage):
             # A bare tasklet: a one-iteration map would fork a thread team to write a single scalar
             init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
             init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
