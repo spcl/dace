@@ -65,13 +65,14 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
-                else:
-                    allocated_as_scalar = True
 
                 if node.in_connectors[cname].type is None:
+                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+                    if e.data.data is not None:
+                        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+                    else:
+                        allocated_as_scalar = True
+
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
@@ -123,7 +124,8 @@ def infer_connector_types(sdfg: SDFG):
 def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     """
     Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
-    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression.
+    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression. The symbol keeps its kind
+    (signed, unsigned or floating point).
 
     :param state: The state that contains ``node``.
     :param node: The nested SDFG node.
@@ -136,7 +138,9 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
         if outer_symbols is None:
             outer_symbols = state.symbols_defined_at(node)
         mapped = infer_expr_type(value, outer_symbols)
-        if mapped is not None and mapped.bytes > declared.bytes and dtypes.result_type_of(declared, mapped) == mapped:
+        # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
+        if (mapped is not None and mapped.bytes > declared.bytes and type(declared) is type(mapped) is dtypes.typeclass
+                and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind):
             node.sdfg.symbols[name] = mapped
 
 
