@@ -53,9 +53,8 @@ def check_decomposition(a: np.ndarray, w: np.ndarray, v: np.ndarray, uplo: str, 
     np.testing.assert_allclose(np.conj(np.swapaxes(v, -1, -2)) @ v, eye, rtol=tol, atol=tol)
 
 
-def eigh_program(dtype: dace.typeclass,
-                 uplo: str = 'L',
-                 batch: tuple[int, ...] = ()) -> dace.frontend.python.parser.DaceProgram:
+def eigh_sdfg(dtype: dace.typeclass, uplo: str = 'L', batch: tuple[int, ...] = (), tag: str = '') -> dace.SDFG:
+    """The kernel's SDFG under a name unique to its configuration, so no case loads another's stale ``.so``."""
     real = {dace.complex64: dace.float32, dace.complex128: dace.float64}.get(dtype, dtype)
 
     @dace.program
@@ -64,7 +63,9 @@ def eigh_program(dtype: dace.typeclass,
         w[:] = ww
         v[:] = vv
 
-    return eigh_kernel
+    sdfg = eigh_kernel.to_sdfg()
+    sdfg.name = '_'.join(['eigh', dtype.to_string(), uplo, *map(str, batch), tag])
+    return sdfg
 
 
 def eigh_nodes(sdfg: dace.SDFG) -> list[Eigh]:
@@ -83,7 +84,7 @@ def run_cpu(sdfg: dace.SDFG, a: np.ndarray, real: type) -> tuple[np.ndarray, np.
 @pytest.mark.parametrize('implementation', ['OpenBLAS', 'pure'])
 def test_eigh_matches_numpy(implementation: str, dtype: dace.typeclass) -> None:
     """Every implementation decomposes every dtype, reading the lower triangle only."""
-    sdfg = eigh_program(dtype).to_sdfg()
+    sdfg = eigh_sdfg(dtype, tag=implementation)
     for node in eigh_nodes(sdfg):
         node.implementation = implementation
     a = hermitian(N, dtype)
@@ -97,7 +98,7 @@ def test_eigh_matches_numpy(implementation: str, dtype: dace.typeclass) -> None:
 def test_eigh_reads_the_upper_triangle_for_uplo_u(implementation: str) -> None:
     """``UPLO='U'`` reads the upper triangle, as numpy does; the lower one is never looked at."""
     dtype = dace.complex128
-    sdfg = eigh_program(dtype, uplo='U').to_sdfg()
+    sdfg = eigh_sdfg(dtype, uplo='U', tag=implementation)
     for node in eigh_nodes(sdfg):
         node.implementation = implementation
     a = hermitian(N, dtype, seed=3)
@@ -111,7 +112,7 @@ def test_eigh_solves_a_stack_of_matrices() -> None:
     """A ``(..., n, n)`` operand is decomposed one matrix at a time, like numpy's."""
     dtype = dace.float64
     batch = (2, 3)
-    sdfg = eigh_program(dtype, batch=batch).to_sdfg()
+    sdfg = eigh_sdfg(dtype, batch=batch)
     a = hermitian(N, dtype, seed=11, batch=batch)
     w, v = run_cpu(sdfg, a, np.float64)
     check_decomposition(a, w, v, 'L', dtype)
@@ -127,6 +128,7 @@ def test_eigvalsh_needs_no_eigenvector_output(implementation: str) -> None:
         w[:] = np.linalg.eigvalsh(a)
 
     sdfg = eigvalsh_kernel.to_sdfg()
+    sdfg.name = f'eigvalsh_{implementation}'
     for node in eigh_nodes(sdfg):
         node.implementation = implementation
     a = hermitian(N, dace.float64, seed=5)
@@ -137,12 +139,12 @@ def test_eigvalsh_needs_no_eigenvector_output(implementation: str) -> None:
 
 def test_eigh_rejects_an_unknown_triangle() -> None:
     with pytest.raises(Exception, match="UPLO argument must be 'L' or 'U'"):
-        eigh_program(dace.float64, uplo='X').to_sdfg()
+        eigh_sdfg(dace.float64, uplo='X')
 
 
 def test_vendor_expansion_raises_on_a_nonzero_info_code() -> None:
     """A failed decomposition must not hand back eigenvectors that were never computed."""
-    sdfg = eigh_program(dace.float64).to_sdfg()
+    sdfg = eigh_sdfg(dace.float64, tag='info')
     for node in eigh_nodes(sdfg):
         node.implementation = 'OpenBLAS'
     sdfg.expand_library_nodes()
@@ -155,7 +157,7 @@ def test_vendor_expansion_raises_on_a_nonzero_info_code() -> None:
 @pytest.mark.parametrize('dtype', [dace.float64, dace.complex128], ids=lambda d: d.to_string())
 def test_canonicalize_cpu_lowers_eigh_to_lapack(dtype: dace.typeclass) -> None:
     """The canonicalize CPU tail selects LAPACK, never the Jacobi loop, and the result is numpy's."""
-    sdfg = eigh_program(dtype).to_sdfg()
+    sdfg = eigh_sdfg(dtype, tag='canon_cpu')
     canonicalize(sdfg)
     finalize_for_target(sdfg, 'cpu')
     assert [n.implementation for n in eigh_nodes(sdfg)] == ['OpenBLAS']
@@ -180,7 +182,7 @@ def run_gpu(sdfg: dace.SDFG, a: np.ndarray, real: type) -> tuple[np.ndarray, np.
 @pytest.mark.parametrize('dtype', DTYPES, ids=lambda d: d.to_string())
 def test_eigh_device_solver_matches_numpy(dtype: dace.typeclass) -> None:
     """The vendor GPU solver decomposes every dtype; the column-major staging is transparent."""
-    sdfg = eigh_program(dtype).to_sdfg()
+    sdfg = eigh_sdfg(dtype, tag='device')
     sdfg.apply_gpu_transformations()
     for node in eigh_nodes(sdfg):
         node.implementation = device_solver()
@@ -194,7 +196,7 @@ def test_eigh_device_solver_matches_numpy(dtype: dace.typeclass) -> None:
 @pytest.mark.parametrize('dtype', [dace.float64, dace.complex128], ids=lambda d: d.to_string())
 def test_canonicalize_gpu_lowers_eigh_to_the_device_solver(dtype: dace.typeclass) -> None:
     """The canonicalize GPU pipeline selects the backend's vendor solver, and the result is numpy's."""
-    sdfg = eigh_program(dtype).to_sdfg()
+    sdfg = eigh_sdfg(dtype, tag='canon_gpu')
     canonicalize(sdfg, target='gpu')
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, 'gpu')
@@ -202,3 +204,24 @@ def test_canonicalize_gpu_lowers_eigh_to_the_device_solver(dtype: dace.typeclass
     a = hermitian(N, dtype, seed=19)
     w, v = run_gpu(sdfg, a, np.real(a).dtype.type)
     check_decomposition(a, w, v, 'L', dtype)
+
+
+if __name__ == '__main__':
+    for dtype in DTYPES:
+        for implementation in ('OpenBLAS', 'pure'):
+            test_eigh_matches_numpy(implementation, dtype)
+    test_eigh_reads_the_upper_triangle_for_uplo_u('OpenBLAS')
+    test_eigh_reads_the_upper_triangle_for_uplo_u('pure')
+    test_eigh_solves_a_stack_of_matrices()
+    test_eigvalsh_needs_no_eigenvector_output('OpenBLAS')
+    test_eigvalsh_needs_no_eigenvector_output('pure')
+    test_eigh_rejects_an_unknown_triangle()
+    test_vendor_expansion_raises_on_a_nonzero_info_code()
+    test_canonicalize_cpu_lowers_eigh_to_lapack(dace.float64)
+    test_canonicalize_cpu_lowers_eigh_to_lapack(dace.complex128)
+    test_eigh_device_solver_matches_numpy(dace.float32)
+    test_eigh_device_solver_matches_numpy(dace.float64)
+    test_eigh_device_solver_matches_numpy(dace.complex64)
+    test_eigh_device_solver_matches_numpy(dace.complex128)
+    test_canonicalize_gpu_lowers_eigh_to_the_device_solver(dace.float64)
+    test_canonicalize_gpu_lowers_eigh_to_the_device_solver(dace.complex128)
