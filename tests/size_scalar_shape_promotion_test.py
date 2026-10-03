@@ -351,7 +351,25 @@ def test_two_arrays_from_one_size_share_their_extent():
     assert p[0] == 3
 
 
+def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
+    """A loop that never writes the size keeps its symbol: the loop-body array and the outer one combine."""
+
+    @dace.program
+    def loop_body_array(nib: dace.int64[1], out: dace.float64[N, 2]):
+        my_n = int(nib[0])
+        acc = np.zeros((N, 2, my_n), dtype=np.float64)
+        for ip in range(2):
+            tg = np.ones((N, my_n), dtype=np.float64)
+            acc[:, ip, :] = tg
+        out[:] = np.sum(acc, axis=2)
+
+    out = np.zeros((5, 2))
+    loop_body_array(np.array([3], dtype=np.int64), out)
+    assert np.allclose(out, 3.0), out
+
+
 if __name__ == '__main__':
+    test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_two_arrays_from_one_size_share_their_extent()
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)

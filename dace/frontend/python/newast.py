@@ -1443,7 +1443,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.indirections = dict()
         #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
         #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
-        #: value shares one (elementwise operations between those arrays compare their extents).
+        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
         self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
@@ -6206,6 +6206,17 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
+    def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether the current region is ``defining_region`` or nested in it within the same SDFG. Loops in between do
+        not matter for a shape symbol: a write to its scalar drops it, so it holds the version every later read of an
+        unwritten scalar sees."""
+        region = self.cfg_target
+        while region is not defining_region:
+            if region is None or isinstance(region, SDFG):
+                return False
+            region = region.parent_graph
+        return True
+
     def proven_symbol_values(self) -> Dict[symbolic.symbol, symbolic.SymbolicType]:
         """Promoted symbols that provably equal a symbolic value at the current region.
 
@@ -6233,7 +6244,7 @@ class ProgramVisitor(ExtNodeVisitor):
         desc = self.sdfg.arrays[scalar]
         if fresh and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
-            if self.dominated_by_region(region):
+            if self.nested_in_region(region):
                 return version_sym
         sym = None if fresh else self.indirections.get(key)
         if sym is None:
