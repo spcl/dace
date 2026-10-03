@@ -91,13 +91,18 @@ _UNARY = {
     operator.neg: lambda a: -a,
     operator.not_: lambda a: sympy.Not(a),
     torch.sym_not: lambda a: sympy.Not(a),
+    torch.sym_float: lambda a: sympy.Float(1.0) * a,
+    torch.sym_int: lambda a: sympy.floor(a),
     math.floor: lambda a: sympy.floor(a),
     math.ceil: lambda a: sympy.ceiling(a),
     math.trunc: lambda a: sympy.floor(a),
     builtins.abs: lambda a: sympy.Abs(a),
+    builtins.float: lambda a: sympy.Float(1.0) * a,
+    builtins.int: lambda a: sympy.floor(a),
 }
-if hasattr(torch, 'sym_sqrt'):
-    _UNARY[torch.sym_sqrt] = lambda a: sympy.sqrt(a)
+for _name, _fn in (('sym_sqrt', sympy.sqrt), ('sym_log2', lambda a: sympy.log(a, 2))):
+    if hasattr(torch, _name):
+        _UNARY[getattr(torch, _name)] = _fn
 
 
 def _is_seq(v):

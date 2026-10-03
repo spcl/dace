@@ -16,7 +16,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 from .context import (ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError, Value,
-                      sanitize_name)
+                      dense_strides, sanitize_name)
 from .symbols import SymbolTable, SymExpr
 
 _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
@@ -190,14 +190,14 @@ class GraphImporter:
                     specs.append(OutputSpec('input', position=input_positions[v.name]))
                     continue
                 if v.is_view or v.source is not None or v.name in already_returned:
-                    out = ctx.add_array(f'out_{i}', v.tshape, v.torch_dtype, transient=False, device=v.device)
+                    strides = dense_strides(v.tstrides, v.tshape)
+                    out = ctx.add_array(f'out_{i}', v.tshape, v.torch_dtype, strides, transient=False, device=v.device)
                     ctx.emit_copy(v, out)
                     v = out
                 else:
                     v.desc.transient = False
                 already_returned.add(v.name)
-                specs.append(
-                    OutputSpec('tensor', v.name, v.tshape, _desc_tstrides(v), v.torch_dtype, v.device))
+                specs.append(OutputSpec('tensor', v.name, v.tshape, v.tstrides, v.torch_dtype, v.device))
             elif isinstance(v, SymValue):
                 specs.append(OutputSpec('sym', expr=v.expr))
             elif isinstance(v, ConstValue):
@@ -207,13 +207,6 @@ class GraphImporter:
             else:
                 raise UnsupportedOpError('output', f'cannot return value of type {type(v).__name__}')
         return specs
-
-
-def _desc_tstrides(v: TensorValue) -> Tuple[SymExpr, ...]:
-    """Strides of the output container at torch rank (rank-0 tensors have no strides)."""
-    if v.rank == 0:
-        return ()
-    return tuple(v.desc.strides)
 
 
 def _storage_for(example_inputs: Sequence[Any]) -> dtypes.StorageType:

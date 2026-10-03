@@ -194,11 +194,16 @@ class LoweringContext:
         self.containers[name] = desc
         return TensorValue(name, desc, tshape, tuple(tstrides), torch_dtype, device, source)
 
-    def add_tensor_like(self, prefix: str, val: torch.Tensor, transient: bool = True, contiguous: bool = True,
+    def add_tensor_like(self, prefix: str, val: torch.Tensor, transient: bool = True, contiguous: bool = False,
                         **kwargs) -> TensorValue:
-        """Registers a container matching a FakeTensor's shape/dtype (and strides unless ``contiguous``)."""
+        """
+        Registers a container matching a FakeTensor's shape, dtype and strides.
+
+        Containers keep torch's layout (``val.stride()``) because the strides of every downstream view in the FX graph
+        are expressed relative to it. Only pass ``contiguous=True`` for containers no FX view can refer to.
+        """
         tshape = self.symtab.shape(val.shape)
-        tstrides = None if contiguous else self.symtab.shape(val.stride())
+        tstrides = None if contiguous else dense_strides(self.symtab.shape(val.stride()), tshape)
         return self.add_array(prefix, tshape, val.dtype, tstrides, transient=transient, device=val.device, **kwargs)
 
     def add_view(self, prefix: str, base: TensorValue, tshape: Sequence[SymExpr], tstrides: Sequence[SymExpr],
@@ -289,6 +294,17 @@ def contiguous_strides(shape: Sequence[SymExpr]) -> Tuple[SymExpr, ...]:
         strides.append(acc)
         acc = acc * s
     return tuple(reversed(strides))
+
+
+def dense_strides(tstrides: Sequence[SymExpr], tshape: Sequence[SymExpr]) -> Optional[Tuple[SymExpr, ...]]:
+    """
+    Returns ``tstrides`` if they describe a dense (non-overlapping) layout usable for a freshly allocated container,
+    otherwise ``None`` (meaning: use a contiguous layout). Broadcast (stride 0) layouts are not dense.
+    """
+    for s in tstrides:
+        if (isinstance(s, int) and s == 0) or (isinstance(s, sympy.Basic) and s == 0):
+            return None
+    return tuple(tstrides)
 
 
 def index_memlet(name: str, indices: Sequence[Union[str, SymExpr]]) -> Memlet:

@@ -36,29 +36,139 @@ def _materialize_if_view(ctx: LoweringContext, t: TensorValue, prefix: str) -> T
     return out
 
 
-def alias_view(ctx: LoweringContext, node, base: TensorValue, subset: Optional[subsets.Range] = None) -> TensorValue:
+def alias_view(ctx: LoweringContext, node, base: TensorValue, subset: Optional[subsets.Range] = None,
+               val: Optional[torch.Tensor] = None, prefix: Optional[str] = None) -> TensorValue:
     """
-    Creates a view of ``base`` with the shape/strides of ``node``'s FakeTensor.
+    Creates a view of ``base`` with the shape/strides of ``node``'s FakeTensor (or ``val``).
 
-    Views of views are emitted as chains (offsets compose since all strides are relative to the root storage). If
+    Identity reinterpretations (same shape, strides, dtype, full range) return ``base`` itself. Views of views are
+    emitted as chains (offsets compose since all strides are relative to the root storage). If
     ``ctx.options.view_chains`` is False, the base is materialized first.
     """
-    val = _val(node)
+    val = _val(node) if val is None else val
+    tshape = ctx.symtab.shape(val.shape)
+    tstrides = ctx.symtab.shape(val.stride())
+    if subset is None and tshape == base.tshape and tstrides == base.tstrides and val.dtype == base.torch_dtype:
+        return base
     if base.is_view and not getattr(ctx.options, 'view_chains', True):
         base = _materialize_if_view(ctx, base, node.name + '_mat')
-    return ctx.emit_view('v_' + node.name, base, val, subset)
+    return ctx.emit_view_raw(prefix or ('v_' + node.name), base, tshape, tstrides, val.dtype, subset)
+
+
+def _slice_subset(tensor: TensorValue, dim: int, start, length, step=1) -> subsets.Range:
+    ranges = [(0, s - 1, 1) for s in tensor.tshape]
+    ranges[dim] = (start, start + (length - 1) * step, step)
+    return subsets.Range(ranges)
 
 
 # ---------------------------------------------------------------------- pure reinterpretations
 @register_lowering(*resolve('aten.view.default', 'aten._unsafe_view.default', 'aten.reshape.default',
                             'aten.permute.default', 'aten.t.default', 'aten.transpose.int', 'aten.unsqueeze.default',
                             'aten.squeeze.default', 'aten.squeeze.dim', 'aten.squeeze.dims', 'aten.alias.default',
-                            'aten.detach.default', 'aten.view.dtype', 'aten.unfold.default', 'aten.as_strided.default',
-                            'aten.movedim.int', 'aten.lift_fresh.default', 'aten._reshape_alias.default'))
+                            'aten.detach.default', 'aten.view.dtype', 'aten.unfold.default',
+                            'aten.movedim.int', 'aten.lift_fresh.default', 'aten._reshape_alias.default',
+                            'prims.broadcast_in_dim', 'prims.view_of', 'prims.transpose', 'prims.squeeze',
+                            'prims.collapse_view', 'prims.split_dim', 'prims.slice_in_dim', 'prims.slice'))
 def lower_reinterpret(ctx: LoweringContext, node, tensor: TensorValue, *args, **kwargs):
     if node.target in (aten.alias.default, aten.detach.default, aten.lift_fresh.default):
         return tensor
     return alias_view(ctx, node, tensor)
+
+
+@register_lowering(*resolve('aten.as_strided.default', 'aten.as_strided_copy.default'))
+def lower_as_strided(ctx: LoweringContext, node, tensor: TensorValue, size, stride, storage_offset=None):
+    """
+    ``as_strided`` relative to ``tensor``'s storage. The offset is expressed as a memlet subset start inside the base:
+    it is decomposed greedily over the base's dimensions (largest stride first) when that is exact.
+    """
+    val = _val(node)
+    offset = 0 if storage_offset is None else as_sym(storage_offset)
+    base_val = _input_val(node, 0)
+    if base_val is not None:
+        offset = offset - ctx.symtab.to_dace(base_val.storage_offset())
+    if offset == 0:
+        return alias_view(ctx, node, tensor)
+    indices = _offset_to_indices(offset, tensor.tshape, tensor.tstrides)
+    if indices is None:
+        raise UnsupportedOpError(node.target, f'cannot express storage offset {offset} within strides {tensor.tstrides}')
+    # The view spans from the offset element; extents along base dims are irrelevant for pointer computation but the
+    # subset must stay well-formed, so use a single element per base dimension.
+    subset = subsets.Range([(i, i, 1) for i in indices])
+    out = alias_view(ctx, node, tensor, subset)
+    return out
+
+
+def _input_val(node, position: int):
+    arg = node.args[position] if len(node.args) > position else None
+    if isinstance(arg, torch.fx.Node):
+        return arg.meta.get('val', None)
+    return None
+
+
+def _offset_to_indices(offset, tshape, tstrides):
+    """Greedy decomposition of a linear element offset into per-dimension indices of a strided layout."""
+    if len(tshape) == 0:
+        return None
+    order = list(range(len(tshape)))
+    if all(isinstance(s, int) for s in tstrides):
+        order.sort(key=lambda k: -tstrides[k])
+    indices = [0] * len(tshape)
+    remaining = offset
+    for k in order:
+        stride = tstrides[k]
+        if isinstance(stride, int) and stride == 0:
+            continue
+        if isinstance(remaining, int) and isinstance(stride, int):
+            q, remaining = divmod(remaining, stride)
+        else:
+            q = sympy.simplify(remaining / stride)
+            if q.is_integer is not True and not (isinstance(q, sympy.Basic) and q.is_Integer):
+                continue
+            remaining = 0
+        indices[k] = q
+    if (isinstance(remaining, int) and remaining == 0) or (isinstance(remaining, sympy.Basic) and remaining == 0):
+        return indices
+    return None
+
+
+def _norm_dims_list(dims, rank):
+    return [_norm_dim(d, rank) for d in (dims.items if isinstance(dims, TupleValue) else dims)]
+
+
+@register_lowering(*resolve('aten.split.Tensor', 'aten.split.sizes', 'aten.split_with_sizes.default',
+                            'aten.unsafe_split.Tensor', 'aten.unsafe_split_with_sizes.default'))
+def lower_split(ctx: LoweringContext, node, tensor: TensorValue, split_size_or_sizes, dim=0):
+    vals = list(_val(node))
+    dim = _norm_dim(dim, tensor.rank)
+    sizes = [ctx.symtab.to_dace(v.shape[dim]) for v in vals]
+    views = []
+    start = 0
+    for k, (v, length) in enumerate(zip(vals, sizes)):
+        views.append(alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, length), val=v,
+                                prefix=f'v_{node.name}_{k}'))
+        start = start + length
+    return TupleValue(views)
+
+
+@register_lowering(*resolve('aten.unbind.int'))
+def lower_unbind(ctx: LoweringContext, node, tensor: TensorValue, dim=0):
+    vals = list(_val(node))
+    dim = _norm_dim(dim, tensor.rank)
+    views = []
+    for k, v in enumerate(vals):
+        ranges = [(0, s - 1, 1) for s in tensor.tshape]
+        ranges[dim] = (k, k, 1)
+        views.append(alias_view(ctx, node, tensor, subsets.Range(ranges), val=v, prefix=f'v_{node.name}_{k}'))
+    return TupleValue(views)
+
+
+@register_lowering(*resolve('aten.narrow.default'))
+def lower_narrow(ctx: LoweringContext, node, tensor: TensorValue, dim, start, length):
+    dim = _norm_dim(dim, tensor.rank)
+    start = as_sym(start)
+    if isinstance(start, int) and start < 0:
+        start = start + tensor.tshape[dim]
+    return alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, as_sym(length)))
 
 
 # ---------------------------------------------------------------------- select / slice
@@ -87,9 +197,9 @@ def lower_slice(ctx: LoweringContext, node, tensor: TensorValue, dim=0, start=No
         start = sympy.Max(sympy.Min(start, size), 0) if not _nonnegative(start) else start
     # The output extent is given by the FakeTensor; it already accounts for clamping of start/end.
     length = ctx.symtab.to_dace(_val(node).shape[dim])
-    ranges = [(0, s - 1, 1) for s in tensor.tshape]
-    ranges[dim] = (start, start + (length - 1) * step, step)
-    return alias_view(ctx, node, tensor, subsets.Range(ranges))
+    if start == 0 and step == 1 and length == size:
+        return alias_view(ctx, node, tensor)  # full-range slice: identity (no view emitted)
+    return alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, length, step))
 
 
 def _nonnegative(expr) -> bool:
@@ -102,7 +212,7 @@ def _nonnegative(expr) -> bool:
 # ---------------------------------------------------------------------- copies
 @register_lowering(*resolve('aten.clone.default', 'aten.contiguous.default'))
 def lower_clone(ctx: LoweringContext, node, tensor: TensorValue, *, memory_format=None):
-    out = ctx.add_tensor_like('t_' + node.name, _val(node), contiguous=True)
+    out = ctx.add_tensor_like('t_' + node.name, _val(node))
     ctx.emit_copy(tensor, out)
     return out
 
@@ -111,7 +221,7 @@ def lower_clone(ctx: LoweringContext, node, tensor: TensorValue, *, memory_forma
 def lower_cat(ctx: LoweringContext, node, tensors: Sequence[TensorValue], dim=0):
     tensors = [t for t in tensors if not (t.rank == 1 and t.tshape[0] == 0)]
     val = _val(node)
-    out = ctx.add_tensor_like('t_' + node.name, val, contiguous=True)
+    out = ctx.add_tensor_like('t_' + node.name, val)
     dim = _norm_dim(dim, out.rank)
     offset = 0
     for t in tensors:

@@ -53,4 +53,4 @@ def resolve(*names):
 
 
 # Import lowering modules so that they register themselves
-from . import symbolic, pointwise, view, linalg, reduction, control_flow  # noqa: E402,F401
+from . import symint, pointwise, view, linalg, reduction, control_flow  # noqa: E402,F401

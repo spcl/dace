@@ -53,13 +53,15 @@ class SymbolTable:
             return int(expr)
         if isinstance(expr, int):
             return expr
+        if isinstance(expr, float):
+            return sympy.Float(expr)
         if isinstance(expr, _SYM_TYPES):
             if isinstance(expr, torch.SymInt) and expr.node.constant is not None:
                 return int(expr.node.constant)
             expr = expr.node.expr
         if isinstance(expr, sympy.Integer):
             return int(expr)
-        if isinstance(expr, sympy.Rational):
+        if isinstance(expr, (sympy.Rational, sympy.Float)):
             return expr
         if isinstance(expr, (sympy.logic.boolalg.BooleanTrue, sympy.logic.boolalg.BooleanFalse)):
             return 1 if bool(expr) else 0
@@ -81,12 +83,25 @@ class SymbolTable:
             if name == 'ModularIndexing':
                 x, d, m = args
                 return sympy.Mod(symbolic.int_floor(x, d), m)
-            if name in ('Identity', 'IntTrueDiv', 'FloatTrueDiv') and name == 'Identity':
+            if name == 'Identity':
                 return args[0]
-            if name == 'TruncToInt' or name == 'FloorToInt':
+            if name in ('IntTrueDiv', 'FloatTrueDiv'):
+                # True division yielding a float: keep a float factor so generated code does not use integer division
+                return sympy.Float(1.0) * args[0] / args[1]
+            if name in ('ToFloat', 'TruncToFloat'):
+                return sympy.Float(1.0) * args[0]
+            if name in ('TruncToInt', 'FloorToInt'):
                 return sympy.floor(args[0])
             if name == 'CeilToInt':
                 return sympy.ceiling(args[0])
+            if name == 'RoundToInt':
+                return sympy.floor(args[0] + sympy.Rational(1, 2))
+            if name in ('PowByNatural', 'FloatPow'):
+                return args[0]**args[1]
+            if name.startswith('OpaqueUnaryFn_'):
+                fn = getattr(sympy, name[len('OpaqueUnaryFn_'):], None)
+                if fn is not None:
+                    return fn(args[0])
             if name == 'IsNonOverlappingAndDenseIndicator':
                 raise UnsupportedSymbolicExpression(f'Unsupported layout predicate in shape expression: {expr}')
             raise UnsupportedSymbolicExpression(f'Unsupported symbolic function {name} in expression {expr}')

@@ -19,7 +19,7 @@ EXTRA_DECOMPOSITIONS = [
     'batch_norm', 'gelu', 'silu', 'mish', 'hardtanh', 'hardswish', 'hardsigmoid', 'leaky_relu', 'elu', 'celu', 'selu',
     'softplus', 'log_sigmoid_forward', 'log_sigmoid', 'native_dropout', 'dropout', 'tril', 'triu', 'masked_fill',
     'baddbmm', 'logsumexp', 'var_mean', 'var', 'std', 'std_mean', 'norm', 'linalg_vector_norm', 'repeat', 'roll',
-    'stack', 'unbind', 'split', 'split_with_sizes', 'chunk', 'narrow', 'expand_as', 'reshape', 'flatten', 'squeeze',
+    'stack', 'expand_as', 'reshape', 'flatten', 'squeeze',
     'unsqueeze', 'index_select', 'embedding', '_unsafe_index', 'nan_to_num', 'cumsum', 'upsample_nearest2d',
     '_adaptive_avg_pool2d', 'avg_pool2d', 'binary_cross_entropy_with_logits', 'mse_loss', 'l1_loss', 'smooth_l1_loss',
     'huber_loss', 'nll_loss_forward', 'nll_loss', 'cross_entropy_loss'
@@ -29,7 +29,7 @@ EXTRA_DECOMPOSITIONS = [
 NATIVE_OPS = [
     'mm', 'bmm', 'addmm', 'mv', 'dot', 'matmul', 'linear', 'convolution', '_to_copy', 'clone', 'cat', 'clamp',
     'clamp_min', 'clamp_max', 'expand', 'view', '_unsafe_view', 'permute', 't', 'transpose', 'slice', 'select', 'alias',
-    'detach', 'sum', 'mean', 'amax', 'amin', 'prod', 'max', 'min', 'argmax', 'argmin', 'where', 'full', 'full_like',
+    'detach', 'split', 'split_with_sizes', 'unbind', 'narrow', 'as_strided', 'sum', 'mean', 'amax', 'amin', 'prod', 'max', 'min', 'argmax', 'argmin', 'where', 'full', 'full_like',
     'zeros', 'zeros_like', 'ones', 'ones_like', 'empty', 'empty_like', 'new_zeros', 'new_ones', 'new_full', 'new_empty',
     'arange', 'scalar_tensor', 'addcmul', 'addcdiv', 'lerp', 'rsub', 'sigmoid', 'tanh', 'relu', 'flip', 'exp', 'log',
     'sqrt', 'rsqrt', 'square', 'reciprocal', 'pow', 'copy'

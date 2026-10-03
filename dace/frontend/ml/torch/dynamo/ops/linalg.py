@@ -13,7 +13,7 @@ aten = torch.ops.aten
 def _matmul(ctx: LoweringContext, node, a: TensorValue, b: TensorValue) -> TensorValue:
     from dace.libraries.blas import MatMul
     val = node.meta['val']
-    out = ctx.add_tensor_like('t_' + node.name, val, contiguous=True)
+    out = ctx.add_tensor_like('t_' + node.name, val)
     ctx.emit_library_call(MatMul('mm_' + node.name), {
         '_a': a.memlet(),
         '_b': b.memlet()

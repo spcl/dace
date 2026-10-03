@@ -79,7 +79,7 @@ def lower_cond(ctx: LoweringContext, node, pred, true_graph, false_graph, operan
     vals = node.meta['val']
     vals = list(vals) if isinstance(vals, (list, tuple)) else [vals]
     operands = _items(operands)
-    joins = [ctx.add_tensor_like(f't_{node.name}_{k}', v, contiguous=True) for k, v in enumerate(vals)]
+    joins = [ctx.add_tensor_like(f't_{node.name}_{k}', v) for k, v in enumerate(vals)]
 
     then_children: list = []
     outs = _lower_into(ctx, _graph(true_graph), operands, then_children)
@@ -106,7 +106,7 @@ def lower_while_loop(ctx: LoweringContext, node, cond_graph, body_graph, carried
     cond_gm, body_gm = _graph(cond_graph), _graph(body_graph)
 
     # Carried state lives in dedicated containers for the duration of the loop
-    state = [ctx.add_tensor_like(f't_{node.name}_c{k}', v, contiguous=True) for k, v in enumerate(vals)]
+    state = [ctx.add_tensor_like(f't_{node.name}_c{k}', v) for k, v in enumerate(vals)]
     for src, dst in zip(carried, state):
         ctx.emit_copy(src, dst)
 
@@ -168,11 +168,11 @@ def lower_scan(ctx: LoweringContext, node, combine_graph, init=(), xs=(), additi
     if not xs:
         raise UnsupportedOpError(node.target, 'scan without scanned inputs')
 
-    state = [ctx.add_tensor_like(f't_{node.name}_c{k}', v, contiguous=True) for k, v in enumerate(vals[:num_carry])]
+    state = [ctx.add_tensor_like(f't_{node.name}_c{k}', v) for k, v in enumerate(vals[:num_carry])]
     for src, dst in zip(init, state):
         ctx.emit_copy(src, dst)
     stacked = [
-        ctx.add_tensor_like(f't_{node.name}_y{j}', v, contiguous=True) for j, v in enumerate(vals[num_carry:])
+        ctx.add_tensor_like(f't_{node.name}_y{j}', v) for j, v in enumerate(vals[num_carry:])
     ]
 
     i = _loop_var(ctx, node)
@@ -196,7 +196,7 @@ def lower_map(ctx: LoweringContext, node, body_graph, xs=(), args=(), *rest, **k
     vals = list(node.meta['val'])
     if not xs:
         raise UnsupportedOpError(node.target, 'map without mapped inputs')
-    stacked = [ctx.add_tensor_like(f't_{node.name}_y{j}', v, contiguous=True) for j, v in enumerate(vals)]
+    stacked = [ctx.add_tensor_like(f't_{node.name}_y{j}', v) for j, v in enumerate(vals)]
 
     i = _loop_var(ctx, node)
     length = xs[0].tshape[0]

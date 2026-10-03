@@ -102,7 +102,7 @@ def lower_pointwise_values(ctx: LoweringContext,
                            prefix: Optional[str] = None,
                            compute_dtype: Optional[torch.dtype] = None) -> TensorValue:
     """
-    Generic pointwise lowering.
+    Generic pointwise lowering into a fresh output shaped like ``node.meta['val']``.
 
     :param operands: Tensor or scalar operands referenced as ``{0}``, ``{1}``, ... in ``template``.
     :param template: Format string (or callable receiving the compute typeclass and returning one).
@@ -111,15 +111,29 @@ def lower_pointwise_values(ctx: LoweringContext,
     :param compute_dtype: Overrides the dtype in which the expression is evaluated.
     """
     val = node.meta['val']
-    out = ctx.add_tensor_like(prefix or ('t_' + node.name), val, contiguous=True)
-    out_dtype = to_dace_dtype(val.dtype)
+    out = ctx.add_tensor_like(prefix or ('t_' + node.name), val)
+    pointwise_into(ctx, node.name, out, operands, template, nocast=nocast, kwargs=kwargs, compute_dtype=compute_dtype)
+    return out
+
+
+def pointwise_into(ctx: LoweringContext,
+                   name: str,
+                   out: TensorValue,
+                   operands: Sequence[Operand],
+                   template: Union[str, Callable[[dtypes.typeclass], str]],
+                   *,
+                   nocast: Sequence[int] = (),
+                   kwargs: Optional[Dict[str, Any]] = None,
+                   compute_dtype: Optional[torch.dtype] = None) -> None:
+    """Emits a broadcasting pointwise expression over ``operands`` into the existing container ``out``."""
+    out_dtype = out.dtype
 
     tensors = [(k, op) for k, op in enumerate(operands) if isinstance(op, TensorValue)]
     if compute_dtype is None:
         if is_boolean(out_dtype) and tensors:
             compute_dtype = _promote([t.torch_dtype for _, t in tensors])
         else:
-            compute_dtype = val.dtype
+            compute_dtype = out.torch_dtype
     compute = to_dace_dtype(compute_dtype)
 
     params = [f'__i{k}' for k in range(out.rank)]
@@ -140,8 +154,7 @@ def lower_pointwise_values(ctx: LoweringContext,
         template = template(compute)
     expr = template.format(*operand_strs, **named)
     code = f'__out = {cast_expr(expr, out_dtype)}'
-    emit_elementwise(ctx, node.name, out, inputs, code, params)
-    return out
+    emit_elementwise(ctx, name, out, inputs, code, params)
 
 
 def _is_scalar(v) -> bool:
@@ -208,7 +221,6 @@ _UNARY = {
     aten.isnan: '({0}) != ({0})',
     aten.isinf: 'isinf({0})',
     aten.isfinite: 'isfinite({0})',
-    prims.convert_element_type: '{0}',
     aten.positive: '{0}',
 }
 
@@ -246,6 +258,61 @@ for _op, _template in _UNARY.items():
     register_lowering(_op)(_simple(_template))
 for _op, _template in _BINARY.items():
     register_lowering(_op)(_simple(_template))
+
+# prims-level aliases (appear in some decompositions)
+_PRIMS = {
+    'add': '({0}) + ({1})',
+    'sub': '({0}) - ({1})',
+    'mul': '({0}) * ({1})',
+    'div': '({0}) / ({1})',
+    'maximum': 'max({0}, {1})',
+    'minimum': 'min({0}, {1})',
+    'pow': 'pow({0}, {1})',
+    'atan2': 'atan2({0}, {1})',
+    'eq': '({0}) == ({1})',
+    'ne': '({0}) != ({1})',
+    'lt': '({0}) < ({1})',
+    'le': '({0}) <= ({1})',
+    'gt': '({0}) > ({1})',
+    'ge': '({0}) >= ({1})',
+    'neg': '-({0})',
+    'abs': 'abs({0})',
+    'exp': 'exp({0})',
+    'log': 'log({0})',
+    'sqrt': 'sqrt({0})',
+    'rsqrt': '1 / sqrt({0})',
+    'sin': 'sin({0})',
+    'cos': 'cos({0})',
+    'tanh': 'tanh({0})',
+    'erf': 'erf({0})',
+    'floor': 'floor({0})',
+    'ceil': 'ceil({0})',
+    'round': 'round({0})',
+    'trunc': 'trunc({0})',
+    'sign': 'sign({0})',
+    'reciprocal': '1 / ({0})',
+    'exp2': 'exp2({0})',
+    'expm1': 'expm1({0})',
+    'log1p': 'log1p({0})',
+    'log2': 'log2({0})',
+    'log10': 'log10({0})',
+    'isnan': '({0}) != ({0})',
+    'isinf': 'isinf({0})',
+    'isfinite': 'isfinite({0})',
+}
+for _name, _template in _PRIMS.items():
+    for _op in resolve(f'prims.{_name}'):
+        register_lowering(_op)(_simple(_template))
+
+
+@register_lowering(*resolve('prims.where'))
+def lower_prims_where(ctx, node, cond, a, b):
+    return lower_pointwise_values(ctx, node, [cond, a, b], '(({1}) if ({0}) else ({2}))', nocast=(0, ))
+
+
+@register_lowering(*resolve('prims.convert_element_type'))
+def lower_convert_element_type(ctx, node, x, dtype=None):
+    return lower_pointwise_values(ctx, node, [x], '{0}')
 
 
 @register_lowering(aten.add.Tensor, aten.add.Scalar)
@@ -353,7 +420,7 @@ def lower_to_copy(ctx, node, x, *args, **kwargs):
 # ---------------------------------------------------------------------- fills, ranges
 def _fill(ctx, node, value):
     val = node.meta['val']
-    out = ctx.add_tensor_like('t_' + node.name, val, contiguous=True)
+    out = ctx.add_tensor_like('t_' + node.name, val)
     code = f'__out = {cast_expr(literal(value, None), out.dtype)}'
     emit_elementwise(ctx, node.name, out, [], code)
     return out
@@ -388,7 +455,7 @@ def lower_ones(ctx, node, *args, **kwargs):
                             'aten.new_empty.default', 'aten.empty_strided.default', 'aten.empty_permuted.default'))
 def lower_empty(ctx, node, *args, **kwargs):
     # Uninitialized storage: allocate the container, emit nothing.
-    return ctx.add_tensor_like('t_' + node.name, node.meta['val'], contiguous=True)
+    return ctx.add_tensor_like('t_' + node.name, node.meta['val'])
 
 
 @register_lowering(aten.scalar_tensor.default)
@@ -405,7 +472,7 @@ def lower_arange(ctx, node, *args, **kwargs):
     else:
         start, _, step = args[:3]
     val = node.meta['val']
-    out = ctx.add_tensor_like('t_' + node.name, val, contiguous=True)
+    out = ctx.add_tensor_like('t_' + node.name, val)
     expr = f'{literal(start, out.dtype)} + {cast_expr("__i0", out.dtype)} * {literal(step, out.dtype)}'
     code = f'__out = {cast_expr(expr, out.dtype)}'
     emit_elementwise(ctx, node.name, out, [], code)
