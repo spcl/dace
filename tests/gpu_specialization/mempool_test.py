@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU memory-pool (``cudaMallocAsync`` / ``cudaFreeAsync``) test for the experimental codegen."""
 import glob
+from dace.codegen import common
 import os
 
 import numpy as np
@@ -54,11 +55,13 @@ def test_mempool_runs_correctly_and_emits_expected_calls():
     assert sources, f"No generated sources found under {build}"
     src = '\n'.join(open(s).read() for s in sources)
 
-    assert src.count('cudaDeviceGetDefaultMemPool') >= 1, "Pool header missing (DeviceGetDefaultMemPool)."
-    assert src.count('cudaMemPoolSetAttribute') >= 1, "Pool header missing (MemPoolSetAttribute)."
+    assert src.count(
+        f'{common.get_gpu_backend()}DeviceGetDefaultMemPool') >= 1, "Pool header missing (DeviceGetDefaultMemPool)."
+    assert src.count(
+        f'{common.get_gpu_backend()}MemPoolSetAttribute') >= 1, "Pool header missing (MemPoolSetAttribute)."
 
-    malloc_async = src.count('cudaMallocAsync')
-    free_async = src.count('cudaFreeAsync')
+    malloc_async = src.count(f'{common.get_gpu_backend()}MallocAsync')
+    free_async = src.count(f'{common.get_gpu_backend()}FreeAsync')
     assert malloc_async >= len(pooled), (f"Expected >= {len(pooled)} cudaMallocAsync calls "
                                          f"(one per pooled array), got {malloc_async}.")
     assert free_async >= len(pooled), (f"Expected >= {len(pooled)} cudaFreeAsync calls "

@@ -38,8 +38,8 @@ CPU_MULTICORE = dace.ScheduleType.CPU_Multicore
 
 
 def cu_objects(objects):
-    """The ``.cu`` CodeObjects (one per GPU translation unit)."""
-    return [o for o in objects if o.language == "cu"]
+    """The GPU CodeObjects (one per GPU translation unit), ``.cu`` on CUDA and ``.cpp`` on HIP."""
+    return [o for o in objects if o.title == "CUDA"]
 
 
 def kernel_cu_objects(objects):
