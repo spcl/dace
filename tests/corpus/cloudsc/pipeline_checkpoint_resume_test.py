@@ -24,10 +24,10 @@ import pytest
 import dace
 from dace.codegen.codegen import generate_code
 from dace.sdfg.state import SDFGState
-from dace.serialize import SerializableObject
-from tests.corpus.cloudsc.pipelines import load_checkpoint, run_pipeline, uniquely_named
+from tests.corpus.cloudsc.pipelines import load_checkpoint, run_pipeline, uniquely_named, variant_phases
 
-PHASES = ('start', 'prep', 'loop_to_x', 'parallelize', 'coalesce')
+#: The phases the ``parallelize`` pipeline checkpoints, in order: read from the pipeline, never restated
+PHASES = tuple(name for name, _ in variant_phases('parallelize'))
 
 
 @dace.program
@@ -164,17 +164,17 @@ def corrupt(path: Path):
 
 
 def test_lossy_checkpoint_is_refused(base_sdfg, inputs, tmp_path):
-    """The default reader warns and hands back an SDFG that quietly lost what it could not rebuild.
-    Resume must reject that graph and fall back to an earlier checkpoint."""
+    """A checkpoint naming a transformation this build does not have cannot be read back faithfully.
+    Resume must reject it and fall back to an earlier checkpoint."""
     dump = tmp_path / 'dump'
     drive(base_sdfg, inputs, dump, resume=False)
     last = checkpoints(dump)[-1]
     corrupt(last)
 
-    # The default reader swaps the element it could not rebuild for an opaque placeholder and hands
-    # back an SDFG -- that is the silent corruption. The strict load raises on the same file.
-    lossy = dace.SDFG.from_file(str(last))
-    assert [type(x) for x in lossy.transformation_hist] == [SerializableObject]
+    # A registered type that fails to parse raises rather than becoming a placeholder, in the default
+    # reader as well as in the checkpoint loader: neither may hand back a graph that lost an element.
+    with pytest.raises(TypeError, match='TransformationFromTheFuture'):
+        dace.SDFG.from_file(str(last))
     with pytest.raises(TypeError, match='TransformationFromTheFuture'):
         load_checkpoint(last)
 
