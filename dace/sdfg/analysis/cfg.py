@@ -311,7 +311,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    idom = idom or sdutil.immediate_dominators(cfg.nx, cfg.start_block)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
         # Branch merges are only needed to tell loops apart from branches
@@ -578,7 +578,7 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
         ptree = {}
         merges = {}
     else:
-        idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+        idom = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
         ptree = block_parent_tree(cfg, loopexits, idom=idom)
         # Annotate branches
         merges = branch_merges(cfg, idom)
