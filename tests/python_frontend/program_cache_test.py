@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -69,8 +69,50 @@ def test_cache_argument_names():
     assert np.allclose(a, rega) and np.allclose(c, regc)
 
 
+N = dace.symbol('N')
+
+
+@dace.program
+def doubled(a: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[i] = a[i] * 2.0
+
+
+@dace.program
+def calls_doubled(a: dace.float64[N], out: dace.float64[N]):
+    doubled(a, out)
+
+
+def _compiled_entries(program) -> int:
+    return sum(entry.compiled_sdfg is not None for entry in program._cache.cache.values())
+
+
+def test_autooptimized_program_is_not_reused_for_other_symbol_values():
+    """Auto-optimization specializes the SDFG for the call's symbol values, so a call with other values recompiles."""
+    with dace.config.set_temporary('optimizer', 'autooptimize', value=True):
+        doubled._cache.clear()
+        for n in (5, 6, 5):
+            out = np.zeros(n)
+            doubled(np.arange(n, dtype=np.float64), out)
+            assert np.allclose(out, 2.0 * np.arange(n)), f'wrong result for N={n}'
+        assert _compiled_entries(doubled) == 2, 'a repeated call with the same values must hit the cache'
+
+
+def test_nesting_an_autooptimized_program_does_not_inherit_its_symbol_values():
+    """A program nesting one that was auto-optimized for N=5 must still see N as a symbol."""
+    with dace.config.set_temporary('optimizer', 'autooptimize', value=True):
+        doubled._cache.clear()
+        calls_doubled._cache.clear()
+        doubled(np.arange(5, dtype=np.float64), np.zeros(5))
+        out = np.zeros(6)
+        calls_doubled(np.arange(6, dtype=np.float64), out)
+        assert np.allclose(out, 2.0 * np.arange(6))
+
+
 if __name__ == '__main__':
     test_cache_same_args()
     test_cache_different_args()
     test_cache_return_values()
     test_cache_argument_names()
+    test_autooptimized_program_is_not_reused_for_other_symbol_values()
+    test_nesting_an_autooptimized_program_does_not_inherit_its_symbol_values()
