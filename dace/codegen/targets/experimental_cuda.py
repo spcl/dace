@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace.ordered import OrderedSet
@@ -10,9 +10,8 @@ from dace import cpf_lowering, dtypes, registry
 from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.narrowing import config_int, config_str
+from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 from dace.codegen import common
@@ -83,7 +82,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
 
         self._global_sdfg: SDFG = sdfg
-        self._toplevel_schedule = None
 
         self.pool_release: Dict[Tuple[SDFG, str], Tuple[SDFGState, Set[nodes.Node]]] = {}
         # Every pooled array released early, which the end of its lifetime must not free again
@@ -389,9 +387,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._localcode.write('}', cfg, state_id, scope_entry)
 
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                    src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
-                    edge: Tuple[nodes.Node, str, nodes.Node, str,
-                                Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+                    src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet],
+                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # One container handed on through the scope exits with a single subset moves nothing; the
         # CPU copy would take the exit's slice as the source and the whole container as the target.
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
@@ -411,7 +408,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise CodegenError(f'Copy {src_node} -> {dst_node} involves GPU memory but was not lowered to a '
                                'CopyLibraryNode by InsertExplicitCopies; the CPU fallback would access device '
                                'memory from the host.')
-        self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+        if not isinstance(src_node,
+                          (nodes.Tasklet, nodes.AccessNode)) or not isinstance(dst_node,
+                                                                               (nodes.Tasklet, nodes.AccessNode)):
+            raise CodegenError(f'Copy {src_node} -> {dst_node} is neither between tasklets nor access nodes')
+        self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream,
+                                      callsite_stream)
 
     def synchronize_host_reads(self,
                                cfg: ControlFlowRegion,
@@ -462,8 +464,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if parts is None:
                 return cpp.cpp_array_expr(state.sdfg, edge.data, framecode=self._frame)
             ptrname, fnname, extra_syms = parts[0], parts[1], parts[3]
-            return format_index_access(ptrname, fnname, [str(index) for index in edge.data.subset.min_element()],
-                                       extra_syms)
+            return format_index_access(ptrname, fnname,
+                                       [str(index) for index in as_range(edge.data.subset).min_element()], extra_syms)
         return assigned_stream_expr(producer)
 
     def reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
@@ -584,10 +586,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def _generate_NestedSDFG(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                              node: nodes.NestedSDFG, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        old_schedule = self._toplevel_schedule
-        nested_schedule = get_node_schedule(sdfg, dfg, node)
-        if nested_schedule != dtypes.ScheduleType.Default:
-            self._toplevel_schedule = nested_schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
@@ -599,14 +597,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dispatcher.defined_vars.exit_scope(node)
 
         self._cpu_codegen.calling_codegen = old_codegen
-        self._toplevel_schedule = old_schedule
 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import ScopeManager
 
         tasklet: nodes.Tasklet = node
-        with ScopeManager(self, sdfg, cfg, dfg, state_id, function_stream, callsite_stream,
+        with ScopeManager(sdfg, cfg, dfg, state_id, function_stream, callsite_stream,
                           brackets_on_enter=False) as scope_manager:
 
             # ``location`` guards run the tasklet on a specific slice of threads/warps/blocks.
@@ -624,10 +621,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             finally:
                 self._cpu_codegen.calling_codegen = old_codegen
 
-    def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                      node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                      declaration_stream: CodeIOStream):
-
+    def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      nodedesc: dt.Data, function_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
+        node = as_access(node)
         ptrname = ptr(node.data, nodedesc, sdfg, self._frame)
         fsymbols = self._frame.symbols_and_constants(sdfg)
 
@@ -659,13 +655,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer, array_ctype)
 
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+                       node: nodes.Node, nodedesc: dt.Data, function_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         """Declare and allocate a data container, dispatching on its storage type.
 
         Views and references fall through to the CPU codegen.  The actual allocation for
         GPU/CPU-pinned/shared arrays is delegated to ``_prepare_<storage>_array``.
         """
+        node = as_access(node)
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         if self._dispatcher.defined_vars.has(dataname):
@@ -790,9 +787,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                     state_id, node)
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                         node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
-                         callsite_stream: CodeIOStream):
-
+                         node: nodes.Node, nodedesc: dt.Data, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
+        node = as_access(node)
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:

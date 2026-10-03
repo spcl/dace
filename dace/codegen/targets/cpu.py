@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, U
 import re
 
 if TYPE_CHECKING:
+    from dace.codegen.targets.cuda import CUDACodeGen
+    from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
@@ -699,7 +701,8 @@ class CPUCodeGen(TargetCodeGenerator):
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
-        self.calling_codegen = self
+        #: The generator whose file the emitted code lands in: this one, or a GPU generator that delegates here.
+        self.calling_codegen: 'CPUCodeGen | CUDACodeGen | ExperimentalCUDACodeGen' = self
         #: Per-SDFG "may be written" sets, for :meth:`standalone_readonly`. Keyed by id because a
         #: descriptor set is asked for once per pointer connector and the walk behind it is not free.
         self._standalone_mutated: Dict[int, Set[str]] = {}
@@ -982,7 +985,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: ScopeSubgraphView, state_id: int, node: nodes.Node,
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Dynamically obtain node generator according to class name
         try:
@@ -1016,7 +1019,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def allocate_view(self,
                       sdfg: SDFG,
                       cfg: ControlFlowRegion,
-                      dfg: SDFGState,
+                      dfg: StateSubgraphView,
                       state_id: int,
                       node: nodes.AccessNode,
                       global_stream: CodeIOStream,
@@ -1136,7 +1139,7 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(f'{atype} {aname};', cfg, state_id, node)
         allocation_stream.write(f'{aname} = {value};', cfg, state_id, node)
 
-    def allocate_reference(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
+    def allocate_reference(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                            node: nodes.AccessNode, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                            allocation_stream: CodeIOStream) -> None:
         name = node.data
@@ -1501,7 +1504,7 @@ class CPUCodeGen(TargetCodeGenerator):
         state_id: int,
         src_node: Union[nodes.Tasklet, nodes.AccessNode],
         dst_node: Union[nodes.Tasklet, nodes.AccessNode],
-        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        edge: MultiConnectorEdge[mmlt.Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
@@ -1553,7 +1556,7 @@ class CPUCodeGen(TargetCodeGenerator):
         dst_node: nodes.Node,
         dst_storage: dtypes.StorageType,
         dst_schedule: dtypes.ScheduleType,
-        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        edge: MultiConnectorEdge[mmlt.Memlet],
         dfg: StateSubgraphView,
         stream: CodeIOStream,
     ) -> None:
@@ -3020,7 +3023,7 @@ class CPUCodeGen(TargetCodeGenerator):
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: ScopeSubgraphView,
+        dfg: StateSubgraphView,
         state_id: int,
         node: nodes.NestedSDFG,
         function_stream: CodeIOStream,

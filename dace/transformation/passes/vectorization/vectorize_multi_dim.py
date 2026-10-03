@@ -406,7 +406,7 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Widen body-NSDFG boundary memlets, then repair the widened connectors.
 
         :returns: The number of widenings applied; ``0`` when nothing widened but the two
@@ -479,7 +479,7 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         violation = no_wcr_inside_nested_sdfgs(sdfg)
         if violation is not None:
             raise VectorizeUnsupported(f"unresolved WCR inside the body NSDFG before tiling: {violation}")
@@ -500,7 +500,7 @@ class _AssertNoBodyWCR(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
             if violation is not None:
                 raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violation}")
@@ -525,7 +525,7 @@ class _AssertTileOpsLowered(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
         if violation is not None:
             raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {violation}")
@@ -590,7 +590,7 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Fuse, promote, then inline the branch-lowered body NestedSDFGs.
 
         :returns: The number of inlines applied; ``0`` when nothing inlined but the state
@@ -981,7 +981,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         self._validate_all = validate_all
         self._assume_even = assume_even
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
         The K-dim tile is taken over the last ``K`` params of one innermost map of the canonical
@@ -990,7 +990,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Carry-in from any enclosing pipeline.
-        :returns: Whatever the inner pipeline returned (count of rewrites).
+        :returns: Whatever the inner pipeline returned.
         """
         with equalized(sdfg):
             return self.vectorize(sdfg, pipeline_results)

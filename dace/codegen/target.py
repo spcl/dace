@@ -9,7 +9,7 @@ from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -128,7 +128,7 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for a single node, outputting it to the given
             code streams.
@@ -146,7 +146,7 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+    def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       nodedesc: dt.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
         """ Generates code for declaring an array without allocating it,
             outputting to the given code streams.
@@ -164,9 +164,9 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-                       nodedesc: dt.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                       allocation_stream: CodeIOStream) -> None:
+    def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                       node: nodes.Node, nodedesc: dt.Data, global_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
             code streams.
 
@@ -185,8 +185,9 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-                         nodedesc: dt.Data, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+    def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                         node: nodes.Node, nodedesc: dt.Data, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
             code streams.
 
@@ -204,9 +205,9 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, src_node: nodes.Node,
-                    dst_node: nodes.Node, edge: gr.MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream,
-                    callsite_stream: CodeIOStream) -> None:
+    def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node, edge: gr.MultiConnectorEdge[mm.Memlet],
+                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for copying memory, either from a data access
             node (array/stream) to another, a code node (tasklet/nested
             SDFG) to another, or a combination of the two.

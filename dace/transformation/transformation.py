@@ -36,6 +36,9 @@ from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
+#: The graph a pattern is matched in: a state for single-state patterns, a control-flow region for multi-state ones.
+GraphT = TypeVar('GraphT', bound=Union[ControlFlowRegion, SDFGState])
+
 
 def explicit_cf_compatible(cls: Type[PassT]) -> Type[PassT]:
     cls.__explicit_cf_compatible__ = True
@@ -99,7 +102,7 @@ class TransformationBase(ppl.Pass):
 
 
 @make_properties
-class PatternTransformation(TransformationBase):
+class PatternTransformation(TransformationBase, Generic[GraphT]):
     """
     Abstract class for pattern-matching transformations.
     Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
@@ -154,11 +157,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def can_be_applied(self,
-                       graph: Union[ControlFlowRegion, SDFGState],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: GraphT, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
 
@@ -173,7 +172,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[ControlFlowRegion, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: GraphT, sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
@@ -543,7 +542,7 @@ class PatternTransformation(TransformationBase):
 
 @make_properties
 @explicit_cf_compatible
-class SingleStateTransformation(PatternTransformation, abc.ABC):
+class SingleStateTransformation(PatternTransformation[SDFGState], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
     New transformations that extend this class must contain static ``PatternNode`` fields that represent the
@@ -599,7 +598,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
 
 
 @make_properties
-class MultiStateTransformation(PatternTransformation, abc.ABC):
+class MultiStateTransformation(PatternTransformation[ControlFlowRegion], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within an SDFG state machine.
     New transformations that extend this class must contain static ``PatternNode``-annotated fields that represent the

@@ -8,18 +8,18 @@ import sympy
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.codegen.targets.cuda import default_block_size, gpu_scope_maps_recursive, thread_block_extent
 from dace.sdfg import nodes
-from dace.transformation import gpu_helpers, pass_pipeline as ppl
+from dace.transformation import gpu_helpers
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 
 
-class InferGPUGridAndBlockSize(ppl.Pass):
+class InferGPUGridAndBlockSize:
     """Infer the 3D grid and block sizes of every ``GPU_Device`` map; nested ``GPU_Device`` maps are not handled.
 
     Without a thread-block map the kernel spans threads: its block is ``gpu_block_size`` or the default.
     """
 
-    def apply_pass(self, sdfg: SDFG,
-                   kernels_with_added_tb_maps: Set[nodes.MapEntry]) -> Dict[nodes.MapEntry, Tuple[List, List]]:
+    def infer(self, sdfg: SDFG,
+              kernels_with_added_tb_maps: Set[nodes.MapEntry]) -> Dict[nodes.MapEntry, Tuple[List, List]]:
         """Map each ``GPU_Device`` entry to ``(grid, block)``; ``kernels_with_added_tb_maps`` read ``gpu_block_size``.
 
         :raises ValueError: Explicit and inferred block sizes conflict.

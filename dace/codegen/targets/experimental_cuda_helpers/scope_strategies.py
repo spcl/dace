@@ -5,9 +5,8 @@ from abc import ABC, abstractmethod
 from dace import dtypes, subsets, symbolic
 from dace.codegen import common
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.transformation import helpers
 from dace.codegen.targets.cpp import sym2cpp
@@ -121,8 +120,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
+        with ScopeManager(sdfg=sdfg,
                           cfg=cfg,
                           dfg_scope=dfg_scope,
                           state_id=state_id,
@@ -185,8 +183,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
+        with ScopeManager(sdfg=sdfg,
                           cfg=cfg,
                           dfg_scope=dfg_scope,
                           state_id=state_id,
@@ -255,8 +252,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        with ScopeManager(frame_codegen=self.codegen._frame,
-                          sdfg=sdfg,
+        with ScopeManager(sdfg=sdfg,
                           cfg=cfg,
                           dfg_scope=dfg_scope,
                           state_id=state_id,
@@ -381,10 +377,9 @@ class ScopeManager:
     """
 
     def __init__(self,
-                 frame_codegen: DaCeCodeGenerator,
                  sdfg: SDFG,
                  cfg: ControlFlowRegion,
-                 dfg_scope: ScopeSubgraphView,
+                 dfg_scope: StateSubgraphView,
                  state_id: int,
                  function_stream: CodeIOStream,
                  callsite_stream: CodeIOStream,
@@ -393,11 +388,9 @@ class ScopeManager:
                  debug: bool = False):
         """Initialize the scope manager.
 
-        :param frame_codegen: frame codegen used for in-scope array (de)allocation.
         :param comment: block label surfaced in ``debug`` mode.
         :param brackets_on_enter: open a bracket on ``__enter__`` (default).
         """
-        self.frame_codegen = frame_codegen
         self.sdfg = sdfg
         self.cfg = cfg
         self.dfg_scope = dfg_scope
