@@ -25,6 +25,7 @@ double -> double) and a half op half still uses CUDA's native half operators.
 
 Every probe is one C++ tasklet in a GPU device map, compiled through ``SDFG.compile``.
 """
+
 from typing import Optional
 
 import pytest
@@ -36,9 +37,21 @@ from dace.codegen.exceptions import CompilationError
 pytestmark = pytest.mark.gpu
 
 #: One operand of each kind, read from GPU memory so nothing folds at compile time.
-INPUTS = {"h": dace.float16, "f": dace.float32, "d": dace.float64, "i": dace.int32, "b": dace.bool_}
+INPUTS = {
+    "h": dace.float16,
+    "f": dace.float32,
+    "d": dace.float64,
+    "i": dace.int32,
+    "b": dace.bool_,
+}
 #: Result connectors; a probe gets the ones its body assigns.
-OUTPUTS = {"out_h": dace.float16, "out_f": dace.float32, "out_d": dace.float64, "out_i": dace.int32, "out_b": dace.bool_}
+OUTPUTS = {
+    "out_h": dace.float16,
+    "out_f": dace.float32,
+    "out_d": dace.float64,
+    "out_i": dace.int32,
+    "out_b": dace.bool_,
+}
 
 
 def _probe_sdfg(name: str, body: str) -> dace.SDFG:
@@ -48,22 +61,30 @@ def _probe_sdfg(name: str, body: str) -> dace.SDFG:
     outputs = {conn: dtype for conn, dtype in OUTPUTS.items() if conn in body}
     for conn, dtype in {**INPUTS, **outputs}.items():
         sdfg.add_array(conn.upper(), [1], dtype, storage=dtypes.StorageType.GPU_Global)
-    map_entry, map_exit = state.add_map("probe", {"k": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet("probe", set(INPUTS), set(outputs), body + ";", language=dtypes.Language.CPP)
+    map_entry, map_exit = state.add_map(
+        "probe", {"k": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device
+    )
+    tasklet = state.add_tasklet(
+        "probe", set(INPUTS), set(outputs), body + ";", language=dtypes.Language.CPP
+    )
     for conn, dtype in INPUTS.items():
         tasklet.in_connectors[conn] = dtype
-        state.add_memlet_path(state.add_read(conn.upper()),
-                              map_entry,
-                              tasklet,
-                              dst_conn=conn,
-                              memlet=dace.Memlet(f"{conn.upper()}[0]"))
+        state.add_memlet_path(
+            state.add_read(conn.upper()),
+            map_entry,
+            tasklet,
+            dst_conn=conn,
+            memlet=dace.Memlet(f"{conn.upper()}[0]"),
+        )
     for conn, dtype in outputs.items():
         tasklet.out_connectors[conn] = dtype
-        state.add_memlet_path(tasklet,
-                              map_exit,
-                              state.add_write(conn.upper()),
-                              src_conn=conn,
-                              memlet=dace.Memlet(f"{conn.upper()}[0]"))
+        state.add_memlet_path(
+            tasklet,
+            map_exit,
+            state.add_write(conn.upper()),
+            src_conn=conn,
+            memlet=dace.Memlet(f"{conn.upper()}[0]"),
+        )
     return sdfg
 
 
@@ -101,7 +122,9 @@ MIXED_EXPRESSIONS = {
 }
 
 
-@pytest.mark.parametrize("name,body", MIXED_EXPRESSIONS.items(), ids=MIXED_EXPRESSIONS.keys())
+@pytest.mark.parametrize(
+    "name,body", MIXED_EXPRESSIONS.items(), ids=MIXED_EXPRESSIONS.keys()
+)
 def test_mixed_half_expression_compiles(name, body):
     error = _compile(name, body)
     assert error is None, f"`{body}` failed to compile:\n{error}"

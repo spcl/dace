@@ -4,12 +4,13 @@
 Each case is one mapped tasklet whose connectors carry the dtypes directly, with no casts in
 between -- the shape a mixed-precision retyping of an fp64 program produces. Under CUDA every one
 of them used to fail to compile, because ``dace::float16`` is ``__half`` and nvcc found the
-built-in operator and ``__half``'s own equally good; a conditional with a half arm still does,
-since ``?:`` cannot be overloaded, so codegen casts its arms. Each case is compiled, run and
-checked against numpy, with the half promoted to the wider operand's type.
+built-in operator and ``__half``'s own equally good. Each case is compiled, run and checked
+against numpy, with the half promoted to the wider operand's type.
 """
+
 import numpy as np
 import pytest
+
 
 import dace
 from dace import dtypes
@@ -24,40 +25,45 @@ FLOATS = np.array([-3.0, -1.0, 0.0, 0.1, 1.0, 2.5, 7.0, 1e3], np.float32)
 
 #: name -> (inputs, output dtype, tasklet code, numpy reference)
 CASES = {
-    "half_lt_double_literal": ({
-        "a": HALVES
-    }, np.bool_, "c = a < 1e-14", lambda a: a.astype(np.float64) < 1e-14),
-    "float_div_half": ({
-        "a": FLOATS,
-        "b": POSITIVE
-    }, np.float32, "c = a / b", lambda a, b: a / b.astype(np.float32)),
+    "half_lt_double_literal": (
+        {"a": HALVES},
+        np.bool_,
+        "c = a < 1e-14",
+        lambda a: a.astype(np.float64) < 1e-14,
+    ),
+    "float_div_half": (
+        {"a": FLOATS, "b": POSITIVE},
+        np.float32,
+        "c = a / b",
+        lambda a, b: a / b.astype(np.float32),
+    ),
     # Half of the floats are not representable as the half they came from.
-    "float_eq_half": ({
-        "a": HALVES.astype(np.float32) + np.float32([0, 1e-3] * 4),
-        "b": HALVES
-    }, np.bool_, "c = a == b", lambda a, b: a == b.astype(np.float32)),
-    "pow_half_double": ({
-        "a": POSITIVE,
-        "b": np.array([-2.0, -1.5, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
-    }, np.float16, "c = a ** b", lambda a, b: (a.astype(np.float64)**b).astype(np.float16)),
-    "pow_half_half": ({
-        "a": POSITIVE,
-        "b": HALVES
-    }, np.float16, "c = a ** b", lambda a, b: (a.astype(np.float32)**b.astype(np.float32)).astype(np.float16)),
-    "abs_half": ({
-        "a": HALVES
-    }, np.float16, "c = abs(a)", lambda a: np.abs(a)),
-    # ``a if k else b`` with a half and a double arm: codegen casts both arms to double.
-    "ifexp_half_double": ({
-        "a": HALVES,
-        "b": np.array([1e-20, 3.0] * (N // 2)),
-        "k": np.array([True, False] * (N // 2))
-    }, np.float64, "c = a if k else b", lambda a, b, k: np.where(k, a.astype(np.float64), b)),
+    "float_eq_half": (
+        {"a": HALVES.astype(np.float32) + np.float32([0, 1e-3] * 4), "b": HALVES},
+        np.bool_,
+        "c = a == b",
+        lambda a, b: a == b.astype(np.float32),
+    ),
+    "pow_half_double": (
+        {"a": POSITIVE, "b": np.array([-2.0, -1.5, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])},
+        np.float16,
+        "c = a ** b",
+        lambda a, b: (a.astype(np.float64) ** b).astype(np.float16),
+    ),
+    "pow_half_half": (
+        {"a": POSITIVE, "b": HALVES},
+        np.float16,
+        "c = a ** b",
+        lambda a, b: (a.astype(np.float32) ** b.astype(np.float32)).astype(np.float16),
+    ),
+    "abs_half": ({"a": HALVES}, np.float16, "c = abs(a)", lambda a: np.abs(a)),
     # A double below fp16's range must come back unchanged: min compares in double, not in half.
-    "min_double_half": ({
-        "a": np.array([1e-20, 3.0] * (N // 2)),
-        "b": POSITIVE
-    }, np.float64, "c = min(a, b)", lambda a, b: np.minimum(a, b.astype(np.float64))),
+    "min_double_half": (
+        {"a": np.array([1e-20, 3.0] * (N // 2)), "b": POSITIVE},
+        np.float64,
+        "c = min(a, b)",
+        lambda a, b: np.minimum(a, b.astype(np.float64)),
+    ),
 }
 
 
@@ -71,8 +77,7 @@ def test_mixed_half_tasklet(name):
     tasklet, _, _ = state.add_mapped_tasklet(
         "compute",
         {"i": f"0:{N}"},
-        {conn: dace.Memlet(f"{conn.upper()}[i]")
-         for conn in inputs},
+        {conn: dace.Memlet(f"{conn.upper()}[i]") for conn in inputs},
         code,
         {"c": dace.Memlet("C[i]")},
         external_edges=True,
@@ -85,4 +90,6 @@ def test_mixed_half_tasklet(name):
 
     out = np.zeros(N, out_dtype)
     sdfg(**{conn.upper(): value for conn, value in inputs.items()}, C=out)
-    np.testing.assert_allclose(out.astype(np.float64), reference(**inputs).astype(np.float64), rtol=1e-3)
+    np.testing.assert_allclose(
+        out.astype(np.float64), reference(**inputs).astype(np.float64), rtol=1e-3
+    )

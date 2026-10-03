@@ -368,6 +368,12 @@ struct common_type<dace::float16, dace::float16>
     using type = dace::float16;
 };
 }  // namespace std
+
+static_assert(std::is_same_v<std::common_type_t<dace::float16, float>, float>);
+static_assert(std::is_same_v<std::common_type_t<dace::float16, double>, double>);
+static_assert(std::is_same_v<std::common_type_t<double, dace::float16>, double>);
+static_assert(std::is_same_v<std::common_type_t<dace::float16, int>, float>);
+static_assert(std::is_same_v<std::common_type_t<dace::float16, dace::float16>, dace::float16>);
 #endif
 
 
