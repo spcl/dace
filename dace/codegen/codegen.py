@@ -215,6 +215,13 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
+    # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
+    # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
+    # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
+    # memlet) and precede library-node expansion (whose generated code addresses the rewritten operands).
+    from dace.transformation.passes.memlet_access_policies import LowerMemletAccessPolicies
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
+
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 

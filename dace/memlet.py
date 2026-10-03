@@ -13,6 +13,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
+from dace.sdfg.memlet_access_policy import CopyOnAccess, MemletAccessPolicy
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
@@ -51,8 +52,20 @@ class Memlet(object):
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '
-                             '(non-atomic) writes in resulting code')
+                             '(non-atomic) writes in resulting code',
+                             category='Code Generation')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+    access_policy = Property(
+        dtype=MemletAccessPolicy,
+        default=CopyOnAccess(),
+        from_json=lambda obj, context=None: MemletAccessPolicy.from_json(obj, context),
+        serialize_if=lambda memlet: not memlet.access_policy.is_default,
+        desc='How this (leaf) memlet\'s addressing is realized in generated code (see '
+        'dace.sdfg.memlet_access_policy). The default, CopyOnAccess, evaluates the full offset at every '
+        'access; a LoopCursor policy advances a loop-carried cursor once per iteration of an '
+        'enclosing loop instead. Descriptive only: policies are lowered to ordinary SDFG '
+        'constructs in the code-generation window.',
+        category='Code Generation')
 
     guid = Property(dtype=str, allow_none=False)
 
@@ -140,6 +153,7 @@ class Memlet(object):
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
+        self.access_policy = CopyOnAccess()
 
         self.guid = generate_element_id(self)
 
@@ -157,6 +171,7 @@ class Memlet(object):
                         wcr_nonatomic=memlet.wcr_nonatomic,
                         allow_oob=memlet.allow_oob)
         result._is_data_src = memlet._is_data_src
+        result.access_policy = memlet.access_policy.copy()
         return result
 
     def to_json(self):
@@ -216,6 +231,7 @@ class Memlet(object):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._access_policy = dcpy(self._access_policy, memo=memo)
         node._guid = generate_element_id(node)
 
         # TODO: Since we set the `.sdfg` and friends to `None` we should probably also set this to `None`.
