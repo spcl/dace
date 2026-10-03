@@ -10,18 +10,21 @@ from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
 from typing import List, Optional, Set
 
 
+def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:
+    """Whether ``out = where(cond, left, right)`` is exactly a MergeLibraryNode: three arrays of one type (so no
+    cast), and a condition that does not widen the result."""
+    if left not in arrays or right not in arrays or arrays[left].dtype != arrays[right].dtype:
+        return False
+    return list(broadcast_together(arrays[cond].shape, arrays[out].shape)[0]) == list(arrays[out].shape)
+
+
 def where_as_merge_node(state: SDFGState, cond: str, left: str, right: str, out: str,
                         left_node: Optional[nodes.AccessNode], right_node: Optional[nodes.AccessNode],
-                        generated_nodes: Optional[Set[nodes.Node]]) -> bool:
-    """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode where that node says it exactly: three
-    arrays of one type (so no cast), and a condition that does not widen the result."""
+                        generated_nodes: Optional[Set[nodes.Node]]) -> None:
+    """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode, reusing the given access nodes."""
     from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
 
     arrays = state.sdfg.arrays
-    if left not in arrays or right not in arrays or arrays[left].dtype != arrays[right].dtype:
-        return False
-    if list(broadcast_together(arrays[cond].shape, arrays[out].shape)[0]) != list(arrays[out].shape):
-        return False
     node = MergeLibraryNode('_where_')
     new_nodes = [node, state.add_write(out)]
     state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, new_nodes[1], None, Memlet.from_array(out, arrays[out]))
@@ -32,7 +35,6 @@ def where_as_merge_node(state: SDFGState, cond: str, left: str, right: str, out:
         state.add_edge(src, None, node, conn, Memlet.from_array(name, arrays[name]))
     if generated_nodes is not None:
         generated_nodes.update(new_nodes)
-    return True
 
 
 @oprepo.replaces('numpy.where')
@@ -129,9 +131,9 @@ def _array_array_where(visitor: ProgramVisitor,
                     generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
-    elif where_as_merge_node(state, cond_operand, left_operand, right_operand, out_operand, left_operand_node,
-                             right_operand_node, generated_nodes):
-        pass
+    elif merge_node_expresses_where(sdfg.arrays, cond_operand, left_operand, right_operand, out_operand):
+        where_as_merge_node(state, cond_operand, left_operand, right_operand, out_operand, left_operand_node,
+                            right_operand_node, generated_nodes)
     else:
         inputs = {}
         inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)

@@ -2,6 +2,7 @@
 """Tests for :class:`MergeLibraryNode`, Fortran ``MERGE(tsource, fsource, mask)`` and NumPy ``where``: every operand
 is read by the NumPy broadcasting rule against the result."""
 import itertools
+import os
 
 import numpy as np
 import pytest
@@ -16,7 +17,8 @@ CONNECTORS = {
     'mask': MergeLibraryNode.MASK_CONNECTOR_NAME,
 }
 
-#: One compiled library per built SDFG: a reused name would load the previous case's library.
+#: One compiled library per built SDFG and process: a reused name would load the previous case's library,
+#: and pytest-xdist workers share the build folder.
 BUILD_IDS = itertools.count()
 
 
@@ -24,7 +26,7 @@ def build(shapes, strides=None, dtypes=None, memlets=None, offsets=None):
     """One MergeLibraryNode over arrays ``t``, ``f``, ``mask`` and ``out`` of the given shapes. ``memlets`` maps
     an array to a subset string; the others are read or written whole."""
     dtypes = {'t': dace.float64, 'f': dace.float64, 'mask': dace.int32, 'out': dace.float64, **(dtypes or {})}
-    sdfg = dace.SDFG(f'merge_{next(BUILD_IDS)}')
+    sdfg = dace.SDFG(f'merge_{os.getpid()}_{next(BUILD_IDS)}')
     for name, shape in shapes.items():
         sdfg.add_array(name, shape, dtypes[name], strides=strides, offset=(offsets or {}).get(name))
     state = sdfg.add_state()
