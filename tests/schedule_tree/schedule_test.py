@@ -55,7 +55,8 @@ def test_libnode():
     assert len(stree.children) == 1
     assert isinstance(stree.children[0], tn.LibraryCall)
     assert (stree.children[0].as_string() ==
-            '__return[0:M, 0:N] = library MatMul[alpha=1, beta=0](a[0:M, 0:K], b[0:K, 0:N])')
+            '__return[0:M, 0:N] = library MatMul[alpha=1, beta=0, transA=False, transB=False]'
+            '(a[0:M, 0:K], b[0:K, 0:N])')
 
 
 def test_nesting():

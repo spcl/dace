@@ -153,6 +153,14 @@ class AllocationLifetime(Enum):
     External = auto()  #: Allocated and managed outside the generated code
 
 
+class StackAllocation(Enum):
+    """ Whether a register array lives on the stack or on the heap. """
+
+    Auto = auto()  #: Decided by ``ResolveStackAllocation``: small constant sizes on the stack
+    Stack = auto()  #: On the stack; a symbolic size becomes a variable-length array
+    Heap = auto()  #: On the heap
+
+
 @undefined_safe_enum
 class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """
@@ -1235,6 +1243,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1263,6 +1272,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
+    gpuStream_t = opaque('gpuStream_t')
 
 _bool = bool
 

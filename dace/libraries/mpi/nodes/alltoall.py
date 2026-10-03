@@ -3,7 +3,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
 
 
 @dace.library.expansion
@@ -20,10 +20,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
 
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
-        if grid:
-            comm = "_grid"
+        comm = resolve_comm(node, parent_state)
 
         code = f"""
             int size;

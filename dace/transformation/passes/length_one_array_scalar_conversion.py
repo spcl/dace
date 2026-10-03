@@ -36,6 +36,7 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 """
 import ast
 import itertools
+import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
@@ -218,6 +219,26 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
         mem.other_subset = subsets.Range.from_string('0')
 
 
+#: A bare identifier, not preceded by a word character or ``.``: every name a code slot can reference.
+IDENTIFIER_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)')
+
+
+def control_flow_reads(sdfg: SDFG) -> Set[str]:
+    """Names ``sdfg`` reads from control flow: gate conditions, loop bounds, assignment right-hand sides.
+
+    Staging repoints those references at the staged descriptor, so they count as reads for the copy-in
+    decision although no AccessNode exists; without them a gate scalar is declared, read and never written.
+    """
+    names: Set[str] = set()
+
+    def collect(src: str) -> str:
+        names.update(IDENTIFIER_RE.findall(src))
+        return src
+
+    rewrite_code_slots(sdfg, collect)
+    return names
+
+
 def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
     for state in sdfg.all_states():
@@ -234,6 +255,54 @@ def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
             if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
                 return True
     return False
+
+
+#: Label prefixes of the states staging creates; ``add_state`` uniquifies, so match by prefix.
+STAGING_STATE_PREFIXES = ('stage_copyin', 'stage_copyout')
+
+
+def already_staged(sdfg: SDFG, name: str) -> bool:
+    """True if every reference to ``name`` sits in a staging state a previous run created.
+
+    Staging keeps the signature array, so a re-run would find it eligible again and chain a second
+    redundant copy hop onto the first. Detecting that here is what makes the pass idempotent.
+    """
+    seen = False
+    for state in sdfg.all_states():
+        in_staging = state.label.startswith(STAGING_STATE_PREFIXES)
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data == name:
+                if not in_staging:
+                    return False
+                seen = True
+    return seen
+
+
+def staging_directions(sdfg: SDFG, name: str, cf_reads: Set[str]) -> Tuple[bool, bool]:
+    """Whether staging ``name`` needs a copy-in (read, including from control flow) and a copy-out."""
+    return name in cf_reads or descriptor_is_read(sdfg, name), descriptor_is_written(sdfg, name)
+
+
+def stage_signature_array(sdfg: SDFG, arr_name: str, arr: 'dace.data.Array', cf_reads: Set[str], rename: Dict[str, str],
+                          staged: List[Tuple[str, str, bool, bool]]) -> None:
+    """Stage the non-transient length-1 array ``arr_name`` into a fresh transient scalar.
+
+    Records the body rename and the copy directions; an unreferenced or already-staged array is left
+    alone so re-application stays a no-op.
+    """
+    is_read, is_written = staging_directions(sdfg, arr_name, cf_reads)
+    if not (is_read or is_written) or already_staged(sdfg, arr_name):
+        return
+    # Fresh name every time (find_new_name): the scalar never collides with an existing descriptor.
+    scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
+                                   dtype=arr.dtype,
+                                   storage=arr.storage,
+                                   transient=True,
+                                   lifetime=arr.lifetime,
+                                   debuginfo=arr.debuginfo,
+                                   find_new_name=True)
+    rename[arr_name] = scal_name
+    staged.append((arr_name, scal_name, is_read, is_written))
 
 
 def _copyin_state(sdfg: SDFG) -> SDFGState:
@@ -420,6 +489,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :returns: Names of the descriptors that are now scalar-referenced in the body.
         """
         blocked = self._blocked_sources(sdfg) | self._blocked_by_unscalarizable_neighbors(sdfg)
+        cf_reads = control_flow_reads(sdfg)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -440,19 +510,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, arr_name)
-                is_written = descriptor_is_written(sdfg, arr_name)
-                # Fresh name every time (find_new_name): a re-run over an already-staged array never
-                # collides with the scalar an earlier run created.
-                scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
-                                               dtype=arr.dtype,
-                                               storage=arr.storage,
-                                               transient=True,
-                                               lifetime=arr.lifetime,
-                                               debuginfo=arr.debuginfo,
-                                               find_new_name=True)
-                rename[arr_name] = scal_name
-                staged.append((arr_name, scal_name, is_read, is_written))
+                stage_signature_array(sdfg, arr_name, arr, cf_reads, rename, staged)
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
         # length-1 subset to the scalar element.
@@ -558,6 +616,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient scalars (top level only).
         :returns: Names of the descriptors that are now array-referenced in the body.
         """
+        cf_reads = control_flow_reads(sdfg)
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
 
@@ -578,8 +637,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, name)
-                is_written = descriptor_is_written(sdfg, name)
+                is_read, is_written = staging_directions(sdfg, name, cf_reads)
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.

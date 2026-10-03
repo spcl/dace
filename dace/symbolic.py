@@ -2,6 +2,7 @@
 import ast
 import collections.abc
 import contextlib
+import math
 from collections import Counter
 from functools import lru_cache, cache
 import sympy
@@ -135,7 +136,7 @@ _SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_C
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|%|\.(?![0-9])|[\[]|[\]]')
 
 
 def _is_sympy_number(expr) -> bool:
@@ -634,7 +635,12 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 def _format_float(value: float) -> str:
     # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
-    s = f'{float(value):.15g}'
+    f = float(value)
+    s = f'{f:.15g}'
+    if float(s) != f:
+        # 15 significant figures did not round-trip (e.g. ``0.1 + 0.2`` or a near-max
+        # double that needs 16-17 digits); fall back to the shortest exact form.
+        s = repr(f)
     if 'e' in s or 'E' in s:
         return s
     if '.' not in s:
@@ -992,7 +998,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND',
-    'OR', 'pow', 'round'
+    'OR', 'pow', 'round', 'int32', 'int64', 'float32', 'float64'
 }
 
 
@@ -1103,6 +1109,10 @@ def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
+        # An integer-valued float (e.g. 1.0) must stay a float below, not collapse to
+        # int (that mistypes e.g. min(x, 1.0) as a mixed double/int Min).
+        if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
+            return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
             # will throw OverflowError (which we want).
@@ -1161,6 +1171,23 @@ class __int_floor(int_floor):
         it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
         ``int_floor(a, b)`` keeps its function spelling. """
     pass
+
+
+class CMod(sympy.Function):
+    """ C's truncating modulo, the meaning of ``%`` in an SDFG. """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            return x - y * sympy.Integer(int(x / y))
+        if x.is_nonnegative and y.is_positive:
+            return sympy.Mod(x, y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+MODULO_FUNCTIONS = {'CMod': CMod, 'FtnMod': CMod, 'Mod': sympy.Mod, 'PyMod': sympy.Mod, 'FtnModulo': sympy.Mod}
 
 
 class int_ceil(sympy.Function):
@@ -1292,6 +1319,44 @@ class IfExpr(sympy.Function):
             return False
 
 
+class int32(sympy.Function):
+    """Explicit ``INTEGER(4)`` typecast in a symbolic expression (interstate edge /
+    memlet subset), where ``dace.int32(x)`` is not sympy-parseable as an attribute
+    call. Prints as the truncating ``dace::int32(x)`` C++ cast."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int64(sympy.Function):
+    """Explicit ``INTEGER(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class float32(sympy.Function):
+    """Explicit ``REAL(4)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+class float64(sympy.Function):
+    """Explicit ``REAL(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
+_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64', 'float32': 'dace::float32', 'float64': 'dace::float64'}
+
+
 class bitwise_and(sympy.Function):
     pass
 
@@ -1340,6 +1405,10 @@ class right_shift(sympy.Function):
         # than collapsing to ``int_floor(x, 2**y)``.
         if x.is_Number and y.is_Number:
             return x >> y
+
+
+class conj(sympy.Function):
+    pass
 
 
 # Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
@@ -1696,6 +1765,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: '__left_shift',
         ast.RShift: '__right_shift',
         ast.FloorDiv: '__int_floor',
+        ast.Mod: 'CMod',
     }
 
     def visit_UnaryOp(self, node):
@@ -1822,6 +1892,19 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                             args=[value] + [self.visit(idx) for idx in indices],
                             keywords=[])
         return ast.copy_location(new_node, node)
+
+    def visit_Call(self, node):
+        # Rewrite ``dace.int32(x)`` etc. to the bare typecast function ``int32(x)``:
+        # the default visit_Attribute would turn it into an uncallable ``Attr(dace, int32)``.
+        func = node.func
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 'dace'
+                and func.attr in _TYPECAST_CPP):
+            new_node = ast.Call(func=ast.Name(id=func.attr, ctx=ast.Load),
+                                args=[self.visit(a) for a in node.args],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        self.generic_visit(node)
+        return node
 
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
@@ -1960,7 +2043,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
+        return _construct_function_uncached(CMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -2016,7 +2099,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_ceil': int_ceil,
         'ipow': ipow,
         'IfExpr': IfExpr,
-        'Mod': sympy.Mod,
+        **MODULO_FUNCTIONS,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
         'BitwiseOr': bitwise_or,
@@ -2189,6 +2272,10 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
+    def __init__(self, use_authority=True, settings=None):
+        super().__init__(settings)
+        self.use_authority = use_authority
+
     def _print_Symbol(self, expr):
         if expr.name == '?':
             return '$?'
@@ -2198,7 +2285,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             # Prefer the dtype the enclosing scope declares for this name over the
             # instance's own (possibly default-minted) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
+            if self.use_authority:
+                dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
+            else:
+                dtype = expr.dtype
             kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f'${expr.name}'
@@ -2213,7 +2303,13 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return _format_float(float(sympy_numeric_fix(expr)))
+        nf = sympy_numeric_fix(expr)
+        if not math.isfinite(float(nf)):
+            # The value exceeds a C double (e.g. Fortran ``HUGE``, just over the max):
+            # let sympy print its own shortest decimal instead of overflowing through
+            # ``float()`` to a spurious ``inf`` (which would then render as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_Add(self, expr):
         # Sort arguments deterministically using SymPy's default_sort_key
@@ -2295,9 +2391,11 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 _PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
 
 
-def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number],
+                                 use_authority: bool = True) -> str:
     if isinstance(expr, SymExpr):
-        return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
+        return (f'SymExpr({serialize_symbolic(expr.expr, use_authority=use_authority)}, '
+                f'{serialize_symbolic(expr.approx, use_authority=use_authority)})')
     if isinstance(expr, TypedConstant):
         return _typed_constant_to_string(expr)
     if isinstance(expr, numpy.generic):
@@ -2312,25 +2410,27 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
         if expr_type in _PLAIN_INTEGER_TYPES:
             return str(expr.p)
         if expr_type is symbol or expr_type is sympy.Symbol:
-            return DaceSympySerializer()._print_Symbol(expr)
+            return DaceSympySerializer(use_authority=use_authority)._print_Symbol(expr)
         # SymPy equality ignores the dtypes of DaCe symbols, which are printed, so they are part of the key
         scope_dtypes = _SERIALIZATION_SYMBOL_DTYPES.get()
         symbol_dtypes = frozenset((s.name, scope_dtypes.get(s.name, s.dtype)) for s in expr.atoms(symbol))
-        return _serialize_sympy_expression(expr, symbol_dtypes)
+        return _serialize_sympy_expression(expr, symbol_dtypes, use_authority)
     return str(expr)
 
 
 @lru_cache(maxsize=16384)
-def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: FrozenSet[Tuple[str, 'dtypes.typeclass']]) -> str:
+def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: FrozenSet[Tuple[str, 'dtypes.typeclass']],
+                                use_authority: bool) -> str:
     """
-    Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
-    serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
+    Serializes a SymPy expression. The result only depends on the expression, on the dtypes its DaCe symbols are
+    serialized with (``symbol_dtypes``, which the caller computes from the current scope) and on ``use_authority``,
+    so it is cached.
     """
-    return DaceSympySerializer().doprint(expr)
+    return DaceSympySerializer(use_authority=use_authority).doprint(expr)
 
 
-def serialize_symbolic(expr):
-    return _serialize_symbolic_uncached(expr)
+def serialize_symbolic(expr, use_authority: bool = True):
+    return _serialize_symbolic_uncached(expr, use_authority=use_authority)
 
 
 @lru_cache(maxsize=16384, typed=True)
@@ -2413,8 +2513,13 @@ _PYSTR2SYM_locals = {
     'int_ceil': int_ceil,
     'ipow': ipow,
     'IfExpr': IfExpr,
-    'Mod': sympy.Mod,
+    **MODULO_FUNCTIONS,
+    'int32': int32,
+    'int64': int64,
+    'float32': float32,
+    'float64': float64,
     'Attr': Attr,
+    'conj': conj,
     'Subscript': Subscript,
     'id': sympy.Symbol('id'),
     'diag': sympy.Symbol('diag'),
@@ -2503,10 +2608,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self._settings['full_prec'] = False
 
     def _print_Float(self, expr):
+        # Shortest round-tripping form, always keeping one fractional digit so an
+        # integer-valued float stays floating-point (``5.0``, not ``5``).
         nf = sympy_numeric_fix(expr)
-        if isinstance(nf, int) or nf != expr:
-            return self._print(nf)
-        return super()._print_Float(expr)
+        if not math.isfinite(float(nf)):
+            # Exceeds a C double (e.g. Fortran ``HUGE``): keep sympy's shortest
+            # decimal rather than overflowing to ``inf`` (rendered as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_TypedConstant(self, expr):
         value = self._print(expr.value)
@@ -2521,6 +2630,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
+        if self.cpp_mode and str(expr.func) == 'int_floor':
+            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
+            return '%s(%s)' % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
+        if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
+            return 'dace::math::conj(%s)' % self._print(expr.args[0])
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
@@ -2578,6 +2693,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
+        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
+        dividend, divisor = expr.args
+        if dividend.is_nonnegative and divisor.is_positive:
+            return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))
+        return '%s(%s, %s)' % ('py_mod' if self.cpp_mode else 'Mod', self._print(dividend), self._print(divisor))
+
+    def _print_CMod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
     def _print_Equality(self, expr):

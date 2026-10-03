@@ -313,6 +313,72 @@ dimensions:
   b = np.random.rand(20)
   example_with_undefined(a, b)
 
+.. _division-modulo:
+
+Division and Modulo Semantics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
+remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
+takes the sign of the divisor:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rounding of the quotient
+     - ``-7`` and ``3``
+     - ``7`` and ``-3``
+   * - truncating (C ``%``, Fortran ``MOD``)
+     - ``-1``
+     - ``1``
+   * - floored (Python ``%``, Fortran ``MODULO``)
+     - ``2``
+     - ``-2``
+
+The SDFG gives each spelling one meaning, wherever it appears: tasklet code, memlet subsets, map ranges, inter-state
+edge conditions and assignments, and any other symbolic expression. **A bare** ``%`` **is always C's modulo.** A
+frontend whose source language means something else emits the function for that language instead:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Spelling
+     - Semantics
+     - Emitted by
+     - Generated C++
+   * - ``a % b``, ``CMod(a, b)``
+     - truncating
+     - the default meaning of ``%``; ``numpy.fmod``
+     - ``a % b``, or ``c_mod(a, b)``, which also takes floating point
+   * - ``PyMod(a, b)``, ``Mod(a, b)``
+     - floored
+     - Python frontend for ``%``, ``numpy.mod`` and ``numpy.remainder``
+     - ``py_mod(a, b)``
+   * - ``FtnMod(a, b)``
+     - truncating
+     - Fortran frontend for ``MOD``, ``AMOD`` and ``DMOD``
+     - ``ftn_mod(a, b)``
+   * - ``FtnModulo(a, b)``
+     - floored
+     - Fortran frontend for ``MODULO``
+     - ``ftn_modulo(a, b)``
+   * - ``a // b``, ``int_floor(a, b)``
+     - floored division
+     - Python frontend for ``//``
+     - ``a / b`` in symbolic expressions, ``py_floor(a, b)`` in tasklets
+
+Tasklet code does not inherit the semantics of the language it is written in. A tasklet created with
+:func:`~dace.sdfg.state.SDFGState.add_tasklet` whose Python code reads ``b = a % 3`` computes C's modulo; code that
+wants Python's modulo calls ``PyMod(a, 3)``. The Python frontend rewrites the ``%`` of a ``@dace.program`` into
+``PyMod`` before it creates tasklets or symbolic expressions, so a program keeps Python's semantics.
+
+In the symbolic engine, ``%`` and ``FtnMod`` parse to :class:`~dace.symbolic.CMod`, while ``PyMod`` and ``FtnModulo``
+parse to SymPy's ``Mod``, whose own rules (constant folding, ``Mod(i + N, N) == Mod(i, N)``) are the floored ones. A
+constant folds by its own rounding: ``CMod(-7, 3)`` is ``-1`` and ``Mod(-7, 3)`` is ``2``. When the dividend is
+provably nonnegative and the divisor provably positive the two agree, and ``CMod`` becomes SymPy's ``Mod``, so
+simplification sees a single form. Printed back, SymPy's ``Mod`` reads ``a % b`` only in that agreeing case and
+``Mod(a, b)`` otherwise, so a serialized SDFG loads with the meaning it was saved with.
+
 
 .. _connectors:
 

@@ -19,10 +19,27 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
+from dace.transformation.passes.resolve_stack_allocation import resolve_stack_allocation
 from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
+    """ Whether a register array is declared on the stack rather than allocated on the heap. A symbolic
+        size makes it a variable-length array, which dies with its block, so a lifetime that outlives
+        the block keeps the heap, and so does a split declare/allocate: ``declare_array`` has already
+        emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and deallocation both
+        ask here so they cannot disagree.
+    """
+    if (nodedesc.storage != dtypes.StorageType.Register
+            or resolve_stack_allocation(nodedesc, sdfg.constants) is not dtypes.StackAllocation.Stack):
+        return False
+    if not symbolic.issymbolic(arrsize, sdfg.constants):
+        return True
+    return not declared and lifetime in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State,
+                                         dtypes.AllocationLifetime.SDFG)
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:
@@ -349,8 +366,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
@@ -429,9 +444,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        arrsize_bytes = None
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
+
+        on_stack = register_array_on_stack(sdfg, nodedesc, arrsize, top_lifetime, declared)
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -509,9 +523,7 @@ class CPUCodeGen(TargetCodeGenerator):
             define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
-                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
+              or (nodedesc.storage == dtypes.StorageType.Register and not on_stack)):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -519,11 +531,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on the heap instead of '
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
-                elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
-                    warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
-                                  "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
-                                      Config.get("compiler", "max_stack_array_size")))
+                else:
+                    warnings.warn(f'Register array {name} with {cpp.sym2cpp(arrsize)} elements was allocated on the '
+                                  f'heap instead of the stack (stack_vla={nodedesc.stack_vla.name})')
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
@@ -548,9 +558,14 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
-            if node.setzero:
+            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment. Its bound
+            # must be positive, while a symbolic extent may evaluate to zero.
+            variable_length_array = symbolic.issymbolic(arrsize, sdfg.constants)
+            bound = cpp.sym2cpp(symbolic.sympy.Max(1, arrsize) if variable_length_array else arrsize)
+            alignment = '' if variable_length_array else '  DACE_ALIGN(64)'
+            if node.setzero and not variable_length_array:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, bound, alignment),
                     cfg,
                     state_id,
                     node,
@@ -558,11 +573,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, bound, alignment),
                 cfg,
                 state_id,
                 node,
             )
+            if node.setzero:
+                allocation_stream.write("memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, bound), cfg,
+                                        state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -611,15 +629,13 @@ class CPUCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
-        arrsize_bytes = None
-        if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
-        if self._dispatcher.declared_arrays.has(alloc_name):
+        declared = self._dispatcher.declared_arrays.has(alloc_name)
+        if declared:
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
@@ -627,9 +643,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
-                  (symbolic.issymbolic(arrsize, sdfg.constants) or
-                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
+              or (nodedesc.storage == dtypes.StorageType.Register
+                  and not register_array_on_stack(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared))):
             if isinstance(nodedesc, data.Array):
                 # Memory from the aligned operator new[] must be released by the aligned operator
                 # delete[]. The direct operator call skips destructors and relies on the new-expression
@@ -1260,6 +1275,17 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> Tuple[DefinedType, str]:
+        """ The defined type and C type of the container ``ptr`` names. An array sized by a symbol that is not free
+            is declared at SDFG scope but allocated where its size is known -- in a state that dominates its
+            accesses, whose scope ends before the accesses' states are generated -- so its declaration holds the
+            type. A View is looked up the same way: its view edge is not at hand here. """
+        dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+            str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc)))
+        if (dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr):
+            return self._dispatcher.declared_arrays.get(ptr)
+        return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+
     def memlet_definition(self,
                           sdfg: SDFG,
                           memlet: mmlt.Memlet,
@@ -1288,20 +1314,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
-            str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc)))
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
@@ -1608,7 +1621,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self.defined_type(sdfg, ptrname, desc, is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:

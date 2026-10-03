@@ -182,6 +182,25 @@ def test_float_precision_preserved():
         assert pystr_to_symbolic(huge) not in (sympy.oo, -sympy.oo)
 
 
+def test_integer_valued_float_not_collapsed():
+    # An integer-valued float (e.g. the ``1.0`` clamp in ``min(x, 1.0)``) keeps its
+    # ``.0`` and never collapses to an int: collapsing would mix int and float in a
+    # Min/Max and silently truncate the result after a serialization round-trip.
+    for src in ('0.0', '1.0', '2.0', '5.0', '100.0'):
+        assert _roundtrip(src) == src
+    # Genuine integers are left untouched.
+    for src in ('0', '1', '2', '42'):
+        assert _roundtrip(src) == src
+    # ``sympy_numeric_fix`` preserves a Python/numpy float as a sympy Float (the int
+    # collapse only ever applied to non-float inputs).
+    assert isinstance(symbolic.sympy_numeric_fix(1.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(2.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(1), int)
+    # Inside a Min the float clamp survives the parse -> print round-trip.
+    assert _idempotent('Min(x, 1.0)')
+    assert '1.0' in _roundtrip('Min(x, 1.0)')
+
+
 def test_infinity_roundtrip():
     assert pystr_to_symbolic('inf') == sympy.oo
     assert pystr_to_symbolic('-inf') == -sympy.oo

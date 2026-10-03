@@ -258,7 +258,10 @@ namespace dace
 
     // OpenMP has no built-in reduction over a class type; declare the float set (no bitwise ops)
     // for each. '-' combines with '+=' (initial - sum), matching OpenMP's '-' reduction for float.
-    #ifdef _OPENMP
+    // nvc++ rejects user-defined `declare reduction` ("not supported in NVIDIA subset"). These
+    // cover only the low-precision class types, so skipping them costs nvc++ builds nothing that
+    // float/double reductions need -- and without the skip nvc++ cannot compile any CPU target.
+    #if defined(_OPENMP) && !defined(__NVCOMPILER_MAJOR__) && !defined(__PGIC__)
     #define DACE_LP_OMP_RED(T)                                                                                              \
         DACE_PRAGMA(omp declare reduction(+ : T : omp_out += omp_in) initializer(omp_priv = T(0.0f)))                        \
         DACE_PRAGMA(omp declare reduction(- : T : omp_out += omp_in) initializer(omp_priv = T(0.0f)))                        \
@@ -356,6 +359,17 @@ static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) ==
               std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+
+#if defined(_OPENMP) && !defined(__NVCOMPILER_MAJOR__) && !defined(__PGIC__)
+// OpenMP has no built-in reduction over std::complex; declare the arithmetic
+// operators so reduction clauses emitted on dace::complex64/128 resolve.
+DACE_PRAGMA(omp declare reduction(+ : std::complex<float> : omp_out += omp_in) initializer(omp_priv = std::complex<float>(0)))
+DACE_PRAGMA(omp declare reduction(- : std::complex<float> : omp_out -= omp_in) initializer(omp_priv = std::complex<float>(0)))
+DACE_PRAGMA(omp declare reduction(* : std::complex<float> : omp_out *= omp_in) initializer(omp_priv = std::complex<float>(1)))
+DACE_PRAGMA(omp declare reduction(+ : std::complex<double> : omp_out += omp_in) initializer(omp_priv = std::complex<double>(0)))
+DACE_PRAGMA(omp declare reduction(- : std::complex<double> : omp_out -= omp_in) initializer(omp_priv = std::complex<double>(0)))
+DACE_PRAGMA(omp declare reduction(* : std::complex<double> : omp_out *= omp_in) initializer(omp_priv = std::complex<double>(1)))
+#endif
 #endif
 
 #endif  // __DACE_TYPES_H

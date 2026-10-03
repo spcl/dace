@@ -3069,6 +3069,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             sdfg = self.sdfg
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
+            # ``sdfg``, not ``self.sdfg``: when ``self`` IS the SDFG its own ``sdfg`` attribute is
+            # not the one the subtree belongs to, and the blocks end up detached.
             for n in node.all_control_flow_blocks():
                 n.sdfg = sdfg
             # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
@@ -3090,10 +3092,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # It may already be out of range on entry (e.g. from deserialization); bounds-check it.
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:

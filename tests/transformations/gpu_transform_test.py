@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Unit tests for the GPU to-device transformation. """
 
+import re
+
 import dace
 import numpy as np
 import pytest
@@ -155,3 +157,43 @@ if __name__ == '__main__':
     for scalar in [False, True]:
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)
+
+
+@pytest.mark.gpu
+def test_an_interstate_condition_reading_a_gpu_map_output_reads_a_host_copy():
+    """A GPU map writes ``flag`` and the next interstate condition reads ``flag[0]`` on the host. The
+    transformation must register the moved array so a host copy-out precedes the reading edge;
+    without it the condition names device memory and validation rejects the SDFG."""
+    sdfg = dace.SDFG("gpu_output_gate")
+    sdfg.add_array("flag", [4], dace.int32, transient=True)
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("out", [8], dace.float64)
+    set_flag = sdfg.add_state("set_flag", is_start_block=True)
+    set_flag.add_mapped_tasklet("write_flag", {"i": "0:4"}, {},
+                                "o = 1", {"o": dace.Memlet("flag[i]")},
+                                external_edges=True)
+    compute = sdfg.add_state("compute")
+    compute.add_mapped_tasklet("double", {"j": "0:8"}, {"a": dace.Memlet("A[j]")},
+                               "o = 2 * a", {"o": dace.Memlet("out[j]")},
+                               external_edges=True)
+    end = sdfg.add_state("end")
+    sdfg.add_edge(set_flag, compute, dace.InterstateEdge("flag[0] > 0"))
+    sdfg.add_edge(set_flag, end, dace.InterstateEdge("not (flag[0] > 0)"))
+    sdfg.add_edge(compute, end, dace.InterstateEdge())
+
+    sdfg.apply_transformations(GPUTransformSDFG, options=dict(simplify=False))
+
+    assert sdfg.arrays["flag"].storage == dace.StorageType.GPU_Global
+    host_copies = [
+        name for name, desc in sdfg.arrays.items()
+        if name.startswith("host_flag") and desc.storage == dace.StorageType.CPU_Heap
+    ]
+    assert len(host_copies) == 1, sorted(sdfg.arrays)
+    conditions = [e.data.condition.as_string for e in sdfg.all_interstate_edges() if not e.data.is_unconditional()]
+    assert len(conditions) == 2, conditions
+    assert all(host_copies[0] in c and not re.search(r"\bflag\[", c) for c in conditions), conditions
+
+    A = np.random.rand(8)
+    out = np.zeros(8)
+    sdfg(A=A, out=out)
+    assert np.allclose(out, 2 * A)

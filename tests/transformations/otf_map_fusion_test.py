@@ -701,6 +701,8 @@ def hdiff(in_field: dace.float64[128 + 4, 128 + 4, 64], out_field: dace.float64[
 
 def test_hdiff():
     sdfg = hdiff.to_sdfg()
+    # np.where is a Merge library node, a map only once expanded
+    sdfg.expand_library_nodes()
     sdfg.simplify()
     assert count_maps(sdfg) == 20
 
