@@ -328,7 +328,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
                     #  the return value and for that NumPy/CuPy is used.
                     raise InvalidSDFGError(
-                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(desc).__name__}`'
+                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(ret_desc).__name__}`'
                     )
 
         # Validate data descriptors

@@ -41,6 +41,7 @@ def randn_away_from_relu_kink(model: torch.nn.Module, *shape: int) -> torch.Tens
         x = torch.randn(*shape)
     return x
 
+
 # DaCe and PyTorch round a float32 matmul differently, so a ReLU input closer to zero than the rounding noise (~1e-6)
 # gets a different gradient mask in each and the weight gradients of that unit disagree by far more than the test
 # tolerance. Inputs are drawn so that no ReLU input is that close to the kink.
