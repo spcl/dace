@@ -376,12 +376,12 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
-    input_arrays = set()
+    input_arrays = {}
     output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
             if node.has_reads(state):
-                input_arrays.add(node.data)
+                input_arrays[node.data] = None
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
@@ -394,7 +394,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays.keys()):
+    for name in dict.fromkeys([*input_arrays, *output_arrays]):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -497,9 +497,8 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg,
-                                        set(input_names.values()) | input_arrays,
-                                        set(output_names.values()) | output_arrays.keys())
+    nested_sdfg = state.add_nested_sdfg(nsdfg, dict.fromkeys([*input_names.values(), *input_arrays]),
+                                        dict.fromkeys([*output_names.values(), *output_arrays]))
 
     # Reconnect memlets to nested SDFG
     reconnected_in = set()
