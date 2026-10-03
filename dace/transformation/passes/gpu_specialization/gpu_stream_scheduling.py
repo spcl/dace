@@ -13,7 +13,7 @@ from enum import Enum
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties

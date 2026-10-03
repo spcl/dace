@@ -2,7 +2,7 @@
 """Shared utilities of the GPU-specialization passes."""
 from typing import Dict, List, Optional
 
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes

@@ -4,8 +4,10 @@
 
 import inspect
 from io import StringIO
+from typing import List, Optional, Union
 from dace.config import Config
 from dace.sdfg.graph import NodeNotFoundError
+from dace.sdfg.nodes import Node
 from dace.sdfg.state import ControlFlowRegion
 
 
@@ -19,7 +21,11 @@ class CodeIOStream(StringIO):
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
         self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
 
-    def write(self, contents, cfg: ControlFlowRegion = None, state_id: int = None, node_id: int = None) -> None:
+    def write(self,
+              contents,
+              cfg: Optional[ControlFlowRegion] = None,
+              state_id: Optional[int] = None,
+              node_id: Union[int, Node, List[Union[int, Node]], None] = None) -> None:
         # Delete single trailing newline, as this will be implicitly inserted
         # anyway
         if contents:

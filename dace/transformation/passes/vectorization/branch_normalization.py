@@ -29,7 +29,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
-from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
+from dace.sdfg.narrowing import free_symbol_names
 from dace.ordered import OrderedSet
 
 

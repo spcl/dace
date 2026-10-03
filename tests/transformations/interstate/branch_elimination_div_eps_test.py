@@ -37,10 +37,10 @@ def _make_pass() -> BranchElimination:
     state explicitly so it can be called in isolation.
     """
     p = BranchElimination()
-    # ``_processed_tasklets`` is an instance attribute the helper checks
+    # ``processed_tasklets`` is an instance attribute the helper checks
     # before rewriting; reset to an empty set per call so each unit test
     # starts from a clean slate.
-    p._processed_tasklets = set()
+    p.processed_tasklets = set()
     p.eps_operator_type_for_log_and_div = "add"
     return p
 

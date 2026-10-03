@@ -10,7 +10,7 @@ from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 

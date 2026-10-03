@@ -11,6 +11,9 @@ from typing import Union
 import sympy
 
 from dace import dtypes, subsets, symbolic
+from dace.config import Config
+from dace.sdfg import nodes
+from dace.sdfg.state import ControlFlowBlock, SDFGState
 
 #: Anything a subset bound, loop bound or parsed expression can be.
 SymbolicLike = Union[symbolic.SymbolicType, int, str]
@@ -90,3 +93,45 @@ def coeff_of(expr: sympy.Expr, symbol: sympy.Expr, power: int = 1) -> sympy.Expr
 def ndrange_exprs(subset: subsets.Subset) -> list[tuple[sympy.Expr, sympy.Expr, sympy.Expr]]:
     """``subset.ndrange()`` with every ``(begin, end, step)`` entry narrowed to a sympy ``Expr``."""
     return [(as_expr(begin), as_expr(end), as_expr(step)) for begin, end, step in subset.ndrange()]
+
+
+def config_str(*key_hierarchy: str) -> str:
+    """The current value of a string configuration entry (``Config.get`` returns any schema type)."""
+    value = Config.get(*key_hierarchy)
+    if not isinstance(value, str):
+        raise TypeError(f'configuration entry {".".join(key_hierarchy)} is {value!r}, not a string')
+    return value
+
+
+def config_int(*key_hierarchy: str) -> int:
+    """The current value of an integer configuration entry (``Config.get`` returns any schema type)."""
+    value = Config.get(*key_hierarchy)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f'configuration entry {".".join(key_hierarchy)} is {value!r}, not an integer')
+    return value
+
+
+def as_state(block: ControlFlowBlock) -> SDFGState:
+    """``block`` as an :class:`~dace.sdfg.state.SDFGState`; the control-flow region it came from must hold a state."""
+    if not isinstance(block, SDFGState):
+        raise TypeError(f'expected an SDFGState, got {type(block).__name__}')
+    return block
+
+
+def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
+    """Names of the free symbols of a subset bound or stride; a Python number has none.
+
+    A :class:`~dace.symbolic.SymExpr` contributes the symbols of its main expression.
+    """
+    if isinstance(value, symbolic.SymExpr):
+        value = value.expr
+    if isinstance(value, sympy.Basic):
+        return {str(s) for s in value.free_symbols}
+    return set()
+
+
+def as_access(node: nodes.Node) -> nodes.AccessNode:
+    """``node`` as an :class:`~dace.sdfg.nodes.AccessNode`."""
+    if not isinstance(node, nodes.AccessNode):
+        raise TypeError(f'expected an AccessNode, got {type(node).__name__}')
+    return node

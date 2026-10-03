@@ -14,7 +14,7 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
                                                                                weakly_connected_node_sets)

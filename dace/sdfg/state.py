@@ -12,8 +12,8 @@ import sys
 import types
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
-                    overload)
+from typing import (TYPE_CHECKING, AbstractSet, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Mapping,
+                    Optional, Set, Tuple, Union, overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -1991,8 +1991,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_tasklet(
         self,
         name: str,
-        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
-        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        inputs: Union[AbstractSet[str], Mapping[str, Optional[dtypes.typeclass]]],
+        outputs: Union[AbstractSet[str], Mapping[str, Optional[dtypes.typeclass]]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
         state_fields: Optional[List[str]] = None,

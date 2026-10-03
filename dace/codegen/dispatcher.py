@@ -302,7 +302,8 @@ class TargetDispatcher(object):
             raise ValueError('Schedule already mapped to ' + str(self._map_dispatchers[schedule_type]))
         self._map_dispatchers[schedule_type] = func
 
-    def register_array_dispatcher(self, storage_type: dtypes.StorageType, func: target.TargetCodeGenerator) -> None:
+    def register_array_dispatcher(self, storage_type: Union[dtypes.StorageType, List[dtypes.StorageType]],
+                                  func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes data allocation,
             initialization, and deinitialization. Used when calling
             ``dispatch_allocate/deallocate/initialize``.
@@ -324,7 +325,7 @@ class TargetDispatcher(object):
     def register_copy_dispatcher(self,
                                  src_storage: dtypes.StorageType,
                                  dst_storage: dtypes.StorageType,
-                                 dst_schedule: dtypes.ScheduleType,
+                                 dst_schedule: Optional[dtypes.ScheduleType],
                                  func: target.TargetCodeGenerator,
                                  predicate: Optional[Callable] = None) -> None:
         """ Registers code generation of data-to-data (or data from/to

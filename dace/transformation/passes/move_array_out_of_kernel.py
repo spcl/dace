@@ -19,7 +19,7 @@ from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 logger = logging.getLogger(__name__)
 

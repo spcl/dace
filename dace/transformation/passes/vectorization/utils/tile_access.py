@@ -66,7 +66,7 @@ from dace import symbolic
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.subsets import Range, Subset
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
+from dace.sdfg.narrowing import free_symbol_names
 
 
 class PerDimKind(enum.Enum):
