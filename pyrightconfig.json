@@ -3,15 +3,9 @@
   // Everything listed here must stay at ZERO errors; a config that reports pre-existing
   // noise is a config people learn to ignore.
   "include": [
+    "dace/transformation/passes/canonicalize",
     "dace/transformation/passes/vectorization",
     "dace/libraries/tileops"
-  ],
-  "exclude": [
-    // Held by another agent while this gate was written; drop each entry once the file is
-    // annotated. These exclusions are temporary, not a permanent hole.
-    "dace/transformation/passes/vectorization/insert_tile_load_store.py",
-    "dace/transformation/passes/vectorization/convert_tasklets_to_tile_ops.py",
-    "dace/transformation/passes/vectorization/utils/broadcast.py"
   ],
   // Oldest interpreter the project supports (pyproject: >=3.10), so the gate rejects syntax
   // newer than that. The interpreter itself is resolved from PATH -- never hardcode a venv.

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import dace
 from dace.codegen.cppunparse import pyexpr2cpp
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 
@@ -42,15 +43,15 @@ def input_connectors(operands: Sequence[Operand], has_mask: bool) -> list[str]:
     return [operand.conn for operand in operands if operand.reads_connector] + (["_mask"] if has_mask else [])
 
 
-def connected_edges(state: dace.SDFGState, node: nodes.LibraryNode) -> dict[str, MultiConnectorEdge]:
+def connected_edges(state: dace.SDFGState, node: nodes.LibraryNode) -> dict[str, MultiConnectorEdge[Memlet]]:
     return {edge.dst_conn: edge for edge in state.in_edges(node) if edge.dst_conn is not None}
 
 
-def output_edge(state: dace.SDFGState, node: nodes.LibraryNode, conn: str) -> MultiConnectorEdge:
+def output_edge(state: dace.SDFGState, node: nodes.LibraryNode, conn: str) -> MultiConnectorEdge[Memlet]:
     return next(edge for edge in state.out_edges(node) if edge.src_conn == conn)
 
 
-def edge_ctype(sdfg: dace.SDFG, edge: MultiConnectorEdge) -> str:
+def edge_ctype(sdfg: dace.SDFG, edge: MultiConnectorEdge[Memlet]) -> str:
     """The C++ element type of the array an edge moves."""
     return sdfg.arrays[edge.data.data].dtype.ctype
 
@@ -67,7 +68,7 @@ def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], o
     return conn, True
 
 
-def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge], sdfg: dace.SDFG,
+def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge[Memlet]], sdfg: dace.SDFG,
                  fallback: str) -> str:
     """The C++ type the value operands of a node share.
 
@@ -104,7 +105,7 @@ def operands_share_output_type(node: nodes.LibraryNode, state: dace.SDFGState, s
     return shared_ctype(operands, connected_edges(state, node), sdfg, out_ctype) == out_ctype
 
 
-def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnectorEdge) -> bool:
+def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnectorEdge[Memlet]) -> bool:
     """Whether every lane computes one value into a one-element output: no tile operand, no tile to write.
 
     Codegen binds a one-element connector by value, so such a node assigns its output once and never walks it.
@@ -116,7 +117,7 @@ def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnec
 class LaneOperands:
     """The operands of one node as the ``pure`` expansion reads them, one lane at a time."""
     sdfg: dace.SDFG
-    in_edges: dict[str, MultiConnectorEdge]
+    in_edges: dict[str, MultiConnectorEdge[Memlet]]
     widths: list[int]
     offset: str
     shared: str
@@ -165,7 +166,7 @@ class LaneOperands:
 
 
 def elementwise_tasklet(node: nodes.LibraryNode, state: dace.SDFGState, operands: Sequence[Operand], out_conn: str,
-                        rhs: str, out_ctype: str, in_edges: dict[str, MultiConnectorEdge]) -> nodes.Tasklet:
+                        rhs: str, out_ctype: str, in_edges: dict[str, MultiConnectorEdge[Memlet]]) -> nodes.Tasklet:
     """The ``pure`` tasklet of an elementwise node: ``out = rhs`` over the lanes, zero where the mask is off."""
     widths = list(node.widths)
     offset = tile_offset(widths)
