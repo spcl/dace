@@ -120,8 +120,9 @@ def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel
     """Host code and the kernel each declare the table once, and the kernel takes it as no argument."""
     sdfg = offloaded()
     objects = sdfg.generate_code()
-    host = next(obj.clean_code for obj in objects if '__program_' in obj.clean_code and obj.language == 'cpp')
-    device = next(obj.clean_code for obj in objects if obj.language == 'cu')
+    # The device translation unit is titled 'CUDA' on both GPU backends; HIP emits it as C++, not .cu
+    host = next(obj.clean_code for obj in objects if obj.language == 'cpp' and obj.name == sdfg.name)
+    device = next(obj.clean_code for obj in objects if obj.title == 'CUDA')
     declaration = 'double table[4] = {'
     assert host.count(declaration) == 1, host
     kernel = device[device.index('__global__'):]
