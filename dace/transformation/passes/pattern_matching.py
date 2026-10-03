@@ -652,6 +652,8 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
                 matcher = _edge_matcher
             elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 0:
                 matcher = _unconnected_pair_matcher
+            elif chain_order(nxpattern) is not None:
+                matcher = _chain_matcher
             else:
                 matcher = _subgraph_isomorphism_matcher
 
@@ -672,6 +674,56 @@ def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
         return
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
+
+
+def chain_order(nxpattern) -> Optional[List[Any]]:
+    """The pattern's nodes from source to sink if the pattern is one directed path, else ``None``."""
+    if len(nxpattern.edges) != len(nxpattern.nodes) - 1:
+        return None
+    sources = [n for n in nxpattern if nxpattern.in_degree(n) == 0]
+    if len(sources) != 1:
+        return None
+    order = [sources[0]]
+    while nxpattern.out_degree(order[-1]) == 1:
+        order.append(next(iter(nxpattern.successors(order[-1]))))
+    return order if len(order) == len(nxpattern.nodes) else None
+
+
+def _chain_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match a pattern that is one directed path (``MapExit -> AccessNode -> MapEntry``).
+
+        Yields the same matches as ``_subgraph_isomorphism_matcher`` -- induced: distinct nodes, the
+        path's edges and no other edge among them, no self-edge -- but in graph order, walking each
+        start node's successors in insertion order. VF2's order is the networkx version's, so a
+        repeated application (map fusion) picked different matches, and fused differently, per version.
+    """
+    order = chain_order(nxpattern)
+    pattern_nodes = [nxpattern.nodes[p] for p in order]
+
+    def admissible(nid: Any, index: int) -> bool:
+        return node_pred(digraph.nodes[nid], pattern_nodes[index]) and not digraph.has_edge(nid, nid)
+
+    def extend(path: List[Any]):
+        if len(path) == len(order):
+            # Induced: the path's own edges are the only ones among the matched nodes
+            for i, u in enumerate(path):
+                for j, v in enumerate(path):
+                    if i != j and j != i + 1 and digraph.has_edge(u, v):
+                        return
+            yield dict(zip(path, order))
+            return
+        tail = path[-1]
+        for nxt in digraph.successors(tail):
+            if nxt in path or not admissible(nxt, len(path)):
+                continue
+            if edge_pred is not None and not edge_pred(digraph.edges[tail, nxt], nxpattern.edges[order[len(path) - 1],
+                                                                                                 order[len(path)]]):
+                continue
+            yield from extend(path + [nxt])
+
+    for start in digraph:
+        if admissible(start, 0):
+            yield from extend([start])
 
 
 def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
