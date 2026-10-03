@@ -18,6 +18,7 @@ API requires):
   reduction must surface, not be silently mis-lowered.
 """
 from copy import deepcopy as dcpy
+from typing import List
 
 import dace
 import dace.library
@@ -158,7 +159,7 @@ __out = _s;
 class ExpandReduceVectorized(pm.ExpandTransformation):
     """Schedule-aware ``"vectorized"`` expansion of a ``Reduce`` node."""
 
-    environments = []
+    environments: List[type] = []
 
     @staticmethod
     def expansion(node: Reduce, state: SDFGState, sdfg: SDFG) -> SDFG:

@@ -184,7 +184,8 @@ CMP_AST_TO_RTYPE = {
 }
 
 #: ``(start, end, conditional block, guard, true branch)`` of a unit-stride, break-free guarded loop.
-LoopSkeleton = Tuple[str, str, ConditionalBlock, properties.CodeBlock, ControlFlowRegion]
+LoopSkeleton = Tuple[symbolic.SymbolicType, symbolic.SymbolicType, ConditionalBlock, properties.CodeBlock,
+                     ControlFlowRegion]
 
 #: A comparison operator class, as ``ast`` parses ``gather OP carrier``.
 CompareOp = Type[ast.cmpop]

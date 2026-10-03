@@ -22,7 +22,7 @@ Every other combo -> ``NotImplementedError``.
 import copy
 import warnings
 from collections.abc import Sequence
-from typing import Any, List, Type, Union
+from typing import Any, List, Tuple, Type, Union
 
 import sympy
 
@@ -1108,7 +1108,8 @@ class VectorizeMultiDim(ppl.Pipeline):
     #: ``ConvertTaskletsToTileOps`` completes. ``NestInnermostMapBodyIntoNSDFG`` is NOT
     #: listed: it clears the stale scalar-staging ``other_subset`` on its boundary edges, so
     #: it leaves a VALID SDFG. The final ``sdfg.validate()`` re-checks the end state.
-    _SKIP_VALIDATE_AFTER = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore, ConvertTaskletsToTileOps)
+    _SKIP_VALIDATE_AFTER: Tuple[Type[ppl.Pass], ...] = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore,
+                                                        ConvertTaskletsToTileOps)
 
     # ``Any``: a subpass result is whatever that pass returns; the base declares ``Optional[Any]``.
     def apply_subpass(self, sdfg: dace.SDFG, p: ppl.Pass, state: dict[str, Any]) -> Any:

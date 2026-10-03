@@ -35,16 +35,16 @@ class LaneIdScheme:
         pre-dating Option B; new code should use :meth:`is_lane_fanned` or :meth:`parse`.
     """
 
-    LEGACY_SUFFIX = "_laneid_"
+    LEGACY_SUFFIX: str = "_laneid_"
 
     # Trailing-chunk matcher anchored to end of string (chunked form).
-    _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
+    _CHUNK_TAIL_RE: re.Pattern[str] = re.compile(r"_lane(\d+)id_(\d+)$")
     # Legacy 1D form, full name.
-    _LEGACY_RE = re.compile(r"^(.*)_laneid_(\d+)$")
+    _LEGACY_RE: re.Pattern[str] = re.compile(r"^(.*)_laneid_(\d+)$")
     # Substring scanner: matches a lane chunk anywhere in a string (canonical or legacy form). Used
     # by audit passes scanning memlet subset strings / interstate expressions for accidentally
     # fanned-out lanes without parsing the whole symbol.
-    LANE_INFIX_RE = re.compile(r"_lane(?:\d+id|id)_\d+")
+    LANE_INFIX_RE: re.Pattern[str] = re.compile(r"_lane(?:\d+id|id)_\d+")
 
     @staticmethod
     def make(base: str, lane: int) -> str:
@@ -228,10 +228,10 @@ class TileNameScheme:
         ``TileMaskGen`` (paired with merge).
     """
 
-    TILE_SUFFIX = "_tile"
-    IDX_SUFFIX = "_tile_idx"
-    ITER_MASK = "_tile_iter_mask"
-    COND_MASK_SUFFIX = "_tile_cond_mask"
+    TILE_SUFFIX: str = "_tile"
+    IDX_SUFFIX: str = "_tile_idx"
+    ITER_MASK: str = "_tile_iter_mask"
+    COND_MASK_SUFFIX: str = "_tile_cond_mask"
 
     @staticmethod
     def make_tile(base: str) -> str:

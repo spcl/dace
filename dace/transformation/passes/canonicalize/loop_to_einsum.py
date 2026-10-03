@@ -658,7 +658,7 @@ def _point_index(memlet: Memlet, expect_data: Optional[str] = None) -> Optional[
     return memlet.data, idx
 
 
-def _tasklet_expr(tasklet: nodes.Tasklet) -> Optional[sympy.Basic]:
+def _tasklet_expr(tasklet: nodes.Tasklet) -> Optional[symbolic.SymbolicType]:
     """The tasklet's single assigned expression as a sympy expression, or ``None``."""
     if tasklet.code.language != dtypes.Language.Python:
         return None

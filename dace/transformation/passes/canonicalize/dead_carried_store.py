@@ -68,7 +68,7 @@ def symbol_named(expr: sympy.Basic, name: str) -> Optional[sympy.Symbol]:
     return next((s for s in expr.free_symbols if str(s) == name), None)
 
 
-def constant_offset_on_axis(subset: Optional[Subset], loop_var: str) -> Optional[Tuple[int, int]]:
+def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int, int]]:
     """``(axis, offset)`` for a subset that is the single point ``i + offset`` on exactly one axis
     and loop-invariant everywhere else, else ``None``.
 

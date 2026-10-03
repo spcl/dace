@@ -12,7 +12,7 @@ import itertools
 import re
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, List, Optional, Tuple
 
 import sympy
 
@@ -417,7 +417,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     # Buffered ``(sdfg, sym, edges, skip_cb)`` deletions during a compound cond lift (``None`` outside
     # one), so a later refusal leaves no committed deletion behind: no partial lifts.
-    _deferred_drops = None
+    _deferred_drops: Optional[List[Tuple[Any, ...]]] = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
