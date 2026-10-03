@@ -200,7 +200,27 @@ def test_the_fill_constructors_accept_a_computed_size(program, expected):
     assert np.isclose(out[0], expected)
 
 
+def test_two_arrays_from_one_size_share_their_extent():
+    """Arrays sized by one unchanged scalar share its symbol, so an elementwise operation between them is not refused
+    as a broadcast of two different extents."""
+
+    @dace.program
+    def counts(p: dace.float64[N]):
+        a_grid = np.zeros(9, dtype=np.int64)
+        b_grid = np.zeros(16, dtype=np.int64)
+        n = a_grid.size * b_grid.size
+        count_a = np.ones(n, dtype=np.int64)
+        count_b = np.ones(n, dtype=np.int64)
+        count_c = p.size - count_a - count_b
+        p[0] = count_c[0]
+
+    p = np.zeros(5)
+    counts(p)
+    assert p[0] == 3
+
+
 if __name__ == '__main__':
+    test_two_arrays_from_one_size_share_their_extent()
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
     test_size_can_be_reassigned_after_use_as_a_shape()

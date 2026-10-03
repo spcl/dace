@@ -1321,6 +1321,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
+        #: value shares one (elementwise operations between those arrays compare their extents).
+        self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -2938,6 +2942,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
+        # The write ends the version the scalar's shape symbol was read from
+        self.shape_promotions.pop(target_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3170,6 +3176,8 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
+        # An update is a write too
+        self.shape_promotions.pop(wtarget_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -5531,16 +5539,32 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
+    def dominated_by_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether an assignment made in ``defining_region`` still reaches the current region: it is that region or a
+        branch nested in it, with no loop in between (a later iteration may have rebound it)."""
+        region = self.cfg_target
+        while region is not defining_region:
+            if region is None or isinstance(region, (LoopRegion, SDFG)):
+                return False
+            region = region.parent_graph
+        return True
+
     def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key a new
-                    symbol is minted, so two shapes sized from the same reassigned scalar keep their own values.
+        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key it is a
+                    shape promotion: one symbol per VERSION of the scalar, shared by every shape sized from it until
+                    the scalar is written again, so two shapes sized from the same reassigned scalar keep their own
+                    values.
         :return: The symbol carrying the scalar's value.
         """
         desc = self.sdfg.arrays[scalar]
+        if key is None and scalar in self.shape_promotions:
+            version_sym, region = self.shape_promotions[scalar]
+            if self.dominated_by_region(region):
+                return version_sym
         base = f'__sym_{scalar}'
         sym = self.indirections.get(key) if key is not None else None
         if sym is None:
@@ -5559,6 +5583,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Subscript promotions stay out: they shadow names there.
                 self.globals[name] = sym
         state = self._add_state(f'promote_{scalar}_to_{sym}')
+        if key is None:
+            self.shape_promotions[scalar] = (sym, self.cfg_target)
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
