@@ -4,18 +4,18 @@ import json
 
 import pytest
 
-from golden_lowering import CASES, DIGEST_FILE, digest, lowerings
+from golden_lowering import DIGEST_FILE, ShardKey, digest, lowerings, shard_keys
 
 
-@pytest.mark.parametrize("node_type", sorted(CASES))
-def test_the_lowering_of_a_tile_node_is_unchanged(node_type):
+@pytest.mark.parametrize("key", shard_keys(), ids=str)
+def test_the_lowering_of_a_tile_node_is_unchanged(key: ShardKey):
     """A restructuring of the tile-op library must not change the tasklet, implementation or environment any
     configuration lowers to; ``python golden_lowering.py dump <file>`` before and after names the one that moved."""
     with open(DIGEST_FILE) as digests:
-        expected = json.load(digests)[node_type]
-    assert digest(lowerings(node_type)) == expected
+        expected = json.load(digests)[str(key)]
+    assert digest(lowerings(key)) == expected
 
 
 if __name__ == "__main__":
-    for tile_node_type in sorted(CASES):
-        test_the_lowering_of_a_tile_node_is_unchanged(tile_node_type)
+    for shard_key in shard_keys():
+        test_the_lowering_of_a_tile_node_is_unchanged(shard_key)

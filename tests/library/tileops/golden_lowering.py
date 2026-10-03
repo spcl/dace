@@ -16,6 +16,7 @@ import os
 import sys
 import warnings
 from collections.abc import Callable, Iterator
+from typing import NamedTuple
 from unittest import mock
 
 import dace
@@ -595,14 +596,36 @@ CASES: dict[str, Callable[[], Iterator[tuple[str, Builder]]]] = {
     "MaskedCopyLibraryNode": masked_copy_cases,
 }
 
+#: Node types split into this many shards, one digest each, so no single test runs long enough to hit the CI
+#: timeout under coverage (TileBinop alone lowers 9600 configurations). Shard ``i`` takes every ``n``-th case from ``i``.
+SHARDS = {"TileBinop": 16, "TileUnop": 8}
 
-def lowerings(node_type: str) -> dict[str, dict[str, object]]:
-    """Every recorded lowering of one node type, keyed by configuration."""
+
+class ShardKey(NamedTuple):
+    """One digest entry: a node type, or one shard of it."""
+    node_type: str
+    index: int
+    count: int
+
+    def __str__(self) -> str:
+        return self.node_type if self.count == 1 else f"{self.node_type}[{self.index}/{self.count}]"
+
+
+def shard_keys() -> list[ShardKey]:
+    """Every digest entry, in digest-file order."""
+    return [
+        ShardKey(node_type, index, SHARDS.get(node_type, 1)) for node_type in sorted(CASES)
+        for index in range(SHARDS.get(node_type, 1))
+    ]
+
+
+def lowerings(key: ShardKey) -> dict[str, dict[str, object]]:
+    """Every recorded lowering of one digest entry, keyed by configuration."""
     results = {}
     with mock.patch.object(dispatch, "host_supported_isas", lambda: HOST_ISAS), \
             mock.patch.object(dispatch, "detect_host_isa", lambda: "AVX512"), warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for name, builder in CASES[node_type]():
+        for name, builder in itertools.islice(CASES[key.node_type](), key.index, None, key.count):
             results[name] = lower_everywhere(builder)
     return results
 
@@ -613,12 +636,12 @@ def digest(results: dict[str, dict[str, object]]) -> dict[str, object]:
 
 
 def digests() -> dict[str, dict[str, object]]:
-    return {node_type: digest(lowerings(node_type)) for node_type in CASES}
+    return {str(key): digest(lowerings(key)) for key in shard_keys()}
 
 
 def dump(path: str) -> None:
     with open(path, "w") as out:
-        json.dump({node_type: lowerings(node_type) for node_type in CASES}, out, sort_keys=True, indent=1, default=str)
+        json.dump({str(key): lowerings(key) for key in shard_keys()}, out, sort_keys=True, indent=1, default=str)
 
 
 def update() -> None:
