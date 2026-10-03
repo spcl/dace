@@ -26,9 +26,14 @@ affine in the loop variable with matching non-scan indices.
 """
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
+import sympy
+
 from dace import SDFG, properties, symbolic
+from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -44,13 +49,13 @@ class CarriedStore(NamedTuple):
         iterations must be peeled off the tail to keep the stores the loop really makes.
     """
     name: str
-    dead_edge: Any
+    dead_edge: MultiConnectorEdge[Memlet]
     dead_offset: int
     kill_offset: int
     distance: int
 
 
-def symbol_named(expr, name: str):
+def symbol_named(expr: sympy.Basic, name: str) -> Optional[sympy.Symbol]:
     """The symbol OBJECT called ``name`` inside ``expr``, or ``None``.
 
     Never ``symbolic.symbol(name)``: a freshly minted symbol carries
@@ -63,7 +68,7 @@ def symbol_named(expr, name: str):
     return next((s for s in expr.free_symbols if str(s) == name), None)
 
 
-def constant_offset_on_axis(subset, loop_var: str) -> Optional[Tuple[int, int]]:
+def constant_offset_on_axis(subset: Optional[Subset], loop_var: str) -> Optional[Tuple[int, int]]:
     """``(axis, offset)`` for a subset that is the single point ``i + offset`` on exactly one axis
     and loop-invariant everywhere else, else ``None``.
 
@@ -178,7 +183,7 @@ def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> O
 
 
 def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loop_var: str, axis: int, kill_off: int,
-                    dead_off: int, dead_edge) -> bool:
+                    dead_off: int, dead_edge: MultiConnectorEdge[Memlet]) -> bool:
     """No read of ``name`` observes the dead store -- in a later iteration, or in this one.
 
     Across iterations: a read at offset ``r`` in iteration ``i`` addresses what the dead store of
@@ -255,7 +260,7 @@ def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loo
     return not any(isinstance(n, nodes.AccessNode) and n.data == name for n in downstream)
 
 
-def reaches(state: SDFGState, start, target) -> bool:
+def reaches(state: SDFGState, start: nodes.Node, target: nodes.Node) -> bool:
     """``True`` iff ``target`` is ``start`` or lies downstream of it inside ``state``."""
     seen, frontier = {id(start)}, [start]
     while frontier:
@@ -269,7 +274,7 @@ def reaches(state: SDFGState, start, target) -> bool:
     return False
 
 
-def drop_store(state: SDFGState, edge) -> None:
+def drop_store(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> None:
     """Remove a write edge and everything that existed only to feed it.
 
     The producer is a Tasklet for a computed store and an AccessNode for a plain copy, so both are

@@ -229,7 +229,7 @@ def reiterated_names(post_blocks: Dict[ControlFlowBlock, None]) -> Dict[str, Non
 
 
 def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[ControlFlowBlock, None], old_name: str,
-                               new_name: str, sdfg: SDFG):
+                               new_name: str, sdfg: SDFG) -> None:
     """Replace every reference to ``old_name`` with ``new_name`` in the
     post-loop blocks: interstate edges into / between them (when both endpoints
     are post-loop), and the blocks' own contents.
@@ -255,7 +255,7 @@ def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[Cont
 class _RenameNames(ast.NodeTransformer):
     """Substitute identifiers in an ast tree."""
 
-    def __init__(self, mapping: Dict[str, str]):
+    def __init__(self, mapping: Dict[str, str]) -> None:
         self.mapping = mapping
 
     def visit_Name(self, node: ast.Name) -> ast.AST:

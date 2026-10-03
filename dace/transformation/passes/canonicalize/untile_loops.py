@@ -71,7 +71,7 @@ hoisted; those are left alone.)
 """
 import copy
 import functools
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Tuple
 
 import sympy
 
@@ -90,7 +90,7 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 UNTILE_PREFIX = '_untile_k_'
 
 
-def count_applied(result) -> int:
+def count_applied(result: Optional[Dict[str, List[Any]]]) -> int:
     """Number of transformations a ``PatternMatchAndApplyRepeated`` run applied.
 
     It returns ``{transformation name: [applied, ...]}``, or ``None`` when it matched nothing.
@@ -124,7 +124,7 @@ def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFl
     return candidate
 
 
-def _iter_candidate_inners(outer: LoopRegion):
+def _iter_candidate_inners(outer: LoopRegion) -> Iterator[LoopRegion]:
     """Walk down through perfect 1-child intermediate chains, yielding
     every descendant :class:`LoopRegion` as a potential tile-pair partner
     for ``outer``.
@@ -173,7 +173,7 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
     return True
 
 
-def _is_constant_positive_int(expr) -> Optional[int]:
+def _is_constant_positive_int(expr: symbolic.SymbolicType) -> Optional[int]:
     """If ``expr`` simplifies to a positive integer literal, return that value."""
     try:
         s = symbolic.simplify(expr)
@@ -185,7 +185,7 @@ def _is_constant_positive_int(expr) -> Optional[int]:
     return v if v > 0 else None
 
 
-def _is_zero(expr) -> bool:
+def _is_zero(expr: symbolic.SymbolicType) -> bool:
     try:
         s = symbolic.simplify(expr)
     except Exception:
@@ -193,7 +193,7 @@ def _is_zero(expr) -> bool:
     return s.is_number and s == 0
 
 
-def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
+def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
     """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``.
 
     ``K_const`` is set for a concrete literal ``> 1``. Refused: literals ``<= 1``, provably
@@ -265,7 +265,7 @@ def map_tile_pattern_present(sdfg: SDFG) -> bool:
     return any(map_tile_partner(outer, inner) for outer in tiled for inner in every if inner is not outer)
 
 
-def tiles_a_parent_window(outer: LoopRegion, start, span) -> bool:
+def tiles_a_parent_window(outer: LoopRegion, start: symbolic.SymbolicType, span: symbolic.SymbolicType) -> bool:
     """``True`` iff ``outer`` walks a fixed-width window opened by an enclosing loop.
 
     The witness is the pair (start depends on an enclosing loop's iterator, width does not): that
@@ -291,7 +291,8 @@ def count_loops(sdfg: SDFG) -> int:
                if isinstance(r, LoopRegion) and r.loop_variable)
 
 
-def clamp_is_the_parent_limit(end_plus_one, outer_sym, K_expr, outer_limit) -> bool:
+def clamp_is_the_parent_limit(end_plus_one: symbolic.SymbolicType, outer_sym: symbolic.SymbolicType,
+                              K_expr: symbolic.SymbolicType, outer_limit: symbolic.SymbolicType) -> bool:
     """``True`` iff ``end_plus_one`` is ``Min(parent limit, i + K)`` -- the remainder clamp.
 
     A strip-mined nest whose last tile would overrun writes its inner bound as
@@ -322,11 +323,12 @@ def clamp_is_the_parent_limit(end_plus_one, outer_sym, K_expr, outer_limit) -> b
     return _diff_is_zero(sympy.Min(*rest), outer_limit)
 
 
-def _match_inner_case(inner: LoopRegion,
-                      outer_var: str,
-                      K_expr: symbolic.SymbolicType,
-                      K_const: Optional[int],
-                      outer_limit=None) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
+def _match_inner_case(
+        inner: LoopRegion,
+        outer_var: str,
+        K_expr: symbolic.SymbolicType,
+        K_const: Optional[int],
+        outer_limit: Optional[symbolic.SymbolicType] = None) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
     """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)`` or ``None``.
 
     * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``);
@@ -393,7 +395,7 @@ def _match_inner_case(inner: LoopRegion,
     return None
 
 
-def _diff_is_zero(a, b) -> bool:
+def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
     """``simplify(a - b) == 0`` if both sides reduce to the same value,
     else ``False``. Tolerates symbolic mismatches by catching the
     ``TypeError`` SymPy raises when an unresolved expression is coerced
@@ -638,7 +640,7 @@ class UntileLoops(ppl.Pass):
                                          'the tile (``A[..., int_floor(i, K), ii]`` with extent K), unblocking that '
                                          'array in the same rewrite. Needs a concrete K; refuses clamped nests.')
 
-    def __init__(self, map_roundtrip: bool = False, unblock_arrays: bool = False):
+    def __init__(self, map_roundtrip: bool = False, unblock_arrays: bool = False) -> None:
         super().__init__()
         self.map_roundtrip = map_roundtrip
         self.unblock_arrays = unblock_arrays

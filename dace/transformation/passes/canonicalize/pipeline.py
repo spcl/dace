@@ -1394,7 +1394,7 @@ CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [(label, _stage_factory(st
                                                        for label, start, stop in _stage_runs()]
 
 
-def _assert_self_contained(unit: ppl.Pass):
+def _assert_self_contained(unit: ppl.Pass) -> None:
     """Guard the empty-``pipeline_results`` invariant.
 
     Every unit is applied with an empty results dict, so it must either have
@@ -1589,7 +1589,7 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
                  dump_dir: Optional[str] = None,
-                 stages: Optional[Sequence[str]] = None):
+                 stages: Optional[Sequence[str]] = None) -> None:
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -1860,24 +1860,24 @@ def canonicalize(sdfg: SDFG,
 
 
 def canonicalize_under_authority(sdfg: SDFG,
-                                 validate,
-                                 validate_all,
-                                 unroll_limit,
-                                 peel_limit,
-                                 break_anti_dependence,
-                                 target,
-                                 interchange_carry_with_map,
-                                 scatter_to_guarded_maps,
-                                 privatize_scatter_reductions,
-                                 reconstruct_wavefront_nest,
-                                 normalize_loop_and_map_origin,
-                                 assume_parallel_guards,
-                                 perfect_loop_nesting,
-                                 specialize_constants,
-                                 lift,
-                                 lift_copy,
-                                 semantic_lifting,
-                                 dump_dir,
+                                 validate: bool,
+                                 validate_all: bool,
+                                 unroll_limit: int,
+                                 peel_limit: Optional[int],
+                                 break_anti_dependence: Optional[bool],
+                                 target: str,
+                                 interchange_carry_with_map: Optional[bool],
+                                 scatter_to_guarded_maps: Optional[bool],
+                                 privatize_scatter_reductions: Optional[bool],
+                                 reconstruct_wavefront_nest: Optional[bool],
+                                 normalize_loop_and_map_origin: Optional[bool],
+                                 assume_parallel_guards: bool,
+                                 perfect_loop_nesting: bool,
+                                 specialize_constants: Optional[Dict[str, int]],
+                                 lift: bool,
+                                 lift_copy: bool,
+                                 semantic_lifting: bool,
+                                 dump_dir: Optional[str],
                                  stages: Optional[Sequence[str]] = None) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(validate=validate,

@@ -38,7 +38,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
     CATEGORY: str = 'Canonicalization'
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Identity offset/begin: this pass overrides ``apply_pass`` entirely
         # and does not use the base shifting behavior.
         super().__init__(offset_expr="0", begin_expr=None)

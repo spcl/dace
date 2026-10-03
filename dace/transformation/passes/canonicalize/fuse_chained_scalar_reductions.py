@@ -49,7 +49,9 @@ import copy
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, nodes, properties
+from dace.memlet import Memlet
 from dace.sdfg import SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
@@ -74,7 +76,9 @@ def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
     return None
 
 
-def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
+def _chase_write_to_accum(
+    state: SDFGState, sdfg: SDFG, out_edge: MultiConnectorEdge[Memlet]
+) -> Optional[Tuple[nodes.AccessNode, List[nodes.AccessNode], List[nodes.Tasklet]]]:
     """From a binop's output edge, follow the staging chain forward to the
     AccessNode it ultimately writes. The frontend stages an accumulator write as
     ``binop -> tmp -> copy -> acc``; that copy is a copy TASKLET before
@@ -123,7 +127,9 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
 class _Step:
     """One ``acc[S] = acc[S] OP inc`` accumulation in the chain."""
 
-    def __init__(self, binop, acc_read_node, acc_read_edge, inc_edge, write_final, write_intermediates, write_copies):
+    def __init__(self, binop: nodes.Tasklet, acc_read_node: nodes.AccessNode, acc_read_edge: MultiConnectorEdge[Memlet],
+                 inc_edge: MultiConnectorEdge[Memlet], write_final: nodes.AccessNode,
+                 write_intermediates: List[nodes.AccessNode], write_copies: List[nodes.Tasklet]) -> None:
         self.binop = binop
         self.acc_read_node = acc_read_node  # AccessNode(acc) feeding the accumulator connector
         self.acc_read_edge = acc_read_edge  # acc_read_node -> binop (accumulator operand)

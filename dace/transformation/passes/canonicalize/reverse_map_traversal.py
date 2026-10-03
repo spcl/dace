@@ -36,6 +36,7 @@ import sympy
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
@@ -56,9 +57,9 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
         if edge.data is None or edge.data.is_empty():
             continue
         for subset in (edge.data.subset, edge.data.other_subset):
-            if subset is None:
+            if not isinstance(subset, Range):
                 continue
-            for rng in getattr(subset, 'ranges', ()):
+            for rng in subset.ranges:
                 for expr in rng:
                     if not isinstance(expr, sympy.Basic) or sym not in expr.free_symbols:
                         continue

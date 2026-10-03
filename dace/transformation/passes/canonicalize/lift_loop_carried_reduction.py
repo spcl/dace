@@ -103,7 +103,9 @@ import ast
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, nodes, properties, symbolic
+from dace.memlet import Memlet
 from dace.sdfg import SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -163,7 +165,7 @@ def _copy_input_connector(tasklet: nodes.Tasklet) -> Optional[str]:
     return None
 
 
-def _trace_to_reduction(st: SDFGState, mx_in) -> Optional[nodes.Tasklet]:
+def _trace_to_reduction(st: SDFGState, mx_in: MultiConnectorEdge[Memlet]) -> Optional[nodes.Tasklet]:
     """The reduction tasklet writing the accumulator through ``mx_in`` (the edge
     feeding the map-exit input connector). Handles the DIRECT shape -- the
     reduction tasklet writes the map exit itself (the cleaned contour shape) --
@@ -199,8 +201,10 @@ def _increment_ast(tasklet: nodes.Tasklet, acc_conn: str) -> ast.AST:
 class _AccumulatorCandidate:
     """A matched in-place reduction into ``array`` inside one map, ready to lift."""
 
-    def __init__(self, state, map_entry, map_exit, tasklet, array, op, acc_conn, read_edge, entry_out_edge,
-                 tasklet_out_edge, exit_out_edge):
+    def __init__(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, tasklet: nodes.Tasklet,
+                 array: str, op: str, acc_conn: str, read_edge: MultiConnectorEdge[Memlet],
+                 entry_out_edge: MultiConnectorEdge[Memlet], tasklet_out_edge: MultiConnectorEdge[Memlet],
+                 exit_out_edge: MultiConnectorEdge[Memlet]) -> None:
         self.state = state
         self.map_entry = map_entry
         self.map_exit = map_exit
@@ -295,8 +299,8 @@ class LiftLoopCarriedReduction(ppl.Pass):
                         out.append(cand)
         return out
 
-    def _match_reduction(self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit, exit_out,
-                         array: str) -> Optional[_AccumulatorCandidate]:
+    def _match_reduction(self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
+                         exit_out: MultiConnectorEdge[Memlet], array: str) -> Optional[_AccumulatorCandidate]:
         # The edge feeding this map-exit input connector carries the per-iteration
         # accumulator write; its subset is the element written each iteration.
         conn = exit_out.src_conn  # OUT_x
@@ -343,9 +347,9 @@ class LiftLoopCarriedReduction(ppl.Pass):
         return _AccumulatorCandidate(st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in,
                                      exit_out)
 
-    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict]:
+    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict[MultiConnectorEdge[Memlet], None]]:
         """Every ``AccessNode(A) -> *`` read edge of each array A across the loop body."""
-        reads: Dict[str, Dict] = {}
+        reads: Dict[str, Dict[MultiConnectorEdge[Memlet], None]] = {}
         for st in body_states:
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode):

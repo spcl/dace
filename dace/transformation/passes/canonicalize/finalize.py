@@ -19,8 +19,8 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 ``canonicalize(s); finalize_for_target(s)`` is the perf-path counterpart to
 ``auto_optimize(s)``.
 """
-from typing import List
 import os
+from typing import List
 
 from dace import SDFG, dtypes, symbolic
 from dace.config import Config
@@ -168,7 +168,9 @@ def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG
         for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state))
 
 
-def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = SMALL_MATMUL_DIM):
+def canonicalize_set_fast_implementations(sdfg: SDFG,
+                                          device: dtypes.DeviceType,
+                                          small_dim: int = SMALL_MATMUL_DIM) -> None:
     """Select library-node implementations for the canonicalize perf tail.
 
     Delegates to :func:`~dace.transformation.auto.auto_optimize.set_fast_implementations` with the

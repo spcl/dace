@@ -159,7 +159,7 @@ lift it correctly, so the refusal costs no parallelism ArgMaxLift could have del
 import ast
 import copy
 import re
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
 
@@ -168,7 +168,7 @@ from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock, BreakBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -182,6 +182,14 @@ CMP_AST_TO_RTYPE = {
     ast.Lt: dtypes.ReductionType.Min,
     ast.LtE: dtypes.ReductionType.Min,
 }
+
+#: ``(start, end, conditional block, guard, true branch)`` of a unit-stride, break-free guarded loop.
+LoopSkeleton = Tuple[str, str, ConditionalBlock, properties.CodeBlock, ControlFlowRegion]
+
+#: A comparison operator class, as ``ast`` parses ``gather OP carrier``.
+CompareOp = Type[ast.cmpop]
+
+BlockT = TypeVar('BlockT', bound=ControlFlowBlock)
 
 
 class _Match(NamedTuple):
@@ -267,7 +275,7 @@ class GuardReadWiring(ast.NodeTransformer):
     :attr:`refused`, because no single memlet expresses it.
     """
 
-    def __init__(self, sdfg: SDFG, loop: LoopRegion):
+    def __init__(self, sdfg: SDFG, loop: LoopRegion) -> None:
         self.sdfg = sdfg
         self.loop = loop
         self.reads: Dict[str, Tuple[str, mm.Memlet]] = {}
@@ -280,7 +288,7 @@ class GuardReadWiring(ast.NodeTransformer):
             self.reads[key] = entry
         return ast.Name(id=entry[0], ctx=ast.Load())
 
-    def visit_Subscript(self, node: ast.Subscript):
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         if not (isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays):
             self.refused = True
             return node
@@ -330,7 +338,7 @@ class GuardReadWiring(ast.NodeTransformer):
             return None  # a per-iteration symbol in the index is not loop-invariant
         return symbolic.simplify(idx)
 
-    def visit_Name(self, node: ast.Name):
+    def visit_Name(self, node: ast.Name) -> ast.AST:
         if node.id not in self.sdfg.arrays:
             return node
         desc = self.sdfg.arrays[node.id]
@@ -391,11 +399,11 @@ class ArgMaxLift(ppl.Pass):
         "reproducing the sequential loop. 'first' / 'last' pin the rule explicitly. Only meaningful when an "
         "index is tracked: the extreme VALUE is the same either way.")
 
-    def __init__(self, tie_break: str = 'infer'):
+    def __init__(self, tie_break: str = 'infer') -> None:
         super().__init__()
         self.tie_break = tie_break
 
-    def _resolve_last_wins(self, op_ast, has_index: bool) -> bool:
+    def _resolve_last_wins(self, op_ast: CompareOp, has_index: bool) -> bool:
         """The tie rule for this match: True -> keep the LAST occurrence of the
         extreme (arg-reduce over the reversed gather), False -> the FIRST (the
         plain forward arg-reduce).
@@ -415,7 +423,7 @@ class ArgMaxLift(ppl.Pass):
             return True
         return op_ast in (ast.GtE, ast.LtE)
 
-    def _contains_break(self, block) -> bool:
+    def _contains_break(self, block: ControlFlowBlock) -> bool:
         """Whether ``block`` contains a :class:`BreakBlock` anywhere beneath it.
 
         A break makes the loop a find-FIRST search rather than a reduction (see
@@ -473,7 +481,7 @@ class ArgMaxLift(ppl.Pass):
                     rewritten += 1
         return rewritten or None
 
-    def guarded_loop_skeleton(self, loop: LoopRegion):
+    def guarded_loop_skeleton(self, loop: LoopRegion) -> Optional[LoopSkeleton]:
         """The gate every payload analysis in this pass shares.
 
         Both the value-carrier argmax (:meth:`_match`, TSVC s314 / s315 / s318) and
@@ -539,7 +547,7 @@ class ArgMaxLift(ppl.Pass):
         guard, true_branch = non_else[0]
         return start, end, cond_block, guard, true_branch
 
-    def _match(self, loop: LoopRegion, sdfg: SDFG, skeleton=None) -> Optional[_Match]:
+    def _match(self, loop: LoopRegion, sdfg: SDFG, skeleton: Optional[LoopSkeleton] = None) -> Optional[_Match]:
         skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
@@ -697,7 +705,7 @@ class ArgMaxLift(ppl.Pass):
 
     # 2-D contiguous nested argmax (TSVC s3110 / s13110).
 
-    def _single_child_region(self, region, want_type):
+    def _single_child_region(self, region: ControlFlowRegion, want_type: Type[BlockT]) -> Optional[BlockT]:
         """Return the unique child block of ``region`` of type ``want_type``,
         requiring every other child to be an empty ``SDFGState``; else ``None``."""
         found = None
@@ -713,7 +721,7 @@ class ArgMaxLift(ppl.Pass):
                 return None
         return found
 
-    def _unit_loop_from_zero(self, loop: LoopRegion):
+    def _unit_loop_from_zero(self, loop: LoopRegion) -> Optional[Tuple[str, str]]:
         """``(start, end)`` for a unit-stride loop starting at 0, else ``None``."""
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
@@ -848,8 +856,8 @@ class ArgMaxLift(ppl.Pass):
                 return arr
         return None
 
-    def _match_2d_true_branch(self, true_branch, carrier: str, gather_sym: str, array: str, outer_var: str,
-                              inner_var: str, sdfg: SDFG):
+    def _match_2d_true_branch(self, true_branch: ControlFlowBlock, carrier: str, gather_sym: str, array: str,
+                              outer_var: str, inner_var: str, sdfg: SDFG) -> Optional[Tuple[str, str]]:
         """Verify the true-branch binds exactly ``carrier := arr[i, j]`` (or
         ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
         with empty states and no other writes. Returns ``(x_name, y_name)`` or
@@ -882,7 +890,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         return x_idx, y_idx
 
-    def _rewrite_2d(self, m: _Match2D, sdfg: SDFG):
+    def _rewrite_2d(self, m: _Match2D, sdfg: SDFG) -> None:
         """Replace the nested 2-D argmax with a flat :class:`ArgReduce` over the
         whole (contiguous) array, decomposing the flat index back into the two
         index carriers (``xindex = mflat // ncols``, ``yindex = mflat % ncols``).
@@ -986,7 +994,7 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
 
-    def _branch_has_content(self, branch) -> bool:
+    def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
             return False
         for n in branch.nodes():
@@ -996,7 +1004,8 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
-    def _parse_compare_node(self, tree):
+    def _parse_compare_node(
+            self, tree: ast.Compare) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a
         :class:`ast.Compare` node ``gather OP carrier`` (or ``f(gather) OP
         carrier``). The gather side may carry a recognised unary transform
@@ -1014,7 +1023,9 @@ class ArgMaxLift(ppl.Pass):
             return None, None, None, None
         return op_cls, lhs_name, rhs_name, transform
 
-    def _parse_inline_subscript_comparison(self, expr_str: str, loop_var: str, loop: LoopRegion):
+    def _parse_inline_subscript_comparison(
+        self, expr_str: str, loop_var: str, loop: LoopRegion
+    ) -> Optional[Tuple[CompareOp, Tuple[str, symbolic.SymbolicType, symbolic.SymbolicType], str, Optional[str]]]:
         """Parse a comparison whose gather is an INLINE array subscript:
         ``[f](array[b + c*i]) OP carrier``.
 
@@ -1055,7 +1066,8 @@ class ArgMaxLift(ppl.Pass):
         base, coeff = aff
         return op_cls, (array, base, coeff), carrier, transform
 
-    def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str):
+    def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock,
+                           tmp_sym: str) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds
         ``tmp_sym`` to a comparison ``[f](g) OP c``. Returns ``(ast_op_cls,
         g_name, c_name, transform)`` or ``(None, None, None, None)``."""
@@ -1073,7 +1085,8 @@ class ArgMaxLift(ppl.Pass):
                 return res
         return None, None, None, None
 
-    def _parse_comparison(self, expr_str: str):
+    def _parse_comparison(self,
+                          expr_str: str) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Parse a comparison ``[f](g) OP c`` inlined directly in the condition.
 
         Mirrors :meth:`_resolve_tmp_iedge` but on the condition string itself
@@ -1132,7 +1145,8 @@ class ArgMaxLift(ppl.Pass):
         return None
 
     @staticmethod
-    def _affine_index_in_loop_var(idx_str: str, loop_var: str, loop: LoopRegion):
+    def _affine_index_in_loop_var(idx_str: str, loop_var: str,
+                                  loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
         """Decompose a gather index ``idx_str`` as ``base + coeff*loop_var``.
 
         Returns ``(base, coeff)`` (sympy exprs) iff ``idx_str`` is affine and
@@ -1165,7 +1179,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         # Every symbol feeding base / coeff must be loop-invariant: not assigned
         # on any body interstate edge (a varying stride/base breaks the closed form).
-        body_assigned: dict = {}
+        body_assigned: Dict[str, None] = {}
         for e in loop.all_interstate_edges():
             body_assigned.update(dict.fromkeys((e.data.assignments or {}).keys()))
         # membership-only scan (early-exit), iteration order does not affect the result
@@ -1174,7 +1188,7 @@ class ArgMaxLift(ppl.Pass):
                 return None
         return base, coeff
 
-    def _extract_name(self, node) -> Optional[str]:
+    def _extract_name(self, node: ast.AST) -> Optional[str]:
         if isinstance(node, ast.Name):
             return node.id
         return None
@@ -1182,9 +1196,9 @@ class ArgMaxLift(ppl.Pass):
     #: Recognised unary gather transforms ``f(g)`` -> the Python builtin name.
     #: Adding one here is not enough for the transform+index shape: that rewrite hands the name to
     #: ``ArgReduce.transform``, whose own set is what decides how it is spelled in C++.
-    SUPPORTED_TRANSFORMS = dict.fromkeys(['abs'])
+    SUPPORTED_TRANSFORMS: Dict[str, None] = dict.fromkeys(['abs'])
 
-    def _extract_transform(self, node) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_transform(self, node: ast.AST) -> Tuple[Optional[str], Optional[str]]:
         """Return ``(transform, name)`` for a possibly-transformed operand.
 
         A bare ``Name`` ``g`` -> ``(None, 'g')``; a recognised unary call
@@ -1199,7 +1213,7 @@ class ArgMaxLift(ppl.Pass):
                 return node.func.id, inner
         return None, None
 
-    def _extract_singleton_state(self, branch) -> Optional[SDFGState]:
+    def _extract_singleton_state(self, branch: ControlFlowBlock) -> Optional[SDFGState]:
         if not isinstance(branch, ControlFlowRegion):
             return None
         content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
@@ -1340,14 +1354,14 @@ class ArgMaxLift(ppl.Pass):
         return bool(symbolic.simplify(base - gather_base) == 0 and symbolic.simplify(coeff - gather_coeff) == 0)
 
     def _symbol_true_branch_writes_carrier(self,
-                                           true_branch,
+                                           true_branch: ControlFlowBlock,
                                            loop: LoopRegion,
                                            carrier: str,
                                            array: str,
                                            gather_sym: str,
-                                           gather_base: Any,
-                                           gather_coeff: Any,
-                                           transform: Optional[str] = None):
+                                           gather_base: symbolic.SymbolicType,
+                                           gather_coeff: symbolic.SymbolicType,
+                                           transform: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """For the symbol-carrier case, verify the true-branch binds the value
         carrier (``carrier := [f](array[gather_base + gather_coeff*loop_var])``
         or ``carrier := [f](gather_sym)``, with the same gather transform ``f``
@@ -1389,7 +1403,7 @@ class ArgMaxLift(ppl.Pass):
                 return False, None  # nested control flow not supported in v1
         return carrier_write_seen, idx_carrier
 
-    def _collect_preloop_assignments(self, loop: LoopRegion, sdfg: SDFG) -> dict:
+    def _collect_preloop_assignments(self, loop: LoopRegion, sdfg: SDFG) -> Dict[str, str]:
         """Walk back the linear pre-loop chain (each block reached by a single
         in-edge) and accumulate interstate-edge assignments. The binding closest
         to the loop wins for each name (it is the value live at loop entry).
@@ -1401,7 +1415,7 @@ class ArgMaxLift(ppl.Pass):
         seed-position check below sees a symbol value rather than an array name it
         must discard.
         """
-        preloop: dict = {}
+        preloop: Dict[str, str] = {}
         parent = loop.parent_graph
         cur = loop
         seen: dict = {}
@@ -1463,7 +1477,7 @@ class ArgMaxLift(ppl.Pass):
                 continue  # an array-read binding, not a scalar symbol value
             subs[symbolic.pystr_to_symbolic(lhs)] = expr
 
-        def _resolve(expr):
+        def _resolve(expr: object) -> Optional[symbolic.SymbolicType]:
             try:
                 return symbolic.simplify(symbolic.pystr_to_symbolic(str(expr)).subs(subs))
             except Exception:  # pragma: no cover -- defensive
@@ -1495,7 +1509,8 @@ class ArgMaxLift(ppl.Pass):
             return False
         return True
 
-    def _seed_gather_position(self, rhs_str: str, array: str, transform: Optional[str], preloop: dict):
+    def _seed_gather_position(self, rhs_str: str, array: str, transform: Optional[str],
+                              preloop: Dict[str, str]) -> Optional[str]:
         """If ``rhs_str`` is ``[f](array[P])`` -- or ``[f](g)`` where ``g`` is a
         pre-loop symbol bound to ``array[P]`` -- return the index string ``P``;
         else ``None``."""
@@ -1553,7 +1568,7 @@ class ArgMaxLift(ppl.Pass):
         return (symbolic.simplify(m.gather_base + m.gather_coeff * iter_lo),
                 symbolic.simplify(m.gather_base + m.gather_coeff * iter_hi))
 
-    def _rewrite(self, m: _Match, sdfg: SDFG):
+    def _rewrite(self, m: _Match, sdfg: SDFG) -> None:
         """Replace the loop with a :class:`Reduce` (value-only) or
         :class:`ArgReduce` (value + index) libnode."""
         if m.transform is not None and m.idx_carrier_name is not None:
@@ -1655,7 +1670,7 @@ class ArgMaxLift(ppl.Pass):
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
 
-    def _rewrite_with_index(self, m: _Match, sdfg: SDFG):
+    def _rewrite_with_index(self, m: _Match, sdfg: SDFG) -> None:
         """Replace an argmax/argmin-with-index loop (TSVC s315) with a two-output ``ArgReduce``.
 
         Value and index land in fresh transient scalars bound back as ``carrier := val_buf`` and
@@ -1745,7 +1760,7 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
 
-    def _rewrite_with_transform(self, m: _Match, sdfg: SDFG):
+    def _rewrite_with_transform(self, m: _Match, sdfg: SDFG) -> None:
         """Replace a transformed value-only reduction (TSVC s3113,
         ``maxv = max(|a[i]|)``) with: a map materialising ``buf[j] = f(a[lo+j])``
         into a fresh contiguous transient, then a :class:`Reduce` over ``buf``.
@@ -1815,7 +1830,7 @@ class ArgMaxLift(ppl.Pass):
                               mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)])))
         reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
 
-    def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG):
+    def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG) -> None:
         """Replace a transformed argmax/argmin with index over an affine gather (TSVC s318,
         ``max(|a[inc*i]|)``) by one ``ArgReduce`` reading the strided slice ``a[pos_lo : pos_hi : coeff]``
         directly, ``transform`` applied per element; ``index := iter_lo + idx_buf``. Both carrier seeds
@@ -1916,7 +1931,10 @@ class ArgMaxLift(ppl.Pass):
 
     # predicate index (TSVC s331)
 
-    def match_predicate_index(self, loop: LoopRegion, sdfg: SDFG, skeleton=None) -> Optional[MatchPredIndex]:
+    def match_predicate_index(self,
+                              loop: LoopRegion,
+                              sdfg: SDFG,
+                              skeleton: Optional[LoopSkeleton] = None) -> Optional[MatchPredIndex]:
         """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value
         carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
 
@@ -1963,7 +1981,7 @@ class ArgMaxLift(ppl.Pass):
                               iter_start=start,
                               iter_end=end)
 
-    def true_branch_writes_index_only(self, true_branch, loop_var: str) -> Optional[str]:
+    def true_branch_writes_index_only(self, true_branch: ControlFlowBlock, loop_var: str) -> Optional[str]:
         """The one index carrier the true branch writes (``idx := loop_var``), or
         ``None`` if it writes anything else, writes twice, or holds any node work --
         the rewrite drops the branch wholesale, so a second effect would be lost.
@@ -2068,7 +2086,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         return seed
 
-    def rewrite_predicate_index(self, m: MatchPredIndex, sdfg: SDFG):
+    def rewrite_predicate_index(self, m: MatchPredIndex, sdfg: SDFG) -> None:
         """Replace the loop with ``init(seed) -> Map(masked index, WCR max) -> bind``.
 
         The WCR-on-scalar map is the shape ``LoopToReduce(prefer='wcr-scalar')``

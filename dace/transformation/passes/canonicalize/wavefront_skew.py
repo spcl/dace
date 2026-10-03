@@ -70,9 +70,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import SDFG, properties, subsets, symbolic
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -131,8 +133,13 @@ SPLIT_SNAP_SUFFIX = '_split_snap'
 #: tested for refusal).
 SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
 
+#: ``(parameter, lo, hi)`` of every enclosing unit-step map, innermost first.
+MapContext = List[Tuple[str, object, object]]
+#: A read of the carrier: ``(per-axis (lo, hi), context, guard)``.
+ReadRecord = Tuple[List[Tuple[object, object]], MapContext, List[object]]
 
-def sym(name: str):
+
+def sym(name: str) -> symbolic.SymbolicType:
     """The pass's own DaCe symbol for ``name`` (never a raw sympy symbol). It carries no
     assumptions -- the registry does not hand those back -- so it is only ever the ITERATOR
     spelling, and every expression the pass takes out of the SDFG is re-keyed onto it by
@@ -148,7 +155,7 @@ def declare_iterators(sdfg: SDFG, *names: str) -> None:
         symbolic.declare_symbol_dtype(name, dace.int64)
 
 
-def canonical_iterators(expr, iters: tuple[str, ...]):
+def canonical_iterators(expr: symbolic.SymbolicType, iters: tuple[str, ...]) -> symbolic.SymbolicType:
     """``expr`` with every free symbol NAMED in ``iters`` re-keyed onto :func:`sym`'s object.
 
     The Python frontend mints a loop iterator with explicit ``nonnegative=None`` /
@@ -195,7 +202,7 @@ class WriteMap:
         if abs(self.det) != 1:
             raise ValueError(f'write map {m} is not unimodular (det={self.det}); it has no integer inverse')
 
-    def invert(self, row_expr, col_expr) -> Tuple[object, object]:
+    def invert(self, row_expr: symbolic.SymbolicType, col_expr: symbolic.SymbolicType) -> Tuple[object, object]:
         """Iteration coordinates ``(u_r, v_r)`` that write array cell
         ``(row_expr, col_expr)``. Exact because ``det in {1, -1}``, so the adjugate
         already IS the inverse up to the factor ``1/det == det``."""
@@ -207,7 +214,7 @@ class WriteMap:
         return symbolic.simplify(u_r), symbolic.simplify(v_r)
 
 
-def split_var(expr, name: str) -> Tuple[object, object]:
+def split_var(expr: symbolic.SymbolicType, name: str) -> Tuple[object, object]:
     """``(coeff, remainder)`` splitting the named symbol out of an affine expr;
     ``remainder`` no longer contains that symbol. Matches by name."""
     e = symbolic.simplify(expr)
@@ -221,7 +228,7 @@ def split_var(expr, name: str) -> Tuple[object, object]:
     return symbolic.pystr_to_symbolic(0), e
 
 
-def integer_value(expr) -> Optional[int]:
+def integer_value(expr: symbolic.SymbolicType) -> Optional[int]:
     """``expr`` as a Python ``int`` when it is an integer literal, else ``None``."""
     e = symbolic.simplify(expr)
     if e.is_Integer:
@@ -229,7 +236,7 @@ def integer_value(expr) -> Optional[int]:
     return None
 
 
-def affine_coeffs(expr, u: str, v: str) -> Optional[Tuple[int, int, object]]:
+def affine_coeffs(expr: symbolic.SymbolicType, u: str, v: str) -> Optional[Tuple[int, int, object]]:
     """``(cu, cv, rest)`` for ``expr == cu*u + cv*v + rest`` with INTEGER ``cu, cv``
     and ``rest`` free of ``u, v``; ``None`` when ``expr`` is not affine in ``(u, v)``
     over the integers.
@@ -250,7 +257,8 @@ def affine_coeffs(expr, u: str, v: str) -> Optional[Tuple[int, int, object]]:
     return iu, iv, rest
 
 
-def parse_write_map(row_expr, col_expr, u: str, v: str) -> Optional[WriteMap]:
+def parse_write_map(row_expr: symbolic.SymbolicType, col_expr: symbolic.SymbolicType, u: str,
+                    v: str) -> Optional[WriteMap]:
     """Recognise ``row/col`` as a UNIMODULAR integer affine map of ``(u, v)``.
     Returns a :class:`WriteMap`, or ``None`` when the subscripts are not integer
     affine or the map is not unimodular.
@@ -483,7 +491,7 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
             st.remove_node(n)
 
 
-def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
+def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     """The per-dimension index of a *point* subset (``start == end`` on every
     axis); ``None`` if any axis is a range.
 
@@ -498,7 +506,7 @@ def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     return idx
 
 
-def access_extent(subset, iters: tuple[str, ...]) -> Optional[List[Tuple[object, object]]]:
+def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List[Tuple[object, object]]]:
     """The per-dimension ``(start, end)`` of a subset, keyed on the nest's iterators.
 
     The range-tolerant form of :func:`point_index`: a whole-row update ``A[i, 1:N-1]`` is a point
@@ -611,7 +619,8 @@ def axis_write_map(write_idxs: List[List[object]], u: str, v: str) -> Optional[T
     return found
 
 
-def axis_distance(idx: object, coeff, const, u: str, v: str) -> Optional[Tuple[object, object]]:
+def axis_distance(idx: object, coeff: symbolic.SymbolicType, const: symbolic.SymbolicType, u: str,
+                  v: str) -> Optional[Tuple[object, object]]:
     """``(du, dv) = writer - current`` for a read of the reduced carrier at ``idx``.
 
     ``coeff`` is its own inverse, so the writing ``v`` is ``coeff * (idx - const)``. Which ``u``
@@ -692,11 +701,11 @@ class Dependence:
     the write always happens can add dependences that do not exist but can never drop one."""
 
     def __init__(self,
-                 du,
-                 dv,
+                 du: symbolic.SymbolicType,
+                 dv: symbolic.SymbolicType,
                  nested: List[Tuple[str, object, object]],
                  kind: str = 'flow',
-                 guard: Optional[List[object]] = None):
+                 guard: Optional[List[object]] = None) -> None:
         self.du = symbolic.simplify(du)
         self.dv = symbolic.simplify(dv)
         self.nested = nested
@@ -704,7 +713,7 @@ class Dependence:
         self.guard = guard or []
 
 
-def dependence_kind(du, dv) -> str:
+def dependence_kind(du: symbolic.SymbolicType, dv: symbolic.SymbolicType) -> str:
     """Classify a distance ``(du, dv) = writer - current`` as ``'flow'`` or
     ``'anti'`` by the lexicographic sign of its first non-zero component (a
     positive first component means the writer runs after the current iteration,
@@ -755,7 +764,7 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
     return ctx
 
 
-def widened_beyond_reading(subset) -> bool:
+def widened_beyond_reading(subset: subsets.Subset) -> bool:
     """``subset`` has an axis whose width is symbolic or wider than a stencil's neighbourhood.
 
     That is precisely what :func:`reduced_points` cannot enumerate, and precisely what memlet
@@ -796,7 +805,8 @@ def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
     return descend
 
 
-def in_scope_accesses(state: SDFGState, edge, is_read: bool) -> Optional[List[Tuple[object, List[Tuple]]]]:
+def in_scope_accesses(state: SDFGState, edge: MultiConnectorEdge[Memlet],
+                      is_read: bool) -> Optional[List[Tuple[subsets.Subset, MapContext]]]:
     """``[(subset, map_ctx), ...]`` for the innermost edges ``edge`` stands for.
 
     Normally the edge's own subset, which is what every previously-analysable shape uses: a
@@ -814,7 +824,7 @@ def in_scope_accesses(state: SDFGState, edge, is_read: bool) -> Optional[List[Tu
     if not isinstance(other, (nodes.MapEntry, nodes.MapExit)) or not widened_beyond_reading(edge.data.subset):
         return [(edge.data.subset, [])]
 
-    out: List[Tuple[object, List[Tuple]]] = []
+    out: List[Tuple[subsets.Subset, MapContext]] = []
     for leaf in state.memlet_tree(edge).leaves():
         endpoint = leaf.dst if is_read else leaf.src
         if isinstance(endpoint, (nodes.MapEntry, nodes.MapExit)):
@@ -828,7 +838,7 @@ def in_scope_accesses(state: SDFGState, edge, is_read: bool) -> Optional[List[Tu
 
 def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str, v: str, v_local: str,
                         snap_src: Dict[str, str], sibling_cons: List[object], writes: Dict[str, List[List[object]]],
-                        reads: Dict[str, List[Tuple]]) -> bool:
+                        reads: Dict[str, List[ReadRecord]]) -> bool:
     """Record ``state``'s point accesses to 2-D arrays into ``writes`` / ``reads``.
 
     ``False`` means refuse: a non-point subset, or an enclosing loop whose range is not a clean
@@ -1028,7 +1038,7 @@ def domain_constraints(u: str, v: str, ub: Tuple[object, object], vb: Tuple[obje
     return [U - ub[0], ub[1] - U, V - vb[0], vb[1] - V]
 
 
-def tau_dot(tau: Tuple[int, int], dep: Dependence):
+def tau_dot(tau: Tuple[int, int], dep: Dependence) -> symbolic.SymbolicType:
     a, b = tau
     return symbolic.simplify(a * dep.du + b * dep.dv)
 
@@ -1176,7 +1186,8 @@ class TilePlan:
     """The skewed TILE-index bounds plus the grid origin and extents
     :meth:`WavefrontSkew._rewrite_tiled` emits from."""
 
-    def __init__(self, bounds, u_lo, v_lo, n_i, n_j, bi: int, bj: int) -> None:
+    def __init__(self, bounds: poly.SkewBounds, u_lo: symbolic.SymbolicType, v_lo: symbolic.SymbolicType,
+                 n_i: symbolic.SymbolicType, n_j: symbolic.SymbolicType, bi: int, bj: int) -> None:
         self.bounds = bounds
         self.u_lo = u_lo
         self.v_lo = v_lo
@@ -1243,7 +1254,7 @@ class WavefrontSkew(ppl.Pass):
                                      default=DEFAULT_GPU_TILE_SIZE,
                                      desc='Skewed-tile extent on the inner (v) axis for the GPU lowering.')
 
-    def __init__(self, target: str = 'cpu'):
+    def __init__(self, target: str = 'cpu') -> None:
         super().__init__()
         self.target = target
 
@@ -1440,7 +1451,7 @@ class WavefrontSkew(ppl.Pass):
         return TilePlan(bounds, u_lo, v_lo, n_i, n_j, bi, bj)
 
     def _rewrite(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
-                 bounds) -> None:
+                 bounds: poly.SkewBounds) -> None:
         """Relabel ``outer -> t`` and ``inner -> p`` with the projected bounds, then
         substitute the original iterators in terms of ``(t, p)`` in the inner body
         and lift it to a parallel Map. The substitution matches the unimodular
@@ -1576,7 +1587,8 @@ class WavefrontSkew(ppl.Pass):
         self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
 
     def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
-                          plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
+                          plan: TilePlan, i_lo: symbolic.SymbolicType, j_lo: symbolic.SymbolicType,
+                          ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
         """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
 
         :meth:`_rewrite` applied one level down; legality carries over since the tile interior is a
@@ -1622,8 +1634,11 @@ class WavefrontSkew(ppl.Pass):
             return
         self._emit_tile_interior(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, bounds, (d_lo, d_hi))
 
-    def _emit_tile_interior(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str,
-                            tau: Tuple[int, int], plan: TilePlan, i_lo, j_lo, bounds, d_range) -> None:
+    def _emit_tile_interior(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int,
+                                                                                                                int],
+                            plan: TilePlan, i_lo: symbolic.SymbolicType, j_lo: symbolic.SymbolicType,
+                            bounds: poly.SkewBounds, d_range: Tuple[symbolic.SymbolicType,
+                                                                    symbolic.SymbolicType]) -> None:
         """Diagonal over a CONSTANT-width parallel Map, with the real extent as a guard.
 
         This is :meth:`_rewrite` with one difference, and the difference is forced by the hardware.
@@ -1766,7 +1781,7 @@ def bound_expr(terms: List[object], subs: Dict[str, object], fn: str) -> str:
     return f"{fn}(" + ", ".join(rendered) + ")"
 
 
-def substitute_by_name(expr, subs: Dict[str, object]):
+def substitute_by_name(expr: symbolic.SymbolicType, subs: Dict[str, object]) -> symbolic.SymbolicType:
     """Substitute symbols in ``expr`` by NAME, so a probe symbol is matched whatever
     assumptions its object carries."""
     e = symbolic.simplify(expr)

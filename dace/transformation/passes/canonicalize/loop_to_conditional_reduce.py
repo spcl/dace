@@ -394,7 +394,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
     # rewrite
 
-    def _rewrite(self, m: _Match, sdfg: SDFG):
+    def _rewrite(self, m: _Match, sdfg: SDFG) -> bool:
         """Turn the guarded update into an unconditional masked reduction::
 
             masked_val = (__addend if (cond) else IDENTITY)   # spliced-in mask
@@ -541,7 +541,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         class _Subst(ast.NodeTransformer):
 
-            def visit_Name(self, node: ast.Name):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
                 # Inline iedge-bound gather symbol (``a_index`` -> ``a[i]`` AST).
                 # Recurse into the substituted AST so any Subscript inside it
                 # also gets connector-replaced in the same pass.
@@ -551,7 +551,7 @@ class LoopToConditionalReduce(ppl.Pass):
                     return self.visit(sub)
                 return node
 
-            def visit_Subscript(self, node: ast.Subscript):
+            def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
                 self.generic_visit(node)  # recurse into the subscript value/slice
                 if not isinstance(node.value, ast.Name):
                     unwireable.append(node)  # subscript of a non-name (e.g. a call result)

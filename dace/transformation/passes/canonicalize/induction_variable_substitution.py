@@ -59,13 +59,14 @@ mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 """
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, Type
 
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -93,9 +94,9 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     pattern matching; the codegen still emits the cast from the original tasklet
     body, only this pass's analysis treats it as a no-op.
     """
-    TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
+    TYPECAST_NAMES: Dict[str, None] = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
@@ -206,7 +207,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     return True
 
 
-def step_is_loop_invariant(step_names, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
+def step_is_loop_invariant(step_names: Iterable[object], loop: LoopRegion, sdfg: SDFG,
+                           sdfg_free_symbols: Set[str]) -> bool:
     """Whether a candidate IV STEP, built from ``step_names``, is loop-invariant.
 
     THIS is the test that separates an induction variable from a REDUCTION, and it is the only
@@ -245,10 +247,11 @@ class TaskletIV(NamedTuple):
     """
     accum: str  #: container the update eventually writes (after any staging transients)
     subset: str  #: the single-element, loop-invariant accumulator slot
-    op_type: type  #: ``ast.Add`` / ``ast.Mult``
+    op_type: Type[ast.operator]  #: ``ast.Add`` / ``ast.Mult``
     const_val: Any  #: numeric literal, or a source string over loop-invariant symbols
-    in_edge: Any  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
-    write_edge: Any  #: the tasklet's update write edge
+    in_edge: MultiConnectorEdge[
+        mm.Memlet]  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
+    write_edge: MultiConnectorEdge[mm.Memlet]  #: the tasklet's update write edge
     reads_accum: bool  #: the carried read traces back to ``accum[subset]`` (a true recurrence)
 
 
@@ -321,7 +324,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     # ``step`` a SDFG symbol, which lifts the same way.
     in_connector_names = dict.fromkeys(tasklet.in_connectors.keys())
 
-    def _is_carrier(node):
+    def _is_carrier(node: ast.AST) -> bool:
         return isinstance(node, ast.Name) and node.id in in_connector_names
 
     # EXACTLY one side may be a connector. Two connectors is ``__out = __in1 + __in2``, where the
@@ -452,7 +455,7 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
 # Use-site closed-form substitution (SCEV expansion) for a DATA accumulator
 
 
-def trip_index(loop: LoopRegion, start, stride):
+def trip_index(loop: LoopRegion, start: symbolic.SymbolicType, stride: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """Trip index ``t`` of the iteration running with ``loop_variable``: ``loop_var == start + t*stride``.
 
     Every visited ``loop_var`` makes ``loop_var - start`` an EXACT multiple of ``stride``, so
@@ -491,8 +494,10 @@ class UseSitePlan(NamedTuple):
     pre_node: nodes.AccessNode  #: accumulator version holding the value on entry to the iteration
     post_node: nodes.AccessNode  #: accumulator version the IV update writes
     chain: List[nodes.AccessNode]  #: staging transients between the IV tasklet and ``post_node``
-    pre_reads: List[Any]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
-    post_reads: List[Any]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
+    pre_reads: List[MultiConnectorEdge[
+        mm.Memlet]]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
+    post_reads: List[MultiConnectorEdge[
+        mm.Memlet]]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
 
 
 def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet,
@@ -540,8 +545,8 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
     if any(n in reachable_from_update for n in entry_versions):
         return None
 
-    pre_reads: List[Any] = []
-    post_reads: List[Any] = []
+    pre_reads: List[MultiConnectorEdge[mm.Memlet]] = []
+    post_reads: List[MultiConnectorEdge[mm.Memlet]] = []
     for node in entry_versions + [post_node]:
         bucket = post_reads if node is post_node else pre_reads
         for e in state.out_edges(node):
@@ -636,7 +641,8 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
 
 
 def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, state: SDFGState, iv: TaskletIV,
-                                plan: UseSitePlan, start, end, stride) -> None:
+                                plan: UseSitePlan, start: symbolic.SymbolicType, end: symbolic.SymbolicType,
+                                stride: symbolic.SymbolicType) -> None:
     """Commit the rewrite :func:`plan_use_site_substitution` validated."""
 
     t = trip_index(loop, start, stride)
@@ -703,8 +709,9 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         if len(branches) < 2 or all(c is not None for c in conds):
             continue  # no else branch -> a path skips the increment -> unsound to hoist
 
-        def branch_increments(br):
-            incs = {}
+        def branch_increments(
+                br: ControlFlowRegion) -> Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
+            incs: Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]] = {}
             for e in br.edges():
                 for lhs, rhs in (e.data.assignments or {}).items():
                     try:
@@ -776,7 +783,7 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     return False
 
 
-def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[str]:
+def _consistent_use_side(loop: LoopRegion, iv_edge: Edge[InterstateEdge], sym_name: str) -> Optional[str]:
     """Which side of the IV increment ``iv_edge`` every use of ``sym_name`` runs on.
 
     ``'before'`` (body sees ``norm_iter * step``), ``'after'`` (``norm_iter + 1``), ``'unused'`` (either
@@ -819,7 +826,8 @@ def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[s
     return 'unused'  # no body use -> either offset reproduces the (absent) reads
 
 
-def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name: str):
+def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
+                          sym_name: str) -> Optional[symbolic.SymbolicType]:
     """The value ``sym_name`` holds on ENTRY to ``loop``, or ``None`` if it is not
     locally provable.
 
@@ -832,7 +840,7 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     in_edges = list(parent.in_edges(loop))
     if not in_edges:
         return None
-    vals: dict = {}
+    vals: Dict[symbolic.SymbolicType, None] = {}
     for e in in_edges:
         rhs = (e.data.assignments or {}).get(sym_name)
         if rhs is None:
@@ -929,7 +937,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
     return False
 
 
-def staged_iedge_rhs(rhs: str, src_state, sdfg: SDFG):
+def staged_iedge_rhs(rhs: str, src_state: SDFGState, sdfg: SDFG) -> Optional[symbolic.SymbolicType]:
     """The arithmetic an interstate assignment's RHS stands for when it is staged through a
     transient, or ``None`` when ``rhs`` is not such a staging and should be read as written.
 
@@ -1175,7 +1183,7 @@ class RotationPlan(NamedTuple):
     remat: RematSource | None = None  #: producer to clone, when the carried value is computed
 
 
-def _subset_at(edge, node) -> Optional[subsets.Subset]:
+def _subset_at(edge: MultiConnectorEdge[mm.Memlet], node: nodes.AccessNode) -> Optional[subsets.Subset]:
     """The subset ``edge``'s memlet addresses in ``node``'s container (``node`` is one endpoint).
 
     A memlet names ONE of its two containers in ``data``; the other side lives in ``other_subset``.
@@ -1272,7 +1280,7 @@ def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFG
     return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in value_edges(st.in_edges(n))]
 
 
-def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var) -> bool:
+def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var: symbolic.SymbolicType) -> bool:
     """Whether ``tasklet`` may be EVALUATED A SECOND TIME, on another iteration's inputs.
 
     A clone runs the code again, so anything the original does beyond writing its output connector is
@@ -1308,8 +1316,9 @@ def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop
     return True
 
 
-def staged_write(sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
-                 reader_sub: subsets.Subset):
+def staged_write(
+        sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
+        reader_sub: subsets.Subset) -> Optional[Tuple[int, SDFGState, nodes.AccessNode, MultiConnectorEdge[mm.Memlet]]]:
     """The body write whose value the read of ``reader_node[reader_sub]`` provably sees.
 
     Returns ``(chain index, state, node, edge)`` for that write, or ``None`` when the read cannot be
@@ -1336,8 +1345,9 @@ def staged_write(sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node
     return ssi, sstate, snode, sedge
 
 
-def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var, stride, reader_si: int, reader_node: nodes.AccessNode,
-                 reader_sub: subsets.Subset, depth: int) -> RematSource | None:
+def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var: symbolic.SymbolicType, stride: symbolic.SymbolicType,
+                 reader_si: int, reader_node: nodes.AccessNode, reader_sub: subsets.Subset,
+                 depth: int) -> RematSource | None:
     """The clone chain that recomputes, at ``i - stride``, the value read at ``reader_node``.
 
     Recursive over the producer's own inputs: one the body writes is recomputed in turn rather than
@@ -1388,8 +1398,9 @@ def remat_shifts(source: RematSource) -> int:
     return sum(int(inp.moved) + (remat_shifts(inp.source) if inp.source is not None else 0) for inp in source.inputs)
 
 
-def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var, stride, wsi: int,
-                              write_edge) -> RematSource | None:
+def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var: symbolic.SymbolicType,
+                              stride: symbolic.SymbolicType, wsi: int,
+                              write_edge: MultiConnectorEdge[mm.Memlet]) -> RematSource | None:
     """The producer whose re-evaluation at ``i - stride`` equals the value ``write_edge`` stores.
 
     Disjoint from the shifted-read chase in :func:`plan_rotation` by construction: this requires the
@@ -1420,7 +1431,7 @@ def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, lo
 
 
 def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
-                  stride) -> Optional[RotationPlan]:
+                  stride: symbolic.SymbolicType) -> Optional[RotationPlan]:
     """Validate that ``accum`` is a delay line and enumerate the rewrite. Mutates nothing.
 
     Every ``return None`` below is one of the discriminators listed at the top of this section.
@@ -1717,7 +1728,7 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
                                      'depth a rotation may have (0 disables the pass). Peeling is what makes the '
                                      'shifted read valid on the first iteration.')
 
-    def __init__(self, peel_limit: int = 4):
+    def __init__(self, peel_limit: int = 4) -> None:
         super().__init__()
         self.peel_limit = peel_limit
 

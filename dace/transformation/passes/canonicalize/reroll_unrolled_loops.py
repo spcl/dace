@@ -31,16 +31,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import symbolic
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
-def _const_int(value) -> Optional[int]:
+def _const_int(value: symbolic.SymbolicType | int) -> Optional[int]:
     """Return ``value`` as a Python ``int`` if it is a constant integer, else ``None``.
 
     :param value: A symbolic expression or number.
@@ -71,7 +74,7 @@ def _offset_of_index(index_expr: str, loop_var: str) -> Optional[int]:
     return _const_int(expr - symbolic.pystr_to_symbolic(loop_var))
 
 
-def _index_offset(subset, loop_var: str) -> Optional[int]:
+def _index_offset(subset: Subset, loop_var: str) -> Optional[int]:
     """Constant offset ``k`` of a one-dimensional ``loop_var + k`` subset.
 
     :param subset: The memlet subset to inspect.
@@ -189,7 +192,8 @@ class RerollUnrolledLoops(ppl.Pass):
                 sym_offset[sym] = off
         return sym_offset
 
-    def _edge_offset(self, subset, loop_var: str, sym_offset: Dict[str, int]) -> Tuple[Optional[int], bool]:
+    def _edge_offset(self, subset: Optional[Subset], loop_var: str,
+                     sym_offset: Dict[str, int]) -> Tuple[Optional[int], bool]:
         """Lane offset of a memlet subset, and whether it is a lane edge at all.
 
         A subset indexed by ``loop_var + k`` has offset ``k``; a subset indexed by
@@ -219,9 +223,9 @@ class RerollUnrolledLoops(ppl.Pass):
     #: Sympy class names of associative binary operations recognised as the
     #: merge tasklet's reduction op. Indexed via ``type(expr).__name__`` so we
     #: stay on the :mod:`dace.symbolic` interface (no direct ``import sympy``).
-    ASSOC_SYMPY_KIND = {'Add': '+', 'Mul': '*', 'Min': 'min', 'Max': 'max'}
+    ASSOC_SYMPY_KIND: Dict[str, str] = {'Add': '+', 'Mul': '*', 'Min': 'min', 'Max': 'max'}
 
-    def _associative_op_kind(self, node) -> Optional[str]:
+    def _associative_op_kind(self, node: nodes.Node) -> Optional[str]:
         """If ``node`` is a binary associative-op tasklet over its two inputs,
         return its op kind (``'+'``, ``'*'``, ``'min'``, ``'max'``); else ``None``.
 
@@ -251,7 +255,7 @@ class RerollUnrolledLoops(ppl.Pass):
             return None
         return self.ASSOC_SYMPY_KIND.get(type(expr).__name__)
 
-    def _is_transparent_spine(self, state: SDFGState, node) -> bool:
+    def _is_transparent_spine(self, state: SDFGState, node: nodes.Node) -> bool:
         """Whether ``node`` carries a value through the reduction without itself
         being a lane-unique computation or an associative merge op.
 
@@ -366,13 +370,13 @@ class RerollUnrolledLoops(ppl.Pass):
         # ``m - 1`` binary ops over ``m`` single-consumer leaves, every operand internal: one tree.
         return len(ops) == len(accs) - 1 and all(e.src in inside for t in ops for e in state.in_edges(t))
 
-    def _shared_nodes(self, state: SDFGState) -> Dict:
+    def _shared_nodes(self, state: SDFGState) -> Dict[nodes.Node, None]:
         """Boundary access nodes of a state (external arrays + read-only sources).
 
         :param state: The body state.
         :returns: The AccessNodes the lane traversal must stop at.
         """
-        shared: Dict = {}
+        shared: Dict[nodes.Node, None] = {}
         for n in state.nodes():
             if not isinstance(n, nodes.AccessNode):
                 continue
@@ -383,7 +387,8 @@ class RerollUnrolledLoops(ppl.Pass):
                 shared[n] = None
         return shared
 
-    def _lane_nodes(self, state: SDFGState, lane_edges: List, shared: Dict) -> Dict:
+    def _lane_nodes(self, state: SDFGState, lane_edges: List[MultiConnectorEdge[Memlet]],
+                    shared: Dict[nodes.Node, None]) -> Dict[nodes.Node, None]:
         """Internal (non-shared) nodes reachable from a lane's boundary edges.
 
         :param state: The body state.
@@ -393,8 +398,8 @@ class RerollUnrolledLoops(ppl.Pass):
 
         Walks VALUE edges only -- an ordering memlet fixes order, never lane membership.
         """
-        seen: Dict = {}
-        frontier = []
+        seen: Dict[nodes.Node, None] = {}
+        frontier: List[nodes.Node] = []
         for e in lane_edges:
             for n in (e.src, e.dst):
                 if n not in shared:
@@ -428,7 +433,7 @@ class RerollUnrolledLoops(ppl.Pass):
             return False
 
         # Lane offset of every loop-dependent boundary edge, per state.
-        edge_offsets: Dict[SDFGState, Dict] = {st: {} for st in states}
+        edge_offsets: Dict[SDFGState, Dict[MultiConnectorEdge[Memlet], int]] = {st: {} for st in states}
         for st in states:
             for edge in st.edges():
                 if edge.data is None:
@@ -581,7 +586,7 @@ class RerollUnrolledLoops(ppl.Pass):
         self._rewrite_step(loop, loop_var, g, m)
         return True
 
-    def _cut_nodes(self, state: SDFGState) -> Dict:
+    def _cut_nodes(self, state: SDFGState) -> Dict[nodes.Node, None]:
         """AccessNodes of the loop's VISIBLE containers -- where the value walk stops.
 
         A lane's private values live in transients; everything a lane reads from or stores to the
@@ -594,7 +599,7 @@ class RerollUnrolledLoops(ppl.Pass):
         return dict.fromkeys(n for n in state.nodes()
                              if isinstance(n, nodes.AccessNode) and not (n.data in arrays and arrays[n.data].transient))
 
-    def _cut_side_subset(self, edge, cut_node):
+    def _cut_side_subset(self, edge: MultiConnectorEdge[Memlet], cut_node: nodes.AccessNode) -> Optional[Subset]:
         """The subset of ``edge`` that indexes ``cut_node``'s container.
 
         :param edge: A boundary edge of a lane component.
@@ -623,7 +628,8 @@ class RerollUnrolledLoops(ppl.Pass):
             idx.setdefault(state.node_id(n), len(idx))
         return idx
 
-    def _value_components(self, states: List[SDFGState], cut: List[Dict]) -> List[List[Tuple[int, nodes.Node]]]:
+    def _value_components(self, states: List[SDFGState], cut: List[Dict[nodes.Node,
+                                                                        None]]) -> List[List[Tuple[int, nodes.Node]]]:
         """Partition the body's non-boundary nodes into connected VALUE components.
 
         Two nodes are in one component when a value flows between them: along a non-empty memlet
@@ -639,13 +645,13 @@ class RerollUnrolledLoops(ppl.Pass):
         """
         parent: Dict[Tuple[int, int], Tuple[int, int]] = {}
 
-        def find(key):
+        def find(key: Tuple[int, int]) -> Tuple[int, int]:
             while parent[key] != key:
                 parent[key] = parent[parent[key]]
                 key = parent[key]
             return key
 
-        def union(a, b):
+        def union(a: Tuple[int, int], b: Tuple[int, int]) -> None:
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[rb] = ra
@@ -856,7 +862,7 @@ class RerollUnrolledLoops(ppl.Pass):
             return False
 
         # Per-offset lane signature: read arrays + private non-fold tasklet codes.
-        def _lane_sig(d: int) -> Tuple:
+        def _lane_sig(d: int) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
             reads = sorted(e.src.data for e in per_lane_edges[d])
             priv = sorted(n.code.as_string for n, offs in reached_by.items()
                           if len(offs) == 1 and d in offs and isinstance(n, nodes.Tasklet)
@@ -892,7 +898,7 @@ class RerollUnrolledLoops(ppl.Pass):
         self._rewrite_step(loop, loop_var, g, m)
         return True
 
-    def _collapse_merge_tree(self, state: SDFGState, merges: Dict) -> None:
+    def _collapse_merge_tree(self, state: SDFGState, merges: Dict[nodes.Node, None]) -> None:
         """Splice each surviving merge tasklet to passthrough its one live input.
 
         After the dropped-lane nodes are removed, each merge tasklet in the
@@ -948,7 +954,8 @@ class RerollUnrolledLoops(ppl.Pass):
             if state.degree(out_acc) == 0:
                 state.remove_node(out_acc)
 
-    def _has_read_modify_write(self, states: List[SDFGState], edge_offsets: Dict) -> bool:
+    def _has_read_modify_write(self, states: List[SDFGState],
+                               edge_offsets: Dict[SDFGState, Dict[MultiConnectorEdge[Memlet], int]]) -> bool:
         """Whether any array is both read and written by the lanes.
 
         :param states: The body states.
