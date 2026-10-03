@@ -57,7 +57,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "networkx>=2.5,<=3.5",
+    "networkx>=2.5",
     "astunparse",
     "sympy>=1.9",
     "pyyaml",
