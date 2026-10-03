@@ -1441,6 +1441,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
+        #: value shares one (elementwise operations between those arrays compare their extents).
+        self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
         self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols every read so far provably set to a symbolic value, with the region it holds in.
@@ -3160,8 +3164,9 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
-        # The write ends the value the scalar was known to hold.
+        # The write ends the value the scalar was known to hold, and the version its shape symbol was read from.
         self.symbolic_scalar_values.pop(target_name, None)
+        self.shape_promotions.pop(target_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3424,8 +3429,9 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
-        # An update is a write too: it ends the value the scalar was known to hold.
+        # An update is a write too: it ends the value the scalar was known to hold, and its shape symbol's version.
         self.symbolic_scalar_values.pop(wtarget_name, None)
+        self.shape_promotions.pop(wtarget_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -6183,15 +6189,22 @@ class ProgramVisitor(ExtNodeVisitor):
         iteration may have rebound it), while none of its symbols is assigned on an interstate edge
         or as a loop variable.
         """
+        if not self.dominated_by_region(defining_region):
+            return False
+        assigned = {name for edge in self.sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
+        assigned.update(loop.loop_variable for loop in self.sdfg.all_control_flow_regions(recursive=True)
+                        if isinstance(loop, LoopRegion))
+        return not any(str(sym) in assigned for sym in value.free_symbols)
+
+    def dominated_by_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether an assignment made in ``defining_region`` still reaches the current region: it is that region or a
+        branch nested in it, with no loop in between (a later iteration may have rebound it)."""
         region = self.cfg_target
         while region is not defining_region:
             if region is None or isinstance(region, (LoopRegion, SDFG)):
                 return False
             region = region.parent_graph
-        assigned = {name for edge in self.sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
-        assigned.update(loop.loop_variable for loop in self.sdfg.all_control_flow_regions(recursive=True)
-                        if isinstance(loop, LoopRegion))
-        return not any(str(sym) in assigned for sym in value.free_symbols)
+        return True
 
     def proven_symbol_values(self) -> Dict[symbolic.symbol, symbolic.SymbolicType]:
         """Promoted symbols that provably equal a symbolic value at the current region.
@@ -6211,12 +6224,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
         :param scalar: Name of the scalar data descriptor to read.
         :param key: Cache key; repeated promotions of the same expression reuse the symbol.
-        :param fresh: Mint a new suffixed symbol instead of reusing a cached one, so two shapes
-                      sized from the same reassigned scalar keep their own values.
+        :param fresh: A shape promotion: one suffixed symbol per VERSION of the scalar, shared by every shape
+                      sized from it until the scalar is written again, so two shapes sized from the same
+                      reassigned scalar keep their own values.
         :return: The symbol carrying the scalar's value.
         """
         key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
+        if fresh and scalar in self.shape_promotions:
+            version_sym, region = self.shape_promotions[scalar]
+            if self.dominated_by_region(region):
+                return version_sym
         sym = None if fresh else self.indirections.get(key)
         if sym is None:
             base = f'__sym_{scalar}'
@@ -6239,6 +6257,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 # ``globals``. Subscript promotions must stay out: they shadow names there.
                 self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+        if fresh:
+            self.shape_promotions[scalar] = (sym, self.cfg_target)
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'

@@ -332,7 +332,27 @@ def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program)
     assert np.allclose(out, a * 2.0)
 
 
+def test_two_arrays_from_one_size_share_their_extent():
+    """Arrays sized by one unchanged scalar share its symbol, so an elementwise operation between them is not refused
+    as a broadcast of two different extents."""
+
+    @dace.program
+    def counts(p: dace.float64[N]):
+        a_grid = np.zeros(9, dtype=np.int64)
+        b_grid = np.zeros(16, dtype=np.int64)
+        n = a_grid.size * b_grid.size
+        count_a = np.ones(n, dtype=np.int64)
+        count_b = np.ones(n, dtype=np.int64)
+        count_c = p.size - count_a - count_b
+        p[0] = count_c[0]
+
+    p = np.zeros(5)
+    counts(p)
+    assert p[0] == 3
+
+
 if __name__ == '__main__':
+    test_two_arrays_from_one_size_share_their_extent()
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
     test_scalar_size_as_shape()
