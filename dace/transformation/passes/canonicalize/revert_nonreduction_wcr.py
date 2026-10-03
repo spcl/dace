@@ -76,6 +76,7 @@ def wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
                             WCRToAugAssign.output: dst
                         }
         elif isinstance(dst, nodes.MapExit):
+            assert edge.data.data is not None, "an edge into a map exit carries a value"
             for out in _exit_outputs(state, dst, edge.data.data):
                 if isinstance(src, nodes.Tasklet):
                     yield 1, {WCRToAugAssign.tasklet: src, WCRToAugAssign.map_exit: dst, WCRToAugAssign.output: out}

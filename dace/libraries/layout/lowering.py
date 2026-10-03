@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy from the logical index to the digit-tuple physical position."""
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import dace
 
@@ -32,7 +32,7 @@ def _emit_relayout_copy(state: dace.SDFGState, in_name: str, out_name: str, logi
                         out_map: LayoutMap) -> None:
     """Emit the single mapped-tasklet copy ``out[digits] = in[logical]`` into ``state``."""
     dims = list(range(len(logical_shape)))
-    map_ranges = {f"__i{d}": f"0:{logical_shape[d]}" for d in dims}
+    map_ranges: Dict[str, Union[str, dace.subsets.Subset]] = {f"__i{d}": f"0:{logical_shape[d]}" for d in dims}
     read_index = ", ".join(f"__i{d}" for d in dims)
     write_index = ", ".join(_digit_expr(dg) for dg in out_map.digits)
     state.add_mapped_tasklet(

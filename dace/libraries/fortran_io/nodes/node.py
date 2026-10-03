@@ -38,9 +38,6 @@ class FortranIONode(nodes.LibraryNode):
     dead code even when, like ``WRITE``, they have no output connectors.
     """
 
-    #: Number of connected items; each concrete node declares it as a ``Property``.
-    num_items: int
-
     def has_side_effects(self, sdfg) -> bool:
         return True
 
@@ -63,7 +60,8 @@ class FortranIONode(nodes.LibraryNode):
         else:
             edges = {e.src_conn: e for e in state.out_edges(self) if e.src_conn}
         items = []
-        for i in range(self.num_items):
+        for i in range(
+                self.num_items):  # type: ignore[attr-defined] # each concrete node declares ``num_items`` as a Property
             conn = f"{prefix}{i}"
             edge = edges.get(conn)
             if edge is None:

@@ -35,8 +35,8 @@ class TBLIS:
     def cmake_libraries():
         # libtci is TBLIS's threading-runtime companion; both ship from the same build.
         if 'TBLIS_ROOT' in os.environ:
-            prefix = config.Config.get('compiler', 'library_prefix')
-            suffix = config.Config.get('compiler', 'library_extension')
+            prefix = str(config.Config.get('compiler', 'library_prefix'))
+            suffix = str(config.Config.get('compiler', 'library_extension'))
             libdir = os.path.join(os.environ['TBLIS_ROOT'], 'lib')
             libs = []
             for name in ('tblis', 'tci'):

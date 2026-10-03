@@ -107,7 +107,7 @@ if _BACKEND_NAME == "idxalg":
     # only when a caller explicitly opts in. Do not fall back silently -- an opt-in that quietly
     # ran on the other engine would make a backend A/B meaningless -- but do say what is missing.
     try:
-        from idxalg import sympy_compat as _idx
+        from idxalg import sympy_compat as _idx  # type: ignore[import-not-found]  # optional backend, opt-in via DACE_SYMBOLIC_BACKEND
     except ImportError as ex:
         raise ImportError('DACE_SYMBOLIC_BACKEND=idxalg requires the "idxalg" package, which is '
                           'not installed. Install it or unset the variable to use the default '

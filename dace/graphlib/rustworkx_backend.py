@@ -179,7 +179,7 @@ class RustworkxGraphHandle:
     graphlib_backend = None  # bound to INSTANCE at the bottom of this module
 
     def __init__(self, multigraph=False):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         self.multigraph = multigraph
         self._rx = rustworkx.PyDiGraph(multigraph=multigraph)
         self._index = NodeIndexMap()
@@ -430,7 +430,7 @@ class RustworkxDiGraphMatcher:
         self._node_match, self._edge_match = node_match, edge_match
 
     def subgraph_isomorphisms_iter(self):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         node_matcher = (lambda a, b: self._node_match(a, b)) if self._node_match else None
         edge_matcher = (lambda a, b: self._edge_match(a, b)) if self._edge_match else None
         mappings = rustworkx.digraph_vf2_mapping(self._G1._rx,
@@ -453,14 +453,14 @@ class RustworkxBackend:
         return RustworkxGraphHandle(multigraph=True)
 
     def has_path(self, G, source, target):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         source_idx = _index_of(G, source, NodeNotFound, f'Source {source} is not in G')
         target_idx = _index_of(G, target, NodeNotFound, f'Target {target} is not in G')
         return rustworkx.has_path(G._rx, source_idx, target_idx)
 
     def immediate_dominators(self, G, start):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         start_idx = _index_of(G, start, NetworkXError, f'{start} is not in G')
         idom = rustworkx.immediate_dominators(G._rx, start_idx)
@@ -469,7 +469,7 @@ class RustworkxBackend:
     def weakly_connected_components(self, G):
         # lazy generator, matching real networkx.weakly_connected_components (each component is
         # still an eager set, same as real networkx -- only the outer sequence is lazy).
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         for comp in rustworkx.weakly_connected_components(G._rx):
             yield {G._index.node_at(i) for i in comp}
@@ -480,7 +480,7 @@ class RustworkxBackend:
         # whenever the graph has index holes from a remove_node (confirmed empirically -- directed
         # [0, 2, 3] comes back as undirected [0, 1, 2]), so its result cannot be mapped back through
         # NodeIndexMap. Missing node raises KeyError, matching real networkx.node_connected_component.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         idx = _index_of(G, node, KeyError, node)
         for comp in rustworkx.weakly_connected_components(G._rx):
@@ -494,7 +494,7 @@ class RustworkxBackend:
         # -- translated here so `except nx.NetworkXUnfeasible:` call sites (e.g. dace/library.py's
         # dependency-graph sort) work identically either backend, including when the cycle is
         # only discovered partway through consuming the generator.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         try:
             for i in rustworkx.topological_sort(G._rx):
@@ -504,7 +504,7 @@ class RustworkxBackend:
 
     def simple_cycles(self, G):
         # lazy generator, matching real networkx.simple_cycles.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         for cycle in rustworkx.simple_cycles(G._rx):
             yield [G._index.node_at(i) for i in cycle]
@@ -517,7 +517,7 @@ class RustworkxBackend:
         # component, not exhaustively all of them -- the only caller today
         # (dace.sdfg.graph.DiGraph.has_cycles, confirmed dead code with no live callers) always
         # passes an explicit, non-empty source list, so this doesn't affect anything reachable.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         sources = list(source) if isinstance(source, (list, tuple, collections.abc.Set)) else [source]
         for src in sources:
@@ -533,17 +533,17 @@ class RustworkxBackend:
         raise NetworkXNoCycle('No cycle found.')
 
     def is_directed_acyclic_graph(self, G):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         return rustworkx.is_directed_acyclic_graph(_coerce(G)._rx)
 
     def descendants(self, G, source):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         source_idx = _index_of(G, source, NetworkXError, f'The node {source} is not in the digraph.')
         return {G._index.node_at(i) for i in rustworkx.descendants(G._rx, source_idx)}
 
     def ancestors(self, G, source):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         source_idx = _index_of(G, source, NetworkXError, f'The node {source} is not in the digraph.')
         return {G._index.node_at(i) for i in rustworkx.ancestors(G._rx, source_idx)}
@@ -551,7 +551,7 @@ class RustworkxBackend:
     def all_simple_paths(self, G, source, target):
         # lazy generator, matching real networkx.all_simple_paths -- including its asymmetry: a
         # missing SOURCE raises NodeNotFound, but a missing TARGET just yields no paths.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         source_idx = _index_of(G, source, NodeNotFound, f'source node {source} not in graph')
         if target not in G._index:
@@ -579,7 +579,7 @@ class RustworkxBackend:
 
     def dfs_edges(self, G, source=None):
         # lazy generator, matching real networkx.dfs_edges.
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         if source is not None:
             src_idx = _index_of(G, source, NetworkXError, f'The node {source} is not in the digraph.')
@@ -589,7 +589,7 @@ class RustworkxBackend:
             yield (G._index.node_at(u), G._index.node_at(v))
 
     def shortest_path_length(self, G, source, target):
-        import rustworkx
+        import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
         G = _coerce(G)
         source_idx = _index_of(G, source, NodeNotFound, f'Source {source} is not in G')
         target_idx = _index_of(G, target, NodeNotFound, f'Target {target} is not in G')

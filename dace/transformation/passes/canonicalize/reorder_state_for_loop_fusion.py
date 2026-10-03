@@ -76,7 +76,7 @@ Candidate = Tuple[LoopRegion, SDFGState, LoopRegion]
 ESCAPE_BLOCKS: Tuple[Type[ControlFlowBlock], ...] = (ReturnBlock, BreakBlock, ContinueBlock)
 
 #: Descriptor types for which two different names can name the same memory -- see checklist item 4.
-ALIASING_TYPES: Tuple[Type[dt.Data], ...] = (dt.View, dt.Reference)
+ALIASING_TYPES: Tuple[type, ...] = (dt.View, dt.Reference)
 
 
 @transformation.explicit_cf_compatible

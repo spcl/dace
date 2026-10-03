@@ -14,7 +14,8 @@ placement, which is the part that goes silently wrong rather than loudly broken.
 """
 from typing import Optional
 
-from dace import dtypes
+from dace import SDFG, dtypes, nodes
+from dace.sdfg.state import SDFGState
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
 #: on NVIDIA (32 wide). Matches ``scan.BLOCK_COLLECTIVE_THREADS``; a kernel holding both takes the
@@ -104,7 +105,9 @@ def add_block_lane_map(state, label: str, lanes: int = BLOCK_COLLECTIVE_THREADS)
 GPU_BLOCK_IMPLEMENTATIONS = ('CUDA (block strided)', 'CUDA (block)')
 
 
-def gpu_block_implementation(node, state=None, sdfg=None) -> Optional[str]:
+def gpu_block_implementation(node: nodes.Node,
+                             state: Optional[SDFGState] = None,
+                             sdfg: Optional[SDFG] = None) -> Optional[str]:
     """The block lowering ``node`` registers and can take, or ``None`` when it has none.
 
     ``Reduce`` registers both keys and they are NOT interchangeable: ``'CUDA (block)'`` is the
@@ -118,7 +121,8 @@ def gpu_block_implementation(node, state=None, sdfg=None) -> Optional[str]:
     block = next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
     if block is None or state is None:
         return block
-    if isinstance(node, Reduce) and block_strided_refusal(node, state, sdfg) is not None:
+    if isinstance(node, Reduce) and block_strided_refusal(node, state,
+                                                          sdfg if sdfg is not None else state.sdfg) is not None:
         return None
     if isinstance(node, Scan) and block_refusal(node) is not None:
         return None
