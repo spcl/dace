@@ -17,6 +17,8 @@ kernels.
 """
 import copy
 
+import re
+
 import numpy as np
 import pytest
 
@@ -63,7 +65,8 @@ def generated_for(build, name, implementation, gpu=False):
 
 def view_index_body(code):
     """Body of the emitted ``V_idx`` index function (the ``return ...;`` line)."""
-    lines = [ln.strip() for ln in code.splitlines() if 'V_idx(' in ln and 'return' in ln]
+    # A GPU build names the device copy ``V_gpu``
+    lines = [ln.strip() for ln in code.splitlines() if re.search(r'\bV(_gpu)?_idx\(', ln) and 'return' in ln]
     assert lines, 'experimental codegen emitted no V_idx index function:\n' + code
     return lines[0]
 
@@ -120,24 +123,23 @@ def test_view_access_bit_exact(require_experimental, target):
 
 
 @pytest.mark.gpu
-def test_view_idx_inside_kernel(require_experimental, require_gpu):
+def test_view_idx_inside_kernel(require_experimental):
     """``V[V_idx(...)]`` (view strides) appears inside the ``__global__`` kernel."""
     code = generated_for(strided_view_copy_sdfg, 'view_gpu_inspect', EXPERIMENTAL, gpu=True)
     assert '__global__' in code, 'no CUDA kernel emitted'
-    assert 'V_idx(' in code, 'view index function missing from device code'
+    assert re.search(r'\bV(_gpu)?_idx\(', code), 'view index function missing from device code'
     body = view_index_body(code)
     assert '2 * __d1' in body, body
 
 
 if __name__ == '__main__':
-    from tests.codegen.readable.conftest import experimental_available, gpu_available
+    from tests.codegen.readable.conftest import experimental_available
     if not experimental_available():
         print('experimental readable codegen not ready; skipping')
     else:
         test_view_idx_uses_view_strides(None)
         test_view_no_pure_fallback(None)
         test_view_access_bit_exact(None, 'cpu')
-        if gpu_available():
-            test_view_access_bit_exact(None, 'gpu')
-            test_view_idx_inside_kernel(None, None)
+        test_view_access_bit_exact(None, 'gpu')
+        test_view_idx_inside_kernel(None)
         print('ok')

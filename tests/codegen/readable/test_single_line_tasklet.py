@@ -20,6 +20,8 @@ CPU generator instance -- inside ``__global__`` kernels.
 """
 import copy
 
+import re
+
 import numpy as np
 import pytest
 
@@ -75,7 +77,8 @@ def generated_for(build, name, implementation, gpu=False):
 
 def tasklet_body_line(code):
     """The single emitted line that stores into ``C`` through the index functions."""
-    lines = [ln.strip() for ln in code.splitlines() if 'C_idx(' in ln and 'A_idx(' in ln and 'B_idx(' in ln]
+    # A GPU build names the device copies ``<name>_gpu``
+    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf'\b{x}(_gpu)?_idx\(', ln) for x in 'CAB')]
     assert lines, 'no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n' + code
     return lines[0]
 
@@ -155,7 +158,7 @@ def test_wcr_reduction_bit_exact(require_experimental, target):
 
 
 @pytest.mark.gpu
-def test_single_line_inside_kernel(require_experimental, require_gpu):
+def test_single_line_inside_kernel(require_experimental):
     """The connector-free single-line tasklet appears inside the ``__global__``
     kernel: the CUDA generator emits device tasklets through the shared CPU
     generator, so the readable form flows into device code too."""
@@ -167,7 +170,7 @@ def test_single_line_inside_kernel(require_experimental, require_gpu):
 
 
 if __name__ == '__main__':
-    from tests.codegen.readable.conftest import experimental_available, gpu_available
+    from tests.codegen.readable.conftest import experimental_available
     if not experimental_available():
         print('experimental readable codegen not ready; skipping')
     else:
@@ -175,8 +178,7 @@ if __name__ == '__main__':
         test_wcr_tasklet_keeps_block(None)
         test_single_line_bit_exact(None, 'cpu')
         test_wcr_reduction_bit_exact(None, 'cpu')
-        if gpu_available():
-            test_single_line_bit_exact(None, 'gpu')
-            test_wcr_reduction_bit_exact(None, 'gpu')
-            test_single_line_inside_kernel(None, None)
+        test_single_line_bit_exact(None, 'gpu')
+        test_wcr_reduction_bit_exact(None, 'gpu')
+        test_single_line_inside_kernel(None)
         print('ok')

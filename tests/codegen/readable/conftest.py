@@ -21,9 +21,7 @@ functions and ``const``/``constexpr`` initialization, which legacy never does).
 """
 import functools
 import os
-import shutil
 import signal
-import subprocess
 import tempfile
 
 # dace lazily ``from mpi4py import MPI`` inside ``to_sdfg`` (auto-calls
@@ -119,24 +117,6 @@ def experimental_available():
     except Exception:  # noqa: BLE001 - generator under development raised -> not ready
         return False
     return experimental_code != legacy_code
-
-
-@functools.lru_cache(maxsize=1)
-def gpu_available():
-    """True iff a CUDA device is usable (cupy device count, else ``nvidia-smi -L``)."""
-    try:
-        import cupy
-        return cupy.cuda.runtime.getDeviceCount() > 0
-    except Exception:  # noqa: BLE001 - cupy missing / no driver
-        pass
-    smi = shutil.which("nvidia-smi")
-    if not smi:
-        return False
-    try:
-        proc = subprocess.run([smi, "-L"], capture_output=True, text=True, timeout=15)
-        return proc.returncode == 0 and "GPU" in proc.stdout
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def to_host(value):
@@ -255,22 +235,12 @@ def require_experimental():
         pytest.skip("experimental readable codegen not ready")
 
 
-@pytest.fixture
-def require_gpu():
-    """Skip the test unless a CUDA device is present."""
-    if not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
-
-
 @pytest.fixture(params=[
     pytest.param("cpu", id="cpu"),
     pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
 ])
 def target(request):
-    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with
-    ``-m gpu``) and additionally skips when no CUDA device is available."""
-    if request.param == "gpu" and not gpu_available():
-        pytest.skip("no CUDA-capable GPU available")
+    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with ``-m gpu``)."""
     return request.param
 
 
