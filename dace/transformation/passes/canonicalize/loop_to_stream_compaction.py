@@ -154,6 +154,8 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Prefixes for the transients and symbol this pass introduces.
 MASK_PREFIX = 'compaction_mask_'
@@ -422,7 +424,7 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 if edge.data.wcr is not None:
                     return False  # a conflict resolution is an accumulation, not an append
-                desc = sdfg.arrays.get(edge.data.data)
+                desc = sdfg.arrays.get(required(edge.data.data))
                 if isinstance(desc, data.Stream):
                     return False  # stream push order is observable
         return True
@@ -457,7 +459,7 @@ class LoopToStreamCompaction(ppl.Pass):
         if step == 0:
             return None  # a zero bump is not an append cursor
         invariant = {*(level.loop.loop_variable for level in levels), *assigned}
-        if any(str(s) in invariant for s in step.free_symbols):
+        if any(str(s) in invariant for s in as_expr(step).free_symbols):
             return None  # a data-dependent or iteration-dependent step breaks c_in + K*rank[i]
         return name, step
 
@@ -466,8 +468,9 @@ class LoopToStreamCompaction(ppl.Pass):
         meta = [cond_str]
         for level in levels:
             meta += [
-                level.loop.loop_condition.as_string, level.loop.init_statement.as_string,
-                level.loop.update_statement.as_string
+                level.loop.loop_condition.as_string,
+                required(level.loop.init_statement).as_string,
+                required(level.loop.update_statement).as_string
             ]
         for code in meta:
             if cursor in self.expression_names(code):
@@ -494,7 +497,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
                 name = edge.data.data
-                uses_cursor = cursor in {str(s) for s in edge.data.subset.free_symbols}
+                uses_cursor = cursor in {str(s) for s in required(edge.data.subset).free_symbols}
                 writes = isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
                 target = (cursor_written if uses_cursor else plain_written) if writes else (
                     cursor_read if uses_cursor else read)
@@ -502,9 +505,9 @@ class LoopToStreamCompaction(ppl.Pass):
         # Interstate edges and branch conditions read data too; a compaction whose source read is
         # bound to a symbol (``t = Z[i]``) aliases its target exactly as a dataflow read would.
         for memlet in self.meta_reads(loop, sdfg):
-            uses_cursor = cursor in {str(s) for s in memlet.subset.free_symbols}
+            uses_cursor = cursor in {str(s) for s in required(memlet.subset).free_symbols}
             target = cursor_read if uses_cursor else read
-            target[memlet.data] = target.get(memlet.data, 0) + 1
+            target[memlet.data] = target.get(required(memlet.data), 0) + 1
         for name in cursor_written:
             if name in read or name in cursor_read:
                 return False  # in-place compaction: the parallel scatter races its own input
@@ -551,7 +554,7 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 if edge.data.subset != guard_reads[name]:
                     return False  # the body overwrites an element the guard read at another index
-                if not self.subset_is_injective_point(edge.data.subset, loop_vars):
+                if not self.subset_is_injective_point(required(edge.data.subset), loop_vars):
                     return False  # two iterations share the element -> the hoist changes the value read
         return True
 
@@ -579,7 +582,7 @@ class LoopToStreamCompaction(ppl.Pass):
             lead = begin.coeff(here[0], 1)
             if symbolic.simplify(begin - (lead * here[0] + begin.coeff(here[0], 0))) != 0:
                 return False  # non-affine in the loop variable
-            if not lead.is_Integer or lead == 0:
+            if not required(lead).is_Integer or lead == 0:
                 return False
             carried.append(here[0])
         # by name: carried holds equalized instances, loop_vars the originals

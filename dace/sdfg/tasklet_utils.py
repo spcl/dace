@@ -287,10 +287,10 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
             found = set()
 
             # 1. Free symbols (simple variables like a, b, i, N, etc.)
-            found |= {str(s) for s in sym_expr.free_symbols}
+            found |= {str(s) for s in as_expr(sym_expr).free_symbols}
 
             # 2. Function names + symbols inside arguments
-            for func in sym_expr.atoms(sympy.Function):
+            for func in as_expr(sym_expr).atoms(sympy.Function):
                 # Add function name
                 found.add(str(func.func))
 
@@ -750,7 +750,7 @@ def _match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet)
     tdict = dict()
     for ie in state.in_edges(tasklet):
         if ie.data is not None:
-            tdict[ie.dst_conn] = state.sdfg.arrays[ie.data.data]
+            tdict[ie.dst_conn] = state.sdfg.arrays[required(ie.data.data)]
 
     return tdict
 
@@ -795,15 +795,15 @@ def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str
             tree = ast.parse(code_rhs, mode="eval")
             call_node = tree.body
             if isinstance(call_node, ast.Call):
-                args = [ast.get_source_segment(code_rhs, arg).strip() for arg in call_node.args]
+                args = [required(ast.get_source_segment(code_rhs, arg)).strip() for arg in call_node.args]
                 assert len(args) == 2
                 left_string, right_string = args[0:2]
             elif isinstance(call_node, ast.BinOp):
                 # Infix form of a function op that never got normalised to a
                 # call — e.g. ``a // b`` for ``int_floor`` in a single-op
                 # tasklet (SplitTasklets only rewrites multi-statement bodies).
-                left_string = ast.get_source_segment(code_rhs, call_node.left).strip()
-                right_string = ast.get_source_segment(code_rhs, call_node.right).strip()
+                left_string = required(ast.get_source_segment(code_rhs, call_node.left)).strip()
+                right_string = required(ast.get_source_segment(code_rhs, call_node.right)).strip()
             else:
                 raise ValueError(f"Expected a function call in expression: {code_rhs}")
         except SyntaxError as e:
@@ -982,11 +982,11 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         in_edges = {ie for ie in state.in_edges_by_connector(node, rhs)}
         assert len(in_edges) == 1, f"expected 1 in-edge for connector {rhs}, found {len(in_edges)}"
         rhs_data_name = in_edges.pop().data.data
-        rhs_data = state.sdfg.arrays[rhs_data_name]
+        rhs_data = state.sdfg.arrays[required(rhs_data_name)]
         out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
         assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
         lhs_data_name = out_edges.pop().data.data
-        lhs_data = state.sdfg.arrays[lhs_data_name]
+        lhs_data = state.sdfg.arrays[required(lhs_data_name)]
 
         # Assignment operators it will return op <- `=` and always populate `rhs1`
         if code_str == f"{lhs} = {rhs}" or code_str == f"{lhs} = {rhs};":
@@ -1038,7 +1038,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         else:
             # Handle the correct order, left-of the operand is `1` and right is `2`
             op = _extract_single_op(code_str)
-            reordered = _reorder_rhs(code_str, op, rhs, constant)
+            reordered = _reorder_rhs(code_str, op, rhs, required(constant))
             rhs1 = rhs if reordered[0] == rhs else None
             rhs2 = rhs if reordered[1] == rhs else None
             constant1 = constant if reordered[0] == constant else None
@@ -1194,7 +1194,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                         out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
                         assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
                         lhs_data_name = out_edges.pop().data.data
-                        lhs_data = state.sdfg.arrays[lhs_data_name]
+                        lhs_data = state.sdfg.arrays[required(lhs_data_name)]
                         lhs_datadesc = lhs_data
                         ttype = None
                         if isinstance(lhs_datadesc, dace.data.Array):
@@ -1223,6 +1223,8 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
 
 
 import ast
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 class FuncToOp(ast.NodeTransformer):

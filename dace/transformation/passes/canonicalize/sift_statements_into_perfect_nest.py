@@ -56,6 +56,8 @@ from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 from dace.transformation.passes.move_if_into_loop import _linear_order
+from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
 
 
 def _provably_nonempty(loop: LoopRegion) -> bool:
@@ -78,7 +80,7 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
         diff = symbolic.simplify(symbolic.pystr_to_symbolic(init) - symbolic.pystr_to_symbolic(end))
     else:
         return False
-    return diff.is_nonnegative is True
+    return as_expr(diff).is_nonnegative is True
 
 
 def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
@@ -284,7 +286,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         inner.add_edge(pre_if, old_start, InterstateEdge())
     if post_if is not None:
         inner.add_node(post_if, ensure_unique_name=True)
-        inner.add_edge(old_sink, post_if, InterstateEdge())
+        inner.add_edge(required(old_sink), post_if, InterstateEdge())
     if pre_if is not None:
         # Make the prepended pre-guard the explicit inner-body start (the getter otherwise
         # prefers a unique source node, and a stale start corrupts dominator analysis).

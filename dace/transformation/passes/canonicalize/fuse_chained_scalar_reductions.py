@@ -57,6 +57,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.optionals import required
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
 FOLDABLE_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
@@ -306,7 +307,9 @@ class FuseChainedScalarReductions(ppl.Pass):
             fold_t = st.add_tasklet(f'_fuse_red_{idx}', dict.fromkeys(['__in1', '__in2']), dict.fromkeys(['__out']),
                                     f'__out = (__in1 {op_str} __in2)')
             if cur_scalar_node is None:
-                st.add_edge(left_edge.src, left_edge.src_conn, fold_t, '__in1', copy.deepcopy(left_edge.data))
+                st.add_edge(
+                    required(left_edge).src,
+                    required(left_edge).src_conn, fold_t, '__in1', copy.deepcopy(required(left_edge).data))
             else:
                 run = cur_scalar_node.data
                 st.add_edge(cur_scalar_node, None, fold_t, '__in1', Memlet.from_array(run, sdfg.arrays[run]))
@@ -319,7 +322,7 @@ class FuseChainedScalarReductions(ppl.Pass):
         # 2. Re-plug the first step's binop increment operand to the folded increment.
         inc_conn = first.inc_edge.dst_conn
         st.add_edge(cur_scalar_node, None, first.binop, inc_conn,
-                    Memlet.from_array(cur_scalar_node.data, sdfg.arrays[cur_scalar_node.data]))
+                    Memlet.from_array(required(cur_scalar_node).data, sdfg.arrays[required(cur_scalar_node).data]))
 
         # 3. Redirect the first step's write path to the terminal accumulator node.
         #    The first step's write_final node is an intermediate; splice it out and

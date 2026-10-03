@@ -35,6 +35,8 @@ from dace.transformation.passes.analysis import scopes
 from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 
 class _RenameLoadName(ast.NodeTransformer):
@@ -280,7 +282,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
             if memlet.data != inner_name:
                 widen_far_side_of_copy(state, edge, inner_name, inner_shape, outer_ranges)
                 continue
-            new_range_list, inner_is_full_rank = outer_ranges(memlet.subset.ranges)
+            new_range_list, inner_is_full_rank = outer_ranges(required(as_range(memlet.subset)).ranges)
             if not inner_is_full_rank:
                 remap_reduce_axes(edge.dst, collapsed_dims)
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
@@ -415,8 +417,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             # (a whole row) instead of ``I[__i0, __i1]`` -- dropping every trailing map dim.
             if not apply_offset:
                 return symbolic.Subscript(base, *uncollapsed_indices(args[1:], offset_dims, collapsed_dims))
-            return symbolic.Subscript(base, *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims,
-                                                           inner_shape))
+            return symbolic.Subscript(
+                base, *outer_indices(args[1:], offset_dims, collapsed_dims, required(step_dims), inner_shape))
         # Not our target: rebuild the original Subscript verbatim.
         return symbolic.Subscript(*args)
 
@@ -517,8 +519,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             if str(args[0]) == inner_name and not apply_offset:
                 return symbolic.Subscript(outer_sym, *args[1:])
             if str(args[0]) == inner_name:
-                return symbolic.Subscript(outer_sym,
-                                          *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims, inner_shape))
+                return symbolic.Subscript(
+                    outer_sym, *outer_indices(args[1:], offset_dims, collapsed_dims, required(step_dims), inner_shape))
             return symbolic.Subscript(*args)
 
         def _rw_index_expr(expr):
@@ -693,7 +695,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             # inner [N,N]).
             inner_desc = inner_sdfg.arrays[in_conn]
             collapsed_dims = []
-            for (b, e, s) in iedge.data.subset.ranges:
+            for (b, e, s) in required(as_range(iedge.data.subset)).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:
@@ -713,7 +715,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             inner_desc = inner_sdfg.arrays[out_conn]
             collapsed_dims = []
-            for (b, e, s) in oedge.data.subset.ranges:
+            for (b, e, s) in required(as_range(oedge.data.subset)).ranges:
                 if (e + 1 - b) // s == 1:
                     collapsed_dims.append(True)
                 else:

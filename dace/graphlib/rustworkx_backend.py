@@ -23,6 +23,7 @@ import collections.abc
 import copy
 
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
+from dace.optionals import required
 
 
 class NodeIndexMap:
@@ -431,8 +432,8 @@ class RustworkxDiGraphMatcher:
 
     def subgraph_isomorphisms_iter(self):
         import rustworkx  # type: ignore[import-not-found]  # optional backend, not installed with dace
-        node_matcher = (lambda a, b: self._node_match(a, b)) if self._node_match else None
-        edge_matcher = (lambda a, b: self._edge_match(a, b)) if self._edge_match else None
+        node_matcher = (lambda a, b: required(self._node_match)(a, b)) if self._node_match else None
+        edge_matcher = (lambda a, b: required(self._edge_match)(a, b)) if self._edge_match else None
         mappings = rustworkx.digraph_vf2_mapping(self._G1._rx,
                                                  self._G2._rx,
                                                  node_matcher=node_matcher,

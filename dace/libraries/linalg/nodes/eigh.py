@@ -23,6 +23,8 @@ from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.standard.helper import host_accessible_info_storage
 from dace.transformation.transformation import ExpandTransformation
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 #: Jacobi sweeps before the pure expansion gives up; cyclic Jacobi converges quadratically, so a
 #: well-scaled matrix needs well under twenty.
@@ -302,9 +304,10 @@ class Eigh(dace.sdfg.nodes.LibraryNode):
         operands = {}
         for conn, memlet in memlets.items():
             subset = copy.deepcopy(memlet.subset)
-            dims = subset.squeeze()
-            desc = sdfg.arrays[memlet.data]
-            operands[conn] = Operand(desc.dtype, desc.storage, subset.size(), [desc.strides[d] for d in dims])
+            dims = required(as_range(subset)).squeeze()
+            desc = sdfg.arrays[required(memlet.data)]
+            operands[conn] = Operand(desc.dtype, desc.storage,
+                                     required(as_range(subset)).size(), [desc.strides[d] for d in dims])
         a_op = operands["_a"]
         if len(a_op.shape) != 2 or symbolic.equal(a_op.shape[0], a_op.shape[1]) is False:
             raise ValueError("eigh needs a square matrix")

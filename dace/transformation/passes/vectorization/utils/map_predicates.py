@@ -15,6 +15,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import map_scope
 from dace.transformation.passes.vectorization.utils.injectivity import scatter_write_is_injective
 from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
+from dace.optionals import required
 
 # Same helper as dace.transformation.passes.analysis.map_scope.map_body_nodes; re-exported here
 # (not redefined) so every existing `from ...map_predicates import map_body_nodes` keeps working.
@@ -331,7 +332,7 @@ def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) 
     reduced = {
         str(s)
         for e in state.in_edges(state.exit_node(map_entry)) if e.data.wcr is not None
-        for s in e.data.subset.free_symbols
+        for s in required(e.data.subset).free_symbols
     }
     params = map_entry.map.params
     count = 0

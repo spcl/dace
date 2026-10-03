@@ -15,8 +15,9 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, SDFGState
 
-#: Anything a subset bound, loop bound or parsed expression can be.
-SymbolicLike = Union[symbolic.SymbolicType, int, str]
+#: Anything a subset bound, loop bound or parsed expression can be (``sympy.Basic`` also covers sympy's own stubs,
+#: which declare ``Basic`` where an ``Expr`` is returned).
+SymbolicLike = Union[sympy.Basic, symbolic.SymExpr, int, str]
 
 
 def as_expr(value: SymbolicLike) -> sympy.Expr:
@@ -26,13 +27,12 @@ def as_expr(value: SymbolicLike) -> sympy.Expr:
     :returns: The sympy expression.
     :raises TypeError: If ``value`` parses to a non-``Expr`` sympy object (a relational, for example).
     """
-    if isinstance(value, symbolic.SymExpr):
-        value = value.expr
-    elif isinstance(value, (int, str)):
-        value = symbolic.pystr_to_symbolic(value)
-    if not isinstance(value, sympy.Expr):
-        raise TypeError(f'{value!r} is not a sympy expression')
-    return value
+    expr = value.expr if isinstance(value, symbolic.SymExpr) else value
+    if isinstance(expr, (int, str)):
+        expr = symbolic.pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Expr):
+        raise TypeError(f'{expr!r} is not a sympy expression')
+    return expr
 
 
 def simplified(value: SymbolicLike) -> sympy.Expr:
@@ -50,6 +50,13 @@ def as_range(subset: subsets.Subset | None) -> subsets.Range:
     if not isinstance(subset, subsets.Range):
         raise TypeError(f'expected a Range subset, got {type(subset).__name__}')
     return subset
+
+
+def as_map_entry(node: nodes.Node | None) -> nodes.MapEntry:
+    """``node`` as a :class:`~dace.sdfg.nodes.MapEntry`; scope lookups return the abstract ``EntryNode | None``."""
+    if not isinstance(node, nodes.MapEntry):
+        raise TypeError(f'expected a MapEntry, got {type(node).__name__}')
+    return node
 
 
 def as_typeclass(dtype: object) -> dtypes.typeclass:
@@ -123,10 +130,9 @@ def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
 
     A :class:`~dace.symbolic.SymExpr` contributes the symbols of its main expression.
     """
-    if isinstance(value, symbolic.SymExpr):
-        value = value.expr
-    if isinstance(value, sympy.Basic):
-        return {str(s) for s in value.free_symbols}
+    expr = value.expr if isinstance(value, symbolic.SymExpr) else value
+    if isinstance(expr, sympy.Basic):
+        return {str(s) for s in expr.free_symbols}
     return set()
 
 

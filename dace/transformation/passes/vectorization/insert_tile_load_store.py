@@ -45,6 +45,8 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
                                                                         build_symbol_definition_map, TileAccess)
 from dace.ordered import OrderedSet
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
@@ -292,7 +294,7 @@ def stage_tile_load(state: SDFGState,
     # ``other_subset`` (the connector descriptor defines the dest shape).
     state.add_edge(an, None, load, load.INPUT_CONNECTOR_NAME, _libnode_boundary_memlet(src_subset))
     for d in gather_dims:
-        idx_an = idx_sources[d]
+        idx_an = required(idx_sources)[d]
         idx_desc = sdfg.arrays[idx_an.data]
         idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
         state.add_edge(idx_an, None, load, f"_idx_{d}", Memlet(f"{idx_an.data}[{idx_subset}]"))
@@ -363,7 +365,7 @@ def stage_tile_store(state: SDFGState,
     src_subset_str = ", ".join(f"0:{w}" for w in widths)
     state.add_edge(bridge_an, None, store, store.INPUT_CONNECTOR_NAME, Memlet(f"{bridge_name}[{src_subset_str}]"))
     for d in gather_dims:
-        idx_an = idx_sources[d]
+        idx_an = required(idx_sources)[d]
         idx_desc = sdfg.arrays[idx_an.data]
         idx_subset = ", ".join(f"0:{s}" for s in idx_desc.shape)
         state.add_edge(idx_an, None, store, f"_idx_{d}", Memlet(f"{idx_an.data}[{idx_subset}]"))
@@ -1120,7 +1122,7 @@ class InsertTileLoadStore(ppl.Pass):
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
             if (isinstance(old_edge.src, AccessNode) and old_edge.data.other_subset is not None
                     and isinstance(inner_state.sdfg.arrays.get(old_edge.src.data), data.Scalar)):
-                new_memlet.other_subset = subsets.Range(list(old_edge.data.other_subset.ranges))
+                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
@@ -1204,7 +1206,7 @@ class InsertTileLoadStore(ppl.Pass):
             for e in inner_state.in_edges(node):
                 if e.data is None:
                     continue
-                src_desc = sdfg.arrays.get(e.data.data)
+                src_desc = sdfg.arrays.get(required(e.data.data))
                 if not isinstance(src_desc, data.Array):
                     continue
                 src_shape = tuple(src_desc.shape)
@@ -1288,7 +1290,7 @@ class InsertTileLoadStore(ppl.Pass):
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
             if (isinstance(old_edge.dst, AccessNode) and old_edge.data.other_subset is not None
                     and isinstance(inner_state.sdfg.arrays.get(old_edge.dst.data), data.Scalar)):
-                new_memlet.other_subset = subsets.Range(list(old_edge.data.other_subset.ranges))
+                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
             inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 

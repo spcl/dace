@@ -38,6 +38,7 @@ from dace.libraries.standard.pure_components import chain, counted_loop, element
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
+from dace.optionals import required
 
 INPUT_CONNECTOR_NAME = "_idx_in"
 OUTPUT_CONNECTOR_NAME = "_count_out"
@@ -59,8 +60,8 @@ def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SD
     if len(in_edges) != 1 or len(out_edges) != 1:
         raise ValueError(f"ScatterConflictCheck {node.label}: one '{INPUT_CONNECTOR_NAME}' in-edge + "
                          f"one '{OUTPUT_CONNECTOR_NAME}' out-edge required.")
-    in_desc = sdfg.arrays[in_edges[0].data.data]
-    out_desc = sdfg.arrays[out_edges[0].data.data]
+    in_desc = sdfg.arrays[required(in_edges[0].data.data)]
+    out_desc = sdfg.arrays[required(out_edges[0].data.data)]
     if not isinstance(in_desc, dace.data.Array) or not _helpers.is_integer_dtype(in_desc.dtype):
         raise ValueError(f"ScatterConflictCheck input must be an integer Array; got {in_desc}.")
     if out_desc.dtype != dtypes.int64:
@@ -71,7 +72,7 @@ def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SD
         raise ValueError(f"ScatterConflictCheck {node.label}: at most one '{SCRATCH_CONNECTOR_NAME}' out-edge.")
     owner_desc = None
     if owner_edges:
-        owner_desc = sdfg.arrays[owner_edges[0].data.data]
+        owner_desc = sdfg.arrays[required(owner_edges[0].data.data)]
         if not isinstance(owner_desc, dace.data.Array) or owner_desc.dtype != dtypes.int64:
             raise ValueError(f"ScatterConflictCheck '{SCRATCH_CONNECTOR_NAME}' must be an int64 Array; "
                              f"got {owner_desc}.")
@@ -86,7 +87,7 @@ def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SD
 def _length(node: "ScatterConflictCheck", state: dace.SDFGState) -> str:
     """C++ expression for the input length from the in-edge memlet."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
-    return sym2cpp(in_edges[0].data.subset.num_elements())
+    return sym2cpp(required(in_edges[0].data.subset).num_elements())
 
 
 def _outputs(owner_desc: Optional[dace.data.Array]) -> Dict[str, None]:
@@ -104,7 +105,7 @@ def _owner(node: "ScatterConflictCheck", state: dace.SDFGState,
     if owner_desc is None:
         return None
     edge = next(e for e in state.out_edges(node) if e.src_conn == SCRATCH_CONNECTOR_NAME)
-    return SCRATCH_CONNECTOR_NAME, sym2cpp(edge.data.subset.num_elements())
+    return SCRATCH_CONNECTOR_NAME, sym2cpp(required(edge.data.subset).num_elements())
 
 
 def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]) -> str:
@@ -172,7 +173,7 @@ class ExpandPure(ExpandTransformation):
         nsdfg = dace.SDFG(f'{node.label}_pure')
         for conn, edge in edges.items():
             operand_array(nsdfg, conn, edge, sdfg)
-        n = symbolic.symstr(edges[INPUT_CONNECTOR_NAME].data.subset.num_elements())
+        n = symbolic.symstr(required(edges[INPUT_CONNECTOR_NAME].data.subset).num_elements())
         blocks = [] if SCRATCH_CONNECTOR_NAME in edges else sized_tags(nsdfg, n)
         tags = SCRATCH_CONNECTOR_NAME if SCRATCH_CONNECTOR_NAME in edges else OWN_TAGS
         capacity = symbolic.symstr(nsdfg.arrays[tags].total_size)

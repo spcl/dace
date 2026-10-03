@@ -57,6 +57,8 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.scatter_conflict_guard import (ScatterIndexSlice, build_guard_states,
                                                                insert_scatter_guard)
 from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties
@@ -219,7 +221,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # counts alone decide the branch -- the per-array symbols below are empty here.
                 cond = ' + '.join(joint_dup_syms[id(loop)]) + ' > 0'
                 anchor = joint_anchors.get(id(loop), loop)
-                _wrap_loop_in_dispatcher(anchor.parent_graph, loop, cond, anchor)
+                _wrap_loop_in_dispatcher(required(anchor).parent_graph, loop, cond, anchor)
                 continue
 
             if self.emit_unparallelized_else_branch and (dup_count_syms or sliced_dup_syms):
@@ -485,9 +487,9 @@ def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
 
     j = symbolic.pystr_to_symbolic(loop_var)
     dim_expr = symbolic.pystr_to_symbolic(astutils.unparse(dim_nodes[dim]))
-    coeff = dim_expr.coeff(j, 1)
-    const = dim_expr.coeff(j, 0)
-    if symbolic.simplify(dim_expr - (coeff * j + const)) != 0:
+    coeff = as_expr(dim_expr).coeff(j, 1)
+    const = as_expr(dim_expr).coeff(j, 0)
+    if symbolic.simplify(dim_expr - (required(coeff) * j + const)) != 0:
         return None  # not affine in the loop variable
 
     elem_stride = symbolic.simplify(coeff * lstride * desc.strides[dim])

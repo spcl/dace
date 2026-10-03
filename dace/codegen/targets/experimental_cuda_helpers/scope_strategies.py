@@ -16,6 +16,7 @@ from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, Kern
 from dace.codegen.targets.cuda import (_named_idx, chiplet_padding_condition, kernel_grid_conditions,
                                        kernel_index_definitions, kernel_launch_qualifiers)
 from dace.transformation.dataflow.add_threadblock_map import product
+from dace.sdfg.narrowing import as_map_entry
 
 
 def emit_dim_index_definitions(scope_map, axis: str, index_types, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
@@ -69,7 +70,7 @@ class ScopeGenerationStrategy(ABC):
 
     def applicable(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> bool:
-        return dfg_scope.source_nodes()[0].map.schedule == self.SCHEDULE
+        return as_map_entry(dfg_scope.source_nodes()[0]).map.schedule == self.SCHEDULE
 
     @abstractmethod
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
@@ -192,7 +193,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                           comment=self.SCOPE_COMMENT) as scope_manager:
 
             node = dfg_scope.source_nodes()[0]
-            scope_map = node.map
+            scope_map = as_map_entry(node).map
             kernel_block_dims = self._current_kernel_spec.block_dims
 
             state = cfg.state(state_id)
@@ -266,7 +267,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
             state_dfg = cfg.state(state_id)
             node = dfg_scope.source_nodes()[0]
-            scope_map = node.map
+            scope_map = as_map_entry(node).map
 
             map_range = subsets.Range(scope_map.range[::-1])  # Reversed for potential better performance
             warp_dim = len(map_range)

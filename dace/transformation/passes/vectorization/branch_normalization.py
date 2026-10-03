@@ -29,7 +29,8 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
-from dace.sdfg.narrowing import free_symbol_names
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range, free_symbol_names
 from dace.ordered import OrderedSet
 
 
@@ -508,7 +509,7 @@ class BranchNormalization(ppl.Pass):
         subset_str = self.representative_write_subset(cb)
         parent = cb.parent_graph
         guard_state = parent.add_state_before(cb, label=f"{cb.label}_guard", is_start_block=parent.start_block is cb)
-        resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, subset_str, skip_cb=cb)
+        resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, required(subset_str), skip_cb=cb)
         if resolved is None:
             raise NotImplementedError(f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
                                       f"({cond_text!r}) although its arms write data it reads; "
@@ -546,7 +547,7 @@ class BranchNormalization(ppl.Pass):
         """Apply the symbol deletions :meth:`freeze_guards` deferred, each re-checked against the current graph."""
         drops = lifter._deferred_drops
         lifter._deferred_drops = None
-        for drop in drops:
+        for drop in required(drops):
             lifter._drop_interstate_symbol(drop[0], drop[1], drop[2])
 
     @staticmethod
@@ -765,7 +766,7 @@ class BranchNormalization(ppl.Pass):
                         for s in (ed.data.subset, ed.data.other_subset):
                             if s is None:
                                 continue
-                            for r in s.ranges:
+                            for r in as_range(s).ranges:
                                 for elem in r:
                                     if elem is None:
                                         continue

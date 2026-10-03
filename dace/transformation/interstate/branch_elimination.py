@@ -1153,8 +1153,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                                 graph.add_edge(new_state, oe2.dst, copy.deepcopy(oe2.data))
         return added_scalars, removed_scalars
 
-    def extract_condition_var_and_assignment(self, graph: Union[ControlFlowRegion,
-                                                                ConditionalBlock]) -> Tuple[str, str]:
+    def extract_condition_var_and_assignment(self, graph: ControlFlowRegion) -> Tuple[str, str]:
         non_none_conds = [cond for cond, _ in self.conditional.branches if cond is not None]
         assert len(non_none_conds) == 1
         cond = non_none_conds.pop()
@@ -1260,7 +1259,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # Get the condition assignment of the if-block to copy the symbol type
         # We add its negation to the new branch (e.g. expr == 0 instead of expr == 1 which is the usual one)
-        cond_var, cond_assignment = self.extract_condition_var_and_assignment(if_block)
+        cond_var, cond_assignment = self.extract_condition_var_and_assignment(parent_graph)
 
         new_if_block.add_branch(condition=CodeBlock(f"({cond_assignment}) == 0"), branch=body)
 

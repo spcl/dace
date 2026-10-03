@@ -321,7 +321,7 @@ class SplitMapForTileRemainder(ppl.Pass):
                 simplified = symbolic.simplify(stride)
                 # A bare symbol is exactly the undecidable case: a constant needs no promise and a
                 # compound expression has no single symbol a runtime check could pin.
-                if simplified.is_Symbol:
+                if as_expr(simplified).is_Symbol:
                     self._stride_checks.append((sdfg, str(simplified), chunk))
 
     def _emit_range_checks(self) -> None:

@@ -39,6 +39,8 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_map_entry
+from dace.optionals import required
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
 # producer edges; a well-formed state bottoms out in a handful of steps).
@@ -129,7 +131,7 @@ class StateValueResolver:
         if isinstance(edge.src, nodes.Tasklet):
             return self.eval_tasklet(edge.src, {}, depth, edge.src_conn)
         if isinstance(edge.src, nodes.AccessNode):
-            return self.value_at(edge.src, subset_indices(edge.data.subset), depth + 1)
+            return self.value_at(edge.src, subset_indices(required(edge.data.subset)), depth + 1)
         raise ValueError(f"rank-k resolve: unsupported producer {type(edge.src).__name__}")
 
     def through_map_exit(self, map_exit: nodes.MapExit, out_conn: str, index: Sequence[symbolic.SymbolicType],
@@ -147,7 +149,7 @@ class StateValueResolver:
             entry = self.state.entry_node(edge.src)
             if entry is None:
                 raise ValueError("rank-k resolve: tasklet outside a map scope")
-            binding = unify(subset_indices(edge.data.subset), index, entry.map.params)
+            binding = unify(subset_indices(required(edge.data.subset)), index, as_map_entry(entry).map.params)
             return self.eval_tasklet(edge.src, binding, depth, edge.src_conn)
         raise ValueError("rank-k resolve: no producer into map exit")
 
@@ -170,7 +172,9 @@ class StateValueResolver:
         for edge in self.state.in_edges(tasklet):
             if edge.dst_conn is None or edge.data is None or edge.data.is_empty():
                 continue
-            index = [symbolic.pystr_to_symbolic(str(i)).subs(bind_syms) for i in subset_indices(edge.data.subset)]
+            index = [
+                symbolic.pystr_to_symbolic(str(i)).subs(bind_syms) for i in subset_indices(required(edge.data.subset))
+            ]
             if isinstance(edge.src, nodes.MapEntry):
                 source = source_access(self.state, edge.src, edge.src_conn)
                 if source is None:
@@ -460,7 +464,7 @@ def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: symp
     if sink is None or sink.data != c_array:
         return None
     subset = sink_write_subset(state, sink)
-    uplo = triangle_of(subset, i, n)
+    uplo = triangle_of(required(subset), i, n)
     if uplo is None:
         return None
     resolver = StateValueResolver(state)
@@ -490,7 +494,7 @@ def resolve_accumulate(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sy
     if sink is None or sink.data != c_array:
         return None
     subset = sink_write_subset(state, sink)
-    uplo = triangle_of(subset, i, n)
+    uplo = triangle_of(required(subset), i, n)
     if uplo is None:
         return None
     resolver = StateValueResolver(state)

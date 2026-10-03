@@ -12,7 +12,8 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy, fill
 from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_map_entry
 
 
 @properties.make_properties
@@ -137,7 +138,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # Enumerating every simple path of a large map body to find them was this pass's whole cost.
         exit_node = state.exit_node(node)
         path_candidates = [
-            self._get_edges_from_path(state, [node, successor, exit_node])
+            self._get_edges_from_path(state, [node, successor, required(exit_node)])
             for successor in dict.fromkeys(e.dst for e in state.out_edges(node))
             if successor is not exit_node and any(e.dst is exit_node for e in state.out_edges(successor))
         ]
@@ -245,7 +246,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
         assert isinstance(node, dace.nodes.MapEntry), f"Node {node} is not a MapEntry"
         assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
-        n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
+        n = {
+            n
+            for n in state.all_nodes_between(node, required(state.exit_node(node)))
+            if isinstance(n, dace.nodes.Tasklet)
+        }
         return len(n)
 
     @staticmethod
@@ -364,7 +369,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # The exactness guard below compares the un-widened ``subst_out`` volume against the trip
         # count; the widened ``new_out`` is what the lifted node actually transfers.
         subst_out = self._subst_range([(b, e, s) for (b, e, s) in out_subset], range_list)
-        new_out = self._overapprox_first_dimension(subst_out, out_data, sdfg)
+        new_out = self._overapprox_first_dimension(subst_out, required(out_data), sdfg)
         if new_out is None:
             return None, None, None
         new_in = []
@@ -639,7 +644,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # A memcpy lowers to a byte copy, so source and destination must agree on dtype and storage.
             if not is_memset:
-                src_desc = state.sdfg.arrays[src_access_node.data]
+                src_desc = state.sdfg.arrays[required(src_access_node).data]
                 dst_desc = state.sdfg.arrays[dst_access_node.data]
                 if src_desc.dtype != dst_desc.dtype:
                     if verbose:
@@ -674,7 +679,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                                                passthrough_conns=passthrough_conns,
                                                libnode_conn_names=libnode_conn_names,
                                                begin_subset=begin_subset,
-                                               exit_subset=exit_subset,
+                                               exit_subset=required(exit_subset),
                                                copy_length=copy_length,
                                                verbose=verbose):
                 continue
@@ -685,10 +690,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                                dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             else:
-                libnode = libnode_cls(name=f"copyLib_{src_access_node.data}_{dst_access_node.data}_{self.rmid}")
+                libnode = libnode_cls(
+                    name=f"copyLib_{required(src_access_node).data}_{dst_access_node.data}_{self.rmid}")
                 state.add_node(libnode)
-                state.add_edge(src_access_node, None, libnode, libnode_cls.INPUT_CONNECTOR_NAME,
-                               dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=src_access_node.data))
+                state.add_edge(
+                    src_access_node, None, libnode, libnode_cls.INPUT_CONNECTOR_NAME,
+                    dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=required(src_access_node).data))
                 state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                                dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
             # The map entry/exit are about to be torn down: their data preds/succs are the reused
@@ -809,7 +816,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         parent_tuple = helpers.get_parent_map(state, node)
         while parent_tuple is not None:
             parent_map, parent_state = parent_tuple
-            if parent_map.map.schedule in dace.dtypes.GPU_SCHEDULES:
+            if as_map_entry(parent_map).map.schedule in dace.dtypes.GPU_SCHEDULES:
                 return True
             parent_tuple = helpers.get_parent_map(parent_state, parent_map)
         return False

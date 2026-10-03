@@ -33,6 +33,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import helpers as xfh, pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
+from dace.optionals import required
 
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -72,13 +73,13 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
     with a known identity (folded across the lanes), or nothing outside the map reads it."""
     inner = set(state.scope_subgraph(entry).nodes())
     for edge in state.out_edges(state.exit_node(entry)):
-        if edge.data.is_empty() or not lane_private(state.sdfg, edge.data.data):
+        if edge.data.is_empty() or not lane_private(state.sdfg, required(edge.data.data)):
             continue
         if edge.data.wcr is not None:
-            if edge.data.subset.num_elements() != 1:
+            if required(edge.data.subset).num_elements() != 1:
                 return False
             continue
-        if reads_outside(state.sdfg, edge.data.data, inner):
+        if reads_outside(state.sdfg, required(edge.data.data), inner):
             return False
     return True
 
@@ -86,8 +87,8 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
 def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
     """Whether ``node`` writes a shared (not lane-private) container it also reads: once per lane is wrong."""
     read = {edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()}
-    return any(edge.data.data in read and not lane_private(state.sdfg, edge.data.data) for edge in state.out_edges(node)
-               if not edge.data.is_empty())
+    return any(edge.data.data in read and not lane_private(state.sdfg, required(edge.data.data))
+               for edge in state.out_edges(node) if not edge.data.is_empty())
 
 
 def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bool:

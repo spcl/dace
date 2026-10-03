@@ -7,6 +7,7 @@ from dace import subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
+from dace.sdfg.narrowing import as_expr
 
 RangeTriple = Tuple[Any, Any, Any]
 
@@ -36,7 +37,7 @@ def exact_trip_count(begin: Any, end: Any, step: Any) -> Any:
         return int(span) // stride + 1
     quotient: Any = 0
     remainder = 0
-    for term, coefficient in symbolic.simplify(span).expand().as_coefficients_dict().items():
+    for term, coefficient in as_expr(symbolic.simplify(span)).expand().as_coefficients_dict().items():
         factor = constant_int(coefficient)
         if factor is not None and term == 1:
             remainder += factor

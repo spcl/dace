@@ -31,6 +31,7 @@ from dace.codegen.common import global_code_id, sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers  # local helper functions kept out of this file for readability
 from .. import environments
+from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
 
 # Connector names exposed for library-node builders.
@@ -55,8 +56,8 @@ def _validate_inputs_and_outputs(node: "IntegerSort", state: dace.SDFGState,
                          f"in-edge and one ``{OUTPUT_CONNECTOR_NAME}`` out-edge.")
     in_name = in_edges[0].data.data
     out_name = out_edges[0].data.data
-    in_desc = sdfg.arrays[in_name]
-    out_desc = sdfg.arrays[out_name]
+    in_desc = sdfg.arrays[required(in_name)]
+    out_desc = sdfg.arrays[required(out_name)]
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
         raise ValueError(f"IntegerSort requires Array inputs/outputs; got {type(in_desc).__name__} -> "
                          f"{type(out_desc).__name__}.")
@@ -70,7 +71,7 @@ def _validate_inputs_and_outputs(node: "IntegerSort", state: dace.SDFGState,
 def _resolve_length(node: "IntegerSort", state: dace.SDFGState, sdfg: dace.SDFG) -> str:
     """Return a C++ expression for the input length ``N`` from the in-edge memlet."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
-    return sym2cpp(in_edges[0].data.subset.num_elements())
+    return sym2cpp(required(in_edges[0].data.subset).num_elements())
 
 
 def _is_length_one(node: "IntegerSort", state: dace.SDFGState) -> bool:
@@ -78,7 +79,7 @@ def _is_length_one(node: "IntegerSort", state: dace.SDFGState) -> bool:
     degenerate to a copy: the sole element is trivially "sorted"."""
     from dace import symbolic as _sym
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
-    n = _sym.simplify(in_edges[0].data.subset.num_elements())
+    n = _sym.simplify(required(in_edges[0].data.subset).num_elements())
     return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
 
 

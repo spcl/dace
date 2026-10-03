@@ -65,6 +65,7 @@ import enum
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
 from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
@@ -192,8 +193,8 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
     if len(init_edges) > 1:
         raise ValueError(f"Scan node {node.label}: ``{init_conn}`` is optional but at "
                          f"most one in-edge is allowed; got {len(init_edges)}.")
-    in_desc = sdfg.arrays[in_edges[0].data.data]
-    out_desc = sdfg.arrays[out_edges[0].data.data]
+    in_desc = sdfg.arrays[required(in_edges[0].data.data)]
+    out_desc = sdfg.arrays[required(out_edges[0].data.data)]
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
         raise ValueError(f"Scan requires Array inputs/outputs; got {type(in_desc).__name__} -> "
                          f"{type(out_desc).__name__}.")
@@ -206,7 +207,7 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
         if len(coef_edges) != 1:
             raise ValueError(f"Scan node {node.label}: ``op=AFFINE`` requires exactly one "
                              f"``{coef_connector(chain)}`` in-edge; got {len(coef_edges)}.")
-        coef_desc = sdfg.arrays[coef_edges[0].data.data]
+        coef_desc = sdfg.arrays[required(coef_edges[0].data.data)]
         if not isinstance(coef_desc, dace.data.Array):
             raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` must be an Array; "
                              f"got {type(coef_desc).__name__}.")
@@ -215,15 +216,17 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
         if coef_desc.dtype != out_desc.dtype:
             raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` dtype "
                              f"{coef_desc.dtype} must match output dtype {out_desc.dtype}.")
-        if symbolic.equal(coef_edges[0].data.subset.num_elements(), in_edges[0].data.subset.num_elements()) is False:
+        if symbolic.equal(
+                required(coef_edges[0].data.subset).num_elements(),
+                required(in_edges[0].data.subset).num_elements()) is False:
             raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` spans "
-                             f"{coef_edges[0].data.subset.num_elements()} elements against "
-                             f"``{in_conn}``'s {in_edges[0].data.subset.num_elements()}.")
+                             f"{required(coef_edges[0].data.subset).num_elements()} elements against "
+                             f"``{in_conn}``'s {required(in_edges[0].data.subset).num_elements()}.")
     elif coef_edges:
         raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` is wired but "
                          f"``op`` is {node.op.value!r}, not AFFINE.")
     if init_edges:
-        init_desc = sdfg.arrays[init_edges[0].data.data]
+        init_desc = sdfg.arrays[required(init_edges[0].data.data)]
         # The OUTPUT dtype, not the input's: ``_scan_init`` is the accumulator's entry value, and
         # the accumulator is the output element type (identical to the input's unless widening).
         if init_desc.dtype != out_desc.dtype:
@@ -249,10 +252,11 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
             raise ValueError(f"Scan node {node.label}: chain {chain} dtypes {in_desc.dtype} -> "
                              f"{out_desc.dtype} differ from chain 0's {first[0].dtype} -> "
                              f"{first[1].dtype}; chains share one scan loop.")
-        if symbolic.equal(in_edge.data.subset.num_elements(), first[2].data.subset.num_elements()) is False:
+        if symbolic.equal(required(in_edge.data.subset).num_elements(),
+                          required(first[2].data.subset).num_elements()) is False:
             raise ValueError(f"Scan node {node.label}: chain {chain} spans "
-                             f"{in_edge.data.subset.num_elements()} elements against chain 0's "
-                             f"{first[2].data.subset.num_elements()}; chains share one scan loop.")
+                             f"{required(in_edge.data.subset).num_elements()} elements against chain 0's "
+                             f"{required(first[2].data.subset).num_elements()}; chains share one scan loop.")
     return first
 
 
@@ -321,20 +325,20 @@ def seed_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     """Descriptor behind chain ``chain``'s wired ``_scan_init``, or None when it carries no seed."""
     conn = init_connector(chain)
     edge = next((e for e in state.in_edges(node) if e.dst_conn == conn), None)
-    return None if edge is None else sdfg.arrays[edge.data.data]
+    return None if edge is None else sdfg.arrays[required(edge.data.data)]
 
 
 def coef_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int = 0):
     """Descriptor behind chain ``chain``'s ``_scan_coef``; affine scans always wire one."""
     conn = coef_connector(chain)
     edge = next(e for e in state.in_edges(node) if e.dst_conn == conn)
-    return sdfg.arrays[edge.data.data]
+    return sdfg.arrays[required(edge.data.data)]
 
 
 def _resolve_length(node: "Scan", state: dace.SDFGState, _sdfg: dace.SDFG) -> str:
     """C++ expression for the number of elements ``N`` in the input edge."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
-    return sym2cpp(in_edges[0].data.subset.num_elements())
+    return sym2cpp(required(in_edges[0].data.subset).num_elements())
 
 
 def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
@@ -343,7 +347,7 @@ def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
     iteration, no iterator-based template instantiation that would conflict with the
     codegen's scalar-typing of single-element subsets."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
-    n = symbolic.simplify(in_edges[0].data.subset.num_elements())
+    n = symbolic.simplify(required(in_edges[0].data.subset).num_elements())
     return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
 
 
@@ -556,7 +560,7 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     on the parallel shape, where the ``inscan`` lowering folds chunk-wise (see the
     header's note); the chains never mix.
     """
-    dtype = _validate_inputs_and_outputs(node, state, sdfg)[0].dtype
+    dtype = required(_validate_inputs_and_outputs(node, state, sdfg))[0].dtype
     ctype = dtype.ctype
     if not symbolic.equal_valued(1, node.stride):
         raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
@@ -933,7 +937,8 @@ def pure_scan_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace
     for edge in [*state.in_edges(node), *state.out_edges(node)]:
         operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
     n = symbolic.symstr(
-        next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset.num_elements())
+        required(next(e for e in state.in_edges(node)
+                      if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset).num_elements())
     if not symbolic.equal_valued(1, node.stride):
         blocks = []
         if node.op is not ScanOp.AFFINE:
@@ -1084,7 +1089,8 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     launch, and a host-readable one has no device address to hand over.
     """
     coef = coef_desc(node, state, sdfg)
-    in_desc = sdfg.arrays[next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.data]
+    in_desc = sdfg.arrays[required(
+        next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.data)]
     e_ctype = out_desc.dtype.base_type.ctype
     c_ctype = coef.dtype.base_type.ctype
     d_ctype = in_desc.dtype.base_type.ctype
@@ -1110,7 +1116,7 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
 
     inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
-        inputs[init_connector(0)] = dtypes.pointer(seed.dtype.base_type) if on_device else None
+        inputs[init_connector(0)] = dtypes.pointer(required(seed).dtype.base_type) if on_device else None
     code = (f'DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, '
             f'{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), __dace_current_stream));')
     return nodes.Tasklet(node.name,
@@ -1235,7 +1241,7 @@ class ExpandCUDABlock(ExpandTransformation):
         op_functor = f'::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>'
         identity = _OP_TO_IDENTITY_CPP[node.op]
 
-        n_sym = in_edge.data.subset.num_elements()
+        n_sym = required(in_edge.data.subset).num_elements()
         nsdfg = dace.SDFG(node.label + '_block')
         nsdfg.add_array(INPUT_CONNECTOR_NAME, [n_sym], in_desc.dtype, storage=in_desc.storage)
         nsdfg.add_array(OUTPUT_CONNECTOR_NAME, [n_sym], out_desc.dtype, storage=out_desc.storage)
@@ -1343,7 +1349,7 @@ class ExpandCUDA(ExpandTransformation):
                 # device-resident seed is read by pointer inside the kernel, so the scan orders after
                 # whatever wrote it without the host sync a ``FutureValue`` needs on rocPRIM.
                 desc = seed_desc(node, state, sdfg, chain)
-                seed_ctype = desc.dtype.base_type.ctype
+                seed_ctype = required(desc).dtype.base_type.ctype
                 on_device = desc is not None and desc.storage in GPU_RESIDENT_STORAGES
                 seed_param = f', const {seed_ctype}* __sc_init' if on_device else f', {seed_ctype} __sc_init'
                 seed_value = '*seed' if on_device else 'seed'
@@ -1417,7 +1423,7 @@ class ExpandCUDA(ExpandTransformation):
                 continue
             desc = seed_desc(node, state, sdfg, chain)
             device = desc is not None and desc.storage in GPU_RESIDENT_STORAGES
-            inputs[init_connector(chain)] = dtypes.pointer(desc.dtype.base_type) if device else None
+            inputs[init_connector(chain)] = dtypes.pointer(required(desc).dtype.base_type) if device else None
         return nodes.Tasklet(
             node.name,
             inputs=inputs,

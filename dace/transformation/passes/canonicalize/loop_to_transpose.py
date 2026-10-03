@@ -57,6 +57,7 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
 
 
 def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
@@ -65,7 +66,7 @@ def _const_pos_int(value: symbolic.SymbolicType) -> Optional[int]:
         s = symbolic.simplify(symbolic.pystr_to_symbolic(str(value)))
     except Exception:
         return None
-    return int(as_expr(s)) if s.is_Integer and int(as_expr(s)) > 0 else None
+    return int(as_expr(s)) if as_expr(s).is_Integer and int(as_expr(s)) > 0 else None
 
 
 def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
@@ -215,9 +216,9 @@ def _axis_affine(idx: symbolic.SymbolicType,
         off = symbolic.simplify(idx - coeff * v)
     except Exception:
         return None
-    if not (coeff.is_Integer and int(as_expr(coeff)) > 0):
+    if not (as_expr(coeff).is_Integer and int(as_expr(coeff)) > 0):
         return None
-    if any(lv in off.free_symbols for lv in loop_var_syms):
+    if any(lv in as_expr(off).free_symbols for lv in loop_var_syms):
         return None
     return v, int(as_expr(coeff)), off
 
@@ -326,11 +327,11 @@ class LoopToTranspose(ppl.Pass):
         # free symbol (`for j in range(i+1, M)` -> `B[..., _loop_it_0 + 1:M]`).
         nest_syms = set(loop_var_syms)
         for lo, last, _ in ranges.values():
-            if (lo.free_symbols | last.free_symbols) & nest_syms:
+            if (as_expr(lo).free_symbols | as_expr(last).free_symbols) & nest_syms:
                 return False
 
         d = len(loops)
-        extracted = _extract_permutation_copy(body)
+        extracted = _extract_permutation_copy(required(body))
         if extracted is None:
             return False
         in_array, out_array, read_subset, write_subset = extracted

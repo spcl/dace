@@ -85,7 +85,8 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
-from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_range
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = '_untile_k_'
@@ -180,7 +181,7 @@ def _is_constant_positive_int(expr: symbolic.SymbolicType) -> Optional[int]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if not s.is_number or not s.is_Integer:
+    if not as_expr(s).is_number or not as_expr(s).is_Integer:
         return None
     v = int(as_expr(s))
     return v if v > 0 else None
@@ -191,7 +192,7 @@ def _is_zero(expr: symbolic.SymbolicType) -> bool:
         s = symbolic.simplify(expr)
     except Exception:
         return False
-    return s.is_number and s == 0
+    return as_expr(s).is_number and s == 0
 
 
 def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
@@ -206,8 +207,8 @@ def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicT
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if s.is_number:
-        if not s.is_Integer:
+    if as_expr(s).is_number:
+        if not as_expr(s).is_Integer:
             return None
         v = int(as_expr(s))
         if v <= 1:
@@ -281,9 +282,9 @@ def tiles_a_parent_window(outer: LoopRegion, start: symbolic.SymbolicType, span:
         if isinstance(graph, LoopRegion) and graph.loop_variable:
             enclosing[graph.loop_variable] = None
         graph = graph.parent_graph
-    if not enclosing or not any(str(s) in enclosing for s in start.free_symbols):
+    if not enclosing or not any(str(s) in enclosing for s in as_expr(start).free_symbols):
         return False
-    return not any(str(s) in enclosing for s in span.free_symbols)
+    return not any(str(s) in enclosing for s in as_expr(span).free_symbols)
 
 
 def count_loops(sdfg: SDFG) -> int:
@@ -409,7 +410,7 @@ def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
         diff = symbolic.simplify(a - b)
     except Exception:
         return False
-    if diff.is_number:
+    if as_expr(diff).is_number:
         try:
             return int(as_expr(diff)) == 0
         except (TypeError, ValueError):
@@ -426,8 +427,8 @@ def free_symbol_names(text: str) -> FrozenSet[str]:
 def memlet_bound_texts(memlet: dace.Memlet) -> List[str]:
     """Every axis bound (lo/hi/stride) of ``memlet``'s subset, then of its other subset, as text."""
     return [
-        str(bound) for subset in (memlet.subset, memlet.other_subset) if subset is not None for rng in subset.ranges
-        for bound in rng
+        str(bound) for subset in (memlet.subset, memlet.other_subset) if subset is not None
+        for rng in as_range(subset).ranges for bound in rng
     ]
 
 
@@ -494,8 +495,8 @@ def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_va
                        K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
     """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
     extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
-    arr = sdfg.arrays.get(memlet.data)
-    ranges = memlet.subset.ranges
+    arr = sdfg.arrays.get(required(memlet.data))
+    ranges = required(as_range(memlet.subset)).ranges
     rank = len(ranges)
     if arr is None or rank < 2 or len(arr.shape) != rank:
         return None
@@ -555,7 +556,7 @@ def unblock_is_safe(sdfg: SDFG, blocked_arrays: BlockedArrays) -> bool:
                 if edge.data is None or edge.data.data != arr_name:
                     continue
                 if edge.data.other_subset is not None or edge.data.subset is None or len(
-                        edge.data.subset.ranges) != expected:
+                        as_range(edge.data.subset).ranges) != expected:
                     return False
     return True
 
@@ -873,8 +874,9 @@ class UntileLoops(ppl.Pass):
             N_excl = stop_excl
         else:
             tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
-            if _diff_is_zero(tiles_end,
-                             span) or tiles_end.is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
+            if _diff_is_zero(
+                    tiles_end,
+                    span) or as_expr(tiles_end).is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
                 N_excl = symbolic.simplify(outer_start_sym + tiles_end)
             else:
                 record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))

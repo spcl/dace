@@ -30,6 +30,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties
@@ -100,7 +101,7 @@ def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
         diff = symbolic.simplify(unsimplified)
     except Exception:
         return None
-    if name in {str(s) for s in diff.free_symbols}:
+    if name in {str(s) for s in as_expr(diff).free_symbols}:
         return None
     return diff
 

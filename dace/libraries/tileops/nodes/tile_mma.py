@@ -115,9 +115,9 @@ class TileMMA(TileOp):
         if self.beta != 0 and "_cin" not in in_e:
             raise ValueError(f"{self.label}: beta={self.beta!r} != 0 requires '_cin' input connector")
         M, K_inner, N = self.widths
-        a_desc = sdfg.arrays[in_e["_a"].data.data]
-        b_desc = sdfg.arrays[in_e["_b"].data.data]
-        c_desc = sdfg.arrays[out_e["_c"].data.data]
+        a_desc = sdfg.arrays[required(in_e["_a"].data.data)]
+        b_desc = sdfg.arrays[required(in_e["_b"].data.data)]
+        c_desc = sdfg.arrays[required(out_e["_c"].data.data)]
         if a_desc.dtype != b_desc.dtype or a_desc.dtype != c_desc.dtype:
             raise NotImplementedError(f"{self.label}: requires uniform dtype across _a, _b, _c; "
                                       f"got a={a_desc.dtype}, b={b_desc.dtype}, c={c_desc.dtype}")

@@ -7,6 +7,7 @@ import numpy
 import sympy as sp
 
 from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
+from dace.sdfg.narrowing import as_expr
 
 
 def average_blocks_touched(
@@ -79,7 +80,7 @@ def average_blocks_touched(
         # The per-step guard above only sees one parameter at a time, so a cross-parameter index like
         # A[i*j] clears it twice and still leaks both into the average. Catch it on the result, where
         # the caller's float() would otherwise fail naming neither the array nor the index.
-        leaked = sorted({str(s) for s in average.free_symbols} & set(params))
+        leaked = sorted({str(s) for s in as_expr(average).free_symbols} & set(params))
         if leaked:
             raise ValueError(f"array {arr!r}: index {subset} is not affine in {leaked} together (e.g. a "
                              f"product of two loop parameters), so the per-iteration block average "

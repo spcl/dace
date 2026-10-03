@@ -60,6 +60,7 @@ from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NA
                                                 INIT_CONNECTOR_NAME, COEF_CONNECTOR_NAME, in_connector, out_connector,
                                                 init_connector)
 from dace.ordered import OrderedSet
+from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
 
 #: Map AST BinOp class -> ScanOp.
@@ -1048,7 +1049,7 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
         for oe in state.out_edges(root):
             if oe.data is None or oe.data.is_empty():
                 continue
-            axis, k, others, coef = _classify_subset(oe.data.subset, loop_var)
+            axis, k, others, coef = _classify_subset(required(oe.data.subset), loop_var)
             if (axis != info.scan_axis or coef != info.coef or symbolic.equal(k, info.k_r) is False
                     or not _same_other_indices(others, info.other_indices)):
                 return False
@@ -2274,7 +2275,7 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
             # from this source AN to the first transient intermediate; its
             # memlet's ``data`` is the source array's name).
             sub = last_edge.data.subset if last_edge.data is not None else None
-            if sub is None or last_edge.data.data != cur.data:
+            if sub is None or required(last_edge.data).data != cur.data:
                 # Fall back: check the AN's out-edge (chain start) for the
                 # case where the chain has zero transient hops -- the tasklet
                 # reads directly from the non-transient.
@@ -3043,7 +3044,7 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
                 off_pos = symbolic.simplify(lo_sym - loop_var_sym)
             except Exception:
                 off_pos = None
-            if off_pos is not None and loop_var_sym not in off_pos.free_symbols:
+            if off_pos is not None and loop_var_sym not in as_expr(off_pos).free_symbols:
                 scan_axis = axis_idx
                 offset = off_pos
                 coef = 1
@@ -3053,7 +3054,7 @@ def _classify_subset(subset: subsets.Subset, loop_var: str):
                 off_neg = symbolic.simplify(lo_sym + loop_var_sym)
             except Exception:
                 off_neg = None
-            if off_neg is not None and loop_var_sym not in off_neg.free_symbols:
+            if off_neg is not None and loop_var_sym not in as_expr(off_neg).free_symbols:
                 scan_axis = axis_idx
                 offset = off_neg
                 coef = -1
@@ -3077,7 +3078,7 @@ def carrier_reads_admissible(state: SDFGState, out_name: str, loop_var: str, sca
             if edge.data is None or edge.data.is_empty():
                 continue
             subset = edge.data.subset if edge.data.data == out_name else edge.data.other_subset
-            r_axis, k, r_others, r_coef = _classify_subset(subset, loop_var)
+            r_axis, k, r_others, r_coef = _classify_subset(required(subset), loop_var)
             if r_axis != scan_axis or r_coef != write_coef or not _same_other_indices(r_others, write_others):
                 continue
             if symbolic.simplify(k - k_w) != 0 and symbolic.simplify(k - k_r) != 0:
@@ -3379,10 +3380,10 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
     """
     import dace
     inner = info.inner_loop
-    inner_var = inner.loop_variable
-    inner_start = loop_analysis.get_init_assignment(inner)
-    inner_end = loop_analysis.get_loop_end(inner)
-    inner_stride = loop_analysis.get_loop_stride(inner)
+    inner_var = required(inner).loop_variable
+    inner_start = loop_analysis.get_init_assignment(required(inner))
+    inner_end = loop_analysis.get_loop_end(required(inner))
+    inner_stride = loop_analysis.get_loop_stride(required(inner))
     if inner_start is None or inner_end is None or inner_stride is None or inner_stride != 1:
         return
     inner_size = symbolic.simplify(inner_end - inner_start + 1)
@@ -4680,7 +4681,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> Optional[_AffineScan]:
     write_edge = _find_unique_write_edge(state, out_name)
     if write_edge is None or not isinstance(write_edge.dst, nodes.AccessNode):
         return None
-    write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_var)
+    write_axis, k_w, write_others, write_coef = _classify_subset(required(write_edge.data.subset), loop_var)
     if write_axis != 0 or write_coef != 1 or write_others:
         return None
 
@@ -4904,7 +4905,7 @@ def emit_affine_scan(state: SDFGState,
     def wire(conn: str, buf: Optional[str], direct: Optional[Tuple[str, Any]]) -> None:
         """Connect one operand: the built buffer, or the slice of the array it copied."""
         if direct is None:
-            state.add_edge(state.add_read(buf), None, node, conn,
+            state.add_edge(state.add_read(required(buf)), None, node, conn,
                            mm.Memlet(data=buf, subset=subsets.Range([(0, trip - 1, 1)])))
             return
         name, offset = direct

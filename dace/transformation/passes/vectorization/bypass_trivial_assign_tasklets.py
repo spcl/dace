@@ -45,6 +45,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
+from dace.sdfg.narrowing import as_range
 # is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
 
@@ -217,8 +218,8 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     if pe.data is None or pe.data.is_empty():
                         continue
                     pe_subset = copy.deepcopy(pe.data.get_src_subset(pe, istate))
-                    out_subset = subsets.Range(list(
-                        out_e.data.subset.ranges)) if out_e.data.subset is not None else None
+                    out_subset = subsets.Range(list(as_range(
+                        out_e.data.subset).ranges)) if out_e.data.subset is not None else None
                     if isinstance(pe.src, dace.nodes.AccessNode):
                         new_memlet = dace.Memlet(data=pe.src.data, subset=pe_subset, other_subset=out_subset)
                     else:
@@ -252,9 +253,10 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                         if istate.degree(dst_an) == 0:
                             istate.remove_node(dst_an)
                         continue
-                    in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
-                    out_subset = subsets.Range(list(
-                        out_e.data.subset.ranges)) if out_e.data.subset is not None else None
+                    in_subset = subsets.Range(list(as_range(
+                        in_e.data.subset).ranges)) if in_e.data.subset is not None else None
+                    out_subset = subsets.Range(list(as_range(
+                        out_e.data.subset).ranges)) if out_e.data.subset is not None else None
                     copy_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=out_subset)
                     _wcr = out_e.data.wcr if out_e.data.wcr is not None else in_e.data.wcr
                     if _wcr is not None:
@@ -267,7 +269,8 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     # write to a read-only input (TSVC s471).
                     if de.data is None or de.data.is_empty():
                         continue
-                    in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
+                    in_subset = subsets.Range(list(as_range(
+                        in_e.data.subset).ranges)) if in_e.data.subset is not None else None
                     de_subset = copy.deepcopy(de.data.get_dst_subset(de, istate))
                     if isinstance(de.dst, dace.nodes.AccessNode):
                         new_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=de_subset)

@@ -53,6 +53,7 @@ from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.sdfg.narrowing import as_map_entry
 
 
 def full_range(desc: dace.data.Data) -> Range:
@@ -240,10 +241,10 @@ class LiftInv(ppl.Pass):
         map_entry = state.entry_node(map_exit)
         if map_entry is None:
             return None
-        params = map_entry.map.params
+        params = as_map_entry(map_entry).map.params
         if len(params) != 2:
             return None
-        for (lo, hi, st) in map_entry.map.range.ndrange():
+        for (lo, hi, st) in as_map_entry(map_entry).map.range.ndrange():
             # The map range is reparsed from the lifted loop while ``n`` carries the descriptor's
             # declared assumptions: one name, two sympy instances, no cancellation.
             end, extent = symbolic.equalize_symbols_across(hi, n)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import copy
 from sympy import simplify
 from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
 
 
 @dataclass
@@ -243,10 +244,10 @@ class SplitDimensions(ppl.Pass):
             if mask == False:
                 new_range_list.append((b, e, s))
             else:
-                new_range_list.append(self._split_range_expr(b, e, s, factor, is_perfect_match, repl_map))
+                new_range_list.append(self._split_range_expr(b, e, s, factor, is_perfect_match, required(repl_map)))
         for ((b, e, s), mask, factor) in zip(subset, masks, factors):
             if mask == True:
-                new_b, new_e, new_s = self._modulo_range_expr(b, e, s, factor, is_perfect_match, repl_map)
+                new_b, new_e, new_s = self._modulo_range_expr(b, e, s, factor, is_perfect_match, required(repl_map))
                 new_range_list.append((new_b, new_e, new_s))
 
         return dace.subsets.Range(new_range_list)

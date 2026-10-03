@@ -3,7 +3,7 @@ import dace.serialize
 from dace import symbolic
 import sympy as sp
 from functools import reduce
-from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import warnings
 from dace.config import Config
 
@@ -250,6 +250,14 @@ class Subset(object):
         raise NotImplementedError
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
+        raise NotImplementedError
+
+    def num_elements(self) -> symbolic.SymbolicType:
+        """ Returns the number of elements of this subset. """
+        raise NotImplementedError
+
+    def replace(self, repl_dict: Dict[str, Any]) -> None:
+        """ Substitutes the symbols of this subset in place. """
         raise NotImplementedError
 
     def at(self, i, strides):

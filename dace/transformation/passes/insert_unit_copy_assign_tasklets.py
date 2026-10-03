@@ -18,6 +18,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.narrowing import as_range
 
 
 def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
@@ -33,7 +34,7 @@ def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
         return False
     if subset.num_elements() != 1:
         return False
-    return all(sz == 1 for sz in subset.size())
+    return all(sz == 1 for sz in as_range(subset).size())
 
 
 @transformation.explicit_cf_compatible

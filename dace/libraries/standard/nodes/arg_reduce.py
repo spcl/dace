@@ -55,7 +55,8 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_range
 
 _OP_CPP = {'max': '>', 'min': '<'}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
@@ -125,15 +126,15 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
     idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
 
-    in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
-    idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+    in_dtype = required(parent_sdfg.arrays[required(in_edge.data.data)]).dtype
+    idx_dtype = required(parent_sdfg.arrays[required(idx_edge.data.data)]).dtype
     sub = in_edge.data.subset
 
     # Stride of the (1-D) input slice. ``_in`` points at the slice base, so a strided slice
     # ``a[lo:hi:s]`` reads element ``j`` at ``_in[j*s]``. A unit-stride slice gets the bare
     # subscript rather than a multiply by one, so the common case reads as what it is; a
     # compile-time-constant stride folds away, a symbolic one stays a runtime multiply.
-    step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+    step = required(as_range(sub)).ranges[0][2] if len(required(as_range(sub)).ranges) == 1 else 1
     try:
         unit_stride = (int(as_expr(symbolic.simplify(step))) == 1)
     except (TypeError, ValueError):
@@ -287,14 +288,14 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
         val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
         idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
-        in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
-        idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+        in_dtype = required(parent_sdfg.arrays[required(in_edge.data.data)]).dtype
+        idx_dtype = required(parent_sdfg.arrays[required(idx_edge.data.data)]).dtype
 
         # A raw pointer only when the read is PROVABLY contiguous and untransformed -- that is the
         # shape CUB can issue vectorised loads for. ``symbolic.equal`` is tri-valued, and a stride it
         # cannot decide (s318's ``inc``) has to take the iterator, which is correct either way.
         sub = in_edge.data.subset
-        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        step = required(as_range(sub)).ranges[0][2] if len(required(as_range(sub)).ranges) == 1 else 1
         gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
         idstr = global_code_id(parent_sdfg, parent_state, node)

@@ -15,6 +15,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_unroll import MapUnroll
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
 
 
 def reverse_bfs_assignments(cfg: ControlFlowRegion, start_node) -> Dict[str, str]:
@@ -398,7 +399,7 @@ class SplitArray(ppl.Pass):
             canonical_access, all_access_exprs = self._has_non_integer_access(sdfg, state, split_map)
 
             if canonical_access is not None:
-                dims = self._get_non_int_access_dims(state, split_map, all_access_exprs, canonical_access)
+                dims = self._get_non_int_access_dims(state, split_map, required(all_access_exprs), canonical_access)
                 assert len(dims) == 1
                 dim = dims.pop()
                 extent = self._symbol_map[dim]
@@ -432,7 +433,7 @@ class SplitArray(ppl.Pass):
                         branch=cfg,
                     )
                     # alias expressions -> same concrete index
-                    access_mapping = {k: i for k in all_access_exprs}
+                    access_mapping = {k: i for k in required(all_access_exprs)}
                     for edge in ns.edges():
                         mapped_data, new_subset = self._get_corresponding_array(edge, split_map, access_mapping)
                         if mapped_data != edge.data.data:
@@ -547,7 +548,7 @@ class SplitArray(ppl.Pass):
                     if in_names:
                         dnode.data = next(iter(in_names))
                     for oe in list(out_edges):
-                        dup = state.add_access(oe.data.data)
+                        dup = state.add_access(required(oe.data.data))
                         state.remove_edge(oe)
                         state.add_edge(dup, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
                         if in_names:
@@ -557,7 +558,7 @@ class SplitArray(ppl.Pass):
                 else:
                     # Multiple in-names, no out-names -> split in-edges
                     for ie in list(in_edges):
-                        dup = state.add_access(ie.data.data)
+                        dup = state.add_access(required(ie.data.data))
                         state.remove_edge(ie)
                         state.add_edge(ie.src, ie.src_conn, dup, None, copy.deepcopy(ie.data))
                     state.remove_node(dnode)

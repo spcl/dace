@@ -69,6 +69,7 @@ from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, Sta
                                                                   single_body_state, sink_write_subset, written_arrays)
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.optionals import required
 
 #: Stand-ins for the two slice indices while a body state's value expression is resolved:
 #: the row inside the ``C[0:i, j]`` scatter, and the column inside the ``C[i, 0:N]`` finalize.
@@ -367,7 +368,7 @@ class LoopToSymm(ppl.Pass):
         # scope node with no out-edge, but such a node is an EXTRA one beside the NestedSDFG, so the true
         # scope is >=2 and both spellings refuse. A body of one NestedSDFG that itself writes nothing empties
         # the walk too, and membership would then fall through to the ``len(outs) != 1`` refusal below.
-        body = state.all_nodes_between(me, mx)
+        body = state.all_nodes_between(me, required(mx))
         if body is None or len(body) != 1:
             return None
         # ``all_nodes_between`` returns a SET; the len==1 guard above makes this pick unambiguous today, but
@@ -422,7 +423,8 @@ class LoopToSymm(ppl.Pass):
             return None
         # C is also read point-wise at [p_row, p_col].
         if c not in ins or not any(
-                _axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in ins[c]):
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in ins[c]):
             return None
 
         # Symmetric operand A: read on its lower triangle [p_row, 0:p_row] and its
@@ -453,9 +455,12 @@ class LoopToSymm(ppl.Pass):
         for name, subs in ins.items():
             if name in exclude:
                 continue
-            has_diag = any(_axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_row) for s in subs)
+            has_diag = any(
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_row)
+                for s in subs)
             has_tri = any(
-                _axes(s) and _is_point(_axes(s)[0], p_row) and _is_lower_tri(_axes(s)[1], p_row) for s in subs)
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_lower_tri(required(_axes(s))[1], p_row)
+                for s in subs)
             if has_diag and has_tri:
                 return name
         return None
@@ -465,9 +470,12 @@ class LoopToSymm(ppl.Pass):
         for name, subs in ins.items():
             if name in exclude:
                 continue
-            has_pt = any(_axes(s) and _is_point(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in subs)
+            has_pt = any(
+                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in subs)
             has_col = any(
-                _axes(s) and _is_lower_tri(_axes(s)[0], p_row) and _is_point(_axes(s)[1], p_col) for s in subs)
+                _axes(s) and _is_lower_tri(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+                for s in subs)
             if has_pt and has_col:
                 return name
         return None
@@ -491,7 +499,7 @@ class LoopToSymm(ppl.Pass):
     def _replace(self, sdfg: SDFG, state: SDFGState, me: nodes.MapEntry, match: SymmMatch) -> None:
         from dace.libraries.blas.nodes.symm import Symm
         mx = state.exit_node(me)
-        nsdfg = min(state.all_nodes_between(me, mx), key=state.node_id)  # set -> stable pick (see _match)
+        nsdfg = min(state.all_nodes_between(me, required(mx)), key=state.node_id)  # set -> stable pick (see _match)
         # One read AccessNode per array feeding the map; the frontend may stage the
         # same array through several duplicate read nodes -- keep one, drop the rest.
         reads = {e.data.data: e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)}
@@ -513,7 +521,7 @@ class LoopToSymm(ppl.Pass):
 
         state.remove_node(nsdfg)
         state.remove_node(me)
-        state.remove_node(mx)
+        state.remove_node(required(mx))
         # Drop any boundary read/write node the map alone kept alive.
         for an in boundary:
             if an in state.nodes() and state.degree(an) == 0:
@@ -709,7 +717,7 @@ def match_finalize_state(state: SDFGState, root: SDFG, i: str, n: symbolic.Symbo
             return None
     if c_leaf is None or alpha is None or a is None or b is None or t is None or a == b:
         return None
-    if not expressions_equal(value, c_leaf + alpha_sym * b_sym * a_sym + alpha_sym * t_sym):
+    if not expressions_equal(value, c_leaf + required(alpha_sym) * b_sym * a_sym + required(alpha_sym) * t_sym):
         return None
     return a, b, alpha, t
 
@@ -770,7 +778,7 @@ def matches_inner_product(state: SDFGState, root: SDFG, i: str, j: str, match: S
     lib = staged_library_node(state, tw)
     if not isinstance(lib, (Dot, MatMul)):
         return False
-    operands = library_operand_reads(state, root, lib)
+    operands = library_operand_reads(state, root, required(lib))
     if operands is None or len(operands) != 2:
         return False
     column = [s for name, s in operands if name == match.b and col_slice(s, i, j)]

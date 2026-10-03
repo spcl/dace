@@ -26,6 +26,7 @@ from dace.codegen.common import global_code_id
 from dace.libraries.standard.helper import schedule_dispatch
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
+from dace.optionals import required
 
 #: The index the predicate expression is written against.
 INDEX_NAME = '__i'
@@ -57,7 +58,7 @@ def find_first_connectors(node: "FindFirst", state: dace.SDFGState, sdfg: dace.S
     for edge in state.in_edges(node):
         if edge.dst_conn is None:
             continue
-        desc = sdfg.arrays[edge.data.data]
+        desc = sdfg.arrays[required(edge.data.data)]
         conns[edge.dst_conn] = None if isinstance(desc, dace.data.Scalar) else dace.pointer(desc.dtype)
     return conns
 
@@ -73,7 +74,9 @@ def find_first_reads_device_memory(node: "FindFirst", state: dace.SDFGState, sdf
     between them -- ``apply_gpu_transformations`` sets a library node's SCHEDULE but never its
     implementation. So each expansion checks, and a mismatch is refused with the knob to turn
     rather than silently reading a device pointer from the host."""
-    return any(sdfg.arrays[e.data.data].storage in GPU_STORAGE for e in state.in_edges(node) if e.dst_conn is not None)
+    return any(
+        required(sdfg.arrays[required(e.data.data)]).storage in GPU_STORAGE for e in state.in_edges(node)
+        if e.dst_conn is not None)
 
 
 def refuse_wrong_machine(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG, want_device: bool) -> None:
@@ -130,7 +133,7 @@ def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
     for edge in state.in_edges(node):
         if edge.dst_conn is None:
             continue
-        desc = sdfg.arrays[edge.data.data]
+        desc = sdfg.arrays[required(edge.data.data)]
         if isinstance(desc, dace.data.Scalar):
             out.append((edge.dst_conn, f'{desc.dtype.ctype} {edge.dst_conn}'))
         else:

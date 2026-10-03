@@ -127,7 +127,7 @@ def _coeff_of(expr_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | None:
         dependency on this expression; else ``None``.
     """
     try:
-        poly = expr_sym.as_poly(var_sym)
+        poly = as_expr(expr_sym).as_poly(var_sym)
     except Exception:
         return None
     if poly is None:

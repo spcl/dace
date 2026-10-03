@@ -49,6 +49,8 @@ from dace import data, dtypes, properties, subsets, symbolic, Memlet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_map_entry
 
 #: Schedules that lower through the CPU path. A GPU-scheduled map never matches.
 _CPU_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
@@ -197,7 +199,7 @@ class ChunkAntiDependence(ppl.Pass):
             if _diff(beg, end) != 0:
                 continue  # a scope-level range, not a point access
             off = _diff(beg, param)
-            if param in {str(s) for s in off.free_symbols}:
+            if param in {str(s) for s in as_expr(off).free_symbols}:
                 continue  # not an affine point access in the iterator: a scope range
             if e.data.data == snap:
                 if off != 1:
@@ -241,7 +243,7 @@ class ChunkAntiDependence(ppl.Pass):
             sub = union if e.dst is outer_entry else point
             e.data.data = seam
             e.data.subset = copy.deepcopy(sub)
-            e.data.volume = sub.num_elements()
+            e.data.volume = required(sub).num_elements()
 
     def _tile(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry, chunk_size) -> nodes.MapEntry:
         """Wrap ``me`` in an outer chunk map and return the outer entry.
@@ -257,7 +259,7 @@ class ChunkAntiDependence(ppl.Pass):
                            save=False,
                            verify=False)
         outer = state.entry_node(me)
-        outer.map.schedule = dtypes.ScheduleType.CPU_Multicore
+        required(as_map_entry(outer)).map.schedule = dtypes.ScheduleType.CPU_Multicore
         # Sequential inner, parallel outer. The differing schedules also stop MapCollapse
         # from fusing the two back into one parallel map, which would race the seam.
         me.map.schedule = dtypes.ScheduleType.Sequential

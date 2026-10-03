@@ -126,7 +126,7 @@ def launches_saved(loop: LoopRegion) -> float:
     if maps == 0 or start is None or end is None or step is None:
         return math.inf if maps else 0
     trips = symbolic.simplify((end - start) / step + 1)
-    if not trips.is_Number:
+    if not as_expr(trips).is_Number:
         return math.inf
     return max(int(as_expr(trips)), 0) * maps - 1
 

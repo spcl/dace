@@ -21,6 +21,7 @@ from dace.codegen.common import global_code_id
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 from typing import List
+from dace.optionals import required
 
 
 @library.expansion
@@ -253,7 +254,7 @@ class Symmetrize(nodes.LibraryNode):
         if in_name != out_name:
             raise ValueError(f"{type(self).__name__} is in-place: '_in' ({in_name}) and '_out' ({out_name}) "
                              f"must be the same array.")
-        desc = sdfg.arrays[in_name]
+        desc = sdfg.arrays[required(in_name)]
         if len(desc.shape) != 2:
             raise ValueError(f"{type(self).__name__} target '{in_name}' must be 2-D; got shape {tuple(desc.shape)}.")
         return in_name, desc

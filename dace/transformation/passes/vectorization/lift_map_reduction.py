@@ -44,6 +44,7 @@ from dace.transformation.passes.vectorization.utils.reductions import (
     recognize_map_reduction,
 )
 from dace.ordered import OrderedSet
+from dace.optionals import required
 
 #: Reduction-op token for each ``add_reduce``-friendly ``ReductionType``. Mirrors
 #: the ``+`` / ``*`` restriction of :data:`_WCR_LAMBDA` (see its docstring).
@@ -162,12 +163,12 @@ def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, m
     acc = write_edge.data.data
     # FIXED scalar accumulator: the write subset must not depend on the map param
     # (else it is an indexed scatter / recurrence, not a scalar fold).
-    if param in {str(s) for s in write_edge.data.subset.free_symbols}:
+    if param in {str(s) for s in required(write_edge.data.subset).free_symbols}:
         return None
-    desc = state.sdfg.arrays.get(acc)
+    desc = state.sdfg.arrays.get(required(acc))
     if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
         return None
-    op = _REDTYPE_OP.get(detect_reduction_type(write_edge.data.wcr))
+    op = _REDTYPE_OP.get(required(detect_reduction_type(write_edge.data.wcr)))
     if op is None or op not in IDENTITY:
         return None
     # Pure WCR: accumulator NOT read at map entry (else loop-carried RMW) and

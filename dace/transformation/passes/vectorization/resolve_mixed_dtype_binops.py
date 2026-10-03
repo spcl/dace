@@ -46,6 +46,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
+from dace.optionals import required
 
 #: Comparison ops produce ``bool`` regardless of operand dtype -- unify the operands but
 #: never cast the output (mirrors ``convert_tasklets_to_tile_ops._COMPARISON_BINOPS``).
@@ -211,9 +212,9 @@ class ResolveMixedDtypeBinops(ppl.Pass):
             if a_conn not in in_edges or b_conn not in in_edges or len(out_edges) != 1:
                 return False
             a_edge, b_edge, out_edge = in_edges[a_conn], in_edges[b_conn], out_edges[0]
-            a_dt = sdfg.arrays[a_edge.data.data].dtype
-            b_dt = sdfg.arrays[b_edge.data.data].dtype
-            out_dt = sdfg.arrays[out_edge.data.data].dtype
+            a_dt = required(sdfg.arrays[required(a_edge.data.data)]).dtype
+            b_dt = required(sdfg.arrays[required(b_edge.data.data)]).dtype
+            out_dt = required(sdfg.arrays[required(out_edge.data.data)]).dtype
             # A logical ``and`` / ``or`` is bool in and bool out, whatever its operands are: numpy
             # promotion answers ``int`` for CloudSC's ``ldcum and <cmp>`` -- a Fortran LOGICAL
             # arrives as an int array -- and the ``&&`` TileBinop rejects an int operand outright.
@@ -312,13 +313,13 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
         if len(out_edges) != 1:
             return False
-        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        out_dt = required(sdfg.arrays[required(out_edges[0].data.data)]).dtype
         changed = False
         for conn in arm_conns:
             edge = in_edges.get(conn)
             if edge is None:
                 continue
-            if sdfg.arrays[edge.data.data].dtype != out_dt:
+            if required(sdfg.arrays[required(edge.data.data)]).dtype != out_dt:
                 self._insert_operand_cast(state, tasklet, edge, conn, out_dt)
                 changed = True
         # The condition is NOT an arm and does not follow the output dtype: ``TileITE``'s ``_mask``
@@ -329,7 +330,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         # it, which is the ``x != 0`` the LOGICAL already means.
         if cond_conn is not None:
             cond_edge = in_edges.get(cond_conn)
-            if cond_edge is not None and sdfg.arrays[cond_edge.data.data].dtype != dtypes.bool_:
+            if cond_edge is not None and required(sdfg.arrays[required(cond_edge.data.data)]).dtype != dtypes.bool_:
                 self._insert_operand_cast(state, tasklet, cond_edge, cond_conn, dtypes.bool_)
                 changed = True
         return changed
@@ -350,8 +351,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         if val_conn not in in_edges or len(out_edges) != 1:
             return False
         val_edge = in_edges[val_conn]
-        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
-        if sdfg.arrays[val_edge.data.data].dtype == out_dt:
+        out_dt = required(sdfg.arrays[required(out_edges[0].data.data)]).dtype
+        if required(sdfg.arrays[required(val_edge.data.data)]).dtype == out_dt:
             return False
         self._insert_operand_cast(state, tasklet, val_edge, val_conn, out_dt)
         return True
@@ -374,8 +375,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         out_edges = [e for e in state.out_edges(tasklet) if e.src_conn == out_conn and e.data and e.data.data]
         if len(in_edges) != 1 or len(out_edges) != 1:
             return False
-        in_dt = sdfg.arrays[in_edges[0].data.data].dtype
-        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        in_dt = required(sdfg.arrays[required(in_edges[0].data.data)]).dtype
+        out_dt = required(sdfg.arrays[required(out_edges[0].data.data)]).dtype
         if in_dt == out_dt:
             return False
         tasklet.code = CodeBlock(f"{out_conn} = dace.{_cast_name(out_dt)}({in_conn})", language=dace.Language.Python)
@@ -471,7 +472,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
         if len(out_edges) != 1:
             return False
-        out_dt = sdfg.arrays[out_edges[0].data.data].dtype
+        out_dt = required(sdfg.arrays[required(out_edges[0].data.data)]).dtype
         assign = single_assignment(tasklet.code.as_string)
         if assign is None:
             return False

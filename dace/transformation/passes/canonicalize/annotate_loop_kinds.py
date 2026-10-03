@@ -43,6 +43,8 @@ from dace.transformation.passes.loop_to_reduce import loop_to_map_refusal_is_car
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.subsets import Subset
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr, as_range
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
 PARALLEL = 'parallel -- the iterations are independent'
@@ -175,7 +177,7 @@ def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -
     """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
     name is one symbol instance whichever scope minted it."""
     expr = symbolic.pystr_to_symbolic(str(expr))
-    repl = {sym: mapping[sym.name] for sym in expr.free_symbols if sym.name in mapping}
+    repl = {sym: mapping[sym.name] for sym in as_expr(expr).free_symbols if sym.name in mapping}
     expr = expr.subs(repl, simultaneous=True) if repl else expr
     return symbolic.pystr_to_symbolic(str(expr))
 
@@ -183,7 +185,7 @@ def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -
 def point_index(subset: Optional[Subset], mapping: Dict[str, sympy.Expr],
                 offset: Tuple[sympy.Expr, ...]) -> Optional[Tuple[sympy.Expr, ...]]:
     """The single element ``subset`` names, in the loop's names, or ``None`` for a range."""
-    if subset is None or (offset and len(offset) != subset.dims()):
+    if subset is None or (offset and len(offset) != as_range(subset).dims()):
         return None
     index = []
     for dim, (begin, end, _) in enumerate(subset.ndrange()):
@@ -234,7 +236,7 @@ def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindi
             continue
         outer, outer_offset = arrays[edge.data.data]
         desc = node.sdfg.arrays.get(conn)
-        begins = [as_loop_names(begin, mapping) for begin, _, _ in edge.data.subset.ndrange()]
+        begins = [as_loop_names(begin, mapping) for begin, _, _ in required(edge.data.subset).ndrange()]
         if desc is None or len(desc.shape) != len(begins) or (outer_offset and len(outer_offset) != len(begins)):
             continue
         inner_arrays[conn] = (outer, tuple(b + outer_offset[d] if outer_offset else b for d, b in enumerate(begins)))
@@ -294,7 +296,7 @@ def proven_carrying_access(loop: LoopRegion) -> Optional[str]:
     loop-invariant or map params are admitted.
     """
     stride = loop_analysis.get_loop_stride(loop)
-    if stride is None or not stride.is_Integer or stride == 0:
+    if stride is None or not as_expr(stride).is_Integer or stride == 0:
         return None
     arrays = {name: (name, ()) for name, desc in loop.sdfg.arrays.items() if not isinstance(desc, data.View)}
     body = Body([], OrderedSet(), OrderedSet(), [])

@@ -45,6 +45,7 @@ from dace.codegen.common import cuda_emits_tree_reductions
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.optionals import required
 
 #: Schedules whose maps derive the block size themselves; a device map wrapping
 #: one of these must not also carry a preset ``gpu_block_size``.
@@ -149,7 +150,7 @@ def scope_contains_block_reduce(state: SDFGState, map_entry: nodes.MapEntry) -> 
     :func:`is_block_reduce`), which the CUDA-block expansion lowers to a ``gpucub::BlockReduce<T,
     N>`` whose ``N`` is this map's flattened block size (via :func:`devicelevel_block_size`) --
     so a bigger block deepens the block-reduce directly."""
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in state.all_nodes_between(map_entry, required(state.exit_node(map_entry))):
         if is_block_reduce(node):
             return True
         if isinstance(node, nodes.NestedSDFG):
@@ -190,7 +191,7 @@ def owns_the_thread_block(node) -> bool:
 def scope_contains_threadblock_map(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff ``map_entry``'s scope (including nested SDFGs) contains a map that owns the
     thread-block level (see :func:`owns_the_thread_block`)."""
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in state.all_nodes_between(map_entry, required(state.exit_node(map_entry))):
         if owns_the_thread_block(node):
             return True
         if isinstance(node, nodes.NestedSDFG):

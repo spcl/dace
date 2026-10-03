@@ -75,6 +75,8 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.dead_carried_store import reaches
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
@@ -377,7 +379,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     if _one_elem(write_subset) != 1:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    if _uses(write_subset, loop_var_sym):
+    if _uses(required(write_subset), loop_var_sym):
         return None
 
     final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
@@ -718,7 +720,7 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                         delta = symbolic.simplify(symbolic.pystr_to_symbolic(rhs) - symbolic.pystr_to_symbolic(lhs))
                     except Exception:
                         continue
-                    if delta.is_number:
+                    if as_expr(delta).is_number:
                         incs.setdefault(lhs, []).append((e, delta))
             return incs
 
@@ -852,7 +854,7 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
     if len(vals) != 1:
         return None
     (val, ) = vals
-    if loop.loop_variable in (str(s) for s in val.free_symbols):
+    if loop.loop_variable in (str(s) for s in as_expr(val).free_symbols):
         return None  # references the loop variable, which is undefined before the loop
     return val
 
@@ -1023,8 +1025,9 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             continue
         # A numeric literal is always admissible; anything else must pass the IV-vs-reduction
         # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
-        if not diff.is_number:
-            if not diff.free_symbols or not step_is_loop_invariant(diff.free_symbols, loop, sdfg, sdfg_free_symbols):
+        if not as_expr(diff).is_number:
+            if not as_expr(diff).free_symbols or not step_is_loop_invariant(
+                    as_expr(diff).free_symbols, loop, sdfg, sdfg_free_symbols):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
@@ -1504,7 +1507,7 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
         if _body_writes(chain, src_data):
             return None
         shifted = copy.deepcopy(src_subset)
-        shifted.replace({loop_var: loop_var - stride})
+        required(shifted).replace({loop_var: loop_var - stride})
         if str(shifted) == str(src_subset):
             return None  # not actually shifted -> a same-iteration copy, no delay to remove
 

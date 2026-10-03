@@ -17,6 +17,7 @@ from dace import properties
 from dace.frontend.python.astutils import unparse
 from dace.properties import CodeBlock
 from dace.transformation import pass_pipeline as ppl
+from dace.optionals import required
 
 
 class _ITEToFpFactor(ast.NodeTransformer):
@@ -75,7 +76,7 @@ class LowerITEToFpFactor(ppl.Pass):
         out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and e.data.data is not None]
         if not out_edges:
             return None
-        dtype = sdfg.arrays[out_edges[0].data.data].dtype
+        dtype = required(sdfg.arrays[required(out_edges[0].data.data)]).dtype
         name = dtype.to_string()
         if name == "bool" or name not in vars(dace):
             return None

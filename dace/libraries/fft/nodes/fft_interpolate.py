@@ -19,6 +19,7 @@ import dace
 from dace import nodes, SDFG, SDFGState, dtypes, Memlet
 from dace import transformation as xf
 from typing import List
+from dace.optionals import required
 
 
 @dace.library.node
@@ -167,8 +168,8 @@ class FFTInterpolatePure(xf.ExpandTransformation):
     @staticmethod
     def expansion(node: 'FFTInterpolate', parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         input_name, output_name = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input_name]
-        outdesc = parent_sdfg.arrays[output_name]
+        indesc = parent_sdfg.arrays[required(input_name)]
+        outdesc = parent_sdfg.arrays[required(output_name)]
         if len(indesc.shape) != len(outdesc.shape):
             raise ValueError(f'FFTInterpolate input/output rank mismatch: '
                              f'{len(indesc.shape)} vs {len(outdesc.shape)}')

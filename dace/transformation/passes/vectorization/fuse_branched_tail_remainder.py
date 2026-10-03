@@ -34,6 +34,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER
 from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
+from dace.optionals import required
 
 #: Tail markers this pass folds into the ``else`` arm. ``__masked_tail`` is a tile body placed as
 #: is; ``__scalar_tail`` is a step-1 body that needs the lane loop around it.
@@ -142,7 +143,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         # out-edge writes nothing, which no ``__tile_main``/tail body does. Verified both ways on a body
         # carrying a write-only scratch scalar; see ``tile_mask_and_tail_fusion_see_write_only_sink_test.py``.
         exit_node = state.exit_node(entry)
-        body = [n for n in state.all_nodes_between(entry, exit_node)]
+        body = [n for n in state.all_nodes_between(entry, required(exit_node))]
         nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
         if len(nsdfgs) == 1 and len(body) == 1:
             return nsdfgs[0]
@@ -215,7 +216,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         state.remove_node(main_nsdfg)
         state.remove_node(rem_nsdfg)
         state.remove_node(rem_entry)
-        state.remove_node(rem_exit)
+        state.remove_node(required(rem_exit))
 
         # Reuse the main map as the fused map, iterating the ORIGINAL element range strided by W:
         # extend the (already-original) innermost lower bound to the tail's upper bound ``ub`` so
@@ -246,7 +247,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         outer_data.update({e.src_conn: e.data.data for e in state.out_edges(main_nsdfg)})
         conn_arrays = dict.fromkeys(list(main_nsdfg.in_connectors) + list(main_nsdfg.out_connectors))
         for name in conn_arrays:
-            desc = copy.deepcopy(sd.arrays[outer_data[name]])
+            desc = copy.deepcopy(sd.arrays[required(outer_data[name])])
             desc.transient = False
             body.add_datadesc(name, desc)
 

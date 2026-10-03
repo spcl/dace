@@ -31,6 +31,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.ordered import OrderedSet
 from dace.symbolic_engine import to_sympy
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
@@ -183,7 +185,7 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
     if expr.is_number:
         return bool(expr >= 0)
     positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
-    return symbolic.simplify(expr.subs(positive)).is_nonnegative is True
+    return as_expr(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
 
 
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
@@ -642,8 +644,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                                    am_state,
                                    arr,
                                    subset,
-                                   then_op,
-                                   else_op,
+                                   required(then_op),
+                                   required(else_op),
                                    cond_text,
                                    cond_array_name=cond_array_name,
                                    cond_producer=cond_producer)
@@ -1145,7 +1147,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else:
             # A symbolic value (``m = n - 1`` feeding ``m > 1``) keeps the symbol's type; ``bool`` truncates it.
             shape = (1, )
-            cond_dtype = sdfg.symbols[cond_sym] if cond_sym in sdfg.symbols else def_edge.data.new_symbols(
+            cond_dtype = sdfg.symbols[cond_sym] if cond_sym in sdfg.symbols else required(def_edge).data.new_symbols(
                 sdfg, sdfg.symbols)[cond_sym]
         cond_name, _ = sdfg.add_array(name=f"_cond_{cond_sym}",
                                       shape=shape,

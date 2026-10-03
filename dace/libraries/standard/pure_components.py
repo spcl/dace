@@ -13,6 +13,7 @@ from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.optionals import required
 
 
 def operand_array(nsdfg: dace.SDFG, name: str, edge: MultiConnectorEdge, outer: dace.SDFG) -> dace.data.Array:
@@ -69,7 +70,7 @@ def tasklet_state(sdfg: dace.SDFG, label: str, code: str, reads: Dict[str, Memle
     tasklet = state.add_tasklet(label, dict.fromkeys(reads), dict.fromkeys(writes), code)
     # a memlet object is never shared between edges
     for conn, memlet in reads.items():
-        state.add_edge(state.add_read(memlet.data), None, tasklet, conn, copy.deepcopy(memlet))
+        state.add_edge(state.add_read(required(memlet.data)), None, tasklet, conn, copy.deepcopy(memlet))
     for conn, memlet in writes.items():
-        state.add_edge(tasklet, conn, state.add_write(memlet.data), None, copy.deepcopy(memlet))
+        state.add_edge(tasklet, conn, state.add_write(required(memlet.data)), None, copy.deepcopy(memlet))
     return state

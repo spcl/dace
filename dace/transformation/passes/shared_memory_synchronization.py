@@ -10,6 +10,8 @@ from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.ordered import OrderedSet
+from dace.sdfg.narrowing import as_map_entry
+from dace.optionals import required
 
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
@@ -76,10 +78,10 @@ class DefaultSharedMemorySync(ppl.Pass):
         The race danger is a shared write inside a sequential map or loop, even a single-iteration one.
         """
         nested_sdfgs = [n.sdfg for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, NestedSDFG)]
-        race_cond_danger = (any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs)
-                            or any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
-                                   and self.map_writes_to_smem(inner_scope, inner_state)
-                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)))
+        race_cond_danger = (any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs) or any(
+            as_map_entry(inner_scope).map.schedule == dtypes.ScheduleType.Sequential
+            and self.map_writes_to_smem(inner_scope, inner_state)
+            for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)))
         return (self.map_writes_to_smem(map_entry,
                                         state), race_cond_danger, nested_in_threadblock_map(state, map_entry))
 
@@ -106,7 +108,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         return any(
             is_shared_memory_write(node, state) or (
                 isinstance(node, NestedSDFG) and self.sdfg_writes_to_smem(node.sdfg))
-            for node in state.all_nodes_between(map_entry, map_exit))
+            for node in state.all_nodes_between(map_entry, required(map_exit)))
 
     def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
         """Insert a ``__syncthreads()`` tasklet after each given node."""
@@ -126,9 +128,9 @@ def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:
     parent = helpers.get_parent_map(state, map_entry)
     while parent:
         parent_map, parent_state = parent
-        if parent_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+        if as_map_entry(parent_map).map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             return True
-        if parent_map.map.schedule == dtypes.ScheduleType.GPU_Device:
+        if as_map_entry(parent_map).map.schedule == dtypes.ScheduleType.GPU_Device:
             return False
         parent = helpers.get_parent_map(parent_state, parent_map)
     return False

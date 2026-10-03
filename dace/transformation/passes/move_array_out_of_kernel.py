@@ -20,6 +20,8 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from dace.ordered import OrderedSet
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
             diff = symbolic.simplify(arg - min_elem)
-            if diff.is_Integer and diff >= 0:
+            if as_expr(diff).is_Integer and diff >= 0:
                 return diff + 1
     return max_elem + 1 - min_elem
 
@@ -340,7 +342,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         chains = [gpu_levels(state, node) for node, state in accesses]
         deepest = max(chains, key=len)
         for chain in chains:
-            if [entry for entry, _ in chain] != [entry for entry, _ in deepest[:len(chain)]]:
+            if [entry for entry, _ in required(chain)] != [entry for entry, _ in deepest[:len(chain)]]:
                 raise NotImplementedError(f"Cannot lift '{name}': it is accessed under sibling GPU maps")
         return deepest
 
@@ -389,14 +391,14 @@ class MoveArrayOutOfKernel(ppl.Pass):
         """Route the array from its access nearest the kernel exit out through every map exit, one slice per edge."""
         desc = plan.desc
         exit_node = state.exit_node(kernel)
-        source = self.get_nearest_access_node([node for node, _ in plan.accesses], exit_node, state)
+        source = self.get_nearest_access_node([node for node, _ in plan.accesses], required(exit_node), state)
         entries = [entry for entry, _ in enclosing_maps(state, source)]
         exits = [state.exit_node(entry) for entry in entries[:entries.index(kernel) + 1]]
         whole = subsets.Range.from_array(desc).ndrange()
         for src, dst in zip([source, *exits[:-1]], exits, strict=True):
-            prefix = lift_prefix(plan.levels, state, src)
-            dst.add_in_connector(f'IN_{name}')
-            dst.add_out_connector(f'OUT_{name}')
+            prefix = lift_prefix(plan.levels, state, required(src))
+            required(dst).add_in_connector(f'IN_{name}')
+            required(dst).add_out_connector(f'OUT_{name}')
             state.add_edge(src, None if src is source else f'OUT_{name}', dst, f'IN_{name}',
                            Memlet(data=name, subset=subsets.Range(prefix + whole[len(prefix):])))
         state.add_edge(exit_node, f'OUT_{name}', state.add_access(name), None, Memlet.from_array(name, desc))

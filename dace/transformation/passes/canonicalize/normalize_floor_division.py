@@ -30,6 +30,7 @@ from dace.sdfg import nodes
 from dace.subsets import Indices, Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.sdfg.narrowing import as_expr
 
 
 def normalize(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
@@ -41,7 +42,7 @@ def normalize(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
         return expr
     replacements = {}
     for node in floors:
-        numerator, denominator = sympy.together(node.args[0]).as_numer_denom()
+        numerator, denominator = as_expr(sympy.together(node.args[0])).as_numer_denom()
         replacements[node] = symbolic.int_floor(numerator, denominator)
     return expr.subs(replacements)
 

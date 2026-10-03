@@ -26,6 +26,8 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
     privatize_reduction_accumulator, )
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from dace.optionals import required
+from dace.sdfg.narrowing import as_map_entry
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
 #: (non-associative ``-`` / ``/``) is not a foldable reduction, so it is never rewritten.
@@ -79,7 +81,7 @@ class PrepareReductionForWidening(ppl.Pass):
         between = map_body_nodes(state, map_entry)
         if any(isinstance(n, nodes.MapEntry) for n in between):
             return False
-        return all(str(step) == "1" for _, _, step in map_entry.map.range)
+        return all(str(step) == "1" for _, _, step in as_map_entry(map_entry).map.range)
 
     def _is_array_slot_reduction(self, state: SDFGState, map_exit: nodes.MapExit,
                                  iedge: MultiConnectorEdge[Memlet]) -> bool:
@@ -105,7 +107,7 @@ class PrepareReductionForWidening(ppl.Pass):
         write_subset = iedge.data.subset
         if write_subset is None or write_subset.num_elements() != 1:
             return False
-        map_param_set = set(state.entry_node(map_exit).map.params)
+        map_param_set = set(required(as_map_entry(state.entry_node(map_exit))).map.params)
         if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
             return False
         # A read of the accumulator inside the map scope would make this a cross-iteration

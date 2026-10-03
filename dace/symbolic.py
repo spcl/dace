@@ -898,7 +898,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType = Union[sympy.Expr, SymExpr]
 
 
 # http://stackoverflow.com/q/3844948/

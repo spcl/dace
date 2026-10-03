@@ -110,6 +110,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.optionals import required
 
 #: Python AST op -> WCR operator symbol for the associative/commutative reductions.
 REDUCTION_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
@@ -292,7 +293,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
                     array = exit_out.dst.data
                     if exit_out.data.wcr is not None or exit_out.data.data != array:
                         continue
-                    if itervar in (str(s) for s in exit_out.data.subset.free_symbols):
+                    if itervar in (str(s) for s in required(exit_out.data.subset).free_symbols):
                         continue  # write subset must be invariant over the loop variable
                     cand = self._match_reduction(st, me, mx, exit_out, array)
                     if cand is not None:

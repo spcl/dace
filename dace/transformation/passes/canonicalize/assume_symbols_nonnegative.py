@@ -47,6 +47,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 from dace.sdfg.state import ControlFlowBlock
+from dace.sdfg.narrowing import as_expr
 
 
 def names_still_plain(sdfg: SDFG) -> Dict[str, None]:
@@ -227,7 +228,11 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     did, and trapping it aborted ``if K > 0`` at ``K = -1`` (llr fuse_move_ifs).
     """
     args = sdfg.used_symbols(all_symbols=False)
-    sized = sized_names(sdfg) | {s.name for relation in tracked_assumptions(sdfg) for s in relation.free_symbols}
+    sized = sized_names(sdfg) | {
+        s.name
+        for relation in tracked_assumptions(sdfg)
+        for s in as_expr(relation).free_symbols
+    }
     return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
 
 
@@ -262,7 +267,7 @@ def collect_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
     free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
     assumptions: List = [symbolic.pystr_to_symbolic(s) >= 0 for s in _signed_integer_free_symbols(sdfg)]
     for relation in tracked_assumptions(sdfg):
-        if all(s.name in free for s in relation.free_symbols) and relation not in assumptions:
+        if all(s.name in free for s in as_expr(relation).free_symbols) and relation not in assumptions:
             assumptions.append(relation)
     return assumptions
 

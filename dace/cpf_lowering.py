@@ -40,6 +40,7 @@ import re
 from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
 
 from dace.ordered import OrderedSet
+from dace.optionals import required
 
 
 class Dialect(enum.Enum):
@@ -1451,7 +1452,8 @@ def required_definitions(names: Set[str], dialect: Optional[Dialect] = None) -> 
         if name in needed:
             continue
         needed.add(name)
-        pending.extend(dependency for dependency in definition_of(tables, name)[1] if dependency not in needed)
+        pending.extend(dependency for dependency in required(definition_of(tables, name))[1]
+                       if dependency not in needed)
     return needed
 
 
@@ -1482,12 +1484,13 @@ def definitions_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple
     emitted: List[str] = []
     placed: Set[str] = set()
     while len(placed) < len(needed):
-        ready = sorted(name for name in needed - placed
-                       if all(dependency in placed for dependency in definitions[name][1] if dependency in needed))
+        ready = sorted(name for name in needed - placed if all(dependency in placed
+                                                               for dependency in required(definitions[name])[1]
+                                                               if dependency in needed))
         if not ready:
             raise ValueError(f'CPF inline definitions have a dependency cycle among {sorted(needed - placed)}')
         for name in ready:
-            emitted.append(definitions[name][0])
+            emitted.append(required(definitions[name])[0])
             placed.add(name)
     return tuple(emitted)
 
@@ -3100,7 +3103,9 @@ def c_native_value_dtype(argument: str, site: Optional[NativeSite], call: str) -
         return entry[0]
     subscripted = C_SUBSCRIPTED.match(text)
     array = names.get(subscripted.group(1)) if subscripted is not None else None
-    if array is not None and array[1] and array[0] in C_SCALAR_SPELLINGS and c_encloses(text, subscripted.end() - 1):
+    if array is not None and array[1] and array[0] in C_SCALAR_SPELLINGS and c_encloses(
+            text,
+            required(subscripted).end() - 1):
         return array[0]
     spelled = C_SPELLED_VALUE.match(text)
     if spelled is not None and c_encloses(text, spelled.end() - 1):

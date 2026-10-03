@@ -22,6 +22,8 @@ from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 
 def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list[str]:
@@ -102,7 +104,7 @@ def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
             if Dfac is None:
                 continue  # no replicate
             # symbolic divisor -> can't prove W % D == 0 -> phase-aware
-        begin = src_edge.data.subset.ranges[dims[d]][0]
+        begin = required(as_range(src_edge.data.subset)).ranges[dims[d]][0]
         fname = type(begin).__name__
         if fname not in ("int_floor", "__int_floor"):
             raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "
@@ -357,16 +359,16 @@ class TileGather(TileOp):
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         if self.has_mask:
-            mask_arr = sdfg.arrays[in_e["_mask"].data.data]
+            mask_arr = sdfg.arrays[required(in_e["_mask"].data.data)]
             validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
         # Packed-layout lock (design section 2.3): refuse non-C non-Fortran source strides.
         if self.src_kind == TILE:
-            src_arr = sdfg.arrays[in_e["_src"].data.data]
+            src_arr = sdfg.arrays[required(in_e["_src"].data.data)]
             validate_packed_layout(self.label, "_src", src_arr)
         # gather_dims source-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         if self.gather_dims and self.src_kind == TILE:
-            src_arr = sdfg.arrays[in_e["_src"].data.data]
+            src_arr = sdfg.arrays[required(in_e["_src"].data.data)]
             src_ndim = len(src_arr.shape)
             if any(d >= src_ndim for d in self.gather_dims):
                 raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
@@ -376,7 +378,7 @@ class TileGather(TileOp):
             conn = f"_idx_{d}"
             if conn not in in_e:
                 raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
-            desc = sdfg.arrays[in_e[conn].data.data]
+            desc = sdfg.arrays[required(in_e[conn].data.data)]
             shape = tuple(desc.shape)
             if resolve_gather_deps(shape, widths) is None:
                 raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
@@ -391,7 +393,8 @@ class TileGather(TileOp):
         widths = list(self.widths)
         K = len(widths)
         dst_off = tile_offset(widths)
-        dst_dtype = sdfg.arrays[next(e for e in state.out_edges(self) if e.src_conn == "_dst").data.data].dtype.ctype
+        dst_dtype = required(sdfg.arrays[required(
+            next(e for e in state.out_edges(self) if e.src_conn == "_dst").data.data)]).dtype.ctype
         if self.src_kind == SYMBOL:
             src_ref = f"({dst_dtype})({pyexpr2cpp(self.src_expr)})"
         elif self.src_kind == SCALAR:
@@ -401,12 +404,12 @@ class TileGather(TileOp):
             # read per lane (``_src[off]``). ``[0]`` is a memlet concern, never a
             # tasklet-body one (a by-value connector is not a pointer).
             src_edge = next(e for e in state.in_edges(self) if e.dst_conn == "_src")
-            desc = sdfg.arrays[src_edge.data.data]
+            desc = sdfg.arrays[required(src_edge.data.data)]
             ref, broadcast = scalar_operand_ref(desc, "_src", widths, dst_off)
             src_ref = f"({dst_dtype})({ref})" if broadcast else ref
         else:
             src_edge = next(e for e in state.in_edges(self) if e.dst_conn == "_src")
-            src_arr = sdfg.arrays[src_edge.data.data]
+            src_arr = sdfg.arrays[required(src_edge.data.data)]
             ndim = len(src_arr.strides)
             # Step along the array dim each tile dim maps to (``src_dims``);
             # default to the last K dims in order (a plain row-major tile).
@@ -434,7 +437,7 @@ class TileGather(TileOp):
                 for k in self.gather_dims:
                     conn = f"_idx_{k}"
                     edge = next(e for e in state.in_edges(self) if e.dst_conn == conn)
-                    idx_shape = tuple(sdfg.arrays[edge.data.data].shape)
+                    idx_shape = tuple(required(sdfg.arrays[required(edge.data.data)]).shape)
                     deps_d = resolve_gather_deps(idx_shape, widths)
                     if deps_d is None:
                         raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
@@ -514,14 +517,14 @@ class TileGather(TileOp):
         if len(self.widths) != 1 or len(self.gather_dims) != 1 or self.replicated() or int(self.gather_dims[0]) != 0:
             return False
         in_edges = connected_edges(state, self)
-        source = sdfg.arrays[in_edges["_src"].data.data]
+        source = sdfg.arrays[required(in_edges["_src"].data.data)]
         if len(source.shape) != 1 or not bool(dace.symbolic.simplify(source.strides[0] == 1)):
             return False
         index_edge = in_edges.get("_idx_0")
         if index_edge is None:
             return False
         try:
-            index_shape = tuple(int(extent) for extent in sdfg.arrays[index_edge.data.data].shape)
+            index_shape = tuple(int(extent) for extent in required(sdfg.arrays[required(index_edge.data.data)]).shape)
         except (TypeError, ValueError):
             return False
         return index_shape == (int(self.widths[0]), )

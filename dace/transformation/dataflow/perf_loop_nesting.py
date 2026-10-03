@@ -89,6 +89,7 @@ from dace import memlet as mm, nodes, properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
+from dace.optionals import required
 
 #: Node types admitted in a replicable intervening chain in an imperfectly
 #: nested parent-map body (side-effect-free, deterministic dataflow).
@@ -241,7 +242,7 @@ def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[s
     """
     if isinstance(child, nodes.MapEntry):
         cx = state.exit_node(child)
-        scope = set(state.all_nodes_between(child, cx)) | {child, cx}
+        scope = set(state.all_nodes_between(child, required(cx))) | {child, cx}
     else:
         scope = {child}
     reads: Set[str] = set()

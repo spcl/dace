@@ -54,6 +54,8 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation import helpers as xfh
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
@@ -73,7 +75,7 @@ def _all_matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: 
     for e in list(state.in_edges(node)) + list(state.out_edges(node)):
         if e.data is None or e.data.subset is None:
             continue
-        for ext in e.data.subset.size():
+        for ext in as_range(e.data.subset).size():
             saw = True
             try:
                 if int(ext) > limit:
@@ -395,7 +397,9 @@ def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
 
 def vector_operands(state: SDFGState, node: nodes.LibraryNode) -> bool:
     """Whether every input of ``node`` is a vector, so a ``MatMul`` specializes to a ``Dot``."""
-    return all(len([extent for extent in edge.data.subset.size() if extent != 1]) <= 1 for edge in state.in_edges(node))
+    return all(
+        len([extent for extent in required(as_range(edge.data.subset)).size() if extent != 1]) <= 1
+        for edge in state.in_edges(node))
 
 
 def expand_gathered_dots(sdfg: SDFG) -> int:

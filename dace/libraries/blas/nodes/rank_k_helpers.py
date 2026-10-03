@@ -15,6 +15,8 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, data as dt, dtypes, memlet as mm
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.symbolic import symstr
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 # Connector names of the runtime coefficient inputs.
 COEFF_CONNECTORS = ("_alpha", "_beta")
@@ -31,20 +33,23 @@ def operand_info(node, state: SDFGState, sdfg: SDFG, connectors: Tuple[str,
         edge = next((e for e in state.in_edges(node) if e.dst_conn == conn), None)
         if edge is None:
             raise ValueError(f"{node.name}: expected a '{conn}' input")
-        desc = sdfg.arrays[edge.data.data]
-        info[conn] = (desc, edge.data.subset.size(), desc.strides)
+        desc = sdfg.arrays[required(edge.data.data)]
+        info[conn] = (desc, required(as_range(edge.data.subset)).size(), desc.strides)
     out = next((e for e in state.out_edges(node) if e.src_conn == "_c"), None)
     if out is None:
         raise ValueError(f"{node.name}: expected a '_c' output")
-    cdesc = sdfg.arrays[out.data.data]
-    info["_c"] = (cdesc, out.data.subset.size(), cdesc.strides)
+    cdesc = sdfg.arrays[required(out.data.data)]
+    info["_c"] = (cdesc, required(as_range(out.data.subset)).size(), cdesc.strides)
     return info
 
 
 def scalar_conn_descs(node, state: SDFGState, sdfg: SDFG) -> Dict[str, dt.Data]:
     """Descriptors of the runtime coefficient connectors (``_alpha`` / ``_beta``)
     that are actually wired, keyed by connector name."""
-    return {e.dst_conn: sdfg.arrays[e.data.data] for e in state.in_edges(node) if e.dst_conn in COEFF_CONNECTORS}
+    return {
+        e.dst_conn: sdfg.arrays[required(e.data.data)]
+        for e in state.in_edges(node) if e.dst_conn in COEFF_CONNECTORS
+    }
 
 
 def render_scalar(value, dtype: dtypes.typeclass) -> str:
@@ -231,7 +236,11 @@ def add_triangular_tasklet(state: SDFGState,
 
     tasklet = state.add_tasklet(label, {conn: None for conn in inputs}, {conn: None for conn in outputs}, code)
     for conn, memlet in inputs.items():
-        state.add_memlet_path(state.add_read(memlet.data), *entries, tasklet, dst_conn=conn, memlet=dc(memlet))
+        state.add_memlet_path(state.add_read(required(memlet.data)),
+                              *entries,
+                              tasklet,
+                              dst_conn=conn,
+                              memlet=dc(memlet))
     if not inputs:
         # A tasklet with no inputs (``beta == 0`` zero-fill) still needs the scope
         # chained together, so connect the entries and the tasklet with empty memlets.
@@ -241,7 +250,7 @@ def add_triangular_tasklet(state: SDFGState,
             prev = entry
         state.add_nedge(prev, tasklet, mm.Memlet())
     for conn, memlet in outputs.items():
-        state.add_memlet_path(tasklet, *exits, state.add_write(memlet.data), src_conn=conn, memlet=dc(memlet))
+        state.add_memlet_path(tasklet, *exits, state.add_write(required(memlet.data)), src_conn=conn, memlet=dc(memlet))
 
 
 def beta_scale_state(nsdfg: SDFG, node, dtype: dtypes.typeclass, n, rt_beta: bool, label: str) -> Optional[SDFGState]:

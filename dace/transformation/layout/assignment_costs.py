@@ -19,6 +19,7 @@ from dace.transformation.layout.global_assign import AssignmentCosts
 from dace.transformation.layout.line_graph import KernelState
 from dace.transformation.layout.nest_eval import MAX_PERMUTE_NDIM, evaluate_nest
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
+from dace.optionals import required
 
 #: Illustrative CPU parameters; shared so both providers price relayouts identically.
 EXAMPLE_CPU = LogGP(L=95e-9,
@@ -183,7 +184,7 @@ def eval_costs(sdfg: SDFG,
                           f"CONTENDED (spread above threshold); medians kept but marked untrusted "
                           f"in the table -- decisions consuming them are flagged in the conflict "
                           f"report")
-        identity_seconds = by_name["identity"].time * 1e-3
+        identity_seconds = required(by_name["identity"].time) * 1e-3
         touched = {n.data for n in kernel.state.data_nodes()}
         for array in arrays:
             for layout in layouts[array]:
@@ -196,7 +197,7 @@ def eval_costs(sdfg: SDFG,
                 else:
                     digits = "".join(map(str, layout.ops[0].perm))
                     candidate_name = f"permute_{array}_{digits}"
-                node_cost[key] = by_name[candidate_name].time * 1e-3
+                node_cost[key] = required(by_name[candidate_name].time) * 1e-3
                 if by_name[candidate_name].metadata.get("contended", False):
                     untrusted.add(key)
     entry_needed, last_write = liveness_facts(sdfg, kernels, arrays)

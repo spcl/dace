@@ -38,6 +38,7 @@ from dace.transformation.passes.vectorization.utils.tasklets import single_assig
 # The name is owned by the unparser that gives it meaning, so the producer here and the C++
 # lowering can never drift apart.
 from dace.codegen.cppunparse import CONDITIONAL_WRITE_FUNC
+from dace.optionals import required
 
 
 class NormalizeMaskedWriteTasklets(ppl.Pass):
@@ -88,7 +89,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                 if parsed is None:
                     continue
                 writes = [e.data for e in state.out_edges(tasklet) if e.src_conn == parsed[0]]
-                if len(writes) != 1 or not assigned & set(writes[0].subset.free_symbols):
+                if len(writes) != 1 or not assigned & set(required(writes[0].subset).free_symbols):
                     continue
                 if self._demote_self_blend(state, tasklet):
                     self._mark_conditional_writes_dynamic(state, tasklet)

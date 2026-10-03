@@ -27,6 +27,7 @@ import ast
 from typing import Any, Dict, Optional
 
 from dace.frontend.python import astutils
+from dace.optionals import required
 
 try:
     import z3
@@ -50,7 +51,7 @@ BINOPS = {
     # Logical, not arithmetic: Python shifts a non-negative int in zeros, z3's ``>>`` shifts in the
     # sign bit. On a CRC the difference is every iteration after the first.
     ast.RShift:
-    lambda a, b: z3.LShR(a, b),
+    lambda a, b: required(z3).LShR(a, b),
     ast.Add:
     lambda a, b: a + b,
     ast.Sub:
@@ -62,26 +63,26 @@ BINOPS = {
 COMPARES = {
     ast.Eq: lambda a, b: a == b,
     ast.NotEq: lambda a, b: a != b,
-    ast.Lt: lambda a, b: z3.ULT(a, b),
-    ast.LtE: lambda a, b: z3.ULE(a, b),
-    ast.Gt: lambda a, b: z3.UGT(a, b),
-    ast.GtE: lambda a, b: z3.UGE(a, b),
+    ast.Lt: lambda a, b: required(z3).ULT(a, b),
+    ast.LtE: lambda a, b: required(z3).ULE(a, b),
+    ast.Gt: lambda a, b: required(z3).UGT(a, b),
+    ast.GtE: lambda a, b: required(z3).UGE(a, b),
 }
 
 
 def bitvec(name: str, width: int = DEFAULT_WIDTH) -> Any:
     """A fresh bitvector variable to stand for one input of the body."""
-    return z3.BitVec(name, width)
+    return required(z3).BitVec(name, width)
 
 
 def constant(value: int, width: int = DEFAULT_WIDTH) -> Any:
     """``value`` as a bitvector literal of ``width`` bits."""
-    return z3.BitVecVal(value, width)
+    return required(z3).BitVecVal(value, width)
 
 
 def truth(term: Any) -> Any:
     """Python truthiness of a bitvector: non-zero. A body may branch on ``crc & 1`` directly."""
-    if z3.is_bool(term):
+    if required(z3).is_bool(term):
         return term
     return term != 0
 
@@ -111,7 +112,7 @@ def encode_expr(node: ast.AST, env: Dict[str, Any], width: int) -> Optional[Any]
         if isinstance(node.op, ast.USub):
             return -operand
         if isinstance(node.op, ast.Not):
-            return z3.Not(truth(operand))
+            return required(z3).Not(truth(operand))
         return None
     if isinstance(node, ast.Compare):
         if len(node.ops) != 1:
@@ -127,7 +128,7 @@ def encode_expr(node: ast.AST, env: Dict[str, Any], width: int) -> Optional[Any]
         parts = [encode_expr(v, env, width) for v in node.values]
         if any(p is None for p in parts):
             return None
-        joiner = z3.And if isinstance(node.op, ast.And) else z3.Or
+        joiner = required(z3).And if isinstance(node.op, ast.And) else required(z3).Or
         return joiner([truth(p) for p in parts])
     if isinstance(node, ast.IfExp):
         cond = encode_expr(node.test, env, width)
@@ -135,7 +136,7 @@ def encode_expr(node: ast.AST, env: Dict[str, Any], width: int) -> Optional[Any]
         orelse = encode_expr(node.orelse, env, width)
         if cond is None or body is None or orelse is None:
             return None
-        return z3.If(truth(cond), body, orelse)
+        return required(z3).If(truth(cond), body, orelse)
     return None
 
 
@@ -148,7 +149,7 @@ def merge_branches(cond: Any, then_env: Dict[str, Any], else_env: Dict[str, Any]
     merged = dict(else_env)
     for name, then_val in then_env.items():
         else_val = else_env.get(name)
-        merged[name] = then_val if else_val is None else z3.If(cond, then_val, else_val)
+        merged[name] = then_val if else_val is None else required(z3).If(cond, then_val, else_val)
     return merged
 
 

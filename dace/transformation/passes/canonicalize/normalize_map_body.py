@@ -26,6 +26,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
+from dace.optionals import required
 
 
 def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry,
@@ -113,7 +114,7 @@ def shared_carrier_connectors(state: SDFGState, keep: nodes.NestedSDFG,
         carrier, name = e.src, e.data.data
         if elsewhere is None:
             elsewhere = Counter(n.data for st in state.sdfg.states() for n in st.data_nodes())
-        if elsewhere[name] != 1 or not state.sdfg.arrays[name].transient:
+        if elsewhere[name] != 1 or not required(state.sdfg.arrays[required(name)]).transient:
             return None  # something else observes it: cannot be made internal
         if any(oe.dst is not drop for oe in state.out_edges(carrier)):
             return None

@@ -13,6 +13,7 @@ from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.operands import (Operand, check_operands, connected_edges, edge_ctype, input_connectors,
                                              output_edge, scalar_operand_ref, validate_elementwise)
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.optionals import required
 
 
 @library.expansion
@@ -169,8 +170,8 @@ class TileITE(TileOp):
                 return f"({cast})({cpp})" if cast else f"({cpp})"
             if operand.kind == TILE:
                 return f"{operand.conn}[{offset}]"
-            reference, broadcast = scalar_operand_ref(sdfg.arrays[in_edges[operand.conn].data.data], operand.conn,
-                                                      widths, offset)
+            reference, broadcast = scalar_operand_ref(sdfg.arrays[required(in_edges[operand.conn].data.data)],
+                                                      operand.conn, widths, offset)
             if not broadcast:
                 return reference
             return f"({cast})({reference})" if cast else f"({reference})"

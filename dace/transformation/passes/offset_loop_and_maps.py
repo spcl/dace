@@ -15,6 +15,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.replace import replace_in_codeblock
 import ast
+from dace.sdfg.narrowing import as_expr
+from dace.optionals import required
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
@@ -353,11 +355,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     self.begin_expr):
                                 has_matches = True
 
-                                b_expr = dace.symbolic.SymExpr(
-                                    symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr))).simplify()
-                                e_expr = dace.symbolic.SymExpr(
-                                    symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr))).simplify()
-                                s_expr = dace.symbolic.SymExpr(symstr(s)).simplify()
+                                b_expr = as_expr(
+                                    dace.symbolic.SymExpr(
+                                        symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                e_expr = as_expr(
+                                    dace.symbolic.SymExpr(
+                                        symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                s_expr = as_expr(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
                                     loop_len = e_expr + 1 - b_expr
@@ -385,7 +389,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         if has_matches:
                             new_range = dace.subsets.Range(new_range_list)
                             state_node.map.range = new_range
-                            nodes_between = state.all_nodes_between(state_node, state.exit_node(state_node))
+                            nodes_between = state.all_nodes_between(state_node, required(state.exit_node(state_node)))
                             edges_between = state.all_edges(*nodes_between)
                             self._repl_memlets_on_edge_list(state, edges_between, repldict)
                             self._repl_tasklets_on_node_list(state, nodes_between, repldict)
@@ -425,7 +429,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         opens = lhs.count("(")
         exits = lhs.count(")")
         rhs = "(" * (opens - exits) + rhs
-        expr_str = lhs + op_to_split + symstr(dace.symbolic.SymExpr(rhs).simplify()) + (")" * (opens - exits))
+        expr_str = lhs + op_to_split + symstr(as_expr(dace.symbolic.SymExpr(rhs)).simplify()) + (")" * (opens - exits))
         return expr_str
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:

@@ -88,7 +88,7 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
         if found is not None:
             return None  # the loop variable steers two axes; the overlap is not a shift
         offset = symbolic.simplify(begin - ivar)
-        if not offset.is_Integer:
+        if not as_expr(offset).is_Integer:
             return None
         found = (axis, int(as_expr(offset)))
     return found

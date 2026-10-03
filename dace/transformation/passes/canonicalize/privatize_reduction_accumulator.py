@@ -39,6 +39,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.optionals import required
+from dace.sdfg.narrowing import as_map_entry
 
 
 @properties.make_properties
@@ -113,7 +115,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit,
     # if the slot were a function of the map parameter this wouldn't be a
     # reduction.)
     map_entry = state.entry_node(map_exit)
-    map_param_set = dict.fromkeys(map_entry.map.params)
+    map_param_set = dict.fromkeys(required(as_map_entry(map_entry)).map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
 
@@ -165,7 +167,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit,
         state.add_edge(in_state_init_an, None, seed_an, None,
                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
         # The map's WCR accumulates onto the seed, so the seed must be written before the map starts.
-        state.add_nedge(seed_an, map_entry, mm.Memlet())
+        state.add_nedge(seed_an, required(map_entry), mm.Memlet())
         # The map's WCR output now goes to a fresh _priv_dot AN ...
         new_scalar_an = state.add_write(scalar_name)
         state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,

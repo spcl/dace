@@ -107,6 +107,8 @@ from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
+from dace.optionals import required
+from dace.sdfg.narrowing import as_map_entry
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen,
@@ -168,7 +170,7 @@ def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.Map
     if not inner:
         return False
     for e in inner:
-        idx_syms = {str(s) for s in e.data.subset.free_symbols}
+        idx_syms = {str(s) for s in required(e.data.subset).free_symbols}
         if not param_syms.issubset(idx_syms):
             # A map param is reduced over (absent from this write) -> cross-iteration reduction.
             return False
@@ -189,7 +191,7 @@ class _MultiOutputReductionMapFission(MapFission):
         map_exit = graph.exit_node(self.map_entry)
         # Count only genuine reductions. An injective per-element RMW WCR (s212 ``a[i] *= c[i]``) is
         # elementwise, and fissioning it detaches the write from its snapshot and miscompiles s212.
-        params = self.map_entry.map.params
+        params = as_map_entry(self.map_entry).map.params
         wcr_arrays = {
             e.data.data
             for e in graph.out_edges(map_exit) if e.data is not None and e.data.data is not None

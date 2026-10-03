@@ -21,6 +21,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 from typing import Dict, Type
+from dace.optionals import required
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -356,13 +357,13 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
     reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
     writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
     for acc in [a for a in writes if a in reads]:  # edge order, not hash order
-        desc = state.sdfg.arrays.get(acc)
+        desc = state.sdfg.arrays.get(required(acc))
         if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
             continue
         read_edge, write_edge = reads[acc], writes[acc]
         # ``y[j] = y[j] + e`` is element-wise, not a reduction: the slot must be one fixed element
-        if read_edge.data.subset != write_edge.data.subset or set(
-                map_entry.map.params) & write_edge.data.subset.free_symbols:
+        if read_edge.data.subset != write_edge.data.subset or set(map_entry.map.params) & required(
+                write_edge.data.subset).free_symbols:
             continue
         op = _op_through_body(state, body, read_edge, write_edge)
         if op is None or op not in IDENTITY:

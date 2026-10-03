@@ -11,6 +11,7 @@ from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.ordered import OrderedSet
+from dace.optionals import required
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 
@@ -76,8 +77,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         defined.update(map_entry.new_symbols(state.sdfg, state, defined))
         nsdfg_node = helpers.nest_state_subgraph(state.sdfg,
                                                  state,
-                                                 StateSubgraphView(state,
-                                                                   list(state.all_nodes_between(map_entry, map_exit))),
+                                                 StateSubgraphView(
+                                                     state, list(state.all_nodes_between(map_entry,
+                                                                                         required(map_exit)))),
                                                  name=f'if_of_nested_{map_entry.label}',
                                                  full_data=True)
         inner = nsdfg_node.sdfg

@@ -129,6 +129,7 @@ from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
+from dace.optionals import required
 
 #: An edge of a body state that carries a value.
 ValueEdge = MultiConnectorEdge[Memlet]
@@ -816,7 +817,7 @@ def split_order(body: LoopRegion,
                     # Same element, same iteration: whether the read already sees the write decides.
                     first = writer if sees_written_value(states, name, state, node) else reader
                 else:
-                    first = reader if offset > 0 else writer
+                    first = reader if required(offset) > 0 else writer
                 after[first][writer if first == reader else reader] = None
                 constrained = True
     if not constrained:

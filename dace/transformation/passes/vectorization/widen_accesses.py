@@ -45,7 +45,8 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
                                                                         classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_expr, as_range
+from dace.optionals import required
 
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
@@ -228,7 +229,7 @@ class WidenAccesses(ppl.Pass):
         if sub is None:
             return None
         try:
-            ranges = list(sub.ranges)
+            ranges = list(as_range(sub).ranges)
         except Exception:  # noqa: BLE001
             return None
         # Per-dim classification; skip GATHER dims (begin is an array subscript).
@@ -253,7 +254,7 @@ class WidenAccesses(ppl.Pass):
             if not is_single:
                 continue
             try:
-                beg_syms = dace.symbolic.SymExpr(str(beg)).free_symbols
+                beg_syms = as_expr(dace.symbolic.SymExpr(str(beg))).free_symbols
             except Exception:  # noqa: BLE001
                 beg_syms = set()
             dominating_k = None
@@ -286,11 +287,11 @@ class WidenAccesses(ppl.Pass):
         # fresh ``symbol(name)`` carries different sympy assumptions / dtype, so ``subs`` and
         # ``in free_symbols`` answer against the wrong object and the stride silently reads as
         # "not affine" (see the symbol-identity rule in dace/symbolic.py).
-        iv = next((sym for sym in beg.free_symbols if str(sym) == iter_var), None)
+        iv = next((sym for sym in as_expr(beg).free_symbols if str(sym) == iter_var), None)
         if iv is None:
             return None
         step = dace.symbolic.simplify(beg.subs(iv, iv + 1) - beg)
-        if any(str(sym) == iter_var for sym in step.free_symbols) or step.is_negative:
+        if any(str(sym) == iter_var for sym in as_expr(step).free_symbols) or as_expr(step).is_negative:
             return None
         return step
 
@@ -306,11 +307,13 @@ class WidenAccesses(ppl.Pass):
                     continue
                 edge_changed = False
                 defs = _state_defs(inner_sdfg, inner_state, state_defs, scan_cache)
-                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg, inner_state, defs)
+                new_sub = self._widen_subset_inplace(required(edge.data.subset), iter_vars, inner_sdfg, inner_state,
+                                                     defs)
                 if new_sub is not None:
                     edge.data.subset = new_sub
                     edge_changed = True
-                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg, inner_state, defs)
+                new_other = self._widen_subset_inplace(required(edge.data.other_subset), iter_vars, inner_sdfg,
+                                                       inner_state, defs)
                 if new_other is not None:
                     edge.data.other_subset = new_other
                     edge_changed = True

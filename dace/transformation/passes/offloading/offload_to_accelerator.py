@@ -35,6 +35,7 @@ from dace.transformation.passes.offloading.taskloop import is_device_wide_libnod
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
+from dace.optionals import required
 
 
 def in_sequential_specialization_arm(block) -> bool:
@@ -751,7 +752,7 @@ class OffloadToAccelerator(ppl.Pass):
             body = nsdfg_node.sdfg
             if edge.dst_conn not in body.arrays or not is_scalar(edge.dst_conn, body):
                 continue
-            if sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES:
+            if required(sdfg.arrays[required(edge.data.data)]).storage not in GPU_RESIDENT_STORAGES:
                 continue
             if not self.read_outside_a_kernel(body, edge.dst_conn):
                 continue
@@ -764,7 +765,7 @@ class OffloadToAccelerator(ppl.Pass):
             staged = state.add_access(host_name)
             # Reuse the edge's own source: a second access node for the same data would leave the
             # original isolated once this edge goes, which is not a valid SDFG.
-            source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(edge.data.data)
+            source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(required(edge.data.data))
             state.remove_edge(edge)
             state.add_edge(source, edge.src_conn, staged, None, deepcopy(edge.data))
             state.add_edge(staged, None, nsdfg_node, edge.dst_conn,
@@ -805,7 +806,7 @@ class OffloadToAccelerator(ppl.Pass):
             # subtracts ``bin_edges[i]`` on the host).
             if isinstance(inner, data.Scalar):
                 continue
-            inner.storage = sdfg.arrays[edge.data.data].storage
+            inner.storage = required(sdfg.arrays[required(edge.data.data)]).storage
 
     def cache_scopes(self, sdfg):
         # Nested SDFGs too: a taskloop's body is a host level, read by the walk and the analysis.
@@ -1034,7 +1035,7 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             input_and_output = get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry) | get_data_used_by_outgoing_access_nodes(sdfg, state,
-                                                                                 state.exit_node(map_entry))
+                                                                                 required(state.exit_node(map_entry)))
             if is_taskloop:
                 pass  # transparent for now, resolved below once the body has spoken
             elif is_gpu:
@@ -1216,7 +1217,7 @@ class OffloadToAccelerator(ppl.Pass):
             if not memlet:
                 continue
             data_name = memlet.data
-            if memlet.data in sdfg.arrays and is_array(data_name, sdfg):
+            if memlet.data in sdfg.arrays and is_array(required(data_name), sdfg):
                 cpu_set.add(memlet.data)
 
         # add array accesses in branches
@@ -1333,13 +1334,13 @@ class OffloadToAccelerator(ppl.Pass):
         end = self._parse_to_IR(sdfg, sdfg, IR)
 
         # finish graph: tie the final node together with the inital close node
-        end.append_node(IR.close)
+        end.append_node(required(IR.close))
         link_early_returns(IR)
         # Only what this SDFG WROTE goes back: restoring a read-only input is dead traffic, and
         # inside a nested SDFG it writes an input connector, which is invalid.
         written = self.written_arrays(sdfg)
-        IR.close.gpu_set = initially_on_gpu & written
-        IR.close.cpu_set = initially_on_cpu & written
+        required(IR.close).gpu_set = initially_on_gpu & written
+        required(IR.close).cpu_set = initially_on_cpu & written
 
         self._propagate_arrays(IR)
 
@@ -1401,7 +1402,7 @@ class OffloadToAccelerator(ppl.Pass):
                     for _, branch in cond_block.branches:
                         branch_end: OffloadingIRNode = self._parse_to_IR(sdfg, branch, curr_node)
                         # TODO: FIND ALL TAILS
-                        branch_end.append_node(outer_node.close)
+                        branch_end.append_node(required(outer_node.close))
 
                 # loop
                 elif isinstance(block, LoopRegion):
@@ -1420,16 +1421,16 @@ class OffloadToAccelerator(ppl.Pass):
                     # TODO: FIND ALL TAILS
                     curr_node = self._parse_to_IR(sdfg, loop,
                                                   curr_node)  # linked list representing all internal nodes of loop
-                    curr_node.append_node(outer_node.close)
+                    curr_node.append_node(required(outer_node.close))
 
                 # nested region -> flatten
                 elif isinstance(block, ControlFlowRegion):
                     curr_node = self._parse_to_IR(sdfg, block, curr_node)
-                    curr_node.append_node(outer_node.close)
+                    curr_node.append_node(required(outer_node.close))
 
                 elif isinstance(block, nodes.NestedSDFG):
                     curr_node = self._parse_to_IR(block.sdfg, block.sdfg, curr_node)
-                    curr_node.append_node(outer_node.close)
+                    curr_node.append_node(required(outer_node.close))
 
                 else:
                     raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
@@ -1539,9 +1540,10 @@ class OffloadToAccelerator(ppl.Pass):
             traverse_same_level(IR, gather_data)
 
             # populate IR sets
-            IR.close.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
-            IR.close.cpu_set = OrderedSet(array_name for array_name in location_on_gpu
-                                          if not location_on_gpu[array_name])
+            required(IR.close).gpu_set = OrderedSet(array_name for array_name in location_on_gpu
+                                                    if location_on_gpu[array_name])
+            required(IR.close).cpu_set = OrderedSet(array_name for array_name in location_on_gpu
+                                                    if not location_on_gpu[array_name])
 
         # Behaviour 2:
         # if there are multiple tail nodes, then mark this node for later.
@@ -1584,9 +1586,9 @@ class OffloadToAccelerator(ppl.Pass):
         (cegterg: ``__inl9_a = hc`` on the device, then a host loop over ``__inl9_a_host``).
         """
         state = node.block
-        sdfg = state.sdfg
+        sdfg = required(state).sdfg
         top = self.cached_scope_children[state][None]
-        for edge in state.edges():
+        for edge in required(state).edges():
             src, dst = edge.src, edge.dst
             if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or edge.data.is_empty():
                 continue
@@ -1679,7 +1681,8 @@ class OffloadToAccelerator(ppl.Pass):
                 if is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
+            self._insert_copy_names_in_block(sdfg, required(node.block), rename_dict,
+                                             node.type == OffloadingIRNode.EDGE)
 
         traverse_IR(IR, _insert_copy_names_in_node)
 
@@ -1770,7 +1773,7 @@ class OffloadToAccelerator(ppl.Pass):
 
                 # A CLOSE node has no block of its own: a copy after it goes after the region it closes.
                 # Before an interstate edge, or between two CLOSEs, there is no next block: copy AFTER the node.
-                after = node.open.block if node.type == OffloadingIRNode.CLOSE else node.block
+                after = required(node.open).block if node.type == OffloadingIRNode.CLOSE else node.block
                 if next.type == OffloadingIRNode.EDGE or (node.type == OffloadingIRNode.CLOSE
                                                           and next.type == OffloadingIRNode.CLOSE):
                     insert_copies(node, next, after, None)
@@ -1784,20 +1787,20 @@ class OffloadToAccelerator(ppl.Pass):
                 bottom = node.close  # INV: bottom.type == OffloadingIRNode.CLOSE
                 tails = OffloadingIRNode.get_all_tails(top)  # INV: all are STATE or CLOSE if there's a nested loop
 
-                gpu_copies = bottom.cpu_set & top.gpu_set
+                gpu_copies = required(bottom).cpu_set & top.gpu_set
 
                 if gpu_copies:
                     for tail in tails:
                         if tail.type == OffloadingIRNode.CLOSE:  # and bottom.type == OffloadingIRNode.CLOSE:
-                            place_copy(tail.open.block, None, gpu_copies, to_gpu=True)
+                            place_copy(required(tail.open).block, None, gpu_copies, to_gpu=True)
                         else:
                             place_copy(tail.block, None, gpu_copies, to_gpu=True)
 
-                cpu_copies = bottom.gpu_set & top.cpu_set
+                cpu_copies = required(bottom).gpu_set & top.cpu_set
                 if cpu_copies:
                     for tail in tails:
                         if tail.type == OffloadingIRNode.CLOSE:
-                            place_copy(tail.open.block, None, cpu_copies, to_gpu=False)
+                            place_copy(required(tail.open).block, None, cpu_copies, to_gpu=False)
                         else:
                             place_copy(tail.block, None, cpu_copies, to_gpu=False)
 
@@ -2185,7 +2188,7 @@ class OffloadToAccelerator(ppl.Pass):
             # add new external access node & edges to it
             map_exit.add_in_connector(in_conn)
             map_exit.add_out_connector(out_conn)
-            outside_access = state.add_access(data_name)
+            outside_access = state.add_access(required(data_name))
             internal_memlet = deepcopy(input_memlet)
             external_memlet = deepcopy(input_memlet)
             state.add_edge(last_access, None, map_exit, in_conn, internal_memlet)

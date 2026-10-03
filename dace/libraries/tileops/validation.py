@@ -7,6 +7,7 @@ import sympy
 
 import dace
 from dace.sdfg import graph
+from dace.sdfg.narrowing import as_range
 
 
 def is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
@@ -36,7 +37,7 @@ def edge_moves_a_tile(edge: graph.MultiConnectorEdge[dace.Memlet], widths: Seque
     """
     if edge.data is None or edge.data.subset is None:
         return False
-    size = tuple(edge.data.subset.size())
+    size = tuple(as_range(edge.data.subset).size())
     if len(size) < len(widths):
         return False
     split = len(size) - len(widths)

@@ -12,6 +12,7 @@ from dace.sdfg import nodes
 from dace.transformation.layout.line_graph import KernelState, check_kernel_per_state, loop_spans
 from dace.transformation.layout.permute_dimensions import (note_copy_side, retranspose_copies,
                                                            rewrite_state_for_permute, spanned_dims)
+from dace.sdfg.narrowing import as_expr
 
 
 @dataclass(frozen=True)
@@ -134,7 +135,7 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
             # No dimension is bound to a map parameter, so this one memlet claims the whole array --
             # true only if the map body actually runs. An empty map writes nothing.
             proven = all(
-                dace.symbolic.simplify(end - begin).is_nonnegative is True
+                as_expr(dace.symbolic.simplify(end - begin)).is_nonnegative is True
                 for begin, end, _ in exit_node.map.range.ranges)
         if proven:
             return True
