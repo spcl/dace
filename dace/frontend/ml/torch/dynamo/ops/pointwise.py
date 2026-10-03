@@ -9,6 +9,7 @@ inputs are cast to the compute dtype where they differ and the result is cast to
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy
 import sympy
 import torch
 
@@ -54,6 +55,8 @@ def literal(value: Any, dtype: Optional[dtypes.typeclass]) -> str:
         value = value.value
     if isinstance(value, SymValue):
         value = value.expr
+    if isinstance(value, numpy.generic):  # numpy scalars (e.g. np.False_ from torch's fill values)
+        value = value.item()
     if isinstance(value, bool):
         return 'True' if value else 'False'
     if isinstance(value, (int, sympy.Integer)):

@@ -213,6 +213,8 @@ class ExtUnparser(astunparse.Unparser):
         # NOTE: This is needed since NumPy 2.0 to avoid unparsing NumPy scalars as calls, e.g. `numpy.int32(1)`
         if isinstance(t.value, numbers.Number):
             self.write(str(t.value))
+        elif isinstance(t.value, numpy.bool_):  # not a numbers.Number; repr would be `np.True_`
+            self.write(str(bool(t.value)))
         else:
             super()._Constant(t)
 
