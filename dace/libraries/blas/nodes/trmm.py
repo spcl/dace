@@ -69,6 +69,7 @@ class ExpandTrmmMKL(ExpandTransformation):
 class ExpandTrmmGPUBLAS(ExpandTransformation):
 
     environments: List[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):

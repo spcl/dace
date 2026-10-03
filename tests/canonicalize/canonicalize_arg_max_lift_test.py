@@ -472,10 +472,15 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
 # symbol is the cloudsc / ICON shape (e.g. iter counters bound via iedges).
 
 
-def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str, op: str = '>', inline_cond: bool = False):
+def _build_symbol_argmax_sdfg(label: str,
+                              in_loop_write_rhs: str,
+                              op: str = '>',
+                              inline_cond: bool = False,
+                              dtype: dace.typeclass = dace.float64):
     """Construct an SDFG where the argmax carrier ``x`` is a symbol.
 
     :param op: comparison operator in the guard (``'>'`` -> Max, ``'<'`` -> Min).
+    :param dtype: element type of the gathered array, the result and the carrier symbols.
     :param inline_cond: when True the comparison ``(a_index OP x)`` sits directly
         in the ConditionalBlock condition (the shape full canonicalize produces
         for TSVC s314/s316); when False it is indirected through a ``__tmp0``
@@ -512,11 +517,11 @@ def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str, op: str = '>',
     from dace.properties import CodeBlock
 
     sdfg = dace.SDFG(label)
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('result', [1], dace.float64)
+    sdfg.add_array('a', [N], dtype)
+    sdfg.add_array('result', [1], dtype)
     # Symbol carriers + helper symbols.
-    sdfg.add_symbol('x', dace.float64)
-    sdfg.add_symbol('a_index', dace.float64)
+    sdfg.add_symbol('x', dtype)
+    sdfg.add_symbol('a_index', dtype)
     sdfg.add_symbol('__tmp0', dace.bool)
 
     init_state = sdfg.add_state('init', is_start_block=True)
@@ -588,6 +593,24 @@ def test_symbol_carrier_positive():
     out = np.zeros(1)
     sdfg(a=a, result=out, N=n)
     assert np.isclose(out[0], np.max(a)), f"got {out[0]}, expected {np.max(a)}"
+
+
+@pytest.mark.parametrize('op, reduce_fn', [('>', np.max), ('<', np.min)])
+def test_symbol_carrier_over_integers(op, reduce_fn):
+    """An integer array lifts like a floating one. Regression: the reduction identity of an integer type was read
+    from ``np.iinfo``, whose limits are Python ints and have no ``.item()``, so every integer symbol carrier
+    crashed the pass."""
+    sdfg = _build_symbol_argmax_sdfg('s_arg_int', in_loop_write_rhs='a[i]', op=op, dtype=dace.int32)
+    sdfg.validate()
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1, 'integer symbol-carrier argmax must lift'
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+
+    n = 16
+    a = np.random.default_rng(1011).integers(-100, 100, size=n).astype(np.int32)
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(a=a, result=out, N=n)
+    assert out[0] == reduce_fn(a), f'got {out[0]}, expected {reduce_fn(a)}'
 
 
 def test_symbol_carrier_negative_wrong_rhs():

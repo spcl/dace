@@ -352,7 +352,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # those land on a single element instead of an N*N buffer.
     ShrinkMapLocalTransients().apply_pass(sdfg, {})
     ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
-    infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
     made_persistent = make_transients_persistent(sdfg, device)
     cfg_by_id = {sd.cfg_id: sd for sd in sdfg.all_sdfgs_recursive()}
@@ -648,7 +648,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # iteration) to ``Sequential`` and a top-level one to the device default. A ``Sequential``
     # Reduce/Scan/Copy/Fill must lower to its efficient single-core expansion, NOT open its own
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
-    infer_types.set_default_schedule_and_storage_types(sdfg, required(None))
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Canonicalization stops at the maximally parallel form, so the target's specialization stage
     # runs here -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules.

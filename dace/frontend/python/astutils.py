@@ -8,7 +8,7 @@ import inspect
 import numbers
 import numpy
 import sympy
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import AbstractSet, Any, Dict, List, Optional, Set, Union
 
 from dace import symbolic
 
@@ -702,7 +702,7 @@ class ConstantExtractor(ast.NodeTransformer):
 class ASTHelperMixin:
     """ A mixin that adds useful helper functions for AST node transformers and visitors """
 
-    def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
+    def generic_visit_filtered(self, node: ast.AST, filter: Optional[AbstractSet[str]] = None):
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
         set of filtered fields.

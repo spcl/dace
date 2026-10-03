@@ -379,7 +379,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     if _one_elem(write_subset) != 1:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    if _uses(required(write_subset), loop_var_sym):
+    if _uses(write_subset, loop_var_sym):
         return None
 
     final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)

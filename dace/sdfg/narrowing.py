@@ -17,18 +17,18 @@ from dace.sdfg.state import ControlFlowBlock, SDFGState
 
 #: Anything a subset bound, loop bound or parsed expression can be (``sympy.Basic`` also covers sympy's own stubs,
 #: which declare ``Basic`` where an ``Expr`` is returned).
-SymbolicLike = Union[sympy.Basic, symbolic.SymExpr, int, str]
+SymbolicLike = Union[sympy.Basic, symbolic.SymExpr, int, float, str]
 
 
 def as_expr(value: SymbolicLike) -> sympy.Expr:
     """``value`` as a sympy ``Expr``; a :class:`~dace.symbolic.SymExpr` contributes its main expression.
 
-    :param value: A symbolic expression, Python int or expression string.
+    :param value: A symbolic expression, Python number or expression string.
     :returns: The sympy expression.
     :raises TypeError: If ``value`` parses to a non-``Expr`` sympy object (a relational, for example).
     """
     expr = value.expr if isinstance(value, symbolic.SymExpr) else value
-    if isinstance(expr, (int, str)):
+    if isinstance(expr, (int, float, str)):
         expr = symbolic.pystr_to_symbolic(expr)
     if not isinstance(expr, sympy.Expr):
         raise TypeError(f'{expr!r} is not a sympy expression')

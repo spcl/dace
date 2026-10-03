@@ -357,7 +357,7 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
     reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
     writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
     for acc in [a for a in writes if a in reads]:  # edge order, not hash order
-        desc = state.sdfg.arrays.get(required(acc))
+        desc = state.sdfg.arrays.get(acc)
         if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
             continue
         read_edge, write_edge = reads[acc], writes[acc]

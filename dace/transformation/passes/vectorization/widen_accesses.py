@@ -46,7 +46,6 @@ from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKi
                                                                         classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_expr, as_range
-from dace.optionals import required
 
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
@@ -307,13 +306,11 @@ class WidenAccesses(ppl.Pass):
                     continue
                 edge_changed = False
                 defs = _state_defs(inner_sdfg, inner_state, state_defs, scan_cache)
-                new_sub = self._widen_subset_inplace(required(edge.data.subset), iter_vars, inner_sdfg, inner_state,
-                                                     defs)
+                new_sub = self._widen_subset_inplace(edge.data.subset, iter_vars, inner_sdfg, inner_state, defs)
                 if new_sub is not None:
                     edge.data.subset = new_sub
                     edge_changed = True
-                new_other = self._widen_subset_inplace(required(edge.data.other_subset), iter_vars, inner_sdfg,
-                                                       inner_state, defs)
+                new_other = self._widen_subset_inplace(edge.data.other_subset, iter_vars, inner_sdfg, inner_state, defs)
                 if new_other is not None:
                     edge.data.other_subset = new_other
                     edge_changed = True

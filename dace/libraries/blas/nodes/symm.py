@@ -267,6 +267,8 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
     ``C = alpha*A*B + beta*C`` (row-major) ``<=> C^T = alpha*B^T*A + beta*C^T``
     (A symmetric): a ``side`` flip, a ``uplo`` flip, and swapped ``m``/``n``."""
 
+    dialect: gpu_dialect.GpuBlasDialect
+
     environments: List[type] = []
     backend = "cu"
 

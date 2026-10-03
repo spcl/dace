@@ -7,7 +7,7 @@ graph, and only then materializes copies -- so a copy is emitted where the locat
 changes rather than around every kernel.
 """
 from copy import deepcopy
-from typing import Any, Optional
+from typing import AbstractSet, Any, MutableSet, Optional
 
 from dace.ordered import OrderedSet
 
@@ -36,6 +36,7 @@ from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_ma
 
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 
 
 def in_sequential_specialization_arm(block) -> bool:
@@ -98,11 +99,12 @@ class OffloadToAccelerator(ppl.Pass):
     def __init__(self, taskloop_overrides: dict[str, bool] | None = None, host_maps: HostMapSpec = False):
         self.taskloop_overrides = dict(taskloop_overrides) if taskloop_overrides else {}
         self._host_maps = host_maps
-        self._host_map_entries = OrderedSet()
-        self._host_pinned = OrderedSet()
+        self._host_map_entries: OrderedSet[nodes.MapEntry] = OrderedSet()
+        self._host_pinned: OrderedSet[nodes.MapEntry] = OrderedSet()
         self._host_only_loops: dict = {}
         #: Containers :meth:`place_single_sided_data` duplicated at entry: valid on both sides all run.
         self._read_only_duplicates: OrderedSet = OrderedSet()
+        self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -238,7 +240,7 @@ class OffloadToAccelerator(ppl.Pass):
                     written = memlet.get_dst_subset(edge, state)
                     if written is None or not written.covers(whole):
                         continue
-                    if symbolic.equal(memlet.volume, desc.total_size, is_length=False):
+                    if symbolic.equal(as_expr(memlet.volume), as_expr(desc.total_size), is_length=False):
                         return True
         return False
 
@@ -500,7 +502,7 @@ class OffloadToAccelerator(ppl.Pass):
             sdfgIR = self.sdfg_to_IR(sdfg)
 
             # step 3: resolve hybrid states
-            new_maps = OrderedSet()
+            new_maps: OrderedSet[tuple[nodes.MapEntry, nodes.MapExit]] = OrderedSet()
             if self.hybrid_states:
                 for state in self.hybrid_states:
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
@@ -520,10 +522,8 @@ class OffloadToAccelerator(ppl.Pass):
             # step 4: assign scalars / len1-arrays correctly
             all_scalars: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
                                                       if is_scalar(data_name, sdfg))
-            all_len1arrays: OrderedSet[str] = {
-                data_name
-                for data_name in sdfg.arrays if is_length1_array(data_name, sdfg)
-            }
+            all_len1arrays: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
+                                                         if is_length1_array(data_name, sdfg))
             gpu_written = self.data_written_by_device_code(sdfg)
 
             to_len1_arrays = (all_scalars & gpu_written) - attempted
@@ -626,7 +626,7 @@ class OffloadToAccelerator(ppl.Pass):
         host_read: OrderedSet[str] = OrderedSet(name for edge in sdfg.all_interstate_edges()
                                                 for name in edge.data.used_arrays(sdfg.arrays))
         for region in sdfg.all_control_flow_regions():
-            host_read |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
+            host_read |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets() if memlet.data is not None)
         refused: OrderedSet[str] = OrderedSet()
         fills: dict[str, dict[SDFGState, OrderedSet[nodes.Tasklet]]] = {}
         #: Per table and state, the sides touching it there: True for device code, False for host code.
@@ -659,7 +659,7 @@ class OffloadToAccelerator(ppl.Pass):
                         touched.add(False)
                     else:
                         refused.add(node.data)
-        tables = {}
+        tables: dict[str, tuple[SDFGState, OrderedSet[nodes.Tasklet], list[SDFGState] | None]] = {}
         for name, per_state in fills.items():
             if name in refused or len(per_state) != 1 or not any(True in on for on in sides[name].values()):
                 continue
@@ -998,7 +998,7 @@ class OffloadToAccelerator(ppl.Pass):
                       gpu_set: OrderedSet[str],
                       cpu_set: OrderedSet[str],
                       is_gpu: bool,
-                      host_level: bool = False) -> tuple[OrderedSet[str], OrderedSet[str]]:
+                      host_level: bool = False) -> None:
             if data_name in gpu_set:  # has already been accessed on GPU
                 if not is_gpu:  # is now accessed on CPU
                     if host_level:
@@ -1035,7 +1035,7 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             input_and_output = get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry) | get_data_used_by_outgoing_access_nodes(sdfg, state,
-                                                                                 required(state.exit_node(map_entry)))
+                                                                                 state.exit_node(map_entry))
             if is_taskloop:
                 pass  # transparent for now, resolved below once the body has spoken
             elif is_gpu:
@@ -1140,7 +1140,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         for node in top_level_nodes:
 
-            g, c = OrderedSet(), OrderedSet()
+            g: OrderedSet[str] = OrderedSet()
+            c: OrderedSet[str] = OrderedSet()
 
             # process map and all nodes within -> may be on GPU
             if isinstance(node, nodes.MapEntry):
@@ -1217,7 +1218,7 @@ class OffloadToAccelerator(ppl.Pass):
             if not memlet:
                 continue
             data_name = memlet.data
-            if memlet.data in sdfg.arrays and is_array(required(data_name), sdfg):
+            if memlet.data in sdfg.arrays and is_array(data_name, sdfg):
                 cpu_set.add(memlet.data)
 
         # add array accesses in branches
@@ -1316,8 +1317,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         # remember initial non-transient array locations
         non_transients = {name for name in sdfg.arrays if not sdfg.arrays[name].transient and not is_scalar(name, sdfg)}
-        initially_on_gpu = OrderedSet()
-        initially_on_cpu = OrderedSet()
+        initially_on_gpu: OrderedSet[str] = OrderedSet()
+        initially_on_cpu: OrderedSet[str] = OrderedSet()
 
         for array_name in non_transients:
             if is_array_stored_on_GPU(sdfg, array_name):
@@ -1352,7 +1353,7 @@ class OffloadToAccelerator(ppl.Pass):
         for block in cfr.bfs_nodes():
 
             # iterate through all (incoming) interstate edges
-            in_edge_arrays = OrderedSet()
+            in_edge_arrays: OrderedSet[str] = OrderedSet()
             for edge in cfr.in_edges(block):
                 arrays = {data_name for data_name in edge.data.used_arrays(sdfg.arrays) if is_array(data_name, sdfg)}
                 in_edge_arrays |= arrays
@@ -1388,11 +1389,8 @@ class OffloadToAccelerator(ppl.Pass):
                     cond_block: ConditionalBlock = block
 
                     # branch condition
-                    meta_data_node: OffloadingIRNode = None
-                    meta_data = {
-                        memlet.data
-                        for memlet in cond_block.get_meta_read_memlets() if memlet.data in sdfg.arrays
-                    }
+                    meta_data = OrderedSet(memlet.data for memlet in cond_block.get_meta_read_memlets()
+                                           if memlet.data in sdfg.arrays)
                     if meta_data:
                         meta_data_node = OffloadingIRNode.new_state_node(block, cpu_set=meta_data, gpu_set=OrderedSet())
                         curr_node.append_node(meta_data_node)
@@ -1409,7 +1407,6 @@ class OffloadToAccelerator(ppl.Pass):
                     loop: LoopRegion = block
 
                     # add meta data node if needed
-                    meta_data_node: OffloadingIRNode = None
                     meta_data = OrderedSet(memlet.data for memlet in loop.get_meta_read_memlets()
                                            if memlet.data in sdfg.arrays)
                     if meta_data:
@@ -1437,7 +1434,7 @@ class OffloadToAccelerator(ppl.Pass):
 
                 # finish container
                 self._populate_container_node_sets(outer_node)
-                curr_node = outer_node.close
+                curr_node = required(outer_node.close)
 
         # TODO: FIND ALL TAILS?
         return curr_node
@@ -1681,13 +1678,12 @@ class OffloadToAccelerator(ppl.Pass):
                 if is_array_stored_on_GPU(sdfg, name):  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._insert_copy_names_in_block(sdfg, required(node.block), rename_dict,
-                                             node.type == OffloadingIRNode.EDGE)
+            self._insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
 
         traverse_IR(IR, _insert_copy_names_in_node)
 
     def _correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode):
-        seen_transients = OrderedSet()
+        seen_transients: OrderedSet[str] = OrderedSet()
 
         def _correct_transients(node: OffloadingIRNode):
             for name in node.gpu_set:
@@ -1901,10 +1897,11 @@ class OffloadToAccelerator(ppl.Pass):
 
         new_storage = dtypes.StorageType.Default if is_array_stored_on_GPU(
             sdfg, known_name) else dtypes.StorageType.GPU_Global
+        shape, dtype = desc.shape, desc.dtype  # before the isinstance: ``View`` is a mixin that declares neither
         if isinstance(desc, data.View):
-            sdfg.add_view(unknown_name, desc.shape, desc.dtype, storage=new_storage)
+            sdfg.add_view(unknown_name, shape, dtype, storage=new_storage)
         else:
-            sdfg.add_array(unknown_name, desc.shape, desc.dtype, storage=new_storage, transient=True)
+            sdfg.add_array(unknown_name, shape, dtype, storage=new_storage, transient=True)
 
     def _get_host_name(self, name: str) -> str:
         """Host-side copy of ``name``.
@@ -1928,22 +1925,23 @@ class OffloadToAccelerator(ppl.Pass):
 
     from collections import deque
 
-    def _get_boundary_in_edges(self, state: SDFGState, node, bounded_set: set):
+    def _get_boundary_in_edges(self, state: SDFGState, node, bounded_set: AbstractSet[nodes.Node]):
         # A list, not a set: the connector numbering below follows this order.
         return [e for e in state.in_edges(node) if e.src not in bounded_set]
 
-    def _get_boundary_out_edges(self, state: SDFGState, node, bounded_set: set):
+    def _get_boundary_out_edges(self, state: SDFGState, node, bounded_set: AbstractSet[nodes.Node]):
         return [e for e in state.out_edges(node) if e.dst not in bounded_set]
 
-    def _get_entry_nodes(self, state: SDFGState, bounded_set: set):
+    def _get_entry_nodes(self, state: SDFGState, bounded_set: AbstractSet[nodes.Node]):
         return OrderedSet(node for node in bounded_set if all(e.src not in bounded_set for e in state.in_edges(node)))
 
-    def _get_exit_nodes(self, state: SDFGState, bounded_set: set):
+    def _get_exit_nodes(self, state: SDFGState, bounded_set: AbstractSet[nodes.Node]):
         return OrderedSet(node for node in bounded_set if all(e.dst not in bounded_set for e in state.out_edges(node)))
 
-    def _wrap_region_in_size1_map(self, state: SDFGState, region_nodes: set) -> tuple[nodes.MapEntry, nodes.MapExit]:
+    def _wrap_region_in_size1_map(self, state: SDFGState,
+                                  region_nodes: AbstractSet[nodes.Node]) -> tuple[nodes.MapEntry, nodes.MapExit] | None:
         if not region_nodes:
-            return
+            return None
         map_label, map_param = get_new_map_identifiers(state, "size1_wrap_region", "__wrap_i")
         map_entry, map_exit = state.add_map(name=map_label,
                                             ndrange={map_param: '0:1'},
@@ -2020,7 +2018,7 @@ class OffloadToAccelerator(ppl.Pass):
 
     def _subgraphs_after_removing_partition_nodes(self,
                                                   state: SDFGState,
-                                                  partition_nodes: set,
+                                                  partition_nodes: AbstractSet[nodes.Node],
                                                   scope_entry=None,
                                                   scope_children=None) -> list[OrderedSet[nodes.Node]]:
         """
@@ -2032,8 +2030,8 @@ class OffloadToAccelerator(ppl.Pass):
         state. Connectivity is treated as undirected (uses both in/out edges) but never leaves the
         scope: an edge out of it lands on the enclosing entry or exit, a boundary and not a member.
         """
-        visited = OrderedSet()
-        components = []
+        visited: OrderedSet[nodes.Node] = OrderedSet()
+        components: list[OrderedSet[nodes.Node]] = []
         if scope_children is None:
             scope_children = state.scope_children()
         members = scope_children[scope_entry]
@@ -2044,7 +2042,7 @@ class OffloadToAccelerator(ppl.Pass):
             if start in visited:
                 continue
 
-            comp = OrderedSet()
+            comp: OrderedSet[nodes.Node] = OrderedSet()
             queue = self.deque([start])
             visited.add(start)
 
@@ -2063,7 +2061,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         return components
 
-    def scope_closed_partition(self, state: SDFGState, region: OrderedSet, boundary: OrderedSet):
+    def scope_closed_partition(self, state: SDFGState, region: OrderedSet[nodes.Node],
+                               boundary: AbstractSet[nodes.Node]) -> OrderedSet[nodes.Node] | None:
         """``region`` grown until every map scope it touches lies wholly inside it, or None.
 
         A size-1 map around HALF a scope puts a map entry inside the new map and its own exit
@@ -2081,6 +2080,7 @@ class OffloadToAccelerator(ppl.Pass):
         queue = list(region)
         while queue:
             node = queue.pop()
+            entry: nodes.EntryNode | None
             if isinstance(node, nodes.MapEntry):
                 entry = node
             elif isinstance(node, nodes.MapExit):
@@ -2098,7 +2098,7 @@ class OffloadToAccelerator(ppl.Pass):
                 queue.append(extra)
         return closed
 
-    def _remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: set):
+    def _remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: MutableSet[nodes.Node]):
         outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
         nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
 
@@ -2160,11 +2160,9 @@ class OffloadToAccelerator(ppl.Pass):
             edge.data for edge in state.in_edges(map_entry)
             if edge.data is not None and not edge.data.is_empty() and edge.data.data is not None
         ]
-        input_only_data = [
-            memlet.data for memlet in input_memlets
-            if all(edge.data is None or edge.data.is_empty() or edge.data.data != memlet.data
-                   for edge in state.out_edges(map_exit))
-        ]
+        input_only_data = OrderedSet(memlet.data for memlet in input_memlets if memlet.data is not None and all(
+            edge.data is None or edge.data.is_empty() or edge.data.data != memlet.data
+            for edge in state.out_edges(map_exit)))
         # find last accesses(ignore data without accesses)
         # INV: dictionary holds ONLY data which goes into the map, is accessed within but does not exit -> if left
         # unchanged this would be detected as a constant and lead to errors
@@ -2201,7 +2199,7 @@ class OffloadToAccelerator(ppl.Pass):
         too -- and a device-wide library node beside it does not change that. Descend through
         taskloops only: a scope under a kernel is device code and has no free computation to lift.
         """
-        found = [None]
+        found: list[nodes.MapEntry | None] = [None]
         for entry in found:  # grows as taskloops are met; a taskloop under a kernel is never reached
             for node in scope_children[entry]:
                 if isinstance(node, nodes.MapEntry) and node in self.taskloops:
@@ -2211,7 +2209,7 @@ class OffloadToAccelerator(ppl.Pass):
     def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState):
         # Wrapping never adds or removes a taskloop, so the scope list is read once here.
         scopes = self.host_level_scopes(state, state.scope_children())
-        new_maps = OrderedSet()
+        new_maps: OrderedSet[tuple[nodes.MapEntry, nodes.MapExit]] = OrderedSet()
         for scope_entry in scopes:
             new_maps |= self.wrap_free_computation(sdfg, state, scope_entry)
         return new_maps
@@ -2244,17 +2242,17 @@ class OffloadToAccelerator(ppl.Pass):
         """
         scope_children = state.scope_children()
         members = scope_children[scope_entry]
-        partition_nodes = OrderedSet(
+        partition_nodes: OrderedSet[nodes.Node] = OrderedSet(
             node for node in members if self.is_device_work(node) or (isinstance(node, nodes.MapEntry) and (
                 node in self.taskloops or node in self._host_map_entries or node in self._host_pinned)))
         partition_nodes |= OrderedSet(
-            state.exit_node(node) for node in partition_nodes if isinstance(node, nodes.MapEntry))
+            required(state.exit_node(node)) for node in partition_nodes if isinstance(node, nodes.MapEntry))
         if scope_entry is not None:
             # The scope's own exit is its boundary, and scope_children lists it beside the body.
-            partition_nodes.add(state.exit_node(scope_entry))
+            partition_nodes.add(required(state.exit_node(scope_entry)))
 
         partitions = self._subgraphs_after_removing_partition_nodes(state, partition_nodes, scope_entry, scope_children)
-        new_maps = OrderedSet()
+        new_maps: OrderedSet[tuple[nodes.MapEntry, nodes.MapExit]] = OrderedSet()
 
         # each partition is wrapped into a map
         ctr = 0
@@ -2273,13 +2271,14 @@ class OffloadToAccelerator(ppl.Pass):
 
             # A partition is a dataflow component, and a map scope spans one: covariance hands this
             # a lone MapEntry whose body and exit went to another component.
-            partition = self.scope_closed_partition(state, partition, partition_nodes)
-            if partition is None:
+            closed_partition = self.scope_closed_partition(state, partition, partition_nodes)
+            if closed_partition is None:
                 continue
+            partition = closed_partition
 
             # if anything is left, wrap it
             if partition:
-                map_entry, map_exit = self._wrap_region_in_size1_map(state, partition)
+                map_entry, map_exit = required(self._wrap_region_in_size1_map(state, partition))
                 new_maps.add((map_entry, map_exit))
 
                 # Avoid illegal direct map-to-map connections by routing through an access node.
@@ -2343,9 +2342,8 @@ class OffloadToAccelerator(ppl.Pass):
         # 5)
         to_len1_arrays = all_scalars & gpu_written
         to_scalars = all_len1arrays - gpu_written
-        to_scalars = {name
-                      for name in to_scalars if not name.startswith("__return")
-                      }  # is usually very inefficient because __return if mostly used at the end of the graph
+        to_scalars = OrderedSet(name for name in to_scalars if not name.startswith("__return")
+                                )  # is usually very inefficient because __return if mostly used at the end of the graph
 
         if to_len1_arrays:
             ConvertScalarsToLengthOneArrays(

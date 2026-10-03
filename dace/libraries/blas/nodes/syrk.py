@@ -134,6 +134,8 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
     ``C_cm := alpha*A_cm^T*A_cm + beta*C_cm`` (column-major). That is a ``trans`` flip
     and a ``uplo`` flip, with ``n`` / ``k`` unchanged."""
 
+    dialect: gpu_dialect.GpuBlasDialect
+
     environments: List[type] = []
     backend = "cu"
 

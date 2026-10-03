@@ -115,6 +115,7 @@ class ExpandIamaxMKL(ExpandTransformation):
 class ExpandIamaxGPUBLAS(ExpandTransformation):
 
     environments: List[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):

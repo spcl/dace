@@ -875,7 +875,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         def _elems(edge: MultiConnectorEdge[Memlet]) -> Optional[int]:
             # Element count of an edge's memlet subset (the widened tile / scalar).
-            desc = inner_state.sdfg.arrays.get(required(edge.data.data))
+            desc = inner_state.sdfg.arrays.get(edge.data.data)
             if desc is None:
                 return None
             sub = edge.data.subset
@@ -1000,8 +1000,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Lower a trivial assign with a scalar SOURCE and ``widths``-shaped tile DEST to a
         # ``TileGather(src_kind="Scalar")`` broadcast (single value splat across lanes).
         sdfg = inner_state.sdfg
-        src_desc = sdfg.arrays.get(required(a_edge.data.data)) if a_edge.data is not None else None
-        dst_desc = sdfg.arrays.get(required(out_edge.data.data)) if out_edge.data is not None else None
+        src_desc = sdfg.arrays.get(a_edge.data.data) if a_edge.data is not None else None
+        dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
         if src_desc is None or dst_desc is None:
             return False
         widths = tuple(self.body_widths)
@@ -1012,7 +1012,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         # ``_src`` <- the scalar source (keep its scalar memlet); ``_dst`` -> the full tile.
         tl = splat_scalar_to_tile(inner_state, f"{tasklet.label}_bcast", a_edge.src, a_edge.src_conn, a_edge.data,
-                                  out_edge.dst, out_edge.dst_conn, required(out_edge.data.data), widths)
+                                  out_edge.dst, out_edge.dst_conn, out_edge.data.data, widths)
         inner_state.remove_edge(a_edge)
         inner_state.remove_edge(out_edge)
         reanchor_order_edges(inner_state, tasklet, tl)
@@ -1047,7 +1047,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         widths = tuple(self.body_widths)
         arr_desc = sdfg.arrays.get(arr_edge.data.data)
         idx_desc = sdfg.arrays.get(idx_edge.data.data)
-        out_desc = sdfg.arrays.get(required(out_edge.data.data))
+        out_desc = sdfg.arrays.get(out_edge.data.data)
         if not (isinstance(arr_desc, dace.data.Array) and len(arr_desc.shape) == 1):
             return False  # multi-dim indirection base: not a 1-D per-lane gather
         if not (isinstance(idx_desc, dace.data.Array) and tuple(idx_desc.shape) == widths):
@@ -1072,7 +1072,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         dst_subset = ", ".join(f"0:{w}" for w in widths)
         inner_state.add_edge(load, "_dst", out_edge.dst, out_edge.dst_conn,
                              dace.Memlet(data=out_edge.data.data, subset=dst_subset))
-        self._wire_mask(inner_state, load, required(mask_an))
+        self._wire_mask(inner_state, load, mask_an)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         reanchor_order_edges(inner_state, tasklet, load)
@@ -1171,7 +1171,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                  op=op,
                                  has_mask=mask_an is not None)
         inner_state.add_node(reduce_node)
-        self._wire_mask(inner_state, reduce_node, required(mask_an))
+        self._wire_mask(inner_state, reduce_node, mask_an)
         # TileReduce connectors: _src (tile input) -> _dst (scalar accumulator). The acc-input
         # edge dangles -- TileReduce folds the whole tile in one shot, reading no separate
         # scalar accumulator; the new _dst edge writes the result on top.
@@ -1264,7 +1264,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 if cond_edge.data is not None and cond_edge.data.data:
                     self._lock_mask_storage(inner_state.sdfg, cond_edge.data.data)
                 inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
-                                     dace.Memlet.from_memlet(required(cond_edge.data)))
+                                     dace.Memlet.from_memlet(cond_edge.data))
         # Wire the materialised arms (an inline Symbol arm carries no connector).
         if wire_t is not None:
             inner_state.add_edge(wire_t[0], wire_t[1], ite, "_t", wire_t[2])
@@ -1421,7 +1421,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         sdfg = inner_state.sdfg
         widths = tuple(int(w) for w in self.body_widths)
         # Pick element dtype from the OUTPUT edge's array (the ITE's output dtype).
-        out_desc = sdfg.arrays.get(required(out_edge.data.data))
+        out_desc = sdfg.arrays.get(out_edge.data.data)
         dtype = out_desc.dtype if out_desc is not None else dace.float64
         arr_name, _ = sdfg.add_array("_ite_sym_tile",
                                      shape=widths,
@@ -1485,7 +1485,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                           kind_b=kind_b,
                           has_mask=mask_an is not None)
         inner_state.add_node(binop)
-        self._wire_mask(inner_state, binop, required(mask_an))
+        self._wire_mask(inner_state, binop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(b_edge.data))
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
@@ -1539,7 +1539,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                       kind_c=kind_c,
                       has_mask=mask_an is not None)
         inner_state.add_node(fma)
-        self._wire_mask(inner_state, fma, required(mask_an))
+        self._wire_mask(inner_state, fma, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, fma, "_a", dace.Memlet.from_memlet(a_edge.data))
         inner_state.add_edge(b_edge.src, b_edge.src_conn, fma, "_b", dace.Memlet.from_memlet(b_edge.data))
         inner_state.add_edge(c_edge.src, c_edge.src_conn, fma, "_c", dace.Memlet.from_memlet(c_edge.data))
@@ -1611,7 +1611,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_a", dace.Memlet.from_memlet(a_edge.data))
             if sym_kind == "Tile":
-                self._wire_materialised_tile(inner_state, binop, "_b", required(sym_an_name))
+                self._wire_materialised_tile(inner_state, binop, "_b", sym_an_name)
         else:
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
                               widths=tuple(self.body_widths),
@@ -1623,8 +1623,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.add_node(binop)
             inner_state.add_edge(a_edge.src, a_edge.src_conn, binop, "_b", dace.Memlet.from_memlet(a_edge.data))
             if sym_kind == "Tile":
-                self._wire_materialised_tile(inner_state, binop, "_a", required(sym_an_name))
-        self._wire_mask(inner_state, binop, required(mask_an))
+                self._wire_materialised_tile(inner_state, binop, "_a", sym_an_name)
+        self._wire_mask(inner_state, binop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
 
         if _was_widened:
@@ -1735,8 +1735,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         has_mask=mask_an is not None)
         inner_state.add_node(unop)
         if sym_kind == "Tile":
-            self._wire_materialised_tile(inner_state, unop, "_a", required(sym_an_name))
-        self._wire_mask(inner_state, unop, required(mask_an))
+            self._wire_materialised_tile(inner_state, unop, "_a", sym_an_name)
+        self._wire_mask(inner_state, unop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
 
         if _was_widened:
@@ -1778,10 +1778,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                           has_mask=mask_an is not None)
         inner_state.add_node(binop)
         if kind_a == "Tile":
-            self._wire_materialised_tile(inner_state, binop, "_a", required(an_a))
+            self._wire_materialised_tile(inner_state, binop, "_a", an_a)
         if kind_b == "Tile":
-            self._wire_materialised_tile(inner_state, binop, "_b", required(an_b))
-        self._wire_mask(inner_state, binop, required(mask_an))
+            self._wire_materialised_tile(inner_state, binop, "_b", an_b)
+        self._wire_mask(inner_state, binop, mask_an)
         _was_widened = self._ensure_output_widened(inner_state, out_edge, binop)
 
         if _was_widened:
@@ -1819,7 +1819,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                         kind_a=kind_a,
                         has_mask=mask_an is not None)
         inner_state.add_node(unop)
-        self._wire_mask(inner_state, unop, required(mask_an))
+        self._wire_mask(inner_state, unop, mask_an)
         inner_state.add_edge(a_edge.src, a_edge.src_conn, unop, "_a", dace.Memlet.from_memlet(a_edge.data))
         _was_widened = self._ensure_output_widened(inner_state, out_edge, unop)
 

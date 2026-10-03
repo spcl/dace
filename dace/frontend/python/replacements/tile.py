@@ -15,7 +15,6 @@ from dace.libraries.tileops.nodes.masked_copy import MASK_CONNECTOR_NAME
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import AccessNode
-from dace.optionals import required
 
 __all__ = ()  # the replacements register themselves
 
@@ -35,7 +34,7 @@ def as_window(pv: ProgramVisitor, sdfg: SDFG, operand: str | Window, what: str) 
     if isinstance(operand, str) and isinstance(sdfg.arrays.get(operand), data.Array):
         return operand, subsets.Range.from_array(sdfg.arrays[operand])
     if not isinstance(operand, tuple):
-        raise DaceSyntaxError(pv, required(None), f"{what}: expects arrays or slices of arrays, got '{operand}'")
+        raise DaceSyntaxError(pv, None, f"{what}: expects arrays or slices of arrays, got '{operand}'")
     return operand
 
 
@@ -77,9 +76,9 @@ def common_lanes(pv: ProgramVisitor, what: str, windows: tuple[Window, ...]) -> 
     try:
         lanes = {lanes_of(window) for window in windows}
     except ValueError as error:
-        raise DaceSyntaxError(pv, required(None), f"{what}: {error}") from error
+        raise DaceSyntaxError(pv, None, f"{what}: {error}") from error
     if len(lanes) != 1:
-        raise DaceSyntaxError(pv, required(None), f"{what}: the arguments have different lanes, {sorted(lanes)}")
+        raise DaceSyntaxError(pv, None, f"{what}: the arguments have different lanes, {sorted(lanes)}")
     return lanes.pop()
 
 
@@ -103,7 +102,7 @@ def add(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Window, b: st
     lanes = common_lanes(pv, what, (a, b))
     dtype = dtype_of(sdfg, a)
     if dtype != dtype_of(sdfg, b):
-        raise DaceSyntaxError(pv, required(None), f"{what}: the operands have different types, {dtype} and "
+        raise DaceSyntaxError(pv, None, f"{what}: the operands have different types, {dtype} and "
                               f"{dtype_of(sdfg, b)}")
     left, right = as_tile(sdfg, state, a, None), as_tile(sdfg, state, b, None)
     result = state.add_write(new_tile(sdfg, lanes, dtype, "sum"))
@@ -127,12 +126,12 @@ def masked_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, destination: s
     destination, source, mask = (as_window(pv, sdfg, operand, what) for operand in (destination, source, mask))
     lanes = common_lanes(pv, what, (destination, source, mask))
     if dtype_of(sdfg, destination) != dtype_of(sdfg, source):
-        raise DaceSyntaxError(pv, required(None), f"{what}: the destination and the source have different types")
+        raise DaceSyntaxError(pv, None, f"{what}: the destination and the source have different types")
     if dtype_of(sdfg, mask) != dtypes.bool_:
-        raise DaceSyntaxError(pv, required(None), f"{what}: the mask must be of type bool, got {dtype_of(sdfg, mask)}")
+        raise DaceSyntaxError(pv, None, f"{what}: the mask must be of type bool, got {dtype_of(sdfg, mask)}")
     if is_tile(sdfg, destination) and is_tile(sdfg, source):
         raise DaceSyntaxError(
-            pv, required(None), f"{what}: copy between two tiles with an assignment, only a window "
+            pv, None, f"{what}: copy between two tiles with an assignment, only a window "
             "is copied under a mask")
     lane_mask = as_tile(sdfg, state, mask, None)
     destination_name, destination_subset = destination

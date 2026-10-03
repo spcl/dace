@@ -37,7 +37,7 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 import ast
 import itertools
 import re
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import AbstractSet, Callable, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import Memlet, dtypes, properties, subsets, symbolic
@@ -384,7 +384,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def __init__(self,
                  recursive: bool = True,
                  preserve_abi: bool = False,
-                 filter: 'Optional[Set[str]]' = None,
+                 filter: 'Optional[AbstractSet[str]]' = None,
                  single_element: bool = False,
                  skip_gpu_outputs: bool = False):
         super().__init__()
@@ -617,7 +617,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
         "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
 
-    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: 'Optional[Set[str]]' = None):
+    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: 'Optional[AbstractSet[str]]' = None):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi

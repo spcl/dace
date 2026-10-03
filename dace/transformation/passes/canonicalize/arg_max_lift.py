@@ -386,6 +386,16 @@ def strip_identity(expr: ast.AST) -> ast.AST:
     return expr
 
 
+def neutral_extreme(numeric_type: type[np.generic], op: dtypes.ReductionType) -> int | float:
+    """The neutral element of a Max (most negative value) or Min (most positive value) over ``numeric_type``.
+
+    ``np.iinfo`` limits are Python ints and ``np.finfo`` limits numpy scalars, so the value is built as a numpy scalar
+    before it is read back as a Python number.
+    """
+    limits = np.finfo(numeric_type) if np.issubdtype(numeric_type, np.floating) else np.iinfo(numeric_type)
+    return numeric_type(limits.min if op == dtypes.ReductionType.Max else limits.max).item()
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class ArgMaxLift(ppl.Pass):
@@ -587,7 +597,7 @@ class ArgMaxLift(ppl.Pass):
             if input_array not in sdfg.arrays:
                 return None
         else:
-            gather = self._resolve_gather_iedge(loop, cond_block, required(gather_sym_name), loop.loop_variable, sdfg)
+            gather = self._resolve_gather_iedge(loop, cond_block, gather_sym_name, loop.loop_variable, sdfg)
             if gather is None:
                 return None
             input_array, gather_base, gather_coeff = gather
@@ -605,7 +615,7 @@ class ArgMaxLift(ppl.Pass):
         # Classify the carrier's storage first; the body-write check differs
         # by case (scalar / length-1 array use state writes; symbol uses an
         # iedge inside the true-branch).
-        carrier_kind, carrier_subset = self._classify_carrier(required(carrier_name), sdfg)
+        carrier_kind, carrier_subset = self._classify_carrier(carrier_name, sdfg)
         if carrier_kind is None:
             return None
 
@@ -623,8 +633,8 @@ class ArgMaxLift(ppl.Pass):
             true_state = self._extract_singleton_state(true_branch)
             if true_state is None:
                 return None
-            if not self._true_state_writes_carrier_from_array(true_state, loop, required(carrier_name), input_array,
-                                                              gather_base, gather_coeff):
+            if not self._true_state_writes_carrier_from_array(true_state, loop, carrier_name, input_array, gather_base,
+                                                              gather_coeff):
                 return None
         else:
             # Symbol-carrier path: the in-loop write is an iedge assignment
@@ -637,9 +647,9 @@ class ArgMaxLift(ppl.Pass):
             # effect the rewrite cannot preserve.
             ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(true_branch,
                                                                            loop,
-                                                                           required(carrier_name),
+                                                                           carrier_name,
                                                                            input_array,
-                                                                           required(gather_sym_name),
+                                                                           gather_sym_name,
                                                                            gather_base,
                                                                            gather_coeff,
                                                                            transform=transform)
@@ -673,8 +683,8 @@ class ArgMaxLift(ppl.Pass):
             # value-only path by extending the emitted slice down to it. Neither is implied by
             # the match, so verify it; a seed that reads elsewhere would reduce over
             # a set missing the real seed and holding an element never gathered.
-            if folds_base and not self._verify_affine_seed(loop, sdfg, required(carrier_name), idx_carrier_name,
-                                                           input_array, gather_base, gather_coeff, start, transform):
+            if folds_base and not self._verify_affine_seed(loop, sdfg, carrier_name, idx_carrier_name, input_array,
+                                                           gather_base, gather_coeff, start, transform):
                 return None
 
         # Tie-break semantics (``tie_break``; 'infer' reads it off the guard's
@@ -691,9 +701,9 @@ class ArgMaxLift(ppl.Pass):
             op=op,
             loop=loop,
             parent=loop.parent_graph,
-            carrier_name=required(carrier_name),
+            carrier_name=carrier_name,
             carrier_kind=carrier_kind,
-            carrier_subset=required(carrier_subset),
+            carrier_subset=carrier_subset,
             input_array=input_array,
             iter_start=start,
             iter_end=end,
@@ -788,15 +798,14 @@ class ArgMaxLift(ppl.Pass):
         op = CMP_AST_TO_RTYPE[op_ast]
 
         outer_var, inner_var = outer_loop.loop_variable, inner_loop.loop_variable
-        array = self._resolve_gather_2d(inner_loop, required(gather_sym), outer_var, inner_var, sdfg)
+        array = self._resolve_gather_2d(inner_loop, gather_sym, outer_var, inner_var, sdfg)
         if array is None:
             return None
         # Value carrier must be a symbol; the true-branch must write exactly the
         # value (from the same gather) plus the two index carriers (i / j).
         if carrier_name not in sdfg.symbols:
             return None
-        idx = self._match_2d_true_branch(true_branch, required(carrier_name), required(gather_sym), array, outer_var,
-                                         inner_var, sdfg)
+        idx = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, outer_var, inner_var, sdfg)
         if idx is None:
             return None
         x_idx_name, y_idx_name = idx
@@ -821,7 +830,7 @@ class ArgMaxLift(ppl.Pass):
                         outer_loop=outer_loop,
                         inner_loop=inner_loop,
                         parent=outer_loop.parent_graph,
-                        carrier_name=required(carrier_name),
+                        carrier_name=carrier_name,
                         x_idx_name=x_idx_name,
                         y_idx_name=y_idx_name,
                         input_array=array,
@@ -1650,11 +1659,7 @@ class ArgMaxLift(ppl.Pass):
         #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
         if m.carrier_kind == 'symbol':
             numeric_type = sdfg.arrays[m.input_array].dtype.type
-            if np.issubdtype(numeric_type, np.floating):
-                limits = np.finfo(numeric_type)
-            else:
-                limits = np.iinfo(numeric_type)
-            identity = (limits.min if m.op == dtypes.ReductionType.Max else limits.max).item()
+            identity = neutral_extreme(numeric_type, m.op)
         else:
             identity = None
         node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=identity)
@@ -1824,8 +1829,7 @@ class ArgMaxLift(ppl.Pass):
         read = reduce_state.add_read(buf)
         write = reduce_state.add_write(out_name)
         wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
-        limits = np.finfo(arr_dtype.type) if np.issubdtype(arr_dtype.type, np.floating) else np.iinfo(arr_dtype.type)
-        identity = (limits.min if m.op == dtypes.ReductionType.Max else limits.max).item()
+        identity = neutral_extreme(arr_dtype.type, m.op)
         node = Reduce(name=f'{m.loop.label}_argf_reduce', wcr=wcr_str, axes=[0], identity=identity)
         node.add_in_connector('_in')
         node.add_out_connector('_out')
@@ -1927,7 +1931,7 @@ class ArgMaxLift(ppl.Pass):
             # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
             # unresolved. The iteration count is known here exactly.
             in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
-            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=required(m.transform))
+            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=m.transform)
         argmax_state.add_node(node)
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))

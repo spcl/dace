@@ -495,7 +495,7 @@ def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_va
                        K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
     """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
     extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
-    arr = sdfg.arrays.get(required(memlet.data))
+    arr = sdfg.arrays.get(memlet.data)
     ranges = required(as_range(memlet.subset)).ranges
     rank = len(ranges)
     if arr is None or rank < 2 or len(arr.shape) != rank:

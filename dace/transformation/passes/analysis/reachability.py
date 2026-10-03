@@ -390,7 +390,7 @@ def states_only(reach: OrderedSet) -> Optional[OrderedSet]:
         bits = reach.bits & required(reach.numbering).states
         if not bits:
             return None
-        return ReachSet.deferred(bits, required(reach.numbering), functools.partial(filter_states, reach))
+        return ReachSet.deferred(bits, reach.numbering, functools.partial(filter_states, reach))
     states = [block for block in reach if isinstance(block, SDFGState)]
     return OrderedSet(states) if states else None
 

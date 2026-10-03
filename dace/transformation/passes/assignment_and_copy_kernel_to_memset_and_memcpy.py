@@ -369,17 +369,17 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # The exactness guard below compares the un-widened ``subst_out`` volume against the trip
         # count; the widened ``new_out`` is what the lifted node actually transfers.
         subst_out = self._subst_range([(b, e, s) for (b, e, s) in out_subset], range_list)
-        new_out = self._overapprox_first_dimension(subst_out, required(out_data), sdfg)
+        new_out = self._overapprox_first_dimension(subst_out, out_data, sdfg)
         if new_out is None:
             return None, None, None
         new_in = []
         if has_in:
             subst_in = self._subst_range([(b, e, s) for (b, e, s) in in_subset], range_list)
-            new_in = self._overapprox_first_dimension(subst_in, required(in_data), sdfg)
+            new_in = self._overapprox_first_dimension(subst_in, in_data, sdfg)
             if new_in is None:
                 return None, None, None
 
-        if has_in and not self._reject_if_not_contiguous(new_in, required(in_data), sdfg, is_input=True):
+        if has_in and not self._reject_if_not_contiguous(new_in, in_data, sdfg, is_input=True):
             return None, None, None
         if out_data is not None and not self._reject_if_not_contiguous(new_out, out_data, sdfg, is_input=False):
             return None, None, None
@@ -679,7 +679,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                                                passthrough_conns=passthrough_conns,
                                                libnode_conn_names=libnode_conn_names,
                                                begin_subset=begin_subset,
-                                               exit_subset=required(exit_subset),
+                                               exit_subset=exit_subset,
                                                copy_length=copy_length,
                                                verbose=verbose):
                 continue

@@ -13,7 +13,7 @@ import types
 import warnings
 import sympy
 from typing import (TYPE_CHECKING, AbstractSet, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Mapping,
-                    Optional, Set, Tuple, Union, overload)
+                    Optional, Sequence, Set, Tuple, Union, overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -81,18 +81,27 @@ def caller_position(frame: types.FrameType) -> Tuple[int, str]:
     return position
 
 
-def _make_iterators(ndrange):
+#: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
+MapBound = Union[symbolic.SymbolicType, int]
+MapDimension = Union[str, sbs.Subset, Tuple[MapBound, MapBound, MapBound]]
+#: The dimensions of a map by parameter name, as a mapping or as a list of pairs.
+MapRanges = Union[Mapping[str, MapDimension], Sequence[Tuple[str, MapDimension]]]
+
+
+def _make_iterators(ndrange: MapRanges):
     # Input can either be a dictionary or a list of pairs
-    if isinstance(ndrange, list):
+    dimensions: Mapping[str, MapDimension]
+    if isinstance(ndrange, collections.abc.Sequence):
         params = [k for k, _ in ndrange]
-        ndrange = {k: v for k, v in ndrange}
+        dimensions = {k: v for k, v in ndrange}
     else:
         params = list(ndrange.keys())
+        dimensions = ndrange
 
     # Parse each dimension separately
     ranges = []
     for p in params:
-        prange: Union[str, sbs.Subset, Tuple[symbolic.SymbolicType]] = ndrange[p]
+        prange: MapDimension = dimensions[p]
         if isinstance(prange, sbs.Subset):
             rng = prange.ndrange()[0]
         elif isinstance(prange, tuple):
@@ -2124,7 +2133,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_map(
         self,
         name,
-        ndrange: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
+        ndrange: MapRanges,
         schedule=dtypes.ScheduleType.Default,
         unroll=False,
         debuginfo: Optional[dtypes.DebugInfo] = None,
@@ -2190,7 +2199,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_mapped_tasklet(
         self,
         name: str,
-        map_ranges: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
+        map_ranges: MapRanges,
         inputs: Dict[str, mm.Memlet],
         code: str,
         outputs: Dict[str, mm.Memlet],

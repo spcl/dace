@@ -1049,7 +1049,7 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
         for oe in state.out_edges(root):
             if oe.data is None or oe.data.is_empty():
                 continue
-            axis, k, others, coef = _classify_subset(required(oe.data.subset), loop_var)
+            axis, k, others, coef = _classify_subset(oe.data.subset, loop_var)
             if (axis != info.scan_axis or coef != info.coef or symbolic.equal(k, info.k_r) is False
                     or not _same_other_indices(others, info.other_indices)):
                 return False
@@ -3078,7 +3078,7 @@ def carrier_reads_admissible(state: SDFGState, out_name: str, loop_var: str, sca
             if edge.data is None or edge.data.is_empty():
                 continue
             subset = edge.data.subset if edge.data.data == out_name else edge.data.other_subset
-            r_axis, k, r_others, r_coef = _classify_subset(required(subset), loop_var)
+            r_axis, k, r_others, r_coef = _classify_subset(subset, loop_var)
             if r_axis != scan_axis or r_coef != write_coef or not _same_other_indices(r_others, write_others):
                 continue
             if symbolic.simplify(k - k_w) != 0 and symbolic.simplify(k - k_r) != 0:
@@ -3381,9 +3381,9 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
     import dace
     inner = info.inner_loop
     inner_var = required(inner).loop_variable
-    inner_start = loop_analysis.get_init_assignment(required(inner))
-    inner_end = loop_analysis.get_loop_end(required(inner))
-    inner_stride = loop_analysis.get_loop_stride(required(inner))
+    inner_start = loop_analysis.get_init_assignment(inner)
+    inner_end = loop_analysis.get_loop_end(inner)
+    inner_stride = loop_analysis.get_loop_stride(inner)
     if inner_start is None or inner_end is None or inner_stride is None or inner_stride != 1:
         return
     inner_size = symbolic.simplify(inner_end - inner_start + 1)
@@ -4681,7 +4681,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> Optional[_AffineScan]:
     write_edge = _find_unique_write_edge(state, out_name)
     if write_edge is None or not isinstance(write_edge.dst, nodes.AccessNode):
         return None
-    write_axis, k_w, write_others, write_coef = _classify_subset(required(write_edge.data.subset), loop_var)
+    write_axis, k_w, write_others, write_coef = _classify_subset(write_edge.data.subset, loop_var)
     if write_axis != 0 or write_coef != 1 or write_others:
         return None
 
