@@ -763,7 +763,7 @@ def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_
 def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
     """A constant fill map whose entry is held by an ENCLOSING map's ordering edge.
 
-    This is what inlining a nested SDFG into a map scope leaves behind (``lift_transients``), and
+    This is what inlining a nested SDFG into a map scope leaves behind, and
     the shape that separates the two ends of the fill scope: the exit reaches degree zero when the
     promotion takes its write, while the entry never does.
     """
