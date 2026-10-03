@@ -10,7 +10,7 @@ import numpy as np
 
 import dace
 import dace.library
-from dace import dtypes
+from dace import dtypes, Config
 from dace.codegen import codeobject, targets, compiler, compiled_sdfg, common
 
 
@@ -31,9 +31,11 @@ def _cuda_helper():
         }}
     }}
     """
-    program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
 
-    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.cuda.CUDACodeGen, "CudaDummy")
+    cuda_codegen = (targets.experimental_cuda.ExperimentalCUDACodeGen
+                    if Config.get('compiler', 'cuda', 'implementation') == 'experimental' else targets.cuda.CUDACodeGen)
+    program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
+    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", cuda_codegen, "CudaDummy")
 
     build_folder = dace.Config.get('default_build_folder')
     BUILD_PATH = os.path.join(build_folder, "cuda_helper")

@@ -181,6 +181,7 @@ def test_block_thread_specialization():
     tasklet.location['gpu_block'] = 1
 
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    sdfg.compile()
     assert '>= 2' in code and '<= 8' in code
     assert ' == 1' in code
 
@@ -191,7 +192,7 @@ def test_block_thread_specialization():
     assert np.allclose(a, ref)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()

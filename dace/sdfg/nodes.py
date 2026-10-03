@@ -83,6 +83,11 @@ class Node(object):
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
     guid = Property(dtype=str, allow_none=False)
+    gpu_stream_id = Property(dtype=int,
+                             default=None,
+                             allow_none=True,
+                             desc="GPU stream this node is scheduled on. Only meaningful for the nodes that "
+                             "can run on a GPU -- a MapEntry, a Tasklet or a LibraryNode. None when unassigned.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -372,6 +377,7 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+        node._gpu_stream_id = self._gpu_stream_id
 
         node._guid = graph.generate_element_id(node)
 

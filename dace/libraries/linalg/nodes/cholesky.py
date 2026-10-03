@@ -136,11 +136,12 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        in_edges = state.in_edges(self)
+        # The GPU stream pipeline attaches a non-dataflow in-edge, so select the data connector.
+        in_edges = list(state.in_edges_by_connector(self, "_a"))
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = state.out_edges(self)
+        out_edges = list(state.out_edges_by_connector(self, "_b"))
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data

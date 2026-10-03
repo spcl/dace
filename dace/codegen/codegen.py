@@ -154,6 +154,16 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def unselected_cuda_target() -> str:
+    """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
+    so instantiating both would register duplicate dispatchers."""
+    cuda_impl = config.Config.get('compiler', 'cuda', 'implementation')
+    if cuda_impl not in ('legacy', 'experimental'):
+        raise ValueError(f"Invalid compiler.cuda.implementation: {cuda_impl!r}. "
+                         "Please select one of 'legacy' or 'experimental'.")
+    return 'experimental_cuda' if cuda_impl == 'legacy' else 'cuda'
+
+
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -243,10 +253,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             default_target = k
     targets = {'cpu': default_target(frame, sdfg)}
 
+    disabled_cuda_target = unselected_cuda_target()
+
     # Instantiate the rest of the targets
     targets.update({
         v['name']: k(frame, sdfg)
-        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in (*targets, disabled_cuda_target)
     })
 
     # Query all code generation targets and instrumentation providers in SDFG

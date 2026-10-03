@@ -48,13 +48,21 @@ class DaCeCodeGenerator(object):
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
+        fsyms = self.free_symbols(sdfg)
+        self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+
+        self.resolve_symbols_and_constants(sdfg)
+
+    def resolve_symbols_and_constants(self, sdfg: SDFG) -> None:
+        """(Re)build the per-``cfg_id`` cache of the symbols and constants each SDFG in the hierarchy sees, and drop
+        the per-state symbol and struct-type caches.
+
+        A target that adds nested SDFGs while preprocessing rebuilds it, as their ``cfg_id``s are new.
+        """
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
         self._symbol_resolver = SymbolResolver()
         self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
-        fsyms = self.free_symbols(sdfg)
-        self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
-
         # resolve all symbols and constants
         # first handle root
         sdfg.reset_cfg_list()
@@ -300,7 +308,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         gpu_drain_decl = ''
         gpu_drain_call = ''
         # getattr: a user-registered code generator need not define target_name.
-        if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
+        if any(
+                getattr(target, 'target_name', None) in ('cuda', 'experimental_cuda')
+                for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')
             gpu_drain_call = '    __dace_gpu_drain_error(__state);\n'
