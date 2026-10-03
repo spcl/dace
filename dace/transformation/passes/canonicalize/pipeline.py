@@ -6,7 +6,7 @@ vectorization, scheduling, equivalence checks) observe one shape per
 computation.
 """
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 from dace import SDFG, data, symbolic, properties
 from dace.ordered import OrderedSet
@@ -197,8 +197,8 @@ class PropagateAndPrune(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         changed = 0
@@ -238,8 +238,8 @@ class StructuralCleanup(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def units(self) -> List[ppl.Pass]:
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
@@ -521,8 +521,8 @@ class _PrivatizeScalarsStage(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def privatizer(self) -> ppl.Pipeline:
         """The privatization pipeline this stage adapts.
@@ -1637,8 +1637,8 @@ class CanonicalizationPipeline(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def build_stages(self) -> List[Tuple[str, ppl.Pass]]:
         """Build this pipeline's flat recipe, honoring every knob property.

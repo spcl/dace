@@ -12,7 +12,7 @@ every match from scratch after each single application, one ``collapse_multigrap
 VF2 subgraph isomorphism per state per sweep. Same reason as
 :mod:`dace.transformation.passes.canonicalize.revert_nonreduction_wcr`, which this mirrors.
 """
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace.sdfg import nodes
@@ -72,8 +72,8 @@ class EliminateTrivialTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Eliminate every trivial copy tasklet in ``sdfg`` and its nested SDFGs.

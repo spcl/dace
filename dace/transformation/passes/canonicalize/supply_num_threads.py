@@ -14,7 +14,7 @@ it through ``symbol_mapping`` like any other symbol.
 """
 from typing import Any, Dict, Optional
 
-from dace import SDFG, dtypes, properties, symbolic
+from dace import SDFG, dtypes, nodes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -24,7 +24,7 @@ from dace.transformation import transformation
 DTYPE = dtypes.int64
 
 
-def symbol_dtype(sdfg: SDFG):
+def symbol_dtype(sdfg: SDFG) -> dtypes.typeclass:
     """The width this SDFG gives the symbol, else :data:`DTYPE`.
 
     A name denotes one value AND one width, so every site that emits or reads the symbol asks here
@@ -63,7 +63,7 @@ class SupplyNumThreads(ppl.Pass):
         return 1
 
 
-def ensure_in_scope(nsdfg_node) -> None:
+def ensure_in_scope(nsdfg_node: nodes.NestedSDFG) -> None:
     """Make ``__dace_num_threads`` resolvable inside ``nsdfg_node``.
 
     A symbol reaches a nested SDFG only through its ``symbol_mapping``, so a transformation that

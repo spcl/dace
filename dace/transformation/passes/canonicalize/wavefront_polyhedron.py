@@ -30,7 +30,7 @@ re-exports the names :class:`WavefrontSkew` reaches through the ``poly`` alias.
 ``pinned_sequential`` safety net preserves the never-slower-than-auto_optimize
 guarantee).
 """
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import sympy as sp
 
@@ -41,7 +41,7 @@ from dace.sdfg.analysis.polyhedral_isl import (isl, classify_dim, collect_basic_
                                                make_set, pwaff_bound, subs_by_name)
 
 
-def constraints_from_condition(cond) -> Optional[List]:
+def constraints_from_condition(cond: Any) -> Optional[List[symbolic.SymbolicType]]:
     """``cond`` rendered as a list of expressions each meant ``>= 0``, or ``None``.
 
     A read that only executes under a branch guard carries a dependence only where that guard
@@ -62,7 +62,7 @@ def constraints_from_condition(cond) -> Optional[List]:
     # sympy's connectives, so matching only ``sp.And`` would miss every parsed guard.
     func = str(cond.func) if isinstance(cond, sp.Basic) else ''
     if isinstance(cond, sp.And) or func == 'AND':
-        out: List = []
+        out: List[symbolic.SymbolicType] = []
         for arg in cond.args:
             part = constraints_from_condition(arg)
             if part is None:
@@ -90,7 +90,8 @@ class SkewBounds:
     ``[max(p_lo_terms), min(p_hi_terms)]``. The pass renders these to loop
     bounds."""
 
-    def __init__(self, t_lo_terms: List, t_hi_terms: List, p_lo_terms: List, p_hi_terms: List):
+    def __init__(self, t_lo_terms: List[symbolic.SymbolicType], t_hi_terms: List[symbolic.SymbolicType],
+                 p_lo_terms: List[symbolic.SymbolicType], p_hi_terms: List[symbolic.SymbolicType]) -> None:
         self.t_lo_terms = t_lo_terms
         self.t_hi_terms = t_hi_terms
         self.p_lo_terms = p_lo_terms
@@ -99,7 +100,7 @@ class SkewBounds:
 
 def skew_bounds(dims: Tuple[str, str],
                 params: Sequence[str],
-                domain_constraints,
+                domain_constraints: Sequence[symbolic.SymbolicType],
                 tau: Tuple[int, int],
                 t_name: str,
                 p_name: str,
@@ -146,8 +147,8 @@ def skew_bounds(dims: Tuple[str, str],
     # p-range at fixed t (parametric in t): read directly from the skewed set. A
     # steep skew scales p by |a| > 1, which ``classify_dim`` turns into an exact
     # int_ceil / int_floor bound.
-    p_lo_terms: List = []
-    p_hi_terms: List = []
+    p_lo_terms: List[symbolic.SymbolicType] = []
+    p_hi_terms: List[symbolic.SymbolicType] = []
     for b_set in collect_basic_sets(s_set):
         for c in b_set.get_constraints():
             e = constraint_to_sympy(c, safe_dims, safe_params, inv)

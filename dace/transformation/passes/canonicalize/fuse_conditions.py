@@ -13,7 +13,7 @@ comparison, the "no branch condition reads a symbol the first block assigns" rul
 itself live on the transformation -- this pass owns only the traversal, so the pass and the
 transformation can never disagree.
 """
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace.config import Config
@@ -45,7 +45,8 @@ def matcher_candidates(region: AbstractControlFlowRegion) -> Iterator[Tuple[int,
             yield NESTED, {ConditionFusion.cblck1: block}
 
 
-def chain_candidates(block: AbstractControlFlowRegion) -> Iterator[Tuple[AbstractControlFlowRegion, int, Dict]]:
+def chain_candidates(
+        block: AbstractControlFlowRegion) -> Iterator[Tuple[AbstractControlFlowRegion, int, Dict[Any, Any]]]:
     """The candidates naming ``block`` or one of its ancestors, in the region holding each, up to the SDFG."""
     while not isinstance(block, SDFG) and block.parent_graph is not None:
         region = block.parent_graph
@@ -72,8 +73,8 @@ class FuseConditions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.CFG | ppl.Modifies.States))
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def __init__(self, matcher_order: bool = False) -> None:
         """
@@ -201,11 +202,13 @@ class FuseConditions(ppl.Pass):
         return fused or None
 
     @staticmethod
-    def bind(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict) -> None:
+    def bind(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any,
+                                                                                                       Any]) -> None:
         xform.setup_match(region.sdfg, -1, -1, binding, expr_index, override=True)
 
     @staticmethod
-    def accepts(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict) -> bool:
+    def accepts(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any,
+                                                                                                          Any]) -> bool:
         FuseConditions.bind(xform, region, expr_index, binding)
         try:
             return xform.can_be_applied(region, expr_index, region.sdfg, permissive=False)

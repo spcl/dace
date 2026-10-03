@@ -21,18 +21,18 @@ Call sites use ``int_floor`` directly; this pass is the net that keeps one misse
 reaching codegen as a wrong index. Recovery is exact: ``together`` puts the distributed argument
 back over a common denominator before it is split into numerator and denominator.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 import sympy
 
 from dace import SDFG, data as dt, symbolic
 from dace.sdfg import nodes
-from dace.subsets import Indices, Range
+from dace.subsets import Indices, Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def normalize(expr):
+def normalize(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """``expr`` with every ``sympy.floor`` replaced by the equivalent ``int_floor``."""
     if not isinstance(expr, sympy.Basic):
         return expr
@@ -46,7 +46,7 @@ def normalize(expr):
     return expr.subs(replacements)
 
 
-def normalize_subset(subset) -> bool:
+def normalize_subset(subset: Optional[Subset]) -> bool:
     """Normalize a subset in place; returns whether anything changed."""
     changed = False
     if isinstance(subset, Range):
@@ -98,8 +98,8 @@ class NormalizeFloorDivision(ppl.Pass):
         # A new floor can only arrive with new memlets, descriptors or nodes.
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
 
-    def depends_on(self) -> Dict:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Normalize descriptors, map ranges and memlet subsets, recursively.

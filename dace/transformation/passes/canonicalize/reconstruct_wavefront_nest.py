@@ -37,7 +37,7 @@ the very next pipeline stage decides. A candidate that does not demonstrably unl
 leaves the SDFG untouched.
 """
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
@@ -231,8 +231,8 @@ class ReconstructWavefrontNest(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Reconstruct every qualifying candidate in ``sdfg`` and its nested SDFGs.

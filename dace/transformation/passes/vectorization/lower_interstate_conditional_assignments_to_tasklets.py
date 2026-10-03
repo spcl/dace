@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
-from typing import Any
+from typing import Any, List, Type, Union
 import dace
 from dace import dtypes, SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
@@ -62,8 +62,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     @staticmethod
     def arm_bound_symbols(sd: SDFG) -> dict[str, 'dtypes.typeclass']:

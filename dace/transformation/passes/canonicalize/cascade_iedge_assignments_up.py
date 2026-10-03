@@ -57,7 +57,7 @@ again before the parallelization stage so the ``LoopToMap`` refuse-check
 sees a clean shape.
 """
 import ast
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace.frontend.python import astutils
@@ -83,7 +83,7 @@ class HoistAnalysisCache:
         self.reads: Dict[int, Optional[Dict[str, None]]] = {}
         self.writes: Dict[int, Tuple[Dict[str, None], Dict[str, None]]] = {}
         self.preds: Dict[Tuple[int, int], Dict[ControlFlowBlock, None]] = {}
-        self.region_indices: Dict[int, Tuple[Dict[str, list], Dict[str, None]]] = {}
+        self.region_indices: Dict[int, Tuple[Dict[str, List[str]], Dict[str, None]]] = {}
 
     def block_reads(self, block: ControlFlowBlock) -> Optional[Dict[str, None]]:
         block_id = id(block)
@@ -103,7 +103,7 @@ class HoistAnalysisCache:
             self.preds[pred_key] = _predecessors_in(parent, child)
         return self.preds[pred_key]
 
-    def region_index(self, region: ControlFlowRegion) -> Tuple[Dict[str, list], Dict[str, None]]:
+    def region_index(self, region: ControlFlowRegion) -> Tuple[Dict[str, List[str]], Dict[str, None]]:
         region_id = id(region)
         if region_id not in self.region_indices:
             self.region_indices[region_id] = build_region_index(region)
@@ -150,14 +150,14 @@ def _region_writes(region: ControlFlowRegion) -> Tuple[Dict[str, None], Dict[str
     return asyms, wdata
 
 
-def build_region_index(region: ControlFlowRegion) -> Tuple[Dict[str, list], Dict[str, None]]:
+def build_region_index(region: ControlFlowRegion) -> Tuple[Dict[str, List[str]], Dict[str, None]]:
     """Every interstate assignment's rhs, grouped by lhs, and every data name an
     access node writes, anywhere inside ``region``.
 
     Backing index for :func:`_key_has_other_writer`: the region walk it needs is
     identical for every ``(key, rhs)`` pair asked about the same region.
     """
-    by_key: Dict[str, list] = {}
+    by_key: Dict[str, List[str]] = {}
     written: Dict[str, None] = {}
     for e in region.all_interstate_edges():
         for lhs, rhs_value in e.data.assignments.items():
@@ -464,7 +464,7 @@ def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: 
     return True
 
 
-def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str):
+def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> None:
     """Add ``key = rhs`` so it dominates ``child`` inside ``dest``.
 
     As in ``MoveLoopInvariantIfUp._move``: on every in-edge of ``child``, or on the edge out of a
@@ -491,7 +491,7 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
         e.data.assignments[key] = rhs
 
 
-def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion):
+def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion) -> None:
     """Placeholder for the cross-NSDFG extension (currently a no-op).
 
     If ``key`` were also declared in an inner NestedSDFG inside ``dest``,
@@ -555,8 +555,8 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Repeatedly hoist legal interstate-edge assignments until a fixpoint.

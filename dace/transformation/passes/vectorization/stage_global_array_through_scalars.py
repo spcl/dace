@@ -32,7 +32,7 @@ body disqualifies the whole Map -- the read / write classifier would have
 to descend into opaque dataflow that the per-subset rewrite does not model.
 """
 import copy
-from typing import Any
+from typing import Any, List, Type, Union
 
 import dace
 from dace import SDFG
@@ -73,9 +73,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         """Idempotent: nothing left to stage after the first run."""
         return False
 
-    def depends_on(self) -> set[type]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         """Standalone pass: no dependencies."""
-        return set()
+        return []
 
     # Helpers
     @staticmethod

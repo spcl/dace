@@ -29,7 +29,7 @@ variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
 never on unrelated adjacent loops.
 """
 import re
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
 
@@ -128,7 +128,7 @@ class FuseConsecutiveLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Fuse every matching consecutive-loop pair in ``sdfg`` and its nested
         SDFGs, repeating until no pair matches (a chain of tiles collapses one
         adjacency per sweep).

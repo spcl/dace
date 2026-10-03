@@ -22,7 +22,7 @@ Every other combo -> ``NotImplementedError``.
 import copy
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, List, Type, Union
 
 import sympy
 
@@ -401,8 +401,8 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Widen body-NSDFG boundary memlets, then repair the widened connectors.
@@ -474,8 +474,8 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         violation = no_wcr_inside_nested_sdfgs(sdfg)
@@ -495,8 +495,8 @@ class _AssertNoBodyWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
@@ -520,8 +520,8 @@ class _AssertTileOpsLowered(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
@@ -585,8 +585,8 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Fuse, promote, then inline the branch-lowered body NestedSDFGs.

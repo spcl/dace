@@ -17,7 +17,7 @@ read that ``AccessNode`` analysis cannot see -- but it runs in the vectorizer be
 the invisible read turns into a refusal.
 """
 import dataclasses
-from typing import Any
+from typing import Any, List, Type, Union
 
 from dace import SDFG
 from dace import properties
@@ -106,8 +106,8 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""

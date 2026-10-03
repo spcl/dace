@@ -67,7 +67,7 @@ The stride ranking reuses
 boundary that the map-only and loop-only stride passes cannot cross.
 """
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG, properties, symbolic
 from dace.sdfg.state import LoopRegion
@@ -171,7 +171,7 @@ class MoveLoopIntoMapGated(ppl.Pass):
         desc='Only consider loops whose maps all run one iteration (the offload wraps host-side work in '
         'such maps; the pass then runs on the offloaded graph)')
 
-    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False):
+    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False) -> None:
         super().__init__()
         self.target = target
         self.single_iteration_only = single_iteration_only
@@ -182,8 +182,8 @@ class MoveLoopIntoMapGated(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Interchange every approved loop<->map pair in ``sdfg``.

@@ -31,10 +31,11 @@ original WCR semantics).
 The init's seed-read AND the writeback are unconditional, so this stays
 value-preserving even if zero iterations of the map run.
 """
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from dace import SDFG, data, memlet as mm, properties, subsets
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -52,7 +53,7 @@ class PrivatizeReductionAccumulator(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for state in list(sdfg.all_states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
@@ -65,7 +66,8 @@ class PrivatizeReductionAccumulator(ppl.Pass):
         return count or None
 
 
-def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, wcr_edge) -> bool:
+def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit,
+                                    wcr_edge: MultiConnectorEdge[mm.Memlet]) -> bool:
     """Rewrite a single Map's WCR-on-array-element write into WCR-on-scalar
     plus init + writeback.
 

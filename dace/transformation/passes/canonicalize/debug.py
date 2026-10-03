@@ -258,7 +258,7 @@ def canonicalize_with_stage_checks(sdfg: SDFG,
     return results
 
 
-def first_failing_stage(sdfg: SDFG, **kwargs) -> Optional[StageCheckResult]:
+def first_failing_stage(sdfg: SDFG, **kwargs: Any) -> Optional[StageCheckResult]:
     """Convenience: return the first stage that broke validity or values,
     or ``None`` if the whole pipeline stayed valid + numerically correct.
 

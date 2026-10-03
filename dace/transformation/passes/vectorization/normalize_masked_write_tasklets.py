@@ -28,7 +28,7 @@ return when the predicate is false.
 """
 import ast
 
-from typing import Any
+from typing import Any, List, Type, Union
 
 import dace
 from dace.sdfg import SDFG, SDFGState, nodes as nd
@@ -52,8 +52,8 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
@@ -250,8 +250,8 @@ class NormalizeTernaryTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0

@@ -66,7 +66,7 @@ References:
 """
 import copy
 import zlib
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import SDFG, properties, subsets, symbolic
@@ -1253,7 +1253,7 @@ class WavefrontSkew(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Skew every eligible 2-D nest. Returns the count or ``None`` on no match
         (also ``None`` when ``islpy`` is unavailable -- the pass degrades to a
         no-op and the loops stay sequential)."""

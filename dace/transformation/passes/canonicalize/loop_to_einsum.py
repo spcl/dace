@@ -80,7 +80,7 @@ never corrupt the real SDFG.
 """
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import sympy
 
@@ -1023,7 +1023,7 @@ class LoopToEinsum(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = self._lift_loops(sdfg)
         count += self._lift_maps(sdfg)
         return count or None

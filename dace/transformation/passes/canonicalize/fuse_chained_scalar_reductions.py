@@ -46,7 +46,7 @@ untouched.
 """
 import ast
 import copy
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, nodes, properties
 from dace.sdfg import SDFGState
@@ -146,7 +146,7 @@ class FuseChainedScalarReductions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             # Not recursive: ``all_sdfgs_recursive`` already recurses; nesting here misplaces ``_fused_inc``.

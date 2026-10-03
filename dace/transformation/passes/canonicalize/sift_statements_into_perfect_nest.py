@@ -52,6 +52,7 @@ from dace import SDFG, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
+from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 from dace.transformation.passes.move_if_into_loop import _linear_order
@@ -80,7 +81,7 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
     return diff.is_nonnegative is True
 
 
-def _last_reached_iterate(loop: LoopRegion):
+def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """The value of the loop variable on the final executed iteration.
 
     ``get_loop_end`` normalizes the raw bound (``i < a -> a-1``, ``i <= a -> a``); with a
@@ -104,7 +105,7 @@ def _last_reached_iterate(loop: LoopRegion):
     return symbolic.simplify(init_s + symbolic.int_floor(end_s - init_s, stride_s) * stride_s)
 
 
-def _has_outer_carry(subset, iv: str) -> bool:
+def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
     """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset.
 
     A single-point / range begin or end of the form ``iv`` (offset 0) is per-iteration and

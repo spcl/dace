@@ -9,7 +9,7 @@ over Tile/Scalar/Symbol operands.
 """
 import copy
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 
@@ -305,8 +305,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _is_lane_id_dependent(self, expr: str, iter_vars: Tuple[str, ...]) -> bool:
         # True if ``expr`` references any tile iter_var (lane-id-dependent Symbol).

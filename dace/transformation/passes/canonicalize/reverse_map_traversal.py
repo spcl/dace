@@ -29,7 +29,7 @@ Direction, then order: this runs before
 belongs innermost by scoring unit coefficients. Orienting first means it scores the coefficients
 the emitted code will actually use.
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import sympy
 
@@ -113,5 +113,5 @@ class ReverseMapTraversal(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         return reverse_descending_maps(sdfg)

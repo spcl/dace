@@ -14,7 +14,7 @@ stage that is 396 states and 368 applications, i.e. 165494 graph collapses to fi
 and it is 31% of the whole canonicalization. Six WCR edges are cheaper to look at than one
 isomorphism.
 """
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace.sdfg import nodes
@@ -135,8 +135,8 @@ class RevertNonReductionWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Revert every conflict-free WCR in ``sdfg`` and its nested SDFGs.

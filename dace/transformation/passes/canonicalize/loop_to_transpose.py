@@ -42,7 +42,7 @@ is not the full array the operands are routed through strided Views (whose strid
 encode the per-axis step) so the library node still sees a dense operand. Only when
 every axis covers its whole array are plain full-array memlets emitted.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
 
@@ -270,7 +270,7 @@ class LoopToTranspose(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions()):

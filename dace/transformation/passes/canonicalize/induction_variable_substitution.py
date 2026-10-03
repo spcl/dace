@@ -116,7 +116,7 @@ class InductionVariableSubstitution(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         # Fixed point: substituting a primary IV frees the symbols derived from
         # it. e.g. TSVC s128 -- substituting ``j := j + 2`` rewrites ``k := j + 1``
         # to ``k := 2*i`` (a pure loop-var expression), which the next round's
@@ -1727,7 +1727,7 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         if self.peel_limit <= 0:
             return None
         # Fixed point: a multi-stage delay line only reveals its outer stage once the inner one is

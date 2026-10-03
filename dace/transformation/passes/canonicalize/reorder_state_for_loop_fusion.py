@@ -56,7 +56,7 @@ mutates the real SDFG. The pass itself never fuses; it only restores adjacency a
 ``FuseLoops``/``LoopFusion``, the same division of labour ``SinkStateIntoLoop`` uses.
 """
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
 from dace import data as dt
@@ -95,7 +95,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def depends_on(self) -> List[type]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return [AccessSets]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:

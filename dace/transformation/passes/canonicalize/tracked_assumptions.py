@@ -25,7 +25,7 @@ from dace.sdfg import SDFG
 ATTR = '_tracked_assumptions'
 
 
-def record_assumption(sdfg: SDFG, relation) -> None:
+def record_assumption(sdfg: SDFG, relation: symbolic.SymbolicType) -> None:
     """Record ``relation`` (a sympy boolean that must hold at runtime) on ``sdfg``.
 
     Deduped, and a relation that simplifies to a constant ``True`` is dropped (it
@@ -45,7 +45,7 @@ def record_assumption(sdfg: SDFG, relation) -> None:
         store.append(relation)
 
 
-def tracked_assumptions(sdfg: SDFG) -> List:
+def tracked_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
     """The relations recorded on ``sdfg`` via :func:`record_assumption` (a copy)."""
     return list(vars(sdfg).get(ATTR, ()))
 

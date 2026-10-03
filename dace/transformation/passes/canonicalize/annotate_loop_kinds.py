@@ -26,7 +26,7 @@ and the pipeline's own decision cannot disagree.
 A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_comment`` drops them
 outside a standalone rendering, and this pass changes no graph.
 """
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import re
 
@@ -40,6 +40,9 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.loop_to_reduce import loop_to_map_refusal_is_carried
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.memlet import Memlet
+from dace.subsets import Subset
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
 PARALLEL = 'parallel -- the iterations are independent'
@@ -148,6 +151,10 @@ def carrying_access(reason: str) -> str:
     return f'{kind} on {array}[{subset.strip()}]'
 
 
+#: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
+ArrayBindings = Dict[str, Tuple[str, Tuple[sympy.Expr, ...]]]
+
+
 class Access(NamedTuple):
     """One element access in a loop body, in the loop SDFG's names: ``array[index]``."""
     array: str
@@ -164,7 +171,7 @@ class Body(NamedTuple):
     moving: List[bool]
 
 
-def as_loop_names(expr, mapping: Dict[str, sympy.Expr]) -> sympy.Expr:
+def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -> sympy.Expr:
     """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
     name is one symbol instance whichever scope minted it."""
     expr = symbolic.pystr_to_symbolic(str(expr))
@@ -173,7 +180,8 @@ def as_loop_names(expr, mapping: Dict[str, sympy.Expr]) -> sympy.Expr:
     return symbolic.pystr_to_symbolic(str(expr))
 
 
-def point_index(subset, mapping: Dict[str, sympy.Expr], offset: Tuple[sympy.Expr, ...]) -> Optional[Tuple]:
+def point_index(subset: Optional[Subset], mapping: Dict[str, sympy.Expr],
+                offset: Tuple[sympy.Expr, ...]) -> Optional[Tuple[sympy.Expr, ...]]:
     """The single element ``subset`` names, in the loop's names, or ``None`` for a range."""
     if subset is None or (offset and len(offset) != subset.dims()):
         return None
@@ -186,7 +194,7 @@ def point_index(subset, mapping: Dict[str, sympy.Expr], offset: Tuple[sympy.Expr
     return tuple(index)
 
 
-def edge_accesses(edge, state: SDFGState, arrays: Dict[str, Tuple[str, Tuple]],
+def edge_accesses(edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: ArrayBindings,
                   mapping: Dict[str, sympy.Expr]) -> List[Access]:
     """The element reads and writes ``edge`` makes: into or out of a tasklet, or an array copy."""
     memlet = edge.data
@@ -212,14 +220,14 @@ def edge_accesses(edge, state: SDFGState, arrays: Dict[str, Tuple[str, Tuple]],
     return found
 
 
-def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: Dict[str, Tuple[str, Tuple]],
-                    mapping: Dict[str, sympy.Expr]) -> Tuple[Dict, Dict]:
+def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings,
+                    mapping: Dict[str, sympy.Expr]) -> Tuple[ArrayBindings, Dict[str, sympy.Expr]]:
     """The arrays and symbols ``node``'s body sees, rebound to the loop's names.
 
     An inner array binds only when its connector's outer subset has the inner rank; its element
     ``k`` is then outer element ``begin + k``. Anything else stays unbound and is ignored.
     """
-    inner_arrays: Dict[str, Tuple[str, Tuple]] = {}
+    inner_arrays: ArrayBindings = {}
     for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
         conn = edge.dst_conn if edge.dst is node else edge.src_conn
         if conn is None or edge.data.is_empty() or edge.data.data not in arrays:
@@ -234,7 +242,7 @@ def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: Dict[str, 
     return inner_arrays, inner_mapping
 
 
-def walk_body(sdfg_or_region: ControlFlowRegion, arrays: Dict[str, Tuple[str, Tuple]], mapping: Dict[str, sympy.Expr],
+def walk_body(sdfg_or_region: ControlFlowRegion, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr],
               loop_variable: str, body: Body) -> None:
     """Fill ``body`` from everything under ``sdfg_or_region``, through nested SDFGs."""
     for region in sdfg_or_region.all_control_flow_regions():
@@ -346,7 +354,7 @@ class AnnotateLoopKinds(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
         for node, parent_graph in list(sdfg.all_nodes_recursive()):

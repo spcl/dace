@@ -24,7 +24,7 @@ silently drops a store the program needed, so the pass declines wherever it cann
 picture: one state, no nested SDFGs, no conditionals, no WCR, and every access to the array
 affine in the loop variable with matching non-scan indices.
 """
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 from dace import SDFG, properties, symbolic
 from dace.sdfg import nodes
@@ -319,8 +319,8 @@ class DeadCarriedStoreElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         from dace.transformation.interstate.loop_peeling import LoopPeeling

@@ -15,7 +15,7 @@ Inside-body counterpart of STAGE_GLOBAL_THROUGH_SCALARS_SPEC.md: outer global ac
 flow through staged transients, lib nodes at the body boundary. No non-transient
 AccessNode survives mid-body dataflow.
 """
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace import data, dtypes, properties, subsets
 from dace.libraries.standard.helper import collapse_shape_and_strides
@@ -405,8 +405,8 @@ class InsertTileLoadStore(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _stage_inner_body(self, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
         # Two-phase staging: all global READS then all global WRITES, both complete BEFORE

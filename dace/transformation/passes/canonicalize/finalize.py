@@ -19,6 +19,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 ``canonicalize(s); finalize_for_target(s)`` is the perf-path counterpart to
 ``auto_optimize(s)``.
 """
+from typing import List
 import os
 
 from dace import SDFG, dtypes, symbolic
@@ -65,7 +66,7 @@ TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
 SMALL_MATMUL_DIM = 32
 
 
-def _all_matmul_extents_small(state, node, limit: int) -> bool:
+def _all_matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: int) -> bool:
     """True iff every operand/output extent of a matmul library ``node`` is a constant
     at most ``limit`` (the matmul is known-small). A symbolic extent -> not known-small."""
     saw = False
@@ -101,7 +102,7 @@ def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return all(any(symbolic.equal_valued(1, s) for s in _matrix_operand(operand)[3]) for operand in operands)
 
 
-def canonicalize_fast_library_priority(device: dtypes.DeviceType):
+def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> List[str]:
     """Availability-aware fast-implementation priority for the canonicalize perf tail.
 
     Prefer OpenBLAS (BLAS + LAPACKE, i.e. LAPACK) over MKL -- MKL is blocklisted by the caller, per
@@ -133,7 +134,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
         # ``pure`` is auto_optimize's terminal fallback rather than a forced pick, so it is dropped
         # here. A tensor library this host cannot build against is already absent from that list.
         return [impl for impl in find_fast_library(device) if impl != 'pure']
-    prio = []
+    prio: List[str] = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')
     if fftw3.FFTW3.is_installed():

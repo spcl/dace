@@ -144,7 +144,7 @@ Refusals -- each names the miscompile it prevents:
 
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import dace
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
@@ -228,8 +228,8 @@ class LoopToStreamCompaction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict[type, ppl.Pass]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         lifted = 0

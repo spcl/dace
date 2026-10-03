@@ -24,7 +24,7 @@ Legality (per array touched by both bodies, under the shared iterator):
   * output (write in both): illegal unless the two writes hit the same index.
 Symbolic / indirected / complex offsets are refused conservatively (v1).
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
@@ -50,8 +50,8 @@ class FuseLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Fuse every qualifying consecutive-loop pair in ``sdfg`` and its nested

@@ -159,7 +159,7 @@ lift it correctly, so the refusal costs no parallelism ArgMaxLift could have del
 import ast
 import copy
 import re
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import numpy as np
 
@@ -439,10 +439,10 @@ class ArgMaxLift(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):

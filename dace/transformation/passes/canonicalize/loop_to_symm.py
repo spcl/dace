@@ -49,7 +49,7 @@ already fused, so the pass is scheduled a second time next to ``loop_to_rank_k_u
 the polybench orientation (``side='L'``, ``uplo='L'``) is recognised; other
 orientations fall through untouched.
 """
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
@@ -335,7 +335,7 @@ class LoopToSymm(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in list(sd.states()):

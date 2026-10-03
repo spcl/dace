@@ -36,7 +36,7 @@ SDFG entry. It is marked ``side_effects = True`` so the terminal
 no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import sympy
 
@@ -46,9 +46,10 @@ from dace.sdfg import tasklet_utils as tutil
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
+from dace.sdfg.state import ControlFlowBlock
 
 
-def names_still_plain(sdfg: SDFG) -> dict:
+def names_still_plain(sdfg: SDFG) -> Dict[str, None]:
     """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``.
 
     ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
@@ -77,7 +78,7 @@ def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
     descriptor extents, map ranges, memlet subsets and volumes (one level of ``sdfg``)."""
     found: List[sympy.Symbol] = []
 
-    def scan(*exprs):
+    def scan(*exprs: object) -> None:
         for expr in exprs:
             if isinstance(expr, sympy.Basic):
                 found.extend(expr.free_symbols)
@@ -154,7 +155,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         return set_symbol_nonnegative_assumptions(sdfg)
 
 
@@ -189,7 +190,7 @@ class AssumeSymbolConstraints(ppl.Pass):
         # Single-shot: the emitted-trap dedup below makes a re-run a no-op anyway.
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         # Set the compile-time nonnegativity assumption on the symbols (so a downstream proof
         # sees ``s >= 0``) AND emit the runtime trap that checks it. Both halves of the same
         # contract; the guard makes the assumption sound rather than merely asserted.
@@ -198,7 +199,7 @@ class AssumeSymbolConstraints(ppl.Pass):
         return (assumed or 0) + (guarded or 0) or None
 
 
-def is_assumption_guard_block(block) -> bool:
+def is_assumption_guard_block(block: ControlFlowBlock) -> bool:
     """True if ``block`` is the runtime assumption-guard state emitted by
     :func:`insert_assumption_guards` (label ``_assume_nonneg_syms``).
 
@@ -229,7 +230,7 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
 
 
-def sized_names(sdfg: SDFG) -> set:
+def sized_names(sdfg: SDFG) -> Set[str]:
     """Names of :func:`sized_symbols` in ``sdfg``, plus the outer names a nested SDFG's sized
     symbols are bound to through its ``symbol_mapping``."""
     names = {str(s) for s in sized_symbols(sdfg)}
@@ -240,7 +241,7 @@ def sized_names(sdfg: SDFG) -> set:
     return names
 
 
-def collect_assumptions(sdfg: SDFG) -> List:
+def collect_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
     """The full list of relations that must hold at runtime for the SDFG to be
     correct, deduped and ordered for a stable guard.
 

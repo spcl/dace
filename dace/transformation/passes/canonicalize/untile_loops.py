@@ -71,7 +71,7 @@ hoisted; those are left alone.)
 """
 import copy
 import functools
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import sympy
 
@@ -741,7 +741,7 @@ class UntileLoops(ppl.Pass):
         self._loops_back_to_maps(probe)
         return untiled > 0 and count_loops(probe) <= loops_before
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Run the per-loop rewrite as a fixpoint over the SDFG, around the Map round trip when
         that is forced or when a Map tile nest makes it pay off."""
         # The round trip rewrites the graph even when no tile pair is found, so its edits have to

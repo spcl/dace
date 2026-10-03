@@ -22,7 +22,7 @@ uses of the dropped symbol are rewritten to the surviving keeper via DaCe's
 symbol-replacement machinery, keeping the transform value-preserving (bit-exact).
 """
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from dace import SDFG, properties
 from dace.sdfg.state import LoopRegion
@@ -58,7 +58,7 @@ class SymbolDedup(ppl.Pass):
         # changes symbols or edges may expose fresh duplicates, so reapply then.
         return modified & (ppl.Modifies.Symbols | ppl.Modifies.Edges) != ppl.Modifies.Nothing
 
-    def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Deduplicate provably-equal interstate symbols across the whole SDFG.
 
         :param sdfg: The SDFG to modify.
@@ -75,7 +75,7 @@ class SymbolDedup(ppl.Pass):
     def report(self, pass_retval: Optional[int]) -> str:
         return f'Deduplicated {pass_retval or 0} interstate-edge symbol(s).'
 
-    def _normalize_rhs(self, rhs) -> str:
+    def _normalize_rhs(self, rhs: object) -> str:
         """Normalize an assignment RHS so equal-but-differently-formatted
         expressions compare equal; fall back to the raw text if it will not parse."""
         text = str(rhs)

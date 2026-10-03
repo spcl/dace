@@ -20,7 +20,7 @@ Downstream chain: ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``
 """
 import copy
 import re
-from typing import Any
+from typing import Any, List, Type, Union
 
 import dace
 from dace import data as dd
@@ -166,8 +166,8 @@ class WidenAccesses(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
-        return set()
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:

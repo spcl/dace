@@ -27,7 +27,7 @@ order, which is what makes the read-ahead see the same value in both forms.
 """
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import symbolic
@@ -118,7 +118,7 @@ class RerollUnrolledLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Re-roll every matching unrolled loop in ``sdfg`` and its nested SDFGs.
 
         Runs to a fixpoint: re-rolling one loop can expose a sibling or an

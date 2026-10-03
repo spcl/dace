@@ -100,7 +100,7 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 substituted) with a small inner map is the case that still lifts.
 """
 import ast
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, nodes, properties, symbolic
 from dace.sdfg import SDFGState
@@ -228,7 +228,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         lifted = 0
         for sd in sdfg.all_sdfgs_recursive():
             for loop in [n for n in sd.all_control_flow_regions(recursive=True) if isinstance(n, LoopRegion)]:

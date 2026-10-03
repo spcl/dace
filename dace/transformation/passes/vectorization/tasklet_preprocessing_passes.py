@@ -2,7 +2,7 @@
 """Vectorization prep passes rewriting Python tasklet bodies: power expansion, cast removal,
 math-prefix stripping, modulo renaming."""
 import dace
-from typing import Any
+from typing import Any, List, Type, Union
 from collections.abc import Callable
 import ast
 import math
@@ -342,8 +342,8 @@ class _BodyRewritePass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def _rewrite(self, src: str) -> str:
         raise NotImplementedError
@@ -493,8 +493,8 @@ class RemoveMathCall(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Strip ``math.`` from the RHS of every Python assignment tasklet.

@@ -65,7 +65,7 @@ Refusals leave the loop unmodified so downstream stages still see it.
 """
 import ast
 import copy
-from typing import Dict, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import numpy as np
 
@@ -73,7 +73,8 @@ from dace import SDFG, data, dtypes, properties
 from dace import memlet as mm
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock)
+from dace.sdfg.state import (ControlFlowBlock, LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock)
+from dace.subsets import Subset
 from dace.frontend import operations
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -99,7 +100,7 @@ OP_TO_WCR: Dict[str, str] = {
 }
 
 
-def _identity_value(op_str: str, dtype: dtypes.typeclass):
+def _identity_value(op_str: str, dtype: dtypes.typeclass) -> Any:
     """The neutral element of ``op_str`` in ``dtype`` as a plain Python scalar,
     from :func:`~dace.dtypes.reduction_identity` (``+``/``-`` -> ``0``,
     ``*`` -> ``1``, and by extension min -> dtype-max, max -> dtype-min). A
@@ -144,10 +145,10 @@ class LoopToConditionalReduce(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
@@ -315,7 +316,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
     # match helpers
 
-    def _branch_has_content(self, branch) -> bool:
+    def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
             return False
         for n in branch.nodes():
@@ -358,7 +359,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 continue
             return upstream
 
-    def _trace_back_to_source_an(self, state: SDFGState, start) -> Optional[nodes.AccessNode]:
+    def _trace_back_to_source_an(self, state: SDFGState, start: nodes.Node) -> Optional[nodes.AccessNode]:
         """Walk back from ``start`` through transient intermediate AccessNodes
         to the source AccessNode (the AN with ``in_degree == 0``). Returns
         ``None`` on ambiguity (multi-in)."""
@@ -373,7 +374,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 return None
             cur = ins[0].src
 
-    def _addend_gather(self, m: _Match):
+    def _addend_gather(self, m: _Match) -> Optional[Tuple[str, Optional[Subset]]]:
         """Return ``(array_name, subset)`` for the addend read, or ``None`` if
         the shape is unrecognized. Handles BOTH the raw transient-hop form
         (``arr -> arr_index(transient) -> tasklet``, as the frontend emits) AND
@@ -410,7 +411,7 @@ class LoopToConditionalReduce(ppl.Pass):
         # The mask tasklet's addend input connector is ``__addend``; the cond
         # resolution rewrites the addend gather to that connector name, and every
         # OTHER array read the guard names becomes a wired ``__guardN`` input.
-        guard_inputs: Dict[str, tuple] = {}
+        guard_inputs: Dict[str, Tuple[str, str]] = {}
         cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name='__addend', guard_inputs=guard_inputs)
         if cond_expr_resolved is None:
             return False  # a guard read is not expressible as a mask input -- leave the loop untouched
@@ -478,7 +479,7 @@ class LoopToConditionalReduce(ppl.Pass):
         self._collapse_empty_wrappers(loop)
         return True
 
-    def _build_mask_body(self, cond_expr: str, identity_value) -> str:
+    def _build_mask_body(self, cond_expr: str, identity_value: object) -> str:
         """Return Python source for the elementwise mask tasklet
         ``__out = (__addend if (cond) else IDENTITY)``, built as an AST so the
         resolved cond sub-expression is spliced structurally (no string surgery)."""
@@ -495,7 +496,7 @@ class LoopToConditionalReduce(ppl.Pass):
                       m: _Match,
                       sdfg: SDFG,
                       addend_conn_name: str = '__addend',
-                      guard_inputs: Optional[Dict[str, tuple]] = None) -> Optional[str]:
+                      guard_inputs: Optional[Dict[str, Tuple[str, str]]] = None) -> Optional[str]:
         """Rewrite the cond expression over tasklet input connectors only.
 
         Substitutes iedge-bound symbols by their RHS and subscripts matching an input edge by its
@@ -615,7 +616,7 @@ class LoopToConditionalReduce(ppl.Pass):
         written = (n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0)
         return arr_name not in written
 
-    def _available_symbols(self, m: _Match, sdfg: SDFG) -> dict:
+    def _available_symbols(self, m: _Match, sdfg: SDFG) -> Dict[str, None]:
         """Names usable in a memlet subset at the update tasklet, taken from the
         DEFINED-symbol API rather than ``sdfg.symbols`` membership. ``sdfg.symbols``
         holds only the SDFG's GLOBAL symbols, so it sees none of the three binders a
@@ -633,7 +634,7 @@ class LoopToConditionalReduce(ppl.Pass):
         return dict.fromkeys(
             [*m.true_state.symbols_defined_at(m.upd_tasklet), *m.true_state.defined_symbols(), *sdfg.constants])
 
-    def _collapse_empty_wrappers(self, loop: LoopRegion):
+    def _collapse_empty_wrappers(self, loop: LoopRegion) -> None:
         """Eliminate empty SDFGState blocks in the loop body whose only role
         is to host an iedge -- after we stripped the dead iedge assignments
         in step 4 above, the wrapper is structurally empty AND its outgoing

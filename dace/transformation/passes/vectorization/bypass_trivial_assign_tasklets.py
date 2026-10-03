@@ -32,7 +32,7 @@ be scatter / gather staging, so they stay untouched. Mirrors
 :class:`EliminateDeadCopies`'s scoping.
 """
 import copy
-from typing import Any
+from typing import Any, List, Type, Union
 
 import dace
 from dace import subsets
@@ -109,9 +109,9 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         """Single fixed-point sweep is enough."""
         return False
 
-    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         """Standalone pass."""
-        return set()
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Sweep every body NSDFG and apply dedup + bypass.

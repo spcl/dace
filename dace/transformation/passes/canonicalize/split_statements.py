@@ -119,7 +119,7 @@ re-fuses whatever should recombine.
 import copy
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, List, Type, Union
 
 from dace import SDFG, Memlet, dtypes, properties, symbolic
 from dace import data as dt
@@ -930,8 +930,8 @@ class SplitStatements(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         count = 0

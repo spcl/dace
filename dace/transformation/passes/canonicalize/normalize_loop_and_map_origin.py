@@ -32,7 +32,7 @@ The shifting mechanics (subset / tasklet / interstate substitution) are
 ``OffsetLoopsAndMaps``' module-level helpers, driven here per scope rather than
 over the whole SDFG.
 """
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Type, Union
 
 import dace
 from dace import SDFG, properties, subsets
@@ -109,8 +109,8 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Dict:
-        return {}
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Rebase every Map/LoopRegion begin to 0 (recursively), keeping stride.
