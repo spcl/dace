@@ -13,7 +13,7 @@ Fires only when it enables widening: a genuine multi-element array slot, an asso
 recurrence that reads the accumulator in the body is not a map-exit WCR and never matches; the
 rewrite is value-preserving, also for zero iterations.
 """
-from typing import Any
+from typing import Any, Tuple
 
 from dace import SDFG, data
 from dace.dtypes import ReductionType
@@ -29,7 +29,8 @@ from dace.transformation.passes.vectorization.utils.map_predicates import map_bo
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
 #: (non-associative ``-`` / ``/``) is not a foldable reduction, so it is never rewritten.
-_FOLDABLE_OPS = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max)
+_FOLDABLE_OPS: Tuple[ReductionType,
+                     ...] = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max)
 
 
 @xf.explicit_cf_compatible

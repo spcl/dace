@@ -2,7 +2,7 @@
 """Vectorization prep passes rewriting Python tasklet bodies: power expansion, cast removal,
 math-prefix stripping, modulo renaming."""
 import dace
-from typing import Any, List, Type, Union
+from typing import Any, Dict, List, Type, Union
 from collections.abc import Callable
 import ast
 import math
@@ -131,7 +131,7 @@ class DaceCastRemover(ast.NodeTransformer):
 
 #: math-module numeric constants (attribute access, not a call, so the prefix-strip below can't
 #: reach them). Emitted as fp64 literals: matches numpy's float64 promotion for math.pi et al.
-_MATH_CONSTANTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
+_MATH_CONSTANTS: Dict[str, float] = {"pi": math.pi, "e": math.e, "tau": math.tau}
 
 
 class RemoveMathPrefix(ast.NodeTransformer):

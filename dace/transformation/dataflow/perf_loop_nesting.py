@@ -708,7 +708,7 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
     new_nsdfg = graph.add_nested_sdfg(new_inner_sdfg,
                                       used_in,
                                       used_out,
-                                      symbol_mapping=_copy.copy(orig_nsdfg.symbol_mapping))
+                                      symbol_mapping=_copy.deepcopy(orig_nsdfg.symbol_mapping))
 
     for conn in used_in:
         new_pe.add_in_connector("IN_" + conn)

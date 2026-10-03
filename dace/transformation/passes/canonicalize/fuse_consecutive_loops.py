@@ -47,7 +47,7 @@ from dace.transformation.passes.analysis import loop_analysis
 #: Per-SDFG context: data name -> states referencing an AccessNode for it. A merge deletes a
 #: whole body state, which changes this, so it is rebuilt once per sweep rather than cached
 #: across an ``apply`` (see ``apply_pass``); never rebuilt per candidate pair.
-ScratchIndex = dict[str, OrderedSet]
+ScratchIndex = dict[str, OrderedSet[SDFGState]]
 
 #: Iterator- and scratch-name-independent key of a body node: ``(kind, payload)``.
 NodeKey = Tuple[str, str]

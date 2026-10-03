@@ -176,7 +176,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
 from dace.libraries.standard.nodes.reduce import Reduce
 
 #: Map AST comparison op class -> DaCe reduction type.
-CMP_AST_TO_RTYPE = {
+CMP_AST_TO_RTYPE: Dict[Type[ast.cmpop], dtypes.ReductionType] = {
     ast.Gt: dtypes.ReductionType.Max,
     ast.GtE: dtypes.ReductionType.Max,
     ast.Lt: dtypes.ReductionType.Min,
@@ -350,9 +350,9 @@ class GuardReadWiring(ast.NodeTransformer):
 
 
 #: Right-hand operand values that make a binary op the identity on its left operand.
-IDENTITY_RHS = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
+IDENTITY_RHS: Tuple[Tuple[Type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
 #: ... and the mirrored form, for the commutative ops only.
-IDENTITY_LHS = ((ast.Add, 0), (ast.Mult, 1))
+IDENTITY_LHS: Tuple[Tuple[Type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Mult, 1))
 
 
 def strip_identity(expr: ast.AST) -> ast.AST:

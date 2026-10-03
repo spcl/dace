@@ -100,7 +100,7 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 substituted) with a small inner map is the case that still lifts.
 """
 import ast
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from dace import SDFG, nodes, properties, symbolic
 from dace.memlet import Memlet
@@ -112,9 +112,9 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Python AST op -> WCR operator symbol for the associative/commutative reductions.
-REDUCTION_OPS = {ast.Add: '+', ast.Mult: '*'}
+REDUCTION_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
 #: min / max reductions arrive as a 2-argument Call.
-REDUCTION_FUNCS = ('min', 'max')
+REDUCTION_FUNCS: Tuple[str, ...] = ('min', 'max')
 
 
 def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast.AST, ast.AST]]]:

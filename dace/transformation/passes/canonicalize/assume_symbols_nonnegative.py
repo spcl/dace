@@ -166,7 +166,8 @@ GUARD_STATE_LABEL = '_assume_nonneg_syms'
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
 #: integer symbols are nonnegative by construction; float symbols are not part
 #: of the offset/size nonnegativity contract.
-SIGNED_INTEGER_DTYPES = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
+SIGNED_INTEGER_DTYPES: Dict[dtypes.typeclass,
+                            None] = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
 
 
 @xf.explicit_cf_compatible

@@ -59,7 +59,7 @@ mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 """
 import ast
 import copy
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, Type
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, Type
 
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace import memlet as mm
@@ -81,7 +81,7 @@ from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _
 SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'])
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
-CLOSED_FORM = {
+CLOSED_FORM: Dict[Type[ast.operator], Callable[[str, str, str], str]] = {
     ast.Add: lambda init, c, n: f"(({init}) + ({c}) * ({n}))",
     ast.Mult: lambda init, c, n: f"(({init}) * (({c}) ** ({n})))",
 }
@@ -1606,8 +1606,8 @@ def emit_remat_clone(sdfg: SDFG, st: SDFGState, source: RematSource, hint: str) 
     """
 
     producer = source.producer
-    clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
-                          producer.code.as_string, producer.code.language)
+    clone = nodes.Tasklet(f'{producer.label}_remat', copy.deepcopy(producer.in_connectors),
+                          copy.deepcopy(producer.out_connectors), producer.code.as_string, producer.code.language)
     st.add_node(clone)
     for inp in source.inputs:
         if inp.source is None:

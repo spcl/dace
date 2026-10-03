@@ -15,6 +15,7 @@ Inside-body counterpart of STAGE_GLOBAL_THROUGH_SCALARS_SPEC.md: outer global ac
 flow through staged transients, lib nodes at the body boundary. No non-transient
 AccessNode survives mid-body dataflow.
 """
+import copy
 import ast
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -98,7 +99,7 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
 
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
     # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileScatter._dst -> AN, etc.).
-    return Memlet(data=other_memlet.data, subset=other_memlet.subset)
+    return Memlet(data=other_memlet.data, subset=copy.deepcopy(other_memlet.subset))
 
 
 # Legacy ``_topo_sort_access_nodes`` deleted: two-phase staging + classifier-side

@@ -33,7 +33,7 @@ frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.Bin
 import ast
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Tuple, Type
 
 from dace.ordered import OrderedSet
 
@@ -49,7 +49,7 @@ from dace.transformation.passes.vectorization.utils.tasklets import single_assig
 
 #: Comparison ops produce ``bool`` regardless of operand dtype -- unify the operands but
 #: never cast the output (mirrors ``convert_tasklets_to_tile_ops._COMPARISON_BINOPS``).
-_COMPARISON_AST = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
+_COMPARISON_AST: Tuple[Type[ast.cmpop], ...] = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
 
 
 def _cast_name(dtype: dtypes.typeclass) -> str:

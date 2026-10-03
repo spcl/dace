@@ -20,6 +20,7 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
+from typing import Dict, Type
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -107,14 +108,14 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
 # loop_to_reduce WCR tables but yields this module's short op token
 # rather than a ``lambda a, b: ...`` string (a different representation,
 # not duplicated behaviour). max / min are function calls, not infix.
-_AST_BINOP_TO_OP = {
+_AST_BINOP_TO_OP: Dict[Type[ast.operator], str] = {
     ast.Add: "+",
     ast.Mult: "*",
     ast.BitAnd: "&",
     ast.BitOr: "|",
     ast.BitXor: "^",
 }
-_AST_BOOLOP_TO_OP = {
+_AST_BOOLOP_TO_OP: Dict[Type[ast.boolop], str] = {
     ast.Or: "|",
     ast.And: "&",
 }

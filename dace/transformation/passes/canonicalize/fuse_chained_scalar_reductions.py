@@ -46,7 +46,7 @@ untouched.
 """
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from dace import SDFG, nodes, properties
 from dace.memlet import Memlet
@@ -59,7 +59,7 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
-FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
+FOLDABLE_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
 
 
 def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:

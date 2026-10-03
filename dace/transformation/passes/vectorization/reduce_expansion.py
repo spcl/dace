@@ -18,7 +18,7 @@ API requires):
   reduction must surface, not be silently mis-lowered.
 """
 from copy import deepcopy as dcpy
-from typing import List
+from typing import Callable, Dict, List, Tuple
 
 import dace
 import dace.library
@@ -37,7 +37,7 @@ from dace.transformation import transformation as pm
 #: primitive; value = op-token suffix used by ``horizontal_reduce.h``. Sub /
 #: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
-REDTYPE_TO_OP = {
+REDTYPE_TO_OP: Dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "add",
     dtypes.ReductionType.Product: "mul",
     dtypes.ReductionType.Max: "max",
@@ -47,14 +47,14 @@ REDTYPE_TO_OP = {
     dtypes.ReductionType.Bitwise_Xor: "bxor",
 }
 
-_VECTORIZED_SEQUENTIAL_SCHEDULES = (
+_VECTORIZED_SEQUENTIAL_SCHEDULES: Tuple[dtypes.ScheduleType, ...] = (
     dtypes.ScheduleType.Default,
     dtypes.ScheduleType.Sequential,
 )
 
 #: Per-op C++ binary fold ``OP(x, y)`` for the W-wide partials + scalar tail;
 #: paired with the identity element when ``Reduce`` carries no ``identity``.
-_OP_CXX = {
+_OP_CXX: Dict[str, Callable[[str, str], str]] = {
     "add": lambda x, y: f"(({x}) + ({y}))",
     "mul": lambda x, y: f"(({x}) * ({y}))",
     "max": lambda x, y: f"std::max(({x}), ({y}))",
@@ -63,7 +63,7 @@ _OP_CXX = {
     "bor": lambda x, y: f"(({x}) | ({y}))",
     "bxor": lambda x, y: f"(({x}) ^ ({y}))",
 }
-_OP_IDENTITY_CXX = {
+_OP_IDENTITY_CXX: Dict[str, str] = {
     "add": "({T})0",
     "mul": "({T})1",
     "max": "(-INFINITY)",

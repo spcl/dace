@@ -29,7 +29,7 @@ original ``init (op) fold``.
 import ast
 import copy
 
-from typing import Any
+from typing import Any, Dict
 
 import dace
 from dace import dtypes, nodes, symbolic
@@ -47,14 +47,14 @@ from dace.ordered import OrderedSet
 
 #: Reduction-op token for each ``add_reduce``-friendly ``ReductionType``. Mirrors
 #: the ``+`` / ``*`` restriction of :data:`_WCR_LAMBDA` (see its docstring).
-_REDTYPE_OP = {
+_REDTYPE_OP: Dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "+",
     dtypes.ReductionType.Product: "*",
 }
 
 #: Reduction-op token -> ``Reduce`` WCR lambda. Only ``+`` / ``*``: their identities are finite;
 #: ``max`` / ``min`` / bitwise fail the finite-float gate below.
-_WCR_LAMBDA = {
+_WCR_LAMBDA: Dict[str, str] = {
     "+": "lambda a, b: a + b",
     "*": "lambda a, b: a * b",
 }

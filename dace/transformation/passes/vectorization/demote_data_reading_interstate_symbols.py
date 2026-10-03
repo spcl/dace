@@ -72,12 +72,12 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
                 found.names.update(str(s) for s in edge.data.free_symbols)
 
 
-def data_reading_assigned_symbols(sd: SDFG) -> OrderedSet:
+def data_reading_assigned_symbols(sd: SDFG) -> OrderedSet[str]:
     """Symbols ``sd``'s own interstate edges assign an expression that READS one of its arrays.
 
     Insertion-ordered, because the demotion it drives adds arrays to the SDFG.
     """
-    found: OrderedSet = OrderedSet()
+    found: OrderedSet[str] = OrderedSet()
     for edge in sd.all_interstate_edges():
         for name, rhs in edge.data.assignments.items():
             try:

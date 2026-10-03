@@ -26,6 +26,7 @@ must agree on. It additionally requires the lanes to RUN in ascending offset
 order, which is what makes the read-ahead see the same value in both forms.
 """
 
+import copy
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -947,7 +948,9 @@ class RerollUnrolledLoops(ppl.Pass):
                 new_memlet = ce.data
                 if (new_memlet is not None and isinstance(live_in.src, nodes.AccessNode)
                         and new_memlet.data == out_acc.data):
-                    new_memlet = dace.Memlet(data=live_in.src.data, subset=new_memlet.subset, wcr=new_memlet.wcr)
+                    new_memlet = dace.Memlet(data=live_in.src.data,
+                                             subset=copy.deepcopy(new_memlet.subset),
+                                             wcr=new_memlet.wcr)
                 state.remove_edge(ce)
                 state.add_edge(live_in.src, live_in.src_conn, ce.dst, ce.dst_conn, new_memlet)
             state.remove_node(m)

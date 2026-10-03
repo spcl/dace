@@ -1077,7 +1077,7 @@ class SplitStatements(ppl.Pass):
             clone = state.add_nested_sdfg(clone_sdfg,
                                           inputs=dict.fromkeys(kept_in),
                                           outputs=dict.fromkeys(sorted(grp)),
-                                          symbol_mapping=dict(node.symbol_mapping))
+                                          symbol_mapping=copy.deepcopy(node.symbol_mapping))
             for e in in_edges:
                 if e.dst_conn is not None and e.dst_conn not in kept_in:
                     continue
@@ -1467,7 +1467,7 @@ class SplitStatements(ppl.Pass):
             clone = target.add_nested_sdfg(clone_sdfg,
                                            inputs=dict.fromkeys(kept_in),
                                            outputs=dict.fromkeys(sorted(grp)),
-                                           symbol_mapping=dict(node.symbol_mapping))
+                                           symbol_mapping=copy.deepcopy(node.symbol_mapping))
             for e in in_edges:
                 if e.dst_conn not in kept_in:
                     continue

@@ -31,13 +31,15 @@ from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from typing import Tuple
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
 #: associative; a ``Custom`` (non-reassociable) WCR keeps the strict "no loose WCR" refusal.
-_ASSOCIATIVE_REDUCTIONS = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
-                           ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
-                           ReductionType.Logical_And, ReductionType.Logical_Or)
+_ASSOCIATIVE_REDUCTIONS: Tuple[ReductionType,
+                               ...] = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
+                                       ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
+                                       ReductionType.Logical_And, ReductionType.Logical_Or)
 
 
 def assert_invariant(violation: str | None, pass_name: str, description: str) -> None:

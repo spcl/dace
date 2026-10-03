@@ -444,7 +444,7 @@ class TreeCopier(ast.NodeTransformer):
             method = 'visit_' + node.__class__.__name__
             visitor = getattr(self, method, self.generic_visit)
             return visitor(node)
-        newnode = copy.copy(node)
+        newnode = copy.deepcopy(node)
         return self.generic_visit(newnode)
 
     def generic_visit(self, node):

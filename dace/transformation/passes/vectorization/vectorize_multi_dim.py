@@ -28,6 +28,7 @@ import sympy
 
 import dace
 from dace import properties, symbolic
+from dace.sdfg.nodes import LibraryNode
 from dace.sdfg.state import ControlFlowRegion
 from dace.config import Config
 from dace.dtypes import DeviceType
@@ -108,8 +109,8 @@ from dace.transformation.passes.vectorization.restore_untiled_map_stride import 
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-TILE_NODE_TYPES = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen, TileITE, TileReduce, TileScatter,
-                   TileUnop)
+TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen,
+                                                  TileITE, TileReduce, TileScatter, TileUnop)
 
 #: Every node the emit stage can produce, including the two the selector above does not stamp.
 #: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
@@ -213,7 +214,8 @@ _VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_ta
 #: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
 #: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
 #: A tuple, not a dict: membership must compare equal for both the enum member and its raw string.
-_BRANCHED_REMAINDER = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
+_BRANCHED_REMAINDER: Tuple[RemainderStrategy,
+                           ...] = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 

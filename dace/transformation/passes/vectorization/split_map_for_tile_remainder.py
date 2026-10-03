@@ -33,7 +33,7 @@ original) and on step-1 maps (before :class:`StrideMapByTileWidths`). A dim
 provably divisible by ``W`` is not split -> a fully-divisible map yields just
 the mask-free interior, no remainder.
 """
-from typing import Any
+from typing import Any, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -57,7 +57,7 @@ MASKED_TAIL_MARKER = "__masked_tail"
 TILE_K1_TAIL_MARKER = "__tile_k1_tail"
 
 #: Every suffix this pass appends to a region's map label.
-REGION_MARKERS = (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, MASKED_TAIL_MARKER, TILE_K1_TAIL_MARKER)
+REGION_MARKERS: Tuple[str, ...] = (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, MASKED_TAIL_MARKER, TILE_K1_TAIL_MARKER)
 
 
 def source_map_label(label: str) -> str:
@@ -75,7 +75,8 @@ def source_map_label(label: str) -> str:
 # Storage classes whose base address the tile codegen is willing to assume anything about
 # (``tileops.alignment.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
 # an unconsumed fact is a runtime abort bought for nothing.
-_DEVICE_STORAGE = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
+_DEVICE_STORAGE: Tuple[dace.dtypes.StorageType,
+                       ...] = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
 
 
 @properties.make_properties

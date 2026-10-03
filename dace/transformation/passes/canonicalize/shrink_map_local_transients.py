@@ -14,7 +14,8 @@ from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import code_text
 
 #: Storages whose buffer is a plain allocation this pass may resize.
-RESIZABLE_STORAGE = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
+RESIZABLE_STORAGE: Tuple[dtypes.StorageType,
+                         ...] = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
 
 
 def named_in_text(sdfg: SDFG, name: str) -> bool:
