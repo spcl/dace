@@ -30,7 +30,8 @@ def library_node_classes():
 
     Walked from the base class rather than from a registry so a node that registers itself in some
     other way is still caught -- the question this answers is "what can appear in an SDFG", and the
-    answer is every subclass that has been imported.
+    answer is every subclass that has been imported. Only the ones DaCe ships count: other tests in the
+    same process define throwaway nodes of their own.
     """
     for module in pkgutil.walk_packages(dace.libraries.__path__, 'dace.libraries.'):
         try:
@@ -41,7 +42,8 @@ def library_node_classes():
 
     def walk(cls):
         for subclass in cls.__subclasses__():
-            found.add(subclass)
+            if subclass.__module__.startswith('dace.'):
+                found.add(subclass)
             walk(subclass)
 
     walk(LibraryNode)
