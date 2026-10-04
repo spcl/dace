@@ -41,7 +41,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
-        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Stream))
+        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
         if isinstance(node, nodes.LibraryNode):
             scalar &= allocated_as_scalar
         dtype = sdfg.arrays[e.data.data].dtype
