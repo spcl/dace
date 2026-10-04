@@ -1373,7 +1373,8 @@ def _propagate_nsdfg_border_edge(edge: gr.MultiConnectorEdge[Memlet], internal_m
     extname = edge.data.data
     outer_desc = parent_sdfg.arrays[extname]
     inner_desc = sdfg.arrays[connector]
-    if not outer_desc.is_equivalent(inner_desc):
+    # The connector is written in the nested SDFG's symbols, which the symbol mapping binds to the parent's
+    if not inner_desc.is_equivalent(outer_desc, symbol_mapping=sdfg.parent_nsdfg_node.symbol_mapping):
         raise ValueError(f'Connector "{connector}" of {sdfg.label} describes {inner_desc}, not the container '
                          f'"{extname}" it is connected to. Restate the nested SDFG with '
                          'dace.sdfg.dealias.convert_legacy_nested_sdfgs.')

@@ -208,6 +208,34 @@ def test_typed_parameter_symbol():
     assert 'j' not in defined.subset.free_symbols
 
 
+def test_nested_sdfg_connector_in_mapped_symbols():
+    """
+    A connector written in the nested SDFG's own symbols is the container it is connected to when the symbol mapping
+    restates it as that container, and its memlets propagate in the parent's symbols.
+    """
+    M = dace.symbol('M')
+    outer = dace.SDFG('prop_mapped_connector')
+    outer.add_array('A', [M + 1], dace.float64)
+    outer.add_array('B', [M + 1], dace.float64)
+    state = outer.add_state()
+    inner = dace.SDFG('inner')
+    inner.add_symbol('N', dace.int64)
+    inner.add_array('a', ['N'], dace.float64)
+    inner.add_array('b', ['N'], dace.float64)
+    inner.add_state().add_mapped_tasklet('cp', {'i': '0:N'}, {'v': dace.Memlet('a[i]')},
+                                         'w = v', {'w': dace.Memlet('b[i]')},
+                                         external_edges=True)
+    node = state.add_nested_sdfg(inner, {'a'}, {'b'}, {'N': 'M + 1'})
+    state.add_edge(state.add_read('A'), None, node, 'a', dace.Memlet('A[0:M+1]'))
+    state.add_edge(node, 'b', state.add_write('B'), None, dace.Memlet('B[0:M+1]'))
+    outer.validate()
+
+    propagate_memlets_sdfg(outer)
+
+    for edge in state.all_edges(node):
+        assert edge.data.subset == dace.subsets.Range([(0, M, 1)]), edge.data.subset
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
@@ -216,3 +244,4 @@ if __name__ == '__main__':
     test_nested_conditional_in_loop_in_map()
     test_strided_write_keeps_the_multiplier()
     test_typed_parameter_symbol()
+    test_nested_sdfg_connector_in_mapped_symbols()
