@@ -553,14 +553,11 @@ def _plain_window(memlet: Memlet, outer: data.Data, inner: data.Data, parent_nod
     expected = _strides_after_squeeze(outer.strides, subset, len(inner.shape))
     if expected is None:
         return False
-    # The connector's strides are written in the nested SDFG's symbols
+    # The connector's strides are written in the nested SDFG's symbols, all replaced at once (e.g., ``{N: M, M: N}``)
     strides = list(inner.strides)
-    symrepl = {
-        symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-        for k, v in parent_node.symbol_mapping.items() if str(k) != str(v)
-    }
-    if symrepl:
-        strides = [s.subs(symrepl) if symbolic.issymbolic(s) else s for s in strides]
+    replacements = symbolic.symbol_replacements(parent_node.symbol_mapping)
+    if replacements:
+        strides = [s.xreplace(replacements) if symbolic.issymbolic(s) else s for s in strides]
     return all((a == b) == True for a, b in zip(strides, expected))
 
 

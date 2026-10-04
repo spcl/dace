@@ -323,6 +323,25 @@ def test_convert_rejects_different_read_and_write_windows():
         dealias.convert_legacy_nested_sdfgs(sdfg)
 
 
+def test_plain_window_replaces_symbols_at_once():
+    """
+    A connector written in its own symbols is compared with the window in the parent's symbols, all replaced at
+    once: with ``{M: N, N: M}``, the stride ``N * M`` is ``M * N`` in the parent, not a square.
+    """
+    K, M, N = (dace.symbol(s) for s in 'KMN')
+    sdfg = dace.SDFG('plain_window_swap')
+    sdfg.add_array('A', [K, M, N], dace.float64)
+    state = sdfg.add_state()
+    inner = dace.SDFG('inner')
+    for s in 'KMN':
+        inner.add_symbol(s, dace.int64)
+    inner.add_array('a', [K - 1, N, M], dace.float64)
+    inner.add_state()
+    node = state.add_nested_sdfg(inner, {'a'}, set(), {'K': 'K', 'M': 'N', 'N': 'M'})
+    edge = state.add_edge(state.add_read('A'), None, node, 'a', Memlet('A[1:K, 0:M, 0:N]'))
+    assert dealias._plain_window(edge.data, sdfg.arrays['A'], inner.arrays['a'], node)
+
+
 if __name__ == '__main__':
     test_inline_windowed_connector()
     test_inline_windowed_connector_simplify()
@@ -333,3 +352,4 @@ if __name__ == '__main__':
     test_convert_symbolic_strides()
     test_convert_window_under_shadowing_map_parameter()
     test_convert_rejects_different_read_and_write_windows()
+    test_plain_window_replaces_symbols_at_once()
