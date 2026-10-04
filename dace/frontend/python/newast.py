@@ -2412,7 +2412,10 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 pass
 
-            data_dtypes = {k: v.dtype for k, v in self.defined.items() if hasattr(v, 'dtype')}
+            data_dtypes = {
+                k: v.dtype
+                for k, v in self.defined_dict().items() if isinstance(v, (data.Data, symbolic.symbol))
+            }
             data_dtypes.update(self.sdfg.symbols)
             sym_obj = symbolic.symbol(indices[0],
                                       infer_iteration_symbol_type(ranges[0][0],
@@ -2458,7 +2461,8 @@ class ProgramVisitor(ExtNodeVisitor):
             used_symbols_set = set(loop_region.used_symbols(all_symbols=True))
             used_data_descs = {
                 k: v
-                for k, v in self.defined.items() if k in used_symbols_set and not getattr(v, 'transient', True)
+                for k, v in self.defined_dict().items()
+                if k in used_symbols_set and isinstance(v, data.Data) and not v.transient
             }
             self.inputs.update({k: (self.cfg_target, Memlet.from_array(k, v), []) for k, v in used_data_descs.items()})
 
