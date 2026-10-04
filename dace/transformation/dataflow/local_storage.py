@@ -101,12 +101,19 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
         from_data_mm = copy.deepcopy(invariant_memlet)
         offset = subsets.Range.from_indices([r[0] for r in invariant_memlet.subset])
 
+        # The copy between the original array and the local storage only covers the part of the local storage
+        # given by the original subset, which can be smaller than the local storage (e.g., on a partial tile).
+        local_subset = copy.deepcopy(invariant_memlet.subset)
+        local_subset.offset(offset, True)
+
         # Reconnect, assuming one edge to the access node
         graph.remove_edge(original_edge)
         if propagate_forward:
+            to_data_mm.other_subset = local_subset
             graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
             new_edge = graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
         else:
+            from_data_mm.other_subset = local_subset
             new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
 

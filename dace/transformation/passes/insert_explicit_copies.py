@@ -29,30 +29,16 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     return src_subset
 
 
-def _competing_writer(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> bool:
-    """True if another edge into ``target`` writes a region of ``name`` that may overlap ``subset``.
+def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> list:
+    """The edges into ``target`` other than ``edge`` that write a region of ``name`` that may overlap ``subset``.
 
-    Nothing in the graph orders two writes to the same region that reach a node on separate edges:
-    plain copy-edge codegen emits a copy when its SOURCE access node is visited, so the copy lands
-    before every other consumer of that node. Lifting the copy to a node of its own re-sorts it
-    against the competing write, which silently swaps which value survives (measured on npbench
-    ``vadv``: a dead ``dcol`` write moved after the tasklet that supersedes it). Where the order
-    cannot be shown to be irrelevant, leave the copy implicit.
-
-    :param state: the state holding ``target``.
-    :param target: the node the copy writes through (access node, or map exit when staging out).
-    :param edge: the copy edge itself, excluded from the scan.
-    :param name: data name the copy writes.
-    :param subset: region the copy writes.
-    :returns: ``True`` when a possibly-overlapping competing write exists.
+    An overlap ``subsets.intersects`` cannot decide counts as one.
     """
-    for other in state.in_edges(target):
-        if other is edge or other.data.is_empty() or other.data.data != name:
-            continue
-        other_subset = other.data.get_dst_subset(other, state) or other.data.subset
-        if subsets.intersects(other_subset, subset) is not False:
-            return True
-    return False
+    return [
+        other for other in state.in_edges(target)
+        if other is not edge and not other.data.is_empty() and other.data.data == name
+        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset) is not False
+    ]
 
 
 def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: nodes.Node) -> None:
@@ -74,12 +60,48 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
         state.add_edge(edge.src, None, libnode, None, Memlet())
 
 
+def order_against_competing_writes(state: SDFGState, libnode: CopyLibraryNode, source: nodes.Node, written: nodes.Node,
+                                   name: str, subset: subsets.Subset) -> None:
+    """Order a lifted copy against the competing writes its implicit form was ordered with.
+
+    Copy-edge codegen emits a copy when its SOURCE node is visited, so the implicit copy landed before every
+    competing write downstream of the source, and after any other copy out of the same source emitted ahead of
+    it. Both orders are kept with empty-memlet edges: nothing else in the graph orders two writes to one region
+    that reach a node on separate edges, and a lifted copy would be re-sorted against them, silently flipping
+    which value survives. A competing write not downstream of the source was never ordered with the copy and
+    stays unordered. An edge is only added where the pair is not already ordered, so no cycle appears.
+
+    ``source`` is the node the copy reads (the map entry when staging in), ``written`` the node it writes through
+    (the map exit when staging out); the libnode is already wired between them.
+    """
+    out_edge = next(state.out_edges_by_connector(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME))
+    competing = competing_writes(state, written, out_edge, name, subset)
+    if not competing:
+        return
+    after_libnode = sdutils.find_downstream_nodes(libnode, state)
+    for other in competing:
+        # Another copy out of the same source, emitted ahead of this one, keeps landing first.
+        if (isinstance(other.src, CopyLibraryNode) and other.src not in after_libnode
+                and any(e.src is source for e in state.in_edges(other.src))):
+            state.add_edge(other.src, None, libnode, None, Memlet())
+    after_source = sdutils.find_downstream_nodes(source, state)
+    before_libnode = sdutils.find_upstream_nodes(libnode, state)
+    for other in competing:
+        # A write out of a scope happens inside it, so the scope as a whole has to follow the copy.
+        writer = state.entry_node(other.src) if isinstance(other.src, nodes.ExitNode) else other.src
+        if writer in after_source and writer not in before_libnode and writer not in after_libnode:
+            state.add_edge(libnode, None, writer, None, Memlet())
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
     """Replaces implicit copy patterns with ``CopyLibraryNode`` instances: direct
     ``AccessNode -> AccessNode`` edges (View endpoints included), and stage-in/stage-out through
-    chained ``MapEntry``/``MapExit`` (libnode placed inside the map scope)."""
+    chained ``MapEntry``/``MapExit`` (libnode placed inside the map scope).
+
+    No copy is left implicit because another write competes for its region: the lifted copy is ordered against
+    that write by an empty memlet, as copy-edge codegen ordered the implicit one."""
 
     # Other storages (TensorCore_*, FPGA_*, Snitch_*) use their own codegen ``copy_memory`` hook.
     _STANDARD_STORAGES = (CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES
@@ -177,9 +199,6 @@ class InsertExplicitCopies(ppl.Pass):
             if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
                 continue
 
-            if _competing_writer(state, dst_node, edge, dst_name, dst_subset):
-                continue
-
             in_memlet = Memlet(data=src_name, subset=copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
             out_memlet = Memlet(data=dst_name, subset=copy.deepcopy(dst_subset))
@@ -200,6 +219,7 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
             _carry_write_ordering(state, dst_node, libnode)
+            order_against_competing_writes(state, libnode, src_node, dst_node, dst_name, dst_subset)
             count += 1
 
         return count
@@ -263,8 +283,6 @@ class InsertExplicitCopies(ppl.Pass):
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
             outer_subset = outer_memlet.get_dst_subset(edge, state) or outer_memlet.subset
-            if _competing_writer(state, edge.dst, edge, outer.data, outer_subset):
-                return False
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
@@ -278,8 +296,6 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
-        if stage_in and _competing_writer(state, inner_node, edge, inner_node.data, inner_subset):
-            return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
         libnode = CopyLibraryNode(name=label)
@@ -290,15 +306,18 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, outer_side_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
             _carry_write_ordering(state, inner_node, libnode)
+            source, written, written_name, written_subset = map_node, inner_node, inner_node.data, inner_subset
             boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
             boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
+            source, written, written_name, written_subset = inner_node, map_node, outer.data, outer_subset
             boundary_conn = 'OUT_' + edge.dst_conn[len('IN_'):]
             boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
         state.remove_edge(edge)
+        order_against_competing_writes(state, libnode, source, written, written_name, written_subset)
 
         # The scope-boundary edge on this connector may still carry a memlet whose ``.data``
         # names the inner array, relying on memlet_path continuing through the scope entry/exit

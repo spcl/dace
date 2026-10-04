@@ -18,6 +18,7 @@ class MLIRCodeGen(TargetCodeGenerator):
     title = 'MLIR'
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
+        self._frame = frame_codegen
         self._codeobjects = []
         self._cpu_codegen: CPUCodeGen = frame_codegen.dispatcher.get_generic_node_dispatcher()
         frame_codegen.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
