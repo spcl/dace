@@ -1781,6 +1781,29 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                 pass
 
 
+def _is_identity_view(view_desc: data.Data, viewed_desc: data.Data, subset: subsets.Subset) -> bool:
+    """
+    Says whether a view is the container it views: all of it, laid out the same way.
+
+    Removing such a view only renames the data its memlets refer to. Their subsets stay as they are, so every node
+    they reach -- a library node included -- receives exactly what it did before.
+
+    :param view_desc: The descriptor of the view.
+    :param viewed_desc: The descriptor of the container it views.
+    :param subset: The part of the container the view covers.
+    :return: True if the view and the container are interchangeable.
+    """
+    if not isinstance(view_desc, data.Array) or not isinstance(viewed_desc, data.Array):
+        return False
+    if view_desc.dtype != viewed_desc.dtype or len(view_desc.shape) != len(viewed_desc.shape):
+        return False
+    for a, b in zip((*view_desc.shape, *view_desc.strides, *view_desc.offset),
+                    (*viewed_desc.shape, *viewed_desc.strides, *viewed_desc.offset)):
+        if (a == b) != True:
+            return False
+    return subset == subsets.Range.from_array(viewed_desc)
+
+
 class RemoveSliceView(pm.SingleStateTransformation):
     """ Removes views which can be represented by slicing (e.g., A[i, :, j, None]). """
 
@@ -1826,12 +1849,14 @@ class RemoveSliceView(pm.SingleStateTransformation):
         ########################################################
         # Syntactic feasibility: ensure memlets reach managable node types (access nodes, tasklets, nested SDFGs if
         # strides match) rather than library nodes, which may behave in a custom manner based on the memlet shape.
+        # A view that is the whole container leaves the memlets' shapes as they are, and library nodes with them.
         if not permissive:
+            identity = _is_identity_view(desc, viewed.desc(sdfg), subset)
             for e in non_view_edges:
                 for sink in state.memlet_tree(e).leaves():
                     sink_node = sink.dst if is_src else sink.src
                     sink_conn = sink.dst_conn if is_src else sink.src_conn
-                    if isinstance(sink_node, nodes.LibraryNode):
+                    if isinstance(sink_node, nodes.LibraryNode) and not identity:
                         return False
                     if isinstance(sink_node, nodes.NestedSDFG):
                         if sink_conn in sink_node.sdfg.arrays:
