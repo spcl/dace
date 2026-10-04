@@ -928,10 +928,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                              state_id, eid)
                 # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
+                # A path may also start or end at a code node, which has no container to view
+                if (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.View)
+                        and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.View)
+                        and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 if e.dst_conn == 'set':
