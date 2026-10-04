@@ -1,4 +1,4 @@
-# Copyright 2020-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2020-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import copy
 import os

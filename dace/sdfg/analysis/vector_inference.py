@@ -1,3 +1,4 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from enum import Flag
 from networkx import DiGraph
 from dace.memlet import Memlet

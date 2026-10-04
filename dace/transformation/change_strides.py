@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module provides a function to change the stride in a given SDFG """
 from typing import List, Union, Tuple
 import sympy
