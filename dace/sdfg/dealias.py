@@ -1032,6 +1032,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = No
             continue
         # The window's symbols are the parent's. A name this SDFG defines itself -- a map parameter or a loop
         # variable shadowing the parent's map parameter, say -- would capture them once the memlets move in.
+        remove_symbol_aliases(sdfg, {sym: sym for sym in passed_symbols})
         window = Memlet(data=connector, subset=copy.deepcopy(memlet.subset))
         for sym in passed_symbols:
             if sym not in sdfg.symbols:

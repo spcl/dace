@@ -273,6 +273,35 @@ def test_convert_symbolic_strides():
     assert np.allclose(B, expected)
 
 
+def test_convert_window_under_shadowing_map_parameter():
+    """
+    Converts a window written in the parameter of an outer map into a nested SDFG whose own map has a parameter of
+    the same name, which must not capture the window's symbol once the memlets move in.
+    """
+    sdfg = dace.SDFG('convert_shadowed_window')
+    sdfg.add_array('A', [12], dace.float64)
+    sdfg.add_array('B', [12], dace.float64)
+    state = sdfg.add_state()
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [4], dace.float64)
+    inner.add_array('b', [4], dace.float64)
+    inner.add_state().add_mapped_tasklet('inc', {'i': '0:4'}, {'v': Memlet('a[i]')},
+                                         'w = v + 1', {'w': Memlet('b[i]')},
+                                         external_edges=True)
+    me, mx = state.add_map('outer_map', {'i': '0:3'})
+    node = state.add_nested_sdfg(inner, {'a'}, {'b'})
+    state.add_memlet_path(state.add_read('A'), me, node, dst_conn='a', memlet=Memlet('A[4*i:4*i+4]'))
+    state.add_memlet_path(node, mx, state.add_write('B'), src_conn='b', memlet=Memlet('B[4*i:4*i+4]'))
+
+    dealias.convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    A = np.arange(12.0)
+    B = np.zeros(12)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A + 1)
+
+
 def test_convert_rejects_different_read_and_write_windows():
     """
     A connector read and written through different windows of its container cannot be the container, and picking
@@ -302,4 +331,5 @@ if __name__ == '__main__':
     test_inline_rejects_window()
     test_convert_noop_on_conforming()
     test_convert_symbolic_strides()
+    test_convert_window_under_shadowing_map_parameter()
     test_convert_rejects_different_read_and_write_windows()
