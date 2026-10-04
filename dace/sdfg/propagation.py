@@ -1053,7 +1053,7 @@ def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[M
     :return: The memlets to use as border candidates for this edge.
     """
     # We import late to avoid cyclic imports here.
-    from dace.sdfg import utils as sdutil
+    from dace.sdfg import utils as sdutil  # Avoid import loop: dace.sdfg.utils imports this module
 
     if direction == 'in':
         container, view_node, is_binding = edge.src, edge.dst, edge.dst_conn == 'views'

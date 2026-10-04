@@ -8,7 +8,7 @@ from dace import data, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
                              UnstructuredControlFlow)
-from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
+from dace.sdfg import dealias, utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
@@ -646,7 +646,6 @@ def _generate_views_in_scope(
 
 def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
     from dace.transformation import helpers as xfh  # Avoid import loop
-    from dace.sdfg import dealias  # Avoid import loop
 
     # Split edges with assignments and conditions
     xfh.split_interstate_edges(sdfg)

@@ -3,8 +3,10 @@
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
 from dace import data, dtypes, subsets, symbolic, utils
+from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd, utils as sdutil
+from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
@@ -602,10 +604,6 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
     :param symbol_types: The types of those symbols.
     :note: This function operates in-place.
     """
-    # Avoid import loops
-    from dace.frontend.python import astutils
-    from dace.sdfg.memlet_utils import MemletReplacer
-
     move = mover(name, old_desc, new_desc)
 
     # Meta accesses are parsed against the descriptor they were written for, so they go first
@@ -1422,10 +1420,6 @@ def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Dat
     :return: The names of the inner containers whose meta accesses were rewritten.
     :note: This function operates in-place.
     """
-    # Avoid import loops
-    from dace.frontend.python import astutils
-    from dace.sdfg.memlet_utils import MemletReplacer
-
     if not integrated:
         return set()
 
