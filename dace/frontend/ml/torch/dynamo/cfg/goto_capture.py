@@ -64,6 +64,9 @@ _SPECULATION_ERRORS = tuple(t for t in (getattr(exc, 'FakeTensorObservedExceptio
 # Bookkeeping
 # ---------------------------------------------------------------------------------------------------------------------
 
+_UNCONDITIONAL_JUMPS = ('JUMP_FORWARD', 'JUMP_BACKWARD', 'JUMP_ABSOLUTE', 'JUMP_BACKWARD_NO_INTERRUPT')
+_NO_OPS = ('NOP', 'NOT_TAKEN')
+
 
 class CaptureFallback(Exception):
     """Raised internally when a jump cannot be captured; the stock Dynamo handler runs instead."""
@@ -115,6 +118,25 @@ class _CodeInfo:
             self.succ.append([x for x in s if x is not None and x < n])
         self.targets = {self.indexof[inst.target] for inst in self.instructions if inst.target is not None}
         self.loops = self._natural_loops()
+
+    def resolve(self, index: int) -> int:
+        """
+        Returns the instruction at which control actually continues when it reaches ``index``, skipping unconditional
+        jumps and no-ops. Successors are compared after resolution, so that equivalent control flow matches across
+        Python versions: e.g., 3.12/3.13 end a loop body with ``POP_JUMP_IF_FALSE exit; JUMP_BACKWARD body``, where
+        3.10/3.11 jump back conditionally and 3.14 re-evaluates the loop test.
+        """
+        seen = set()
+        while index < len(self.instructions) and index not in seen:
+            seen.add(index)
+            inst = self.instructions[index]
+            if inst.opname in _UNCONDITIONAL_JUMPS:
+                index = self.indexof[inst.target]
+            elif inst.opname in _NO_OPS:
+                index += 1
+            else:
+                break
+        return index
 
     # -- live variables -----------------------------------------------------------------------------------------------
     def livevars(self, index: int) -> Set[str]:
@@ -359,7 +381,7 @@ def capture_jump(tx, inst: bt.Instruction, value, jumps_on_true: bool, state: Ca
         raise CaptureFallback(f'value stack is not empty below the predicate ({len(tx.stack) - 1} entries)')
     if tx.block_stack:
         raise CaptureFallback('jump inside a with/try block')
-    next_j, target_j = j + 1, tx.indexof[inst.target] - prefix
+    next_j, target_j = info.resolve(j + 1), info.resolve(tx.indexof[inst.target] - prefix)
     t_succ, f_succ = (target_j, next_j) if jumps_on_true else (next_j, target_j)
 
     # 1. Back-edge of the loop whose body is being traced: return (predicate, *carried) from the body continuation
@@ -385,7 +407,7 @@ def capture_jump(tx, inst: bt.Instruction, value, jumps_on_true: bool, state: Ca
         if cap.code is info.code and cap.loop is not None and guard[0].header == cap.loop.header:
             guard = None  # a conditional exit (``break``) of the loop being captured, not a new loop
     if guard is not None:
-        _capture_while(tx, inst, value, info, prefix, j, guard, jumps_on_true, state)
+        _capture_while(tx, value, info, prefix, j, guard, t_succ, state)
     else:
         _capture_if(tx, inst, value, info, prefix, j, t_succ, f_succ, state)
 
@@ -417,8 +439,7 @@ def _capture_if(tx, inst, value, info: _CodeInfo, prefix: int, j: int, t_succ: i
     _return_from(tx, result)
 
 
-def _capture_while(tx, inst, value, info: _CodeInfo, prefix: int, j: int, guard, jumps_on_true: bool,
-                   state: CaptureState) -> None:
+def _capture_while(tx, value, info: _CodeInfo, prefix: int, j: int, guard, t_succ: int, state: CaptureState) -> None:
     from torch._dynamo.variables import TupleVariable, UserFunctionVariable
 
     loop, body_j, exit_j = guard
@@ -435,10 +456,7 @@ def _capture_while(tx, inst, value, info: _CodeInfo, prefix: int, j: int, guard,
     tx.pop()
     # The flag means "run (another) iteration": invert the predicate when the loop is entered on the false edge
     # (e.g. ``while True: ...; if t: break`` guarded by its break test)
-    next_j = j + 1
-    enters_on_true = (body_j == (tx.indexof[inst.target] - prefix)) == jumps_on_true if body_j != next_j else \
-        (not jumps_on_true)
-    init_flag = value if enters_on_true else _logical_not(tx, value)
+    init_flag = value if body_j == t_succ else _logical_not(tx, value)
     cap = LoopCapture(info.code, j, body_j, exit_j, carried, loop)
     state.loop_stack.append(cap)
     state.log('while', info.code, j, f'carried={carried} additional={additional}')
@@ -501,9 +519,6 @@ def _make_jump_handler(orig: Callable, jumps_on_true: bool) -> Callable:
     return handler
 
 
-_UNCONDITIONAL_JUMPS = ('JUMP_FORWARD', 'JUMP_BACKWARD', 'JUMP_ABSOLUTE', 'JUMP_BACKWARD_NO_INTERRUPT')
-
-
 def _make_exit_jump_handler(orig: Callable) -> Callable:
     """
     Unconditional jumps: inside a loop-body continuation, a jump to the loop exit (``break``) ends the body with the
@@ -522,8 +537,8 @@ def _make_exit_jump_handler(orig: Callable) -> Callable:
                 info, prefix = state.resolve(self)
             except CaptureFallback:
                 return orig(self, inst)
-            if (cap.code is info.code and self.indexof[inst.target] - prefix == cap.exit_index and not self.stack
-                    and not self.block_stack and _FLAG in self.symbolic_locals):
+            if (cap.code is info.code and info.resolve(self.indexof[inst.target] - prefix) == cap.exit_index
+                    and not self.stack and not self.block_stack and _FLAG in self.symbolic_locals):
                 flag = self.symbolic_locals[_FLAG]
                 # ``flag != flag`` is a False scalar of the flag's dtype/device. (``torch.zeros_like(flag)`` would be
                 # the obvious choice, but the importer's constant-fill lowering emits numpy-2's ``np.False_`` repr into
