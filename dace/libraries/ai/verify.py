@@ -14,7 +14,6 @@ rather than as an error: header search paths generally come from CMake package d
 the probe does not perform.
 """
 
-import logging
 import os
 import shlex
 import shutil
@@ -26,8 +25,6 @@ from typing import Any, List, Optional, Sequence
 from dace.config import Config
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.context import ExpansionContext
-
-logger = logging.getLogger(__name__)
 
 #: Maximum time (in seconds) to wait for the probe compilation.
 _COMPILE_TIMEOUT = 180
@@ -163,9 +160,9 @@ def build_probe_source(spec: TaskletSpec, ctx: ExpansionContext, environments: S
     for conn in ctx.connectors:
         ctype = probe_ctype(conn)
         if ctype is None:
-            logger.info(
-                'Skipping AI expansion verification: the type of connector "%s" is not known, so the probe '
-                'would not check the generated code faithfully.', conn.name)
+            if Config.get_bool('debugprint'):
+                print(f'[ai] Skipping AI expansion verification: the type of connector "{conn.name}" is not known, '
+                      'so the probe would not check the generated code faithfully.')
             return None
         if conn.direction == 'out' and not conn.is_pointer:
             locals_.append(f'    {ctype} {conn.name};')
@@ -313,14 +310,16 @@ def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequen
 
         command = _device_command(source_path, ctx) if device else _host_command(source_path)
         if command is None:
-            logger.info('Skipping AI expansion verification: no suitable compiler was found.')
+            if Config.get_bool('debugprint'):
+                print('[ai] Skipping AI expansion verification: no suitable compiler was found.')
             return ProbeResult(ok=True, inconclusive=True, source=source)
         command = command[:1] + _env_flags(environments) + command[1:]
 
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=_COMPILE_TIMEOUT, check=False)
         except (OSError, subprocess.SubprocessError) as e:
-            logger.info('Skipping AI expansion verification: the probe could not be run (%s).', e)
+            if Config.get_bool('debugprint'):
+                print(f'[ai] Skipping AI expansion verification: the probe could not be run ({e}).')
             return ProbeResult(ok=True, inconclusive=True, source=source)
 
         # The probe lives in a randomly named temporary directory. Replacing that path with a
@@ -333,7 +332,8 @@ def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequen
         if result.returncode == 0:
             return ProbeResult(ok=True, command=stable(' '.join(command)), source=source)
         if _is_inconclusive(result.stderr):
-            logger.info('AI expansion verification was inconclusive (a header could not be located by the probe).')
+            if Config.get_bool('debugprint'):
+                print('[ai] AI expansion verification was inconclusive (a header could not be located by the probe).')
             return ProbeResult(ok=False,
                                inconclusive=True,
                                command=stable(' '.join(command)),

@@ -21,16 +21,14 @@ run* of lines per node, so for a tasklet with a ``code_global`` it describes the
 omits the body entirely -- which is where compile errors most often are.
 """
 
-import logging
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from dace.config import Config
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.sdfg import SDFG
-
-logger = logging.getLogger(__name__)
 
 #: The annotation :class:`~dace.codegen.prettycode.CodeIOStream` leaves on every generated line.
 _ANNOTATION = re.compile(r'////__DACE:(\d+):(\d+):([\d,]+)')
@@ -242,7 +240,8 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> List[str]:
     for name in blamed:
         slot = next((s for s in iterate.sessions(sdfg) if s.name == name), None)
         if slot is None or slot.pinned:
-            logger.info('Not refining tasklet "%s": it is pinned or no longer present.', name)
+            if Config.get_bool('debugprint'):
+                print(f'[ai] Not refining tasklet "{name}": it is pinned or no longer present.')
             continue
         others = [o for o in blamed if o != name]
         iterate.refine(sdfg, slot.tasklet, _message_for(name, found.by_slot[name], others), **kwargs)

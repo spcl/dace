@@ -17,7 +17,6 @@ The central entry point is :func:`collect_context`, which gathers four kinds of 
 """
 
 import inspect
-import logging
 import platform
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,8 +27,6 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -687,12 +684,12 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
     try:
         copied = copy.deepcopy(root)
         infer_types.set_default_schedule_and_storage_types(copied, [None])
-    except Exception:
+    except Exception as e:
         # Inference raises on an ambiguous scope. Building a prompt must never be the thing that
         # fails an expansion, so fall back to the unresolved schedules.
-        logger.debug('Could not infer defaults for "%s"; reporting schedules and storage as declared.',
-                     getattr(sdfg, 'name', '?'),
-                     exc_info=True)
+        if Config.get_bool('debugprint'):
+            print(f'[ai] Could not infer defaults for "{getattr(sdfg, "name", "?")}" ({e}); reporting schedules '
+                  'and storage as declared.')
         return ResolvedDefaults()
 
     resolved = ResolvedDefaults()

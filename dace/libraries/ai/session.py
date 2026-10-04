@@ -26,14 +26,12 @@ Writing is controlled by ``ai.sessions`` and located by ``ai.session_dir``.
 import dataclasses
 import datetime
 import json
-import logging
 import os
 import re
+import warnings
 from typing import Any, Dict, List, Optional
 
 from dace.config import Config
-
-logger = logging.getLogger(__name__)
 
 #: Name of the machine-readable index in every session directory.
 INDEX_NAME = 'session.json'
@@ -162,8 +160,8 @@ class Session:
         try:
             with open(os.path.join(directory, filename), 'w') as fp:
                 fp.write(content)
-        except OSError:
-            logger.warning('Could not write the AI session file %s', filename, exc_info=True)
+        except OSError as e:
+            warnings.warn(f'Could not write the AI session file {filename}: {e}')
 
     def flush(self) -> None:
         """ Rewrites the index and the conversation so an interrupted round still leaves a record. """
@@ -334,8 +332,8 @@ def load(session_id: str) -> Optional[Session]:
     try:
         with open(index_path, 'r') as fp:
             index = json.load(fp)
-    except (OSError, ValueError):
-        logger.warning('Ignoring an unreadable AI session index at %s', index_path, exc_info=True)
+    except (OSError, ValueError) as e:
+        warnings.warn(f'Ignoring an unreadable AI session index at {index_path}: {e}')
         return None
 
     conversation: List[Dict[str, str]] = []
@@ -385,8 +383,8 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) ->
         root = session_dir(create=True)
         directory = os.path.join(root, session_id)
         os.makedirs(directory, exist_ok=True)
-    except OSError:
-        logger.warning('Could not create an AI session directory; continuing without one', exc_info=True)
+    except OSError as e:
+        warnings.warn(f'Could not create an AI session directory; continuing without one: {e}')
         return Session(session_id, None, index, [])
 
     created = Session(session_id, directory, index, [])

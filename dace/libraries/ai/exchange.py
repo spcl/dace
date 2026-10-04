@@ -18,9 +18,9 @@ response saved for one is found by the other.
 
 import hashlib
 import json
-import logging
 import os
 import tempfile
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 from dace.config import Config
@@ -30,8 +30,6 @@ from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import nodes
 from dace.sdfg import SDFG, SDFGState
-
-logger = logging.getLogger(__name__)
 
 #: Appended to the prompt, since a chat interface has no structured-output mode to enforce it.
 JSON_INSTRUCTIONS = """
@@ -228,6 +226,6 @@ def read_prompt_responses(sdfg: SDFG, directory: Optional[str] = None) -> List[A
             missing.append(f'{_describe(node)} ({prompt_path})')
 
     if missing:
-        logger.warning('No saved response for %d node(s), which remain library nodes:\n    %s', len(missing),
-                       '\n    '.join(missing))
+        listing = '\n    '.join(missing)
+        warnings.warn(f'No saved response for {len(missing)} node(s), which remain library nodes:\n    {listing}')
     return [read_prompt_response(node, state, response) for node, state, response in answered]

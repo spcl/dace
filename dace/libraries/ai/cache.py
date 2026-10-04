@@ -21,14 +21,12 @@ import dataclasses
 import datetime
 import hashlib
 import json
-import logging
 import os
+import warnings
 from typing import Dict, List, Optional
 
 from dace.config import Config
 from dace.libraries.ai import backend
-
-logger = logging.getLogger(__name__)
 
 
 def enabled() -> bool:
@@ -106,8 +104,8 @@ def lookup(cache_key: str) -> Optional[backend.TaskletSpec]:
         return backend.spec_from_dict(entry['answer'], raw=entry.get('raw', ''))
     except FileNotFoundError:
         return None
-    except Exception:
-        logger.warning('Ignoring an unreadable AI answer cache entry at %s', _path(cache_key), exc_info=True)
+    except Exception as e:
+        warnings.warn(f'Ignoring an unreadable AI answer cache entry at {_path(cache_key)}: {e}')
         return None
 
 
@@ -139,5 +137,5 @@ def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: List
         cache_dir(create=True)
         with open(_path(cache_key), 'w') as fp:
             json.dump(entry, fp, indent=1)
-    except OSError:
-        logger.warning('Could not write the AI answer cache entry at %s', _path(cache_key), exc_info=True)
+    except OSError as e:
+        warnings.warn(f'Could not write the AI answer cache entry at {_path(cache_key)}: {e}')

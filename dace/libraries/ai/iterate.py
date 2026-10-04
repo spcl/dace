@@ -20,7 +20,7 @@ working a moment ago is put back exactly as it was.
 
 import hashlib
 import json
-import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
@@ -29,8 +29,6 @@ from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
-
-logger = logging.getLogger(__name__)
 
 #: What a caller may pass to identify a slot: its name, an ``AITasklet``, or ``None`` for "the only
 #: one". A guid also works, since it is matched against the name.
@@ -118,7 +116,7 @@ def read(tasklet: nodes.Tasklet) -> Optional[Dict[str, Any]]:
     try:
         return json.loads(blob)
     except ValueError:
-        logger.warning('Ignoring unreadable provenance on tasklet "%s"', tasklet.label)
+        warnings.warn(f'Ignoring unreadable provenance on tasklet "{tasklet.label}"')
         return None
 
 

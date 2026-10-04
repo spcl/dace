@@ -18,7 +18,7 @@ imported inside :meth:`ExpandAI.expansion`.
 """
 
 import functools
-import logging
+import warnings
 from typing import Any, Dict, List, Optional, Type
 
 import dace.library
@@ -26,8 +26,6 @@ from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
-
-logger = logging.getLogger(__name__)
 
 
 class ExpandAI(ExpandTransformation):
@@ -179,9 +177,7 @@ class ExpandAI(ExpandTransformation):
                 if attempt == attempts - 1:
                     raise AIExpansionError(f'The generated code for {described} still does not compile after '
                                            f'{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}')
-                logger.info('AI expansion of %s failed to compile; asking for a repair (attempt %d/%d).', described,
-                            attempt + 2, attempts)
-                _status(f'{described}: asking for a repair')
+                _status(f'{described}: asking for a repair (attempt {attempt + 2}/{attempts})')
                 prompt = prompts.build_repair_prompt(result.stderr, result.command)
                 messages.append({'role': 'assistant', 'content': _echo(spec)})
                 messages.append({'role': 'user', 'content': prompt})
@@ -193,7 +189,7 @@ class ExpandAI(ExpandTransformation):
             # call, and the session is the only copy of what it said.
             if isinstance(e, AIExpansionError):
                 raise AIExpansionError(f'{e}\n\nThe full prompts and answers are in {record.path}') from e
-            logger.warning('AI expansion of %s failed; the prompts and answers are in %s', described, record.path)
+            warnings.warn(f'AI expansion of {described} failed; the prompts and answers are in {record.path}')
             raise
 
         cls.environments = list(environments)
@@ -262,7 +258,7 @@ class ExpandAI(ExpandTransformation):
 
             iterate.stamp(tasklet, session=record.id, round_number=record.number, node_json=node.to_json(state))
         if spec.notes:
-            logger.info('AI expansion of %s "%s": %s', type(node).__name__, node.name, spec.notes)
+            _status(f'{type(node).__name__} "{node.name}": {spec.notes}')
         return tasklet
 
 

@@ -13,17 +13,15 @@ edited.
 """
 
 import importlib.util
-import logging
 import os
 import re
 import sys
+import warnings
 from typing import List, Optional
 
 from dace.config import Config
 from dace.libraries.ai.backend import EnvironmentSpec
 from dace.libraries.ai.exceptions import AIExpansionError
-
-logger = logging.getLogger(__name__)
 
 #: Prefix of every generated environment module, used to recognize them on reload.
 MODULE_PREFIX = 'dace_ai_env_'
@@ -160,8 +158,9 @@ def materialize(spec: EnvironmentSpec) -> type:
     env = getattr(module, classname, None)
     if env is None:
         raise AIExpansionError(f'The generated environment module {path} does not define {classname}.')
-    logger.info('AI expansion registered environment %s (libraries: %s, headers: %s) from %s', classname,
-                ', '.join(spec.cmake_libraries) or 'none', ', '.join(spec.headers) or 'none', path)
+    if Config.get_bool('debugprint'):
+        print(f'[ai] AI expansion registered environment {classname} (libraries: '
+              f'{", ".join(spec.cmake_libraries) or "none"}, headers: {", ".join(spec.headers) or "none"}) from {path}')
     return env
 
 
@@ -258,8 +257,8 @@ def load_generated_environments(directory: Optional[str] = None) -> List[type]:
         path = os.path.join(directory, entry)
         try:
             module = _import_module(path)
-        except Exception:  # A broken or hand-edited module must not break importing DaCe
-            logger.warning('Could not load the generated DaCe environment at %s', path, exc_info=True)
+        except Exception as e:  # A broken or hand-edited module must not break importing DaCe
+            warnings.warn(f'Could not load the generated DaCe environment at {path}: {e}')
             continue
         loaded.extend(value for value in vars(module).values() if getattr(value, '_dace_library_environment', False))
     return loaded
