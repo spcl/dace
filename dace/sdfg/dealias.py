@@ -102,6 +102,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
         if edge.data.data in parent_sdfg.arrays:
             parent_names.add(edge.data.data)
     inner_replacements: Dict[str, str] = {}
+    taken_names: Optional[Set[str]] = None
     for name, desc in sdfg.arrays.items():
         if name in parent_names:
             replace = False
@@ -115,7 +116,12 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                         replace = True
                         break
             if replace:
-                new_name = sdfg._find_new_name(name)
+                # Scope parameters, symbols that control flow defines and names used further down share the
+                # namespace of the containers, so the new name has to avoid all of them
+                if taken_names is None:
+                    taken_names = names_in_subtree(sdfg) | parent_names
+                new_name = utils.find_new_name(name, taken_names)
+                taken_names.add(new_name)
                 inner_replacements[name] = new_name
 
     if inner_replacements:

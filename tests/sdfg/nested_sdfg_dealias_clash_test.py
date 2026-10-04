@@ -569,6 +569,31 @@ def test_symbol_mapped_to_a_parent_container_is_kept():
     assert str(node.symbol_mapping['s']) == 'X'
 
 
+def test_renamed_inner_container_avoids_scope_names():
+    """
+    An inner transient named like the parent container connected to the node is renamed, and the new name has to
+    avoid the names that scopes inside define, not only the containers, symbols and constants.
+    """
+    parent = SDFG('rename_avoids_map_param')
+    parent.add_array('A', [10], dace.float64)
+    state = parent.add_state()
+    inner = SDFG('inner')
+    inner.add_array('B', [10], dace.float64)
+    inner.add_transient('A', [10], dace.float64)
+    inner.add_state().add_mapped_tasklet('copy', {'A_0': '0:10'}, {'v': dace.Memlet('B[A_0]')},
+                                         'w = v', {'w': dace.Memlet('A[A_0]')},
+                                         external_edges=True)
+    node = state.add_nested_sdfg(inner, {'B'}, set())
+    state.add_edge(state.add_read('A'), None, node, 'B', dace.Memlet('A[0:10]'))
+
+    dealias.dealias_sdfg(inner)
+
+    transients = [name for name, desc in inner.arrays.items() if desc.transient]
+    assert len(transients) == 1
+    assert transients[0] not in _all_map_params(inner) | {'A'}
+    assert not inner.arrays['A'].transient
+
+
 if __name__ == '__main__':
     test_no_clash_identity_is_noop()
     test_symbol_clash_with_map_param()
@@ -591,3 +616,4 @@ if __name__ == '__main__':
     test_adopted_connector_follows_a_rename()
     test_symbol_mapped_to_a_parent_symbol_is_folded()
     test_symbol_mapped_to_a_parent_container_is_kept()
+    test_renamed_inner_container_avoids_scope_names()
