@@ -737,7 +737,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if id(subset) in references:
                 raise InvalidSDFGEdgeError(
                     f'Duplicate subset detected in memlet "{e.data}". Please copy objects '
-                    'rather than using multiple references to the same one', sdfg, state_id, eid)
+                    'rather than using multiple references to the same one', state.parent_graph, state_id, eid)
             references.add(id(subset))
 
         # Edge validation
