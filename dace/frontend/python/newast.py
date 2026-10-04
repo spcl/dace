@@ -1323,7 +1323,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.indirections = dict()
         #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
         #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
-        #: value shares one (elementwise operations between those arrays compare their extents).
+        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
 
     @classmethod
@@ -2626,6 +2626,7 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
             incr = {indices[0]: '%s = %s + %s' % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
+            self.drop_shape_versions_written_in(node)
             loop_region = self._add_loop_region(loop_cond_expr,
                                                 label=f'for_{node.lineno}',
                                                 loop_var=indices[0],
@@ -2751,6 +2752,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.add_symbol(astr, dtype)
 
     def visit_While(self, node: ast.While):
+        self.drop_shape_versions_written_in(node)
         # Get loop condition expression and create the necessary states for it.
         loop_cond, _, test_region = self._visit_test(node.test)
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
@@ -5539,12 +5541,18 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
-    def dominated_by_region(self, defining_region: ControlFlowRegion) -> bool:
-        """Whether an assignment made in ``defining_region`` still reaches the current region: it is that region or a
-        branch nested in it, with no loop in between (a later iteration may have rebound it)."""
+    def drop_shape_versions_written_in(self, loop: Union[ast.For, ast.While]):
+        """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
+        does not see: a shape in the body ahead of the write must read the scalar again."""
+        for name in {n.id for n in ast.walk(loop) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}:
+            self.shape_promotions.pop(self.variables.get(name, name), None)
+
+    def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether the current region is ``defining_region`` or nested in it within the same SDFG. Loops in between do
+        not matter for a shape symbol: a write to its scalar drops it, and so does entering a loop that writes it."""
         region = self.cfg_target
         while region is not defining_region:
-            if region is None or isinstance(region, (LoopRegion, SDFG)):
+            if region is None or isinstance(region, SDFG):
                 return False
             region = region.parent_graph
         return True
@@ -5561,30 +5569,40 @@ class ProgramVisitor(ExtNodeVisitor):
         :return: The symbol carrying the scalar's value.
         """
         desc = self.sdfg.arrays[scalar]
-        if key is None and scalar in self.shape_promotions:
+        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
+        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
+        # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
+        # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
+        version = key in (None, scalar) or self.variables.get(key) == scalar
+        if version and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
-            if self.dominated_by_region(region):
+            if self.nested_in_region(region):
+                if key is None:
+                    self.globals[str(version_sym)] = version_sym
                 return version_sym
         base = f'__sym_{scalar}'
-        sym = self.indirections.get(key) if key is not None else None
+        sym = None if version else self.indirections.get(key)
         if sym is None:
             # A minted shape symbol never takes the bare name the cached subscript promotion reuses
-            name = base if key is not None else find_new_name(
-                base,
-                self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
-                | {base})
+            name = base if not version else find_new_name(base,
+                                                          self.sdfg.symbols.keys() | self.sdfg.arrays.keys()
+                                                          | {base})
             if name not in self.sdfg.symbols:
                 self.sdfg.add_symbol(name, desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
-            if key is not None:
+            if not version:
                 self.indirections[key] = sym
-            else:
+            elif key is None:
                 # Shape symbols must resolve inside nested scopes, which look up free symbols in ``globals``.
                 # Subscript promotions stay out: they shadow names there.
                 self.globals[name] = sym
         state = self._add_state(f'promote_{scalar}_to_{sym}')
-        if key is None:
-            self.shape_promotions[scalar] = (sym, self.cfg_target)
+        if version:
+            # A call region runs once, in sequence, so its symbol holds for the rest of the caller's region.
+            region = self.cfg_target
+            while isinstance(region, FunctionCallRegion):
+                region = region.parent_graph
+            self.shape_promotions[scalar] = (sym, region)
         edge = state.parent_graph.in_edges(state)[0]
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
