@@ -1633,10 +1633,11 @@ def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
 @pytest.mark.parametrize('in_map', [False, True])
 def test_inline_shared_inout_connector_different_offsets(in_map: bool):
     """
-    Tests inlining a shared input/output connector whose input and output bind different parts of the container.
+    Tests that a shared input/output connector whose input and output bind different parts of the container is
+    rejected when integrated: one view cannot stand for both windows, and picking one would move the other's accesses.
     """
-    sdfg, nested = _make_shared_inout_sdfg('write_then_read', in_map, 'offset_mismatch')
-    _check_shared_inout_inlining(sdfg, nested)
+    with pytest.raises(ValueError, match='read through .* and written through'):
+        _make_shared_inout_sdfg('write_then_read', in_map, 'offset_mismatch')
 
 
 def test_inline_shared_inout_connector_different_ranges():

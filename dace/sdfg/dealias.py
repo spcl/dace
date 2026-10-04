@@ -1133,6 +1133,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     :param sdfg: The SDFG to operate on.
     :param symbols: A resolver for the symbols defined in the parent, shared by callers that integrate many nested
                     SDFGs; one is made if not given.
+    :raises ValueError: If a connector is read and written through different windows of its container.
     :note: This function operates in-place.
     """
     if sdfg.parent is None:
@@ -1212,6 +1213,14 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                         # well, or they are left describing something the contract says they are not.
                         rebase_descendants(sdfg, connector, old_desc, sdfg.arrays[connector])
                         continue
+                    if connector in to_add_and_view:
+                        # One view stands for the connector, reads and writes alike. Two different windows
+                        # cannot both be it, and picking one would silently move the other's accesses.
+                        _, _, other = to_add_and_view[connector]
+                        if other.data != edge.data.data or other.subset != edge.data.subset:
+                            raise ValueError(f'Connector "{connector}" of nested SDFG "{sdfg.label}" describes a '
+                                             f'window of its container, but is read through {other} and written '
+                                             f'through {edge.data}. Use one window, or separate connectors.')
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
     parent_names: Set[str] = set()  # The names of the parent containers being integrated
@@ -1428,6 +1437,7 @@ def convert_legacy_nested_sdfgs(sdfg: SDFG,
     :param sdfg: The SDFG at the root of the tree to convert.
     :param symbols: A resolver for the symbols defined in the tree, shared by the recursion; one is made if not given.
     :return: The ``(nested SDFG node, connector)`` pairs that did not follow the contract.
+    :raises ValueError: If a windowed connector is read and written through different windows of its container.
     :note: This function operates in-place.
     """
     if symbols is None:

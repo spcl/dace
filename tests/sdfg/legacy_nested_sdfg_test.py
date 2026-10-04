@@ -9,6 +9,7 @@ inside address it as the parent does -- including in the nested SDFGs further do
 same container. Inlining one without converting it first has to fail rather than lose the window.
 """
 import numpy as np
+import pytest
 
 import dace
 from dace import nodes
@@ -272,6 +273,27 @@ def test_convert_symbolic_strides():
     assert np.allclose(B, expected)
 
 
+def test_convert_rejects_different_read_and_write_windows():
+    """
+    A connector read and written through different windows of its container cannot be the container, and picking
+    one of the windows would silently move the accesses through the other.
+    """
+    sdfg = dace.SDFG('convert_inout_windows')
+    sdfg.add_array('A', [8], dace.float64)
+    state = sdfg.add_state()
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [4], dace.float64)
+    inner.add_state().add_mapped_tasklet('body', {'i': '0:4'}, {'v': Memlet('a[i]')},
+                                         'w = 10 * v', {'w': Memlet('a[i]')},
+                                         external_edges=True)
+    node = state.add_nested_sdfg(inner, {'a'}, {'a'})
+    state.add_edge(state.add_read('A'), None, node, 'a', Memlet('A[0:4]'))
+    state.add_edge(node, 'a', state.add_write('A'), None, Memlet('A[1:5]'))
+
+    with pytest.raises(ValueError, match=r'read through A\[0:4\] and written through A\[1:5\]'):
+        dealias.convert_legacy_nested_sdfgs(sdfg)
+
+
 if __name__ == '__main__':
     test_inline_windowed_connector()
     test_inline_windowed_connector_simplify()
@@ -280,3 +302,4 @@ if __name__ == '__main__':
     test_inline_rejects_window()
     test_convert_noop_on_conforming()
     test_convert_symbolic_strides()
+    test_convert_rejects_different_read_and_write_windows()
