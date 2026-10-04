@@ -1,10 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for simultaneous symbol replacement: ``symbolic.symbol_replacements`` and ``symbolic.safe_replace``. """
+""" Tests for simultaneous symbol replacement: ``symbolic.symbol_replacements``, ``symbolic.replace_symbols`` and
+``symbolic.safe_replace``. """
 from typing import Dict, List
 
 import pytest
 import sympy
 
+import dace
 from dace import symbolic
 
 A, B, C = (symbolic.symbol(name) for name in 'ABC')
@@ -25,14 +27,24 @@ CASES = [
 @pytest.mark.parametrize('mapping, expr, expected', CASES)
 def test_symbol_replacements(mapping: Dict, expr: sympy.Basic, expected: sympy.Basic):
     replacements = symbolic.symbol_replacements(mapping)
-    assert sympy.simplify(expr.xreplace(replacements) - expected) == 0
+    assert sympy.simplify(symbolic.replace_symbols(expr, replacements) - expected) == 0
 
 
 def test_symbol_replacements_identity():
     assert symbolic.symbol_replacements(None) is None
     assert symbolic.symbol_replacements({}) is None
     assert symbolic.symbol_replacements({'A': 'A', B: B}) is None
-    assert symbolic.symbol_replacements({'A': 'A', 'B': 'C'}) == {B: C}
+    assert symbolic.symbol_replacements({'A': 'A', 'B': 'C'}) == {'B': C}
+
+
+def test_replace_symbols_of_any_type():
+    """ A mapping names its symbols, which are replaced whatever type they have. """
+    N = symbolic.symbol('N', dtype=dace.int64)
+    M = symbolic.symbol('M', dtype=dace.int32)
+    replacements = symbolic.symbol_replacements({'N': 'M', 'M': 8})
+    assert symbolic.replace_symbols(N * M + 1, replacements) == 8 * symbolic.pystr_to_symbolic('M') + 1
+    assert symbolic.replace_symbols(5, replacements) == 5
+    assert symbolic.replace_symbols(N, None) is N
 
 
 @pytest.mark.parametrize('value_as_string', [False, True])
@@ -53,6 +65,7 @@ if __name__ == '__main__':
     for case in CASES:
         test_symbol_replacements(*case)
     test_symbol_replacements_identity()
+    test_replace_symbols_of_any_type()
     for case in CASES:
         test_safe_replace(*case, False)
         test_safe_replace(*case, True)

@@ -2426,11 +2426,14 @@ _PYSTR2SYM_locals.update(_sympy_clash)
 
 
 def symbol_replacements(
-        symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]]) -> Optional[Dict[sympy.Basic, sympy.Basic]]:
+        symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]]) -> Optional[Dict[str, sympy.Basic]]:
     """
-    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that replaces all
-    of its symbols simultaneously through ``xreplace``. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols
-    rather than replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that
+    ``replace_symbols`` replaces all at once. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols rather than
+    replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+
+    The dictionary is keyed by symbol name: a mapping names its symbols, which have a type of their own that is part
+    of their identity (e.g., ``symbol('N')`` is not ``symbol('N', dtype=dace.int64)``).
 
     :param symbol_mapping: A mapping from symbol names or symbols to expressions, or None.
     :return: The replacement dictionary, or None if the mapping replaces nothing.
@@ -2439,16 +2442,31 @@ def symbol_replacements(
         return None
     result = {}
     for key, value in symbol_mapping.items():
+        key = str(key)
         value = value if isinstance(value, sympy.Basic) else pystr_to_symbolic(value)
-        if isinstance(key, str):
-            # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
-            if isinstance(value, sympy.Symbol) and value.name == key:
-                continue
-            key = pystr_to_symbolic(key)
-        elif key == value:
+        # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
+        if isinstance(value, sympy.Symbol) and value.name == key:
             continue
         result[key] = value
     return result or None
+
+
+def replace_symbols(expr: Any, replacements: Optional[Dict[str, sympy.Basic]]) -> Any:
+    """
+    Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
+    whatever their types.
+
+    :param expr: The expression, or a non-symbolic value, which is returned as is.
+    :param replacements: Expressions to replace the symbols with, by symbol name, or None.
+    :return: The expression with the symbols replaced.
+    """
+    if not replacements or not isinstance(expr, sympy.Basic):
+        return expr
+    found = {
+        s: replacements[s.name]
+        for s in expr.free_symbols if isinstance(s, sympy.Symbol) and s.name in replacements
+    }
+    return expr.xreplace(found) if found else expr
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:

@@ -31,11 +31,9 @@ from dace.utils import prod
 SymbolMapping = Dict[Union[str, sp.Basic], Any]
 
 
-def _restate(expr: Any, replacements: Optional[Dict[sp.Basic, sp.Basic]]) -> Any:
+def _restate(expr: Any, replacements: Optional[Dict[str, sp.Basic]]) -> Any:
     """ Replaces symbols in a (possibly non-symbolic) descriptor property value, for ``is_equivalent``. """
-    if replacements is None or not isinstance(expr, sp.Basic):
-        return expr
-    return expr.xreplace(replacements)
+    return symbolic.replace_symbols(expr, replacements)
 
 
 # Backward compatibility alias

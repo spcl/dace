@@ -36,10 +36,9 @@ class DistributedDescriptor(Data):
             if value is None:
                 continue
             if isinstance(prop, ShapeProperty):
-                setattr(restated, prop.attr_name,
-                        [v.xreplace(replacements) if isinstance(v, symbolic.sympy.Basic) else v for v in value])
+                setattr(restated, prop.attr_name, [symbolic.replace_symbols(v, replacements) for v in value])
             elif isinstance(prop, SymbolicProperty) and isinstance(value, symbolic.sympy.Basic):
-                setattr(restated, prop.attr_name, value.xreplace(replacements))
+                setattr(restated, prop.attr_name, symbolic.replace_symbols(value, replacements))
         return restated == other
 
     def as_arg(self, with_types=True, for_call=False, name=None):

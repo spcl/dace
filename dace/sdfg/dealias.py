@@ -556,8 +556,7 @@ def _plain_window(memlet: Memlet, outer: data.Data, inner: data.Data, parent_nod
     # The connector's strides are written in the nested SDFG's symbols, all replaced at once (e.g., ``{N: M, M: N}``)
     strides = list(inner.strides)
     replacements = symbolic.symbol_replacements(parent_node.symbol_mapping)
-    if replacements:
-        strides = [s.xreplace(replacements) if symbolic.issymbolic(s) else s for s in strides]
+    strides = [symbolic.replace_symbols(s, replacements) for s in strides]
     return all((a == b) == True for a, b in zip(strides, expected))
 
 
