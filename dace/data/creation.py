@@ -9,14 +9,9 @@ import ctypes
 
 from numbers import Number
 from typing import Any, Dict, Optional, Tuple
-from typing_extensions import TypeAlias
 
 import numpy as np
-
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike: TypeAlias = Any
+from numpy.typing import ArrayLike
 
 from dace import dtypes, symbolic
 from dace.data.core import Array, Data, Scalar

@@ -17,11 +17,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import numpy as np
 import sympy as sp
 
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
-
 from dace import dtypes, serialize, symbolic
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
