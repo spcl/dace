@@ -2670,9 +2670,10 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
         # Otherwise, symbolic replacement
         symbolic_repl[str(k)] = v
 
-    # Two-step replacement is only needed when keys appear in the values (e.g., {M: N, N: M})
+    # Two-step replacement is only needed when replaced keys (including ones mapped to constants) appear in the
+    # symbolic values (e.g., {M: N, N: M} or {M: N, N: 5}), as the callback may replace sequentially
     if symbolic_repl:
-        keys = set(symbolic_repl.keys())
+        keys = set(symbolic_repl.keys()) | {str(k) for k in repl.keys()}
         overlap = False
         for v in symbolic_repl.values():
             try:
