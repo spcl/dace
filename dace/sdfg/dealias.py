@@ -183,7 +183,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             new_syms = parent_arr.used_symbols(all_symbols=True) - previous_syms
             for sym in new_syms:
                 if str(sym) not in sdfg.symbols:
-                    symtype = defined_symbols.get(str(sym), parent_sdfg.symbols.get(str(sym), None))
+                    symtype = defined_symbols.get(str(sym))
                     sdfg.add_symbol(str(sym), symtype or dtypes.typeclass(int))
                     parent_node.symbol_mapping[str(sym)] = symbolic.pystr_to_symbolic(str(sym))
 
