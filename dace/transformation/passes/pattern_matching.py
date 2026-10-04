@@ -109,11 +109,10 @@ class PatternMatchAndApply(ppl.Pass):
                                   'for more information.')
                     continue
 
-            # Find only the first match
-            try:
-                match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
-            except StopIteration:
+            # Find only the first match. No metadata: the cached one covers all transformations and would
+            #  override `[xform]`.
+            match = next(match_patterns(sdfg, [xform], permissive=self.permissive, states=self.states), None)
+            if match is None:
                 continue
 
             tcfg = sdfg.cfg_list[match.cfg_id]
@@ -128,15 +127,17 @@ class PatternMatchAndApply(ppl.Pass):
             if self.validate_all:
                 sdfg.validate()
 
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
+
         if self.validate:
             sdfg.validate()
 
-        if (len(applied_transformations) > 0
-                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
+        if self.print_report or (self.print_report is None and Config.get_bool('debugprint')):
             print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
 
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
-            return None
         return applied_transformations
 
 
@@ -152,7 +153,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     CATEGORY: str = 'Helper'
 
     order_by_transformation = properties.Property(dtype=bool,
-                                                  default=True,
+                                                  default=False,
                                                   desc='Whether or not to order by transformation.')
 
     def __init__(self,
@@ -163,7 +164,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                  states: Optional[List[SDFGState]] = None,
                  print_report: Optional[bool] = None,
                  progress: Optional[bool] = None,
-                 order_by_transformation: bool = True) -> None:
+                 order_by_transformation: bool = False) -> None:
         super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
         self.order_by_transformation = order_by_transformation
 
@@ -231,15 +232,21 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     applied = True
                     while applied:
                         applied = False
-                        for match in match_patterns(sdfg,
-                                                    permissive=self.permissive,
-                                                    patterns=[xform],
-                                                    states=self.states,
-                                                    metadata=self._metadata):
-                            self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                        matched_pattern = next(
+                            # We pass 'metadata=None' here to ensure that the pattern matching does not rely on
+                            #  the cached order of transformations.
+                            match_patterns(sdfg,
+                                           permissive=self.permissive,
+                                           patterns=[xform],
+                                           states=self.states,
+                                           metadata=None),
+                            None)
+                        if matched_pattern is not None:
+                            self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results,
+                                                     applied_transformations)
+                            match = matched_pattern
                             applied = True
                             applied_anything = True
-                            break
 
                 if apply_once:
                     break
@@ -247,27 +254,32 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             applied = True
             while applied:
                 applied = False
-                for match in match_patterns(sdfg,
-                                            permissive=self.permissive,
-                                            patterns=xforms,
-                                            states=self.states,
-                                            metadata=self._metadata):
-                    self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                matched_pattern = next(
+                    match_patterns(sdfg,
+                                   permissive=self.permissive,
+                                   patterns=xforms,
+                                   states=self.states,
+                                   metadata=self._metadata), None)
+                if matched_pattern is not None:
+                    self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                    match = matched_pattern
                     applied = True
-                    break
+
+        # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
+        # pass assumes its input was already valid.
+        if len(applied_transformations) == 0:
+            return None
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied and match is not None:
-                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
-                                           match.state_id) from err
-                else:
-                    raise err
-
-        if len(applied_transformations) == 0:
-            return None
+                # `match` is the last applied transformation. `print_match()` needs the control flow region
+                #  it belongs to, not this pass.
+                assert match is not None
+                tcfg = sdfg.cfg_list[match.cfg_id]
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.", sdfg,
+                                       match.state_id) from err
 
         return applied_transformations
 
@@ -381,10 +393,9 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
     Helper function that tries to instantiate a pattern match into a
     transformation object.
     """
-    subgraph = {
-        nxpattern.nodes[j]['node']: graph.node_id(collapsed_graph.nodes[i]['node'])
-        for i, j in subgraph.items()
-    }
+    # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
+    # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
+    subgraph = {nxpattern.nodes[j]['node']: i for i, j in subgraph.items()}
 
     try:
         if isinstance(xform, xf.PatternTransformation):
@@ -464,6 +475,8 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
                 matcher = _node_matcher
             elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
                 matcher = _edge_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 0:
+                matcher = _unconnected_pair_matcher
             else:
                 matcher = _subgraph_isomorphism_matcher
 
@@ -477,6 +490,11 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
 
 def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
     """ Match based on the VF2 algorithm for general SI. """
+    # A subgraph isomorphism maps pattern nodes (and hence edges) injectively, so a graph with fewer nodes or edges
+    # than the pattern cannot match. Checking this first avoids setting up the matcher for, e.g., small regions.
+    if (digraph.number_of_nodes() < nxpattern.number_of_nodes()
+            or digraph.number_of_edges() < nxpattern.number_of_edges()):
+        return
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
 
@@ -489,6 +507,31 @@ def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
     for nid in digraph:
         if node_pred(digraph.nodes[nid], pnode):
             yield {nid: pnid}
+
+
+def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match two pattern nodes that are not connected by an edge.
+
+        Yields the same matches in the same order as ``_subgraph_isomorphism_matcher``, whose
+        subgraph isomorphisms are induced: ordered pairs of distinct nodes that satisfy the node
+        predicate, are not adjacent in either direction and have no self-edge. VF2 runs its
+        feasibility test on every graph node for the second pattern node, once per candidate for
+        the first, which dominates the matching time on large states.
+    """
+    first, second = nxpattern
+    first_pattern_node = nxpattern.nodes[first]
+    second_pattern_node = nxpattern.nodes[second]
+
+    def candidates(pattern_node):
+        return [
+            nid for nid in digraph if node_pred(digraph.nodes[nid], pattern_node) and not digraph.has_edge(nid, nid)
+        ]
+
+    second_candidates = candidates(second_pattern_node)
+    for u in candidates(first_pattern_node):
+        for v in second_candidates:
+            if u is not v and not digraph.has_edge(u, v) and not digraph.has_edge(v, u):
+                yield {u: first, v: second}
 
 
 def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):

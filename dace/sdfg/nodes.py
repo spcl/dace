@@ -3,6 +3,8 @@
     dataflow multigraph representation. """
 
 import ast
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -19,7 +21,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_expr_type
+from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
 
@@ -30,6 +32,50 @@ import warnings
 AI_IMPLEMENTATION_NAME = 'ai'
 
 # -----------------------------------------------------------------------------
+
+
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict['dace.SDFG', Set[str]]]] = contextvars.ContextVar(
+    'nested_used_symbols_memo', default=None)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
 
 
 @make_properties
@@ -199,11 +245,17 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(f'Tried to remove `{connector_name}` from the in-connectors of node {str(self)}',
+                          stacklevel=1)
+            return False
 
-        if connector_name in self.in_connectors:
-            connectors = self.in_connectors
-            del connectors[connector_name]
-            self.in_connectors = connectors
+        if connector_name not in self.in_connectors:
+            return False
+
+        connectors = self.in_connectors
+        del connectors[connector_name]
+        self.in_connectors = connectors
         return True
 
     def remove_out_connector(self, connector_name: str):
@@ -212,11 +264,17 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(f'Tried to remove `{connector_name}` from the out-connectors of node {str(self)}',
+                          stacklevel=1)
+            return False
 
-        if connector_name in self.out_connectors:
-            connectors = self.out_connectors
-            del connectors[connector_name]
-            self.out_connectors = connectors
+        if connector_name not in self.out_connectors:
+            return False
+
+        connectors = self.out_connectors
+        del connectors[connector_name]
+        self.out_connectors = connectors
         return True
 
     def _next_connector_int(self) -> int:
@@ -265,6 +323,11 @@ class Node(object):
         """ Returns a mapping between symbols defined by this node (e.g., for
             scope entries) to their type. """
         return {}
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """ Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+            without inferring their types. """
+        return set(self.new_symbols(sdfg, state, {}).keys())
 
     def infer_connector_types(self, sdfg, state):
         """
@@ -675,7 +738,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.
@@ -871,11 +940,15 @@ class MapEntry(EntryNode):
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         # Add map params
-        known = {**symbols, **result}
+        known = {**symbols, **_constant_types(sdfg), **result}
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], known), infer_expr_type(rng[1], known))
+            result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
 
         return result
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
@@ -891,7 +964,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -1055,6 +1128,13 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
     def __init__(self,
                  label,
                  params,
@@ -1182,7 +1262,7 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        result = set(self._consume.num_pes.free_symbols)
+        result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
         return result - dyn_inputs
@@ -1190,7 +1270,11 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes,
+                                                                     symbols={
+                                                                         **symbols,
+                                                                         **_constant_types(sdfg)
+                                                                     })
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))

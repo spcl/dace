@@ -12,6 +12,34 @@ from transformers.models.bert.modeling_bert import BertLayer
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
+# DaCe and PyTorch round a float32 matmul differently, so a ReLU input closer to zero than the rounding noise (~1e-6)
+# gets a different gradient mask in each and the weight gradients of that unit disagree by far more than the test
+# tolerance. Inputs are drawn so that no ReLU input is that close to the kink.
+RELU_KINK_MARGIN = 1e-4
+
+
+def min_relu_input_magnitude(model: torch.nn.Module, x: torch.Tensor) -> float:
+    """Smallest absolute value that any ``nn.ReLU`` of ``model`` receives on input ``x``."""
+    magnitudes = []
+    hooks = [
+        module.register_forward_pre_hook(lambda _, args: magnitudes.append(args[0].abs().min().item()))
+        for module in model.modules() if isinstance(module, nn.ReLU)
+    ]
+    try:
+        with torch.no_grad():
+            model(x)
+    finally:
+        for hook in hooks:
+            hook.remove()
+    return min(magnitudes)
+
+
+def randn_away_from_relu_kink(model: torch.nn.Module, *shape: int) -> torch.Tensor:
+    x = torch.randn(*shape)
+    while min_relu_input_magnitude(model, x) < RELU_KINK_MARGIN:
+        x = torch.randn(*shape)
+    return x
+
 
 def training_step(
     dace_model: torch.nn.Module,
@@ -57,9 +85,44 @@ def training_step(
         torch_tensors_close(name, pt_param.detach(), dace_param.detach())
 
 
+def identity_then_relu(*biases: float) -> torch.nn.Module:
+    layers = []
+    for bias in biases:
+        layer = nn.Linear(1, 1)
+        with torch.no_grad():
+            layer.weight.fill_(1.0)
+            layer.bias.fill_(bias)
+        layers += [layer, nn.ReLU()]
+    return nn.Sequential(*layers)
+
+
+@pytest.mark.torch
+@pytest.mark.parametrize("values, expected", [([0.5, -3e-7, 2.0], 3e-7), ([0.5, -2.0], 0.5)])
+def test_the_relu_input_closest_to_zero_is_reported(values, expected):
+    x = torch.tensor(values).reshape(-1, 1)
+    assert min_relu_input_magnitude(identity_then_relu(0.0), x) == pytest.approx(expected, rel=1e-6)
+
+
+@pytest.mark.torch
+def test_every_relu_of_the_model_is_checked():
+    """Only the second ReLU sees an input at the kink: ``relu(1.0) - 1.0 == 0``."""
+    x = torch.tensor([[1.0]])
+    assert min_relu_input_magnitude(identity_then_relu(0.0, -1.0), x) == 0.0
+
+
+@pytest.mark.torch
+def test_a_batch_with_a_relu_input_at_the_kink_is_redrawn(monkeypatch):
+    batches = iter([torch.tensor([[3e-7], [0.5]]), torch.tensor([[0.5], [-2.0]])])
+    monkeypatch.setattr(torch, "randn", lambda *shape: next(batches))
+    x = randn_away_from_relu_kink(identity_then_relu(0.0), 2, 1)
+    assert x.flatten().tolist() == [0.5, -2.0]
+
+
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_mnist():
+    # Seed 607 draws a batch with a ReLU input 3e-7 away from zero, which flips the gradient mask in DaCe.
+    torch.manual_seed(607)
     input_size = 784
     hidden_sizes = [128, 64]
     output_size = 10
@@ -83,7 +146,7 @@ def test_mnist():
                                nn.LogSoftmax(dim=1))
 
     # check forward pass using loss
-    images = torch.randn(64, 784)
+    images = randn_away_from_relu_kink(model, 64, 784)
     labels = torch.randint(0, 10, [64], dtype=torch.long)
 
     training_step(dace_model, model, (images, labels), sdfg_name="test_mnist_training")
@@ -116,5 +179,10 @@ def test_bert():
 
 
 if __name__ == "__main__":
+    test_the_relu_input_closest_to_zero_is_reported([0.5, -3e-7, 2.0], 3e-7)
+    test_the_relu_input_closest_to_zero_is_reported([0.5, -2.0], 0.5)
+    test_every_relu_of_the_model_is_checked()
+    with pytest.MonkeyPatch.context() as patcher:
+        test_a_batch_with_a_relu_input_at_the_kink_is_redrawn(patcher)
     test_mnist()
     # test_bert is skipped

@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
@@ -17,7 +18,7 @@ from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
@@ -42,6 +43,22 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
+@functools.lru_cache(maxsize=16384)
+def _normalize_python_code(code: str) -> str:
+    """
+    Parses and unparses Python code that was already unparsed from an AST (e.g., ``CodeBlock.as_string``). The second
+    unparsing roundtrip avoids issues in AST parsing/unparsing of negative numbers, i.e., "(-1)" becomes "(- 1)".
+    The result only depends on the string, so it is cached.
+    """
+    return unparse(ast.parse(code))
+
+
+@functools.lru_cache(maxsize=None)
+def _predates_symbolic_serialization(version: str) -> bool:
+    """ Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format. """
+    return parse_version(version) < parse_version("2.0.0a4")
+
+
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     """
     A backwards compatibility deserializer for symbolic properties. If the version of the
@@ -51,7 +68,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if version is None or _predates_symbolic_serialization(version):
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
@@ -74,6 +91,10 @@ class PropertyError(Exception):
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
+
+    #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
+    attr_name: Optional[str] = None
+    private_name: Optional[str] = None
 
     def __init__(
             self,
@@ -179,16 +200,17 @@ class Property(Generic[T]):
         # If a custom getter is specified, use it
         if self.getter:
             return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
         # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+        name = self.private_name
+        if name is None:
+            raise RuntimeError("Attribute name not set")
+        return getattr(obj, name)
 
     def __set__(self, obj, val):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
+        if self.private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -218,7 +240,7 @@ class Property(Generic[T]):
                 and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        setattr(obj, self.private_name, val)
 
     # Python Properties of this Property class
 
@@ -346,6 +368,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.private_name = "_" + name  # precomputed: __get__/__set__ must not rebuild it per access
         prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
@@ -715,6 +738,10 @@ class EnumProperty(Property):
                 return None
             if isinstance(s, dtype):
                 return s
+            if isinstance(s, dict) and issubclass(dtype, dace.attr_enum.ExtensibleAttributeEnum):
+                # An instance of a template member, stored with its attributes
+                self._undefined_val = None
+                return dtype.from_json(s)
             try:
                 self._undefined_val = None
                 return dtype[s]
@@ -729,10 +756,13 @@ class EnumProperty(Property):
         self._undefined_val = None
 
         def g(obj):
-            if self._undefined_val is None:
-                return dace.serialize.to_json(obj)
-            else:
+            if self._undefined_val is not None:
                 return self._undefined_val
+            if isinstance(obj, dace.attr_enum.ExtensibleAttributeEnum) and obj._is_template:
+                # The property knows its enumeration, so an uninstantiated template is stored as its name, like any
+                # other member (and as before the member became a template)
+                return obj._name_
+            return dace.serialize.to_json(obj)
 
         self._to_json = g
         self._to_string = g
@@ -1049,7 +1079,10 @@ class CodeBlock(object):
             self.code = code
 
     def __eq__(self, other):
-        if isinstance(other, str) or other is None:
+        if other is None:
+            # Only code that is None has no string representation
+            return self.code is None
+        if isinstance(other, str):
             return self.as_string == other
         elif isinstance(other, CodeBlock):
             return self.as_string == other.as_string and self.language == other.language
@@ -1060,7 +1093,7 @@ class CodeBlock(object):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if self.language == dace.dtypes.Language.Python and self.code is not None:
-            code = unparse(ast.parse(self.as_string))
+            code = _normalize_python_code(self.as_string)
         else:
             code = self.as_string
 
@@ -1116,7 +1149,7 @@ class CodeProperty(Property):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if obj.language == dace.dtypes.Language.Python and obj.code is not None:
-            code = unparse(ast.parse(obj.as_string))
+            code = _normalize_python_code(obj.as_string)
         else:
             code = obj.as_string
 

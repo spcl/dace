@@ -33,8 +33,6 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
-        pyproject-file: pyproject.toml
-        cache-dependency-glob: pyproject.toml
     - name: Install dependencies
       run: |
         rm -f ~/.dace.conf

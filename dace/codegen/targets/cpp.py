@@ -14,7 +14,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
-from typing import IO, TYPE_CHECKING, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -25,7 +25,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, propagation
+from dace.sdfg import nodes, graph as gr, propagation, utils as sdutil
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -751,6 +751,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
             warnings.warn('Unexpected WCR path to not end in access node')
             return dst
 
+        # Writes through views conflict on the viewed container
+        dst = sdutil.get_last_view_node(dfg, dst) or dst
+
         if dfg.in_degree(dst) > 0:
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):
                 x, y = x.data.subset, y.data.subset
@@ -958,7 +961,11 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    defined_symbols = state_dfg.symbols_defined_at(node)
+    frame = codegen.get_framecode_generator()
+    if frame is not None:
+        defined_symbols = frame.symbols_defined_at(state_dfg, node)
+    else:
+        defined_symbols = state_dfg.symbols_defined_at(node)
 
     defined_symbols.update({
         k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
@@ -970,9 +977,17 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             defined_symbols.update({connector: conntype})
 
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
+    # Struct initializers only apply to calls of the SDFG's struct types or explicitly marked ones
+    structs = frame.struct_types(sdfg) if frame is not None else StructInitializer.struct_types(sdfg)
+    struct_initializer = None
+    if structs or any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id.startswith('__DACESTRUCT_')
+            for stmt in body for n in ast.walk(stmt)):
+        struct_initializer = StructInitializer(sdfg, structs)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
-        rk = StructInitializer(sdfg).visit(stmt)
+        if struct_initializer is not None:
+            struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
         else:
@@ -1315,19 +1330,31 @@ class StructInitializer(ExtNodeTransformer):
     """ Replace struct creation calls with compound literal struct
         initializers in tasklets. """
 
-    def __init__(self, sdfg: SDFG):
-        self._structs = {}
-        if sdfg is None:
-            return
+    def __init__(self, sdfg: SDFG, structs: Optional[Dict[str, dtypes.struct]] = None):
+        """
+        :param sdfg: The SDFG containing the code.
+        :param structs: The struct types of the data containers of ``sdfg`` by name (see ``struct_types``), if
+                        already known. Otherwise, they are collected on first use.
+        """
+        self._sdfg = sdfg
+        self._structs = structs
 
-        # Find all struct types in SDFG
+    @staticmethod
+    def struct_types(sdfg: Optional[SDFG]) -> Dict[str, dtypes.struct]:
+        """ Returns the struct types of the data containers of an SDFG, by name. """
+        structs = {}
+        if sdfg is None:
+            return structs
         for array in sdfg.arrays.values():
             if array is None:
                 continue
             if isinstance(array.dtype, dace.dtypes.struct):
-                self._structs[array.dtype.name] = array.dtype
+                structs[array.dtype.name] = array.dtype
+        return structs
 
     def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and not node.func.id.startswith('__DACESTRUCT_') and self._structs is None:
+            self._structs = self.struct_types(self._sdfg)
         if isinstance(node.func, ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
                                                 or node.func.id in self._structs):
             fields = ', '.join([

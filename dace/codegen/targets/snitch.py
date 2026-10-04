@@ -40,7 +40,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         ################################################################
         # Define some locals:
         # Can be used to call back to the frame-code generator
-        self.frame = frame_codegen
+        self._frame = frame_codegen
         # Can be used to dispatch other code generators for allocation/nodes
         self.dispatcher = frame_codegen.dispatcher
         # Mapping of ssr to ssr_config
@@ -73,14 +73,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         # initialization, and deinitialization (allocate_array)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_TCDM, self)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_SSR, self)
-
-    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
-        """
-        Returns the frame-code generator associated with this target.
-
-        :return: The frame-code generator.
-        """
-        return self.frame
 
     def state_dispatch_predicate(self, sdfg, state):
         for node in state.nodes():
@@ -120,9 +112,9 @@ class SnitchCodeGen(TargetCodeGenerator):
                 # SSR setup takes the stride relative to the last dimension and
                 # in "bytes"
                 # stride = sp.simplify(dim["stride"] - stride_off)
-                stride = f'{str(dim["stride"])} - ({stride_off})'
+                stride = f'{sym2cpp(dim["stride"])} - ({stride_off})'
                 # stride_off += dim["stride"] * (dim["bound"] - 1)
-                stride_off = f'{stride_off} + {str(dim["stride"])} * ({dim["bound"]} - 1)'
+                stride_off = f'{stride_off} + {sym2cpp(dim["stride"])} * ({sym2cpp(dim["bound"])} - 1)'
                 # the bound is one less than the actual bound
                 bound = f'{dim["bound"]} - 1' if isinstance(dim["bound"], str) else (dim["bound"] - 1)
                 # try to simplify expression
@@ -395,7 +387,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        arrsize_bytes = arrsize * nodedesc.dtype.bytes
+        arrsize_bytes = nodedesc.total_size_in_bytes
         alloc_name = self.ptr(name, nodedesc, sdfg)
         dbg('  arrsize "{}" arrsize_bytes "{}" alloc_name "{}" nodedesc "{}"'.format(
             arrsize, arrsize_bytes, alloc_name, nodedesc))
@@ -972,12 +964,12 @@ class SnitchCodeGen(TargetCodeGenerator):
                             # same as for static scheduling in kmp.c
                             thd_sym = dace.symbol('tid')
 
-                            my_chunk = f'{str(chunk + 1)} if {str(thd_sym)} < {str(leftOver)} else {str(chunk)}'
+                            chunk_str, tid, left = (sym2cpp(x) for x in (chunk, thd_sym, leftOver))
+                            my_chunk = f'{sym2cpp(chunk + 1)} if {tid} < {left} else {chunk_str}'
 
-                            beg_lt = str(thd_sym * strd * (chunk + 1))
-                            beg_else = thd_sym * strd * chunk + leftOver
-                            beg_else = str((beg_else if not isinstance(loopSize, dace.symbolic.symbol) else beg_else))
-                            my_begin = f'{beg_lt} if {str(thd_sym)} < {str(leftOver)} else {beg_else}'
+                            beg_lt = sym2cpp(thd_sym * strd * (chunk + 1))
+                            beg_else = sym2cpp(thd_sym * strd * chunk + leftOver)
+                            my_begin = f'{beg_lt} if {tid} < {left} else {beg_else}'
 
                             dbg(f'  OMP loopSize, chunk, leftOver, begin [{loopSize}, {sym2cpp(my_chunk)}, {leftOver}, {my_begin}]'
                                 )
@@ -1165,4 +1157,4 @@ class SnitchCodeGen(TargetCodeGenerator):
         :param ancestor: Scope ancestor level.
         :return: C-compatible name that can be used to access the data.
         """
-        return cpp.ptr(name, desc, sdfg, self.frame)
+        return cpp.ptr(name, desc, sdfg, self._frame)

@@ -5,6 +5,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.utils import dfs_topological_sort
 from typing import Callable, Dict, List, Optional, Set, Union
 
@@ -64,13 +65,14 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
-                else:
-                    allocated_as_scalar = True
 
                 if node.in_connectors[cname].type is None:
+                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+                    if e.data.data is not None:
+                        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+                    else:
+                        allocated_as_scalar = True
+
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
@@ -105,6 +107,9 @@ def infer_connector_types(sdfg: SDFG):
                     if ctype is not None:
                         node.out_connectors[cname] = ctype
 
+            if isinstance(node, nodes.NestedSDFG):
+                widen_mapped_symbols(state, node)
+
             # Let the node infer other output types on its own
             node.infer_connector_types(sdfg, state)
 
@@ -114,6 +119,29 @@ def infer_connector_types(sdfg: SDFG):
                 if cname and node.out_connectors[cname] is None:
                     raise TypeError('Ambiguous or uninferable type in'
                                     ' connector "%s" of node "%s"' % (cname, node))
+
+
+def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
+    """
+    Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
+    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression. The symbol keeps its kind
+    (signed, unsigned or floating point).
+
+    :param state: The state that contains ``node``.
+    :param node: The nested SDFG node.
+    """
+    outer_symbols = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer_symbols is None:
+            outer_symbols = state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer_symbols)
+        # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
+        if (mapped is not None and mapped.bytes > declared.bytes and type(declared) is type(mapped) is dtypes.typeclass
+                and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind):
+            node.sdfg.symbols[name] = mapped
 
 
 #############################################################################

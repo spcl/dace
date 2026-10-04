@@ -857,51 +857,74 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     return consolidated
 
 
-def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
+def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge) -> int:
     """
-    Removes an edge and all of its parent edges in a memlet path, cleaning
-    dangling connectors and isolated nodes resulting from the removal.
+    Removes an edge and all of its parent edges in a memlet path, including now
+    unused connectors. Furthermore, all nodes that become isolated are also
+    removed from the state.
 
     :param state: The state in which the edge exists.
     :param edge: The edge to remove.
     """
-    mtree = state.memlet_tree(edge)
-    inwards = (isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.EntryNode))
+
+    if edge.data.is_empty():
+        state.remove_edge(edge)
+        if state.degree(edge.dst) == 0:
+            state.remove_node(edge.dst)
+        if state.degree(edge.src) == 0:
+            state.remove_node(edge.src)
+        return 1
 
     # Traverse tree upwards, removing edges and connectors as necessary
-    curedge = mtree
-    while curedge is not None:
-        e = curedge.edge
-        state.remove_edge(e)
-        if inwards:
-            neighbors = [] if not e.src_conn else [
-                neighbor for neighbor in state.out_edges_by_connector(e.src, e.src_conn)
-            ]
-        else:
-            neighbors = [] if not e.dst_conn else [
-                neighbor for neighbor in state.in_edges_by_connector(e.dst, e.dst_conn)
-            ]
-        if len(neighbors) > 0:  # There are still edges connected, leave as-is
-            break
+    mtree = state.memlet_tree(edge)
+    curr_tree = mtree
+    nb_removed_edges = 0
+    while curr_tree is not None:
+        curr_edge = curr_tree.edge
+        assert not curr_edge.data.is_empty()
+        state.remove_edge(curr_edge)
+        nb_removed_edges += 1
 
-        # Remove connector and matching outer connector
-        if inwards:
-            if e.src_conn:
-                e.src.remove_out_connector(e.src_conn)
-                e.src.remove_in_connector('IN' + e.src_conn[3:])
-        else:
-            if e.dst_conn:
-                e.dst.remove_in_connector(e.dst_conn)
-                e.dst.remove_out_connector('OUT' + e.dst_conn[2:])
+        if curr_tree.downwards:
+            if state.degree(curr_edge.dst) == 0:
+                # If target node is isolated we can remove it.
+                state.remove_node(curr_edge.dst)
+            else:
+                # If the node is not isolated we must look at its connectors and clean them.
+                if isinstance(curr_edge.dst, nd.EntryNode) and curr_edge.dst_conn.startswith("IN_"):
+                    curr_edge.dst.remove_out_connector("OUT_" + curr_edge.dst_conn[3:])
+                if curr_edge.dst_conn and len(list(state.in_edges_by_connector(curr_edge.dst,
+                                                                               curr_edge.dst_conn))) == 0:
+                    curr_edge.dst.remove_in_connector(curr_edge.dst_conn)
 
-        # Continue traversing upwards
-        curedge = curedge.parent
-    else:
-        # Check if an isolated node have been created at the root and remove
-        root_edge = mtree.root().edge
-        root_node: nd.Node = root_edge.src if inwards else root_edge.dst
-        if state.degree(root_node) == 0:
-            state.remove_node(root_node)
+            # There is a fan-out, i.e. the `curr_edge.src_conn` is still in use and we are done here.
+            if len(list(state.out_edges_by_connector(curr_edge.src, curr_edge.src_conn))) != 0:
+                return nb_removed_edges
+
+        else:
+            if state.degree(curr_edge.src) == 0:
+                state.remove_node(curr_edge.src)
+            else:
+                if isinstance(curr_edge.src, nd.ExitNode) and curr_edge.src_conn.startswith("OUT_"):
+                    curr_edge.src.remove_in_connector("IN_" + curr_edge.src_conn[4:])
+                if curr_edge.src_conn and len(list(state.out_edges_by_connector(curr_edge.src,
+                                                                                curr_edge.src_conn))) == 0:
+                    curr_edge.src.remove_out_connector(curr_edge.src_conn)
+
+            # The connector might be collecting.
+            if len(list(state.in_edges_by_connector(curr_edge.dst, curr_edge.dst_conn))) != 0:
+                return nb_removed_edges
+
+        # Continue traversing tree upwards
+        curr_tree = curr_tree.parent
+
+    # Check if an isolated node have been created at the root and remove
+    root_edge = mtree.root().edge
+    root_node: nd.Node = root_edge.src if mtree.downwards else root_edge.dst
+    if state.degree(root_node) == 0:
+        state.remove_node(root_node)
+
+    return nb_removed_edges
 
 
 def consolidate_edges(
@@ -1010,10 +1033,12 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     view_edge = get_view_edge(state, view)
     if view_edge is None:
         return None
+
+    # Follow the memlet path
+    memlet_path = state.memlet_path(view_edge)
     if view_edge.dst == view:
-        return view_edge.src
-    else:
-        return view_edge.dst
+        return memlet_path[0].src
+    return memlet_path[-1].dst
 
 
 def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
@@ -1170,6 +1195,68 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     # If both access nodes reside in the same scope, the input data is viewed.
     warnings.warn(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
     return in_edge
+
+
+def convert_to_view(sdfg: SDFG, name: str, viewed: str, subset: sbs.Subset) -> dt.View:
+    """
+    Turns a data container into a view of a subset of another one, in every state of an SDFG.
+
+    The view keeps the name, shape, strides and data type of the container (the data type may differ from the viewed
+    container's, which reinterprets its memory), so no memlet needs to change. Every access node of the container is
+    connected to a new access node of ``viewed`` through a ``views`` connector, so that its view edge is never
+    ambiguous (see ``get_view_edge``): a node that is only read views ``viewed`` through its incoming edge, one that is
+    only written through its outgoing edge, and one that is both is split into a written view, followed by ``viewed``,
+    followed by a read view.
+
+    :param sdfg: The SDFG that contains both containers. Nested SDFGs are not modified.
+    :param name: The name of the container to turn into a view.
+    :param viewed: The name of the container to view.
+    :param subset: The subset of ``viewed`` that the view refers to.
+    :return: The new view descriptor, which replaces the container in ``sdfg``.
+    """
+    view = dt.View.view(sdfg.arrays[name])
+    sdfg.arrays[name] = view
+
+    for state in sdfg.all_states():
+        for node in [n for n in state.data_nodes() if n.data == name]:
+            _attach_view_edges(state, node, viewed, subset)
+
+    return view
+
+
+def _attach_view_edges(state: SDFGState, node: nd.AccessNode, viewed: str, subset: sbs.Subset) -> None:
+    """Connects a view access node to a new access node of the container it views; see ``convert_to_view``."""
+    is_written = any(not e.data.is_empty() for e in state.in_edges(node))
+    is_read = any(not e.data.is_empty() for e in state.out_edges(node))
+    scope_entry = state.entry_node(node)
+
+    viewed_node = state.add_access(viewed)
+    if is_written:
+        # The written view (``node``) is followed by the viewed container. Dependencies that follow ``node`` now
+        # follow the viewed container, so that the view edge is the only outgoing edge of the written view.
+        for e in [e for e in state.out_edges(node) if e.data.is_empty()]:
+            state.remove_edge(e)
+            state.add_edge(viewed_node, None, e.dst, e.dst_conn, e.data)
+        read_edges = [e for e in state.out_edges(node)]
+        node.add_out_connector('views', force=True)
+        state.add_edge(node, 'views', viewed_node, None, mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
+        if not is_read:
+            return
+
+        # Split the reads off into a read view that follows the viewed container
+        read_view = state.add_access(node.data)
+        for e in read_edges:
+            state.remove_edge(e)
+            if e.src_conn is not None:
+                read_view.add_out_connector(e.src_conn, force=True)
+            state.add_edge(read_view, e.src_conn, e.dst, e.dst_conn, e.data)
+        node = read_view
+    elif scope_entry is not None:
+        # A viewed container that only precedes a view has no other edge that places it in the view's scope
+        state.add_nedge(scope_entry, viewed_node, mm.Memlet())
+
+    node.add_in_connector('views', force=True)
+    state.add_edge(viewed_node, None, node, 'views', mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
 
 
 def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
@@ -1886,6 +1973,11 @@ def traverse_sdfg_with_defined_symbols(
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
 
+def immediate_dominators(graph: nx.DiGraph, start: ControlFlowBlock) -> CFBlockDictT:
+    """ Immediate dominators of all nodes reachable from ``start``, with ``start`` mapped to itself. """
+    return {start: start, **nx.immediate_dominators(graph, start)}
+
+
 def postdominators(
     cfg: ControlFlowRegion,
     return_alldoms: bool = False
@@ -1910,7 +2002,7 @@ def postdominators(
         return None
     else:
         sink = sink_nodes[0]
-    ipostdom: CFBlockDictT = nx.immediate_dominators(cfg._nx.reverse(), sink)
+    ipostdom: CFBlockDictT = immediate_dominators(cfg._nx.reverse(), sink)
 
     if return_alldoms:
         allpostdoms = cfg_analysis.all_dominators(cfg, ipostdom)
@@ -2253,7 +2345,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
                     added_sinks[cfg] = cfg.add_state()
                     for s in sinks:
                         cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
-                idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+                idom.update(immediate_dominators(cfg.nx, cfg.start_block))
         # Compute the transitive relationship of immediate dominators:
         # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
         #   parent control flow region.
@@ -2313,7 +2405,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
                 else:
                     sink = sink_nodes[0]
                     sinks_per_cfg[cfg] = sink
-                ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+                ipostdom.update(immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
