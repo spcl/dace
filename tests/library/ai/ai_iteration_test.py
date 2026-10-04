@@ -8,7 +8,7 @@ These call a real model provider, so they are marked ``ai`` and excluded from CI
 
 Any configured provider works::
 
-    DACE_ai_provider=responses OPENAI_API_KEY=... ...      # OpenAI Responses API
+    DACE_ai_provider=openai OPENAI_API_KEY=... ...         # OpenAI
     DACE_ai_provider=manual ...  -s < /dev/null            # relay the prompt by hand
 
 Add ``DACE_debugprint=verbose`` to watch the prompts, answers and probe compilations go by. Each

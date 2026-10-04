@@ -16,10 +16,10 @@ from dace.config import Config
 from dace.libraries.ai.exceptions import AIExpansionError
 
 #: Environment variable names used when ``ai.api_key_envvar`` is left at its schema default.
-DEFAULT_KEY_ENVVARS = {'anthropic': 'ANTHROPIC_API_KEY', 'responses': 'OPENAI_API_KEY'}
+DEFAULT_KEY_ENVVARS = {'anthropic': 'ANTHROPIC_API_KEY', 'openai': 'OPENAI_API_KEY'}
 
 #: Providers accepted by ``ai.provider``. ``manual`` needs neither a key nor an SDK.
-SUPPORTED_PROVIDERS = ('anthropic', 'responses', 'manual')
+SUPPORTED_PROVIDERS = ('anthropic', 'openai', 'manual')
 
 
 @dataclass
@@ -334,9 +334,9 @@ def get_provider() -> LLMProvider:
     if provider == 'anthropic':
         from dace.libraries.ai.providers.anthropic_provider import AnthropicProvider
         return AnthropicProvider()
-    if provider == 'responses':
-        from dace.libraries.ai.providers.responses_provider import ResponsesProvider
-        return ResponsesProvider()
+    if provider == 'openai':
+        from dace.libraries.ai.providers.openai_provider import OpenAIProvider
+        return OpenAIProvider()
     if provider == 'manual':
         from dace.libraries.ai.providers.manual_provider import ManualProvider
         return ManualProvider()

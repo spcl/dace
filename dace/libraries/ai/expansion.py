@@ -75,7 +75,11 @@ class ExpandAI(ExpandTransformation):
         :param kwargs: ``feedback`` -- a critique of the code generated for this slot last time,
                        which turns this expansion into the next round of an existing conversation;
                        ``session`` -- the identifier of that conversation. Both are supplied by
-                       :func:`dace.libraries.ai.iterate.refine`. Anything else is ignored.
+                       :func:`dace.libraries.ai.iterate.refine`. ``response`` -- a
+                       :class:`~dace.libraries.ai.backend.TaskletSpec` obtained outside the
+                       expansion, which is used instead of asking a provider; supplied by
+                       :func:`dace.libraries.ai.exchange.read_prompt_response`. Anything else is
+                       ignored.
         :return: The generated tasklet.
         :raises AIExpansionError: If no tasklet could be generated.
         """
@@ -90,6 +94,7 @@ class ExpandAI(ExpandTransformation):
         from dace.libraries.ai.exceptions import AIExpansionError
 
         feedback = kwargs.get('feedback') or ''
+        response = kwargs.get('response')
         described = f'{type(node).__name__} "{node.name}"'
         ctx = collect_context(node, parent_state, parent_sdfg)
         record = ai_session.begin(node, parent_state, parent_sdfg, session_id=kwargs.get('session'))
@@ -132,9 +137,13 @@ class ExpandAI(ExpandTransformation):
                 # before it and be handed back the very answer it is trying to replace.
                 salt = str(record.number) if not feedback and record.number > 1 else ''
                 cache_key = ai_cache.key(system, messages, salt=salt)
-                spec = ai_cache.lookup(cache_key)
+                spec = None if response is not None else ai_cache.lookup(cache_key)
                 cached = spec is not None
-                if cached:
+                if response is not None:
+                    _status(f'{described}: using the supplied response')
+                    spec = response
+                    ai_cache.store(cache_key, spec, system, messages)
+                elif cached:
                     _status(f'{described}: reusing the cached answer for this prompt ({cache_key[:12]}), '
                             f'attempt {attempt + 1}/{attempts}')
                 else:
@@ -163,6 +172,10 @@ class ExpandAI(ExpandTransformation):
 
                 _status(f'{described}: probe compilation failed ({result.command})')
                 _detail('probe diagnostics', result.stderr)
+                if response is not None:
+                    # Not sent for repair: whoever supplied it chose not to use a provider
+                    raise AIExpansionError(f'The supplied response for {described} does not compile. '
+                                           f'Diagnostics:\n\n{result.stderr}')
                 if attempt == attempts - 1:
                     raise AIExpansionError(f'The generated code for {described} still does not compile after '
                                            f'{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}')

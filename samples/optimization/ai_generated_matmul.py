@@ -23,7 +23,7 @@ Running it needs a model provider, so either set an API key::
 
     ANTHROPIC_API_KEY=... python samples/optimization/ai_generated_matmul.py
     # or, for the OpenAI SDK:
-    DACE_ai_provider=responses DACE_ai_api_key_envvar=OPENAI_API_KEY DACE_ai_model=gpt-6-astra python samples/optimization/ai_generated_matmul.py
+    DACE_ai_provider=openai DACE_ai_model=gpt-6-astra python samples/optimization/ai_generated_matmul.py
 
 or relay the prompt by hand, without an API key, through a chat interface::
 

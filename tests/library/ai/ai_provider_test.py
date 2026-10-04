@@ -44,8 +44,8 @@ def test_missing_sdk_points_at_the_extra():
     assert 'DACE_ai_provider' in message
 
 
-def test_missing_responses_sdk_points_at_its_own_extra():
-    with dace.config.set_temporary('ai', 'provider', value='responses'):
+def test_missing_openai_sdk_points_at_its_own_extra():
+    with dace.config.set_temporary('ai', 'provider', value='openai'):
         with _hide_module('openai'):
             with pytest.raises(AIExpansionError) as info:
                 backend.get_provider()

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Responses API backend for AI-generated library node expansions. """
+""" OpenAI backend for AI-generated library node expansions. """
 
 import json
 from typing import Dict, List
@@ -9,11 +9,11 @@ from dace.libraries.ai import backend
 from dace.libraries.ai.exceptions import AIExpansionError
 
 
-class ResponsesProvider:
+class OpenAIProvider:
     """
-    Generates tasklets through the Responses API of the ``openai`` package.
+    Generates tasklets through the Responses API of the OpenAI Python SDK (``openai``).
 
-    Selected with ``DACE_ai_provider=responses``. Like the Anthropic provider, the SDK is imported
+    Selected with ``DACE_ai_provider=openai``. Like the Anthropic provider, the SDK is imported
     in the constructor so that it is only required when this provider is actually used.
     """
 
@@ -21,15 +21,15 @@ class ResponsesProvider:
         try:
             import openai  # Optional dependency: only needed when the 'ai' expansion is used
         except ImportError as e:
-            raise backend.missing_sdk_error('responses', 'openai', 'ai-openai', e)
+            raise backend.missing_sdk_error('openai', 'openai', 'ai-openai', e)
 
         self._openai = openai
-        key = backend.api_key('responses')
+        key = backend.api_key('openai')
         timeout = float(Config.get('ai', 'timeout'))
         try:
             self._client = openai.OpenAI(api_key=key, timeout=timeout) if key else openai.OpenAI(timeout=timeout)
         except Exception as e:
-            raise backend.missing_credentials_error('responses', str(e)) from e
+            raise backend.missing_credentials_error('openai', str(e)) from e
 
     def generate(self, system: str, messages: List[Dict[str, str]]) -> backend.TaskletSpec:
         """
@@ -60,7 +60,7 @@ class ResponsesProvider:
                 },
             )
         except self._openai.OpenAIError as e:
-            raise AIExpansionError(f'The Responses API request failed for model {model}: {e}') from e
+            raise AIExpansionError(f'The OpenAI API request failed for model {model}: {e}') from e
 
         text = getattr(response, 'output_text', '') or ''
         if not text.strip():

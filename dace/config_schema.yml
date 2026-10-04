@@ -624,8 +624,8 @@ required:
                 title: Model provider
                 description: >
                     Which backend to generate code with. "anthropic" uses the Anthropic Messages
-                    API (pip install 'dace[ai-anthropic]'); "responses" uses the Responses API of
-                    the openai package (pip install 'dace[ai-openai]'); "manual" prints the prompt and
+                    API (pip install 'dace[ai-anthropic]'); "openai" uses the OpenAI Responses API
+                    (pip install 'dace[ai-openai]'); "manual" prints the prompt and
                     reads the reply back from the terminal, needing neither a key nor an SDK. The
                     SDK is only imported when an expansion actually runs.
 
@@ -640,11 +640,13 @@ required:
 
             api_key_envvar:
                 type: str
-                default: 'ANTHROPIC_API_KEY'
+                default: ''
                 title: API key environment variable
                 description: >
-                    Name of the environment variable holding the provider's API key. If
-                    the variable is unset, the provider's own credential chain is used instead.
+                    Name of the environment variable holding the provider's API key. When empty,
+                    the provider's conventional variable is used (ANTHROPIC_API_KEY or
+                    OPENAI_API_KEY). If the variable is unset, the provider's own credential chain
+                    is used instead.
 
             model:
                 type: str

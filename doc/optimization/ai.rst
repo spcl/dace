@@ -98,10 +98,10 @@ only when an expansion actually runs, so none of them is a dependency of DaCe it
       - ``pip install 'dace[ai-anthropic]'``
       - The Anthropic Messages API, and the default. Reads the key from ``ANTHROPIC_API_KEY``,
         falling back to the SDK's own credential chain if that variable is unset.
-    * - ``responses``
+    * - ``openai``
       - ``pip install 'dace[ai-openai]'``
-      - The Responses API of the ``openai`` package. Set :envvar:`ai.api_key_envvar` to
-        ``OPENAI_API_KEY`` and :envvar:`ai.model` to a model that package serves.
+      - The OpenAI Responses API. Reads the key from ``OPENAI_API_KEY``; set :envvar:`ai.model`
+        to an OpenAI model.
     * - ``manual``
       - --
       - Neither an SDK nor a key: the prompt is written to a file for you to paste into a chat
@@ -113,8 +113,7 @@ only when an expansion actually runs, so none of them is a dependency of DaCe it
     ANTHROPIC_API_KEY=... python my_program.py
 
     # OpenAI
-    export DACE_ai_provider=responses
-    export DACE_ai_api_key_envvar=OPENAI_API_KEY
+    export DACE_ai_provider=openai
     export DACE_ai_model=gpt-6-astra
     OPENAI_API_KEY=... python my_program.py
 
@@ -125,6 +124,23 @@ The ``manual`` provider is also the way to *read* a prompt: it writes the full t
 :envvar:`ai.manual_dir` and waits for the model's JSON reply on standard input, or for it to be
 saved to the response file it names. A saved reply is reused on later runs, so the same program can
 be re-run, and re-compiled, without being asked again.
+
+The manual provider asks for one node at a time, while the program compiles. To answer every node
+of an SDFG in one sitting instead, write all the prompts out first and read the responses back
+afterwards, before compiling:
+
+.. code-block:: python
+
+    import dace.libraries.ai as ai
+
+    ai.generate_prompts(sdfg, 'prompts')       # prompts/<node>_<hash>_prompt.md, one per node
+    # ... save each reply as prompts/<node>_<hash>_response.json ...
+    ai.read_prompt_responses(sdfg, 'prompts')  # expands every node that has a response
+
+The same is available per node, as ``node.generate_prompt(state)`` and
+``node.read_prompt_response(state, reply)``. A response supplied this way is verified like any
+other, but code that does not compile is reported rather than sent back to a model for repair.
+Both flows use the same files, so the manual provider also finds a reply saved for the batch.
 
 Which model is used, how much effort it spends, and how long a request may take are set by
 :envvar:`ai.model`, :envvar:`ai.effort`, :envvar:`ai.max_tokens` and :envvar:`ai.timeout`.

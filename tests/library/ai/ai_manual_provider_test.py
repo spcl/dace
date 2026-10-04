@@ -19,7 +19,6 @@ from dace import nodes
 from dace.libraries.ai import backend
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-from dace.libraries.ai.providers.manual_provider import ManualProvider, _strip_fences
 
 REPLY = {
     'notes': 'doubling',
@@ -110,43 +109,13 @@ def test_reply_can_be_written_to_a_file(manual, monkeypatch):
     assert tasklet.code.as_string.strip() == '_out = 2.0 * _in;'
 
 
-def test_saved_answers_are_keyed_by_prompt_content(manual):
-    provider = ManualProvider()
-
-    first, _ = provider._paths('prompt A')
-    again, _ = provider._paths('prompt A')
-    other, _ = provider._paths('prompt B')
-
-    # Stable across processes, so an answer survives a re-run; distinct per question, so a repair
-    # round does not overwrite the prompt it is repairing
-    assert first == again
-    assert first != other
-
-
-def test_fenced_replies_are_accepted(manual, monkeypatch):
-    fenced = f'Here you go!\n\n```json\n{json.dumps(REPLY)}\n```\n\nHope that helps.'
-    monkeypatch.setattr('sys.stdin', io.StringIO(fenced))
+def test_surrounding_whitespace_is_ignored(manual, monkeypatch):
+    # What a terminal paste typically adds: leading blank lines and a trailing newline
+    monkeypatch.setattr('sys.stdin', io.StringIO(f'\n\n  {json.dumps(REPLY)}  \n\n'))
     sdfg, state, node = _sdfg_and_node()
 
     node.expand(state, 'ai')
     assert any(isinstance(n, nodes.Tasklet) for n in state.nodes())
-
-
-def test_strip_fences_handles_what_chat_interfaces_actually_return():
-    payload = '{"code": "x"}'
-
-    assert _strip_fences(payload) == payload
-    assert _strip_fences(f'```\n{payload}\n```') == payload
-    assert _strip_fences(f'```json\n{payload}\n```') == payload
-    # Commentary around the block is the common case
-    assert _strip_fences(f'Sure!\n\n```json\n{payload}\n```\n\nLet me know.') == payload
-    # Unfenced, but still wrapped in prose
-    assert _strip_fences(f'Here it is: {payload} Hope that works.') == payload
-    # Code containing braces and backticks inside the JSON survives
-    inner = '{"code": "for (int i = 0; i < N; i++) { out[i] = 1; }"}'
-    assert _strip_fences(f'```json\n{inner}\n```') == inner
-    # Nothing JSON-shaped: returned unchanged, so the error names the real problem
-    assert _strip_fences('I cannot do that') == 'I cannot do that'
 
 
 def test_missing_reply_is_reported_clearly(manual, monkeypatch):

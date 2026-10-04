@@ -17,6 +17,7 @@ The central entry point is :func:`collect_context`, which gathers four kinds of 
 """
 
 import inspect
+import logging
 import platform
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,14 +29,7 @@ from dace.sdfg import nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
 
-#: Storage types that live in GPU memory and are therefore unreachable from host code.
-DEVICE_ONLY_STORAGE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
-
-#: Storage types that live in host memory and are therefore unreachable from device code.
-HOST_ONLY_STORAGE = (dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal)
-
-#: Storage types that live in GPU memory (used to decide whether a GPU stream is in scope).
-GPU_STORAGE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -522,13 +516,19 @@ def collect_capabilities(node: nodes.LibraryNode,
     from dace.codegen import common  # Avoid a cyclic import through the code generator
 
     device_level = is_devicelevel_gpu(sdfg, state, node)
-    touches_gpu_memory = any(c.storage in {s.name for s in GPU_STORAGE} for c in connectors)
+    storages = {c.name: dtypes.StorageType[c.storage] for c in connectors if c.storage is not None}
 
     # Reachability is a match between where the code runs and where the data lives. Device code
     # can dereference GPU memory and not host memory; host code, the other way round.
-    unreachable = {s.name for s in (HOST_ONLY_STORAGE if device_level else DEVICE_ONLY_STORAGE)}
+    execution_space = dtypes.ScheduleType.GPU_Device if device_level else dtypes.ScheduleType.CPU_Multicore
     for conn in connectors:
-        conn.dereferenceable = conn.storage not in unreachable
+        storage = storages.get(conn.name)
+        conn.dereferenceable = storage is None or bool(dtypes.can_access(execution_space, storage))
+
+    # A GPU stream is in scope for host code that operates on memory the device can reach
+    touches_gpu_memory = any(
+        storage is not dtypes.StorageType.Register and dtypes.can_access(dtypes.ScheduleType.GPU_Device, storage)
+        for storage in storages.values())
 
     try:
         backend = common.get_gpu_backend()
@@ -604,6 +604,44 @@ def collect_target_info(device_level: bool) -> TargetInfo:
         elif backend == 'cuda':
             info.gpu_flags = Config.get('compiler', 'cuda', 'args')
     return info
+
+
+def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """
+    Checks whether anything the context reports about this slot still says ``Default``.
+
+    The context only depends on the slot itself: the library node's schedule, the schedules of the
+    scopes enclosing it, and the storage of the containers behind its connectors. On the usual path
+    -- expansion during compilation -- :mod:`dace.codegen.codegen` has already resolved all of
+    them, and they can be read off the graph directly. Only a node expanded by hand, before
+    compilation, still needs :func:`infer_defaults`.
+
+    :param node: The library node being expanded.
+    :param state: The state containing the node.
+    :param sdfg: The SDFG containing the state.
+    :return: True if a schedule or storage relevant to the node is still ``Default``.
+    """
+    for edge in state.all_edges(node):
+        _, desc = _descriptor_for(state, sdfg, edge, edge.dst is node)
+        if desc is not None and desc.storage is dtypes.StorageType.Default:
+            return True
+
+    if node.schedule is dtypes.ScheduleType.Default:
+        return True
+    cur_node: nodes.Node = node
+    cur_state: SDFGState = state
+    cur_sdfg: SDFG = sdfg
+    while cur_state is not None:
+        sdict = cur_state.scope_dict()
+        entry = sdict.get(cur_node)
+        while entry is not None:
+            if entry.schedule is dtypes.ScheduleType.Default:
+                return True
+            entry = sdict.get(entry)
+        cur_node = cur_sdfg.parent_nsdfg_node
+        cur_state = cur_sdfg.parent
+        cur_sdfg = cur_sdfg.parent_sdfg
+    return False
 
 
 def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
@@ -776,9 +814,10 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
     :param sdfg: The SDFG containing the state.
     :return: The complete expansion context.
     """
-    # Computed once and shared: it deep-copies the SDFG, and every part of the context that
-    # mentions a schedule or a storage type has to agree with it.
-    defaults = infer_defaults(sdfg)
+    # Computed once and shared, since every part of the context that mentions a schedule or a
+    # storage type has to agree with it. Inference copies the whole SDFG, so it only runs when the
+    # slot itself does not already say what it resolves to.
+    defaults = infer_defaults(sdfg) if has_unresolved_defaults(node, state, sdfg) else ResolvedDefaults()
     connectors = collect_connectors(node, state, sdfg, defaults)
     capabilities = collect_capabilities(node, state, sdfg, connectors, defaults)
     nesting = collect_nesting(node, state, sdfg, defaults)

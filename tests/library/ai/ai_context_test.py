@@ -7,8 +7,11 @@ hierarchy: a GPU kernel containing a nested SDFG containing a loop containing an
 containing a sequential map, with a different symbol name at every level.
 """
 
+import pytest
+
 import dace
 from dace import dtypes
+from dace.libraries.ai import context as ai_context
 from dace.libraries.ai.context import collect_context, collect_nesting
 from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.prompts import build_user_prompt
@@ -214,9 +217,65 @@ def test_prompt_contains_the_whole_hierarchy():
     assert '_in' in prompt and '_out' in prompt
 
 
+def _single_node_sdfg(storage: dtypes.StorageType, schedule: dtypes.ScheduleType):
+    """
+    Builds a top-level map around an :class:`AINode`, with the given storage and map schedule.
+
+    :return: A tuple of (node, state, SDFG).
+    """
+    sdfg = dace.SDFG('ai_resolved')
+    sdfg.add_array('A', [16], dace.float64, storage=storage)
+    sdfg.add_array('B', [16], dace.float64, storage=storage)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('outer', {'i': '0:16'}, schedule=schedule)
+    node = AINode('kernel', DESCRIPTION, inputs={'_in'}, outputs={'_out'})
+    node.schedule = dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='_in', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(node, exit_node, state.add_write('B'), src_conn='_out', memlet=dace.Memlet('B[i]'))
+    return node, state, sdfg
+
+
+def test_resolved_slot_is_read_without_copying_the_sdfg(monkeypatch):
+    # The compile path resolves defaults before expanding, so the context comes from the slot alone
+    node, state, sdfg = _single_node_sdfg(dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.CPU_Multicore)
+    assert not ai_context.has_unresolved_defaults(node, state, sdfg)
+
+    def fail(*args, **kwargs):
+        raise AssertionError('inference ran on a slot that was already resolved')
+
+    monkeypatch.setattr(ai_context, 'infer_defaults', fail)
+    ctx = collect_context(node, state, sdfg)
+    assert {c.storage for c in ctx.connectors} == {'CPU_Heap'}
+    assert all(c.storage_declared is None for c in ctx.connectors)
+    assert ctx.nesting[0].schedule == 'CPU_Multicore'
+
+
+@pytest.mark.parametrize('storage, schedule', [
+    (dtypes.StorageType.Default, dtypes.ScheduleType.CPU_Multicore),
+    (dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default),
+])
+def test_default_in_the_slot_requires_inference(storage, schedule):
+    node, state, sdfg = _single_node_sdfg(storage, schedule)
+    assert ai_context.has_unresolved_defaults(node, state, sdfg)
+
+
+def test_host_code_cannot_dereference_gpu_memory():
+    node, state, sdfg = _single_node_sdfg(dtypes.StorageType.GPU_Global, dtypes.ScheduleType.CPU_Multicore)
+    ctx = collect_context(node, state, sdfg)
+
+    assert not ctx.capabilities.device_level
+    assert ctx.capabilities.dereferenceable == {'_in': False, '_out': False}
+    # Host code over GPU memory runs on a stream
+    assert ctx.capabilities.current_stream_available
+
+
 if __name__ == '__main__':
     test_nesting_walk_crosses_maps_loops_and_nested_sdfgs()
     test_symbol_remapping_chain_is_recorded()
     test_device_level_is_detected_through_nested_sdfgs()
     test_connectors_and_descriptors_are_collected()
     test_prompt_contains_the_whole_hierarchy()
+    test_default_in_the_slot_requires_inference(dtypes.StorageType.Default, dtypes.ScheduleType.CPU_Multicore)
+    test_default_in_the_slot_requires_inference(dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default)
+    test_host_code_cannot_dereference_gpu_memory()

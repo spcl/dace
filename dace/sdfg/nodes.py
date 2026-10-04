@@ -1610,6 +1610,34 @@ class LibraryNode(CodeNode):
         """
         return set(cls.implementations.keys()) | {AI_IMPLEMENTATION_NAME}
 
+    def generate_prompt(self, state: 'dace.sdfg.state.SDFGState') -> str:
+        """
+        Returns the prompt the ``'ai'`` implementation would send to a language model for this node.
+
+        Answer it with any model, then pass the reply to :meth:`read_prompt_response`. To do this
+        for every such node of an SDFG at once, see :func:`dace.libraries.ai.generate_prompts`.
+
+        :param state: The state containing this node.
+        :return: The full, self-contained prompt, including the required response format.
+        """
+        from dace.libraries.ai import exchange  # Avoid a cyclic import
+        return exchange.generate_prompt(self, state)
+
+    def read_prompt_response(self, state: 'dace.sdfg.state.SDFGState', response: str) -> 'Tasklet':
+        """
+        Expands this node with a language model's reply to :meth:`generate_prompt`.
+
+        The generated code is verified as in any ``'ai'`` expansion. If it does not compile, the
+        error is raised rather than sent back to a model for repair.
+
+        :param state: The state containing this node.
+        :param response: The model's reply, a single JSON object.
+        :return: The tasklet that replaced this node.
+        :raises AIExpansionError: If the reply cannot be interpreted or does not compile.
+        """
+        from dace.libraries.ai import exchange  # Avoid a cyclic import
+        return exchange.read_prompt_response(self, state, response)
+
     @property
     def free_symbols(self) -> Set[str]:
         fsyms = super(LibraryNode, self).free_symbols
