@@ -527,7 +527,8 @@ class MapFission(transformation.SingleStateTransformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
-                        # An integrated nested SDFG already uses the outer coordinate system
+                        # An integrated nested SDFG already uses the outer coordinate system, up to the ``offset``
+                        # it may keep to name the origin of its index space (e.g., one-based indices)
                         already_integrated = desc.is_equivalent(outer_desc)
                         if isinstance(desc, dt.Scalar):
                             parent.arrays[node.data] = dcpy(outer_desc)
@@ -555,8 +556,9 @@ class MapFission(transformation.SingleStateTransformation):
                                     e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
 
                         # Only after offsetting memlets we can modify the
-                        # overall offset
-                        if isinstance(desc, dt.Array):
+                        # overall offset. The memlets of an integrated nested SDFG were not offset, and still
+                        # address the container through its own offset
+                        if isinstance(desc, dt.Array) and not already_integrated:
                             desc.offset = outer_desc.offset
 
             # Fill in memlet trees for border transients

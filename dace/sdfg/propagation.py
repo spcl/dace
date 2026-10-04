@@ -1381,6 +1381,16 @@ def _propagate_nsdfg_border_edge(edge: gr.MultiConnectorEdge[Memlet], internal_m
 
     result = copy.deepcopy(internal_memlet)
     result.data = extname
+    # The connector may keep an ``offset`` of its own -- the origin of the index space the memlets inside are written
+    # in, e.g., to keep one-based indices -- so they are restated in the container's
+    if isinstance(inner_desc, data.Array) and isinstance(outer_desc, data.Array) and result.subset is not None:
+        replacements = symbolic.symbol_replacements(sdfg.parent_nsdfg_node.symbol_mapping)
+        inner_offset = [pystr_to_symbolic(off) for off in inner_desc.offset]
+        if replacements is not None:
+            inner_offset = [off.xreplace(replacements) for off in inner_offset]
+        shift = [ioff - ooff for ioff, ooff in zip(inner_offset, outer_desc.offset)]
+        if any(off != 0 for off in shift):
+            result.subset.offset(shift, False)
     return result
 
 

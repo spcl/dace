@@ -2,7 +2,7 @@
 import copy
 import dace
 import pytest
-from dace.sdfg import nodes, utils as sdutils
+from dace.sdfg import dealias, nodes, utils as sdutils
 from dace.transformation.dataflow import MapFission
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
@@ -1036,6 +1036,40 @@ def test_fission_promoted_transient_of_nested_sdfg():
     assert np.allclose(B, expected)
 
 
+def test_mapfission_keeps_connector_offset():
+    """
+    Fissions a map around a nested SDFG whose connectors keep an offset of their own (e.g., one-based indices). The
+    memlets inside keep addressing the container through that offset.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_symbol('i', dace.int64)
+    inner.add_array('A', [4], dace.float64, offset=[-1])
+    inner.add_array('B', [4], dace.float64, offset=[-1])
+    first = inner.add_state()
+    first.add_nedge(first.add_read('A'), first.add_write('B'), dace.Memlet('A[i + 1]'))
+    second = inner.add_state_after(first)
+    second.add_nedge(second.add_read('A'), second.add_write('B'), dace.Memlet('A[i + 1]'))
+
+    sdfg = dace.SDFG('mapfission_connector_offset')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', {'i': '0:4'})
+    node = state.add_nested_sdfg(inner, {'A'}, {'B'}, {'i': 'i'})
+    state.add_memlet_path(state.add_read('A'), me, node, dst_conn='A', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(node, mx, state.add_write('B'), src_conn='B', memlet=dace.Memlet('B[i]'))
+    dealias.integrate_nested_sdfg(inner)
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    A = np.arange(4.0) + 1
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -1064,3 +1098,4 @@ if __name__ == '__main__':
     test_mapfission_does_not_apply_to_conditional_map()
     test_mapfission_refuses_conditional_component_stays_valid()
     test_fission_promoted_transient_of_nested_sdfg()
+    test_mapfission_keeps_connector_offset()

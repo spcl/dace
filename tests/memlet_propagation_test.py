@@ -236,6 +236,32 @@ def test_nested_sdfg_connector_in_mapped_symbols():
         assert edge.data.subset == dace.subsets.Range([(0, M, 1)]), edge.data.subset
 
 
+def test_nested_sdfg_connector_offset():
+    """
+    A connector keeping an offset of its own (e.g., one-based indices) is the container it is connected to, and its
+    memlets propagate in the container's index space.
+    """
+    outer = dace.SDFG('prop_connector_offset')
+    outer.add_array('A', [4], dace.float64)
+    outer.add_array('B', [4], dace.float64)
+    state = outer.add_state()
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [4], dace.float64, offset=[-1])
+    inner.add_array('b', [4], dace.float64, offset=[-1])
+    inner.add_state().add_mapped_tasklet('cp', {'i': '2:4'}, {'v': dace.Memlet('a[i]')},
+                                         'w = v', {'w': dace.Memlet('b[i]')},
+                                         external_edges=True)
+    node = state.add_nested_sdfg(inner, {'a'}, {'b'})
+    state.add_edge(state.add_read('A'), None, node, 'a', dace.Memlet('A[0:4]'))
+    state.add_edge(node, 'b', state.add_write('B'), None, dace.Memlet('B[0:4]'))
+    outer.validate()
+
+    propagate_memlets_sdfg(outer)
+
+    for edge in state.all_edges(node):
+        assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
@@ -245,3 +271,4 @@ if __name__ == '__main__':
     test_strided_write_keeps_the_multiplier()
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
+    test_nested_sdfg_connector_offset()
