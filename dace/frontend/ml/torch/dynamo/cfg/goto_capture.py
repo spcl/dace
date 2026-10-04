@@ -33,7 +33,6 @@ import dataclasses
 import dis
 import functools
 import inspect
-import operator
 import sys
 import threading
 import types
@@ -43,7 +42,6 @@ import torch
 from torch._dynamo import bytecode_analysis, bytecode_transformation as bt
 from torch._dynamo import exc
 from torch._dynamo import symbolic_convert as sc
-from torch._dynamo.exc import Unsupported, unimplemented
 
 from ..backend import DaceBackend
 
@@ -55,6 +53,12 @@ _PASSTHROUGH_EXCEPTIONS = tuple(t
                                           getattr(exc, 'TensorifyScalarRestartAnalysis', None),
                                           getattr(exc, 'SkipFrame', None), getattr(exc, 'BackendCompilerFailed', None))
                                 if isinstance(t, type))
+
+#: Errors raised while speculatively tracing a capture that subclass a passthrough exception but must still take the
+#: fallback path. On torch >= 2.14, ``get_fake_value`` wraps fake-tensor ``RuntimeError``s (e.g. ``cond`` branches
+#: with mismatched outputs) in ``FakeTensorObservedException``, a subclass of ``ObservedException``; older versions
+#: lack the class (resolved with ``getattr`` because Dynamo's exception set differs across torch versions).
+_SPECULATION_ERRORS = tuple(t for t in (getattr(exc, 'FakeTensorObservedException', None), ) if isinstance(t, type))
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Bookkeeping
@@ -345,7 +349,7 @@ def _hop(name):
 
 def capture_jump(tx, inst: bt.Instruction, value, jumps_on_true: bool, state: CaptureState) -> None:
     """Handles a data-dependent conditional jump whose predicate ``value`` (a tensor) is TOS."""
-    from torch._dynamo.variables import TupleVariable, UserFunctionVariable
+    from torch._dynamo.variables import TupleVariable
 
     info, prefix = state.resolve(tx)
     j = tx.indexof[inst] - prefix
@@ -479,22 +483,20 @@ def _make_jump_handler(orig: Callable, jumps_on_true: bool) -> Callable:
         except CaptureFallback as e:
             state.log('fallback', self.f_code, self.indexof[inst], str(e))
             return orig(self, inst)
-        except _PASSTHROUGH_EXCEPTIONS:
-            raise  # Dynamo control flow (ReturnValueOp from _return_from, restarts, observed user exceptions)
         except Exception as e:  # noqa: BLE001 - Unsupported from nested speculation, or HOP validation errors
-            # The graph may have been mutated: blacklist the jump and let Dynamo restart the analysis (it only does so
-            # for ``Unsupported``); on the second pass the stock handler graph-breaks here.
+            if isinstance(e, _PASSTHROUGH_EXCEPTIONS) and not isinstance(e, _SPECULATION_ERRORS):
+                raise  # Dynamo control flow (ReturnValueOp from _return_from, restarts, observed user exceptions)
+            # The graph may have been mutated: blacklist the jump and restart the analysis of the frame; on the next
+            # pass the stock handler graph-breaks here. (Re-raising, e.g. as ``Unsupported``, would make Dynamo skip
+            # the whole frame when the jump is in the root frame.) A failure nested in an enclosing capture's
+            # speculation also restarts; the enclosing jump then fails on the next pass and is blacklisted in turn.
             state.blacklist.add(_position_key(self, inst))
             msg = (str(e).splitlines() or [''])[0][:200]
             state.log('error', self.f_code, self.indexof[inst], f'{type(e).__name__}: {msg}')
-            if isinstance(e, (Unsupported, exc.UserError)):
+            if isinstance(e, exc.UserError):
                 raise
-            unimplemented(gb_type='dace control-flow capture failed',
-                          context=f'{type(e).__name__}: {msg}',
-                          explanation='The experimental DaCe bytecode-level control-flow capture could not express '
-                          'this jump; Dynamo falls back to a graph break here.',
-                          hints=[],
-                          from_exc=e)
+            raise exc.RestartAnalysis(restart_reason=f'dace control-flow capture failed: {type(e).__name__}: {msg}') \
+                from e
 
     return handler
 
