@@ -62,7 +62,8 @@ class GraphImporter:
                      gm: torch.fx.GraphModule,
                      example_inputs: Sequence[Any],
                      name: str,
-                     symbol_names: Optional[Dict[str, str]] = None) -> ImportResult:
+                     symbol_names: Optional[Dict[str, str]] = None,
+                     input_names: Optional[Sequence[Optional[str]]] = None) -> ImportResult:
         """
         Lowers an ATen graph into a schedule tree and converts it to an SDFG.
 
@@ -70,6 +71,8 @@ class GraphImporter:
         :param example_inputs: Fake or real example inputs in placeholder order.
         :param name: Name of the SDFG.
         :param symbol_names: Optional renaming of Dynamo shape symbols (``s77``) to user-facing DaCe symbol names.
+        :param input_names: Optional container name per placeholder (``None`` entries keep the FX node name), e.g.
+                            the qualified names of the arguments and parameters the placeholders come from.
         """
         from . import ops  # noqa: F401 (registers lowerings)
 
@@ -78,7 +81,7 @@ class GraphImporter:
         ctx = LoweringContext(name, symtab, self.options, importer=self, storage=storage)
         self.gm = gm
 
-        inputs = self._bind_placeholders(ctx, gm, example_inputs)
+        inputs = self._bind_placeholders(ctx, gm, example_inputs, input_names)
         output_values = self.walk(ctx, gm)
         outputs = self._finalize_outputs(ctx, output_values, inputs)
 
@@ -107,8 +110,11 @@ class GraphImporter:
         return self.walk(ctx, sub_gm)
 
     # ------------------------------------------------------------------ placeholders
-    def _bind_placeholders(self, ctx: LoweringContext, gm: torch.fx.GraphModule,
-                           example_inputs: Sequence[Any]) -> List[InputSpec]:
+    def _bind_placeholders(self,
+                           ctx: LoweringContext,
+                           gm: torch.fx.GraphModule,
+                           example_inputs: Sequence[Any],
+                           input_names: Optional[Sequence[Optional[str]]] = None) -> List[InputSpec]:
         specs: List[InputSpec] = []
         position = 0
         for node in gm.graph.nodes:
@@ -117,7 +123,8 @@ class GraphImporter:
             val = node.meta.get('val', None)
             if val is None and position < len(example_inputs):
                 val = example_inputs[position]
-            value, spec = self._bind_input(ctx, node.name, val, position)
+            name = input_names[position] if input_names is not None and input_names[position] else node.name
+            value, spec = self._bind_input(ctx, name, val, position)
             ctx.env[node] = value
             if spec is not None:
                 specs.append(spec)

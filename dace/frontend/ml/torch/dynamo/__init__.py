@@ -12,6 +12,7 @@ Usage::
     y = compiled(x)
 """
 from .backend import DaceBackend, dace_backend
+from .capture import CapturedProgram, capture
 from .interface import compile
 
-__all__ = ['DaceBackend', 'dace_backend', 'compile']
+__all__ = ['DaceBackend', 'dace_backend', 'compile', 'capture', 'CapturedProgram']

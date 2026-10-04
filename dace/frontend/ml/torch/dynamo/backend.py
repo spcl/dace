@@ -3,11 +3,20 @@
 import contextlib
 import dataclasses
 import hashlib
+import os
+from collections import Counter
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import torch
+from torch._dynamo.backends.common import aot_autograd
+
+from dace import dtypes
+from dace.config import Config
 
 from .decompositions import build_decomposition_table
+from .importer import GraphImporter
+from .runtime import CompiledGraph
+from .sources import GraphDescription, describe_graph
 
 
 @dataclasses.dataclass
@@ -39,7 +48,6 @@ class DaceBackend:
     def __init__(self, **options):
         self.options = DaceBackendOptions(**options)
         # Configuration defaults for options not given explicitly
-        from dace.config import Config
         for key in ('simplify', 'onnx_fallback'):
             if key not in options:
                 try:
@@ -51,8 +59,14 @@ class DaceBackend:
         self.last_sdfg = None  #: The most recently generated SDFG (before compilation)
         self.last_result = None  #: The most recent :class:`~dace.frontend.ml.torch.dynamo.importer.ImportResult`
         self._name_counter: Dict[str, int] = {}
-        self._symbol_names: Dict[str, str] = {}
-        self.symbol_names: Dict[str, str] = {}  #: Dynamo symbol -> DaCe symbol name of the most recent graph
+        #: Sources, symbol names, and guards of the most recent Dynamo-level graph
+        self.last_description: Optional[GraphDescription] = None
+        self.last_dynamo_graph: Optional[torch.fx.GraphModule] = None  #: The most recent Dynamo-level graph
+
+    @property
+    def symbol_names(self) -> Dict[str, str]:
+        """Dynamo symbol -> DaCe symbol name of the most recent graph."""
+        return dict(self.last_description.symbol_names) if self.last_description is not None else {}
 
     # Dynamo enters this context manager around tracing of frames compiled with this backend. The bytecode-level
     # control-flow capture (``cfg.goto_capture``) installs its translator patches here.
@@ -65,11 +79,10 @@ class DaceBackend:
         return self._decomp_table
 
     def __call__(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
-        from torch._dynamo.backends.common import aot_autograd
-        from . import shapes
-        # The Dynamo-level graph knows which argument each placeholder came from; the AOT graphs below do not.
-        self._symbol_names = shapes.symbol_names_for_graph(gm, self.options.dynamic_shapes, self.options.signature)
-        self.symbol_names = dict(self._symbol_names)
+        # The Dynamo-level graph knows which argument, parameter, or buffer each placeholder came from; the AOT graphs
+        # below do not (their placeholders correspond to the Dynamo-level ones positionally)
+        self.last_description = describe_graph(gm, self.options.signature, self.options.dynamic_shapes)
+        self.last_dynamo_graph = gm
         return aot_autograd(fw_compiler=self._compile_forward,
                             bw_compiler=self._compile_backward,
                             decompositions=self.decomposition_table)(gm, example_inputs)
@@ -84,22 +97,24 @@ class DaceBackend:
         return name if n == 0 else f'{name}_{n}'
 
     def _compile_forward(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
-        from .importer import GraphImporter
-        from .runtime import CompiledGraph
-
         if self.options.print_ops:
             _print_op_histogram(gm)
+        description = self.last_description
+        input_names = description.input_names() if len(description.inputs) == len(example_inputs) else None
         importer = GraphImporter(self.options)
-        result = importer.import_graph(gm, example_inputs, self._graph_name(gm), symbol_names=self._symbol_names)
+        result = importer.import_graph(gm,
+                                       example_inputs,
+                                       self._graph_name(gm),
+                                       symbol_names=description.symbol_names,
+                                       input_names=input_names)
         sdfg = result.sdfg
         self.last_sdfg = sdfg
         self.last_result = result
         if self.options.save_sdfg:
-            import os
             os.makedirs(self.options.save_sdfg, exist_ok=True)
             sdfg.save(os.path.join(self.options.save_sdfg, sdfg.name + '.sdfgz'))
         if self.options.auto_optimize:
-            from dace.transformation.auto import auto_optimize as aopt
+            from dace.transformation.auto import auto_optimize as aopt  # Deferred: imports the transformation library
             aopt.auto_optimize(sdfg, sdfg_device(sdfg))
         csdfg = sdfg.compile()
         self.compile_count += 1
@@ -112,7 +127,6 @@ class DaceBackend:
 
 
 def sdfg_device(sdfg):
-    from dace import dtypes
     for desc in sdfg.arrays.values():
         if desc.storage == dtypes.StorageType.GPU_Global:
             return dtypes.DeviceType.GPU
@@ -120,13 +134,10 @@ def sdfg_device(sdfg):
 
 
 def _print_op_histogram(gm: torch.fx.GraphModule) -> None:
-    from collections import Counter
     hist = Counter()
     for node in gm.graph.nodes:
         if node.op == 'call_function':
             hist[str(node.target)] += 1
-        for sub in gm.children():
-            pass
     print('Operator histogram:')
     for op, count in sorted(hist.items()):
         print(f'  {count:5d}  {op}')
