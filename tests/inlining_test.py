@@ -1745,6 +1745,37 @@ def test_inline_restates_nested_connectors(inliner: Type):
     assert np.allclose(Y, 2 * X)
 
 
+def test_inline_connector_offset():
+    """
+    Tests inlining a nested SDFG whose connectors keep an offset of their own (e.g., one-based indices). The inlined
+    memlets must keep addressing the same elements of the container.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_array('a', [4], dace.float64, offset=[-1])
+    inner.add_array('b', [4], dace.float64, offset=[-1])
+    inner.add_state().add_mapped_tasklet('inc', {'i': '2:4'}, {'v': dace.Memlet('a[i]')},
+                                         'w = v + 1', {'w': dace.Memlet('b[i]')},
+                                         external_edges=True)
+    sdfg = dace.SDFG('inline_connector_offset')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {'a'}, {'b'})
+    state.add_edge(state.add_read('A'), None, node, 'a', dace.Memlet('A[0:4]'))
+    state.add_edge(node, 'b', state.add_write('B'), None, dace.Memlet('B[0:4]'))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    sdfg.validate()
+
+    A = np.arange(4.0)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    expected = np.zeros(4)
+    expected[1:3] = A[1:3] + 1
+    assert np.allclose(B, expected)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1801,3 +1832,4 @@ if __name__ == "__main__":
             test_inline_shared_inout_connector_rejected(outer_context=outer_context, in_map=in_map)
     for inliner in [InlineSDFG, InlineMultistateSDFG]:
         test_inline_restates_nested_connectors(inliner)
+    test_inline_connector_offset()

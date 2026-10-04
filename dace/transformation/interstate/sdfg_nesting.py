@@ -472,6 +472,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
                                                                   edge.data, nsdfg_node):
                 reshapes.add(aname)
+                continue
+            # A connector may keep an ``offset`` of its own -- the origin of the index space the memlets inside are
+            # written in, e.g., to keep one-based indices -- which only a view of the container carries over
+            if (edge is not None and isinstance(array, data.Array)
+                    and isinstance(sdfg.arrays[edge.data.data], data.Array)
+                    and list(array.offset) != list(sdfg.arrays[edge.data.data].offset)):
+                reshapes.add(aname)
         # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
         # influences the behavior of the access nodes and thus the reshapes through views are necessary.
         for node in nstate.nodes():
