@@ -63,7 +63,12 @@ def lower_sym_numel(ctx, node, tensor):
 
 @register_lowering(*resolve('aten.sym_storage_offset.default', 'aten.sym_storage_offset'))
 def lower_sym_storage_offset(ctx, node, tensor):
-    return ConstValue(0)
+    # The torch-level offset (from the FakeTensor), not 0: containers start at the tensor's first element, and
+    # ``as_strided`` subtracts the base's torch-level offset to get an offset relative to the container
+    v = value_from_meta(ctx, node)
+    if v is None:
+        raise UnsupportedOpError(node.target, 'storage offset without FakeTensor metadata')
+    return v
 
 
 _BINARY = {

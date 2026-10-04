@@ -1,14 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reduction lowerings onto the standard-library ``Reduce`` node."""
-from typing import List, Optional, Sequence
+from typing import List
 
 import torch
 
 from dace import dtypes
-from dace.memlet import Memlet
 
 from ..context import ConstValue, LoweringContext, TensorValue, TupleValue, as_sym
-from ..dtypes import to_dace_dtype
+from ..dtypes import is_floating
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
@@ -21,6 +20,21 @@ _REDUCTIONS = {
     'any': ('lambda a, b: a or b', 0),
     'all': ('lambda a, b: a and b', 1),
 }
+
+
+def _identity(kind: str, dtype: dtypes.typeclass):
+    """
+    Returns the identity of a reduction in ``dtype``. Every reduction needs one: ``Reduce`` without an identity folds
+    into the existing contents of its output instead of initializing it.
+    """
+    identity = _REDUCTIONS[kind][1]
+    if identity is not None:
+        return identity
+    if dtype == dtypes.bool_:
+        return kind == 'amin'
+    if is_floating(dtype):
+        return float('-inf') if kind == 'amax' else float('inf')
+    return dtypes.min_value(dtype) if kind == 'amax' else dtypes.max_value(dtype)
 
 
 def _norm_dims(dims, rank: int) -> List[int]:
@@ -162,7 +176,8 @@ def lower_prims_var(ctx: LoweringContext,
 def _emit_reduce_into(ctx: LoweringContext, name: str, tensor: TensorValue, kind: str, dims: List[int],
                       out: TensorValue) -> None:
     from dace.libraries.standard import Reduce
-    wcr, identity = _REDUCTIONS[kind]
+    wcr = _REDUCTIONS[kind][0]
+    identity = _identity(kind, tensor.dtype)
     if tensor.rank == 0:
         ctx.emit_copy(tensor, out)
         return

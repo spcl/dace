@@ -16,8 +16,7 @@ import torch
 import dace
 from dace import dtypes
 
-from ..context import (ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError, as_sym,
-                       index_memlet)
+from ..context import (ConstValue, LoweringContext, SymValue, TensorValue, UnsupportedOpError, index_memlet)
 from ..dtypes import is_boolean, is_floating, to_dace_dtype
 from . import register_lowering, resolve
 
@@ -179,6 +178,24 @@ def cast_tensor(ctx: LoweringContext, name: str, tensor: TensorValue, dtype: tor
 
 
 # ---------------------------------------------------------------------- operator tables
+def nan_max(a: str, b: str) -> str:
+    """Maximum that propagates NaN from either operand, as ``torch.maximum`` does (``max`` returns ``b`` if ``a`` is NaN)."""
+    return f'(({a}) if (({a}) != ({a})) or (({a}) > ({b})) else ({b}))'
+
+
+def nan_min(a: str, b: str) -> str:
+    """Minimum that propagates NaN from either operand, as ``torch.minimum`` does."""
+    return f'(({a}) if (({a}) != ({a})) or (({a}) < ({b})) else ({b}))'
+
+
+def _maximum(dt: dtypes.typeclass) -> str:
+    return nan_max('{0}', '{1}') if is_floating(dt) else 'max({0}, {1})'
+
+
+def _minimum(dt: dtypes.typeclass) -> str:
+    return nan_min('{0}', '{1}') if is_floating(dt) else 'min({0}, {1})'
+
+
 def _simple(template, nocast=()):
 
     def lower(ctx, node, *args, **kwargs):
@@ -217,10 +234,10 @@ _UNARY = {
     aten.erf: 'erf({0})',
     aten.erfc: 'erfc({0})',
     aten.sigmoid: '1 / (1 + exp(-({0})))',
-    aten.relu: 'max({0}, 0)',
+    aten.relu: lambda dt: (nan_max('{0}', '0') if is_floating(dt) else 'max({0}, 0)'),
     aten.floor: 'floor({0})',
     aten.ceil: 'ceil({0})',
-    aten.round: 'round({0})',
+    aten.round: lambda dt: ('rint({0})' if is_floating(dt) else '{0}'),  # rint: round half to even, like torch
     aten.trunc: 'trunc({0})',
     aten.logical_not: 'not ({0})',
     aten.bitwise_not: lambda dt: ('not ({0})' if is_boolean(dt) else '~({0})'),
@@ -238,13 +255,13 @@ _BINARY = {
     aten.true_divide:
     '({0}) / ({1})',
     aten.maximum:
-    'max({0}, {1})',
+    _maximum,
     aten.minimum:
-    'min({0}, {1})',
+    _minimum,
     aten.fmax:
-    'max({0}, {1})',
+    lambda dt: ('fmax({0}, {1})' if is_floating(dt) else 'max({0}, {1})'),  # fmax/fmin ignore NaN, like torch
     aten.fmin:
-    'min({0}, {1})',
+    lambda dt: ('fmin({0}, {1})' if is_floating(dt) else 'min({0}, {1})'),
     aten.atan2:
     'atan2({0}, {1})',
     aten.fmod:
@@ -280,9 +297,9 @@ _BINARY = {
     aten.hypot:
     'hypot({0}, {1})',
     aten.clamp_min:
-    'max({0}, {1})',
+    _maximum,
     aten.clamp_max:
-    'min({0}, {1})',
+    _minimum,
 }
 
 for _op, _template in _UNARY.items():
@@ -296,8 +313,8 @@ _PRIMS = {
     'sub': '({0}) - ({1})',
     'mul': '({0}) * ({1})',
     'div': '({0}) / ({1})',
-    'maximum': 'max({0}, {1})',
-    'minimum': 'min({0}, {1})',
+    'maximum': _maximum,
+    'minimum': _minimum,
     'pow': 'pow({0}, {1})',
     'atan2': 'atan2({0}, {1})',
     'eq': '({0}) == ({1})',
@@ -318,7 +335,7 @@ _PRIMS = {
     'erf': 'erf({0})',
     'floor': 'floor({0})',
     'ceil': 'ceil({0})',
-    'round': 'round({0})',
+    'round': lambda dt: ('rint({0})' if is_floating(dt) else '{0}'),
     'trunc': 'trunc({0})',
     'sign': 'sign({0})',
     'reciprocal': '1 / ({0})',
@@ -379,7 +396,7 @@ def lower_div_mode(ctx, node, a, b, *, rounding_mode=None):
         return lower_pointwise_values(ctx, node, [a, b], '({0}) / ({1})')
     if rounding_mode == 'floor':
         return lower_pointwise_values(ctx, node, [a, b], lambda dt: ('floor(({0}) / ({1}))'
-                                                                     if is_floating(dt) else 'int_floor({0}, {1})'))
+                                                                     if is_floating(dt) else 'py_floor({0}, {1})'))
     if rounding_mode == 'trunc':
         return lower_pointwise_values(ctx, node, [a, b], lambda dt: ('trunc(({0}) / ({1}))'
                                                                      if is_floating(dt) else '({0}) / ({1})'))
@@ -414,15 +431,19 @@ def lower_where(ctx, node, cond, a, b):
 def lower_clamp(ctx, node, x, min=None, max=None):
     lo = None if min is None or (isinstance(min, ConstValue) and min.value is None) else min
     hi = None if max is None or (isinstance(max, ConstValue) and max.value is None) else max
-    operands = [x]
-    expr = '{0}'
-    if lo is not None:
-        operands.append(lo)
-        expr = f'max({expr}, {{{len(operands) - 1}}})'
-    if hi is not None:
-        operands.append(hi)
-        expr = f'min({expr}, {{{len(operands) - 1}}})'
-    return lower_pointwise_values(ctx, node, operands, expr)
+    operands = [x] + [v for v in (lo, hi) if v is not None]
+
+    def template(dt: dtypes.typeclass) -> str:
+        fmax, fmin = (nan_max, nan_min) if is_floating(dt) else (lambda a, b: f'max({a}, {b})',
+                                                                 lambda a, b: f'min({a}, {b})')
+        expr, k = '{0}', 1
+        if lo is not None:
+            expr, k = fmax(expr, f'{{{k}}}'), k + 1
+        if hi is not None:
+            expr = fmin(expr, f'{{{k}}}')
+        return expr
+
+    return lower_pointwise_values(ctx, node, operands, template)
 
 
 @register_lowering(aten.addcmul.default)

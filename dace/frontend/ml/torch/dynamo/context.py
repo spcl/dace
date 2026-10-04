@@ -18,7 +18,6 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 import sympy
 import torch
 
-import dace
 from dace import data, dtypes, nodes, subsets
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -158,7 +157,8 @@ class LoweringContext:
         self.env: Dict[Any, Value] = {}
         self._names: set = set()
         self._counter = itertools.count()
-        self.constants: Dict[str, torch.Tensor] = {}  #: lifted constant tensors (name -> tensor)
+        #: Compile-time constant containers (name -> (descriptor, value)), see ``ScheduleTreeRoot.constants``
+        self.constants: Dict[str, Tuple[data.Data, Any]] = {}
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:

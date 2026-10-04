@@ -9,14 +9,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.fx
+from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx.node import map_arg
 
 from dace import dtypes
 from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
-from .context import (ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError, Value,
-                      dense_strides, sanitize_name)
+from .context import (ConstValue, LoweringContext, SymValue, TensorValue, UnsupportedOpError, Value, dense_strides)
 from .symbols import SymbolTable, SymExpr
 
 _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
@@ -24,10 +24,9 @@ _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
 
 @dataclasses.dataclass
 class InputSpec:
-    kind: str  #: 'tensor' | 'sym' | 'const'
+    kind: str  #: 'tensor' | 'sym'
     name: str  #: container or symbol name
-    position: int = -1  #: index in the flat argument list (for 'tensor'/'sym')
-    value: Any = None  #: constant tensor (for 'const')
+    position: int = -1  #: index in the flat argument list
 
 
 @dataclasses.dataclass
@@ -83,10 +82,11 @@ class GraphImporter:
         output_values = self.walk(ctx, gm)
         outputs = self._finalize_outputs(ctx, output_values, inputs)
 
-        arg_names = [spec.name for spec in inputs if spec.kind in ('tensor', 'const')]
+        arg_names = [spec.name for spec in inputs if spec.kind == 'tensor']
         arg_names += [spec.name for spec in outputs if spec.kind == 'tensor']
         stree = tn.ScheduleTreeRoot(name=name,
                                     containers=ctx.containers,
+                                    constants=ctx.constants,
                                     symbols=symtab.symbol_types,
                                     arg_names=arg_names,
                                     children=ctx.root_children)
@@ -174,10 +174,27 @@ class GraphImporter:
         if isinstance(obj, torch.fx.GraphModule):
             return ConstValue(obj)
         if isinstance(obj, torch.Tensor):
-            tv = ctx.add_tensor_like(node.name, obj, transient=False, contiguous=False, source='const')
-            ctx.constants[tv.name] = obj.detach()
-            return tv
+            return self._lower_constant_tensor(ctx, node.name, obj)
         return ConstValue(obj)
+
+    def _lower_constant_tensor(self, ctx: LoweringContext, name: str, tensor: torch.Tensor) -> TensorValue:
+        """
+        Lowers a constant tensor of the graph (e.g., ``torch.tensor([...])`` in the program) to a transient container
+        that is also a compile-time constant of the SDFG (``ScheduleTreeRoot.constants``), so it is neither allocated
+        nor passed at runtime.
+        """
+        # The compiler runs under AOTAutograd's fake mode, but the constant is a real tensor whose values are needed
+        with unset_fake_temporarily():
+            value = tensor.detach().cpu().contiguous().numpy()
+        tshape = ctx.symtab.shape(tensor.shape)
+        const = ctx.add_array('c_' + name, tshape, tensor.dtype, transient=True, device=tensor.device, source='const')
+        ctx.constants[const.name] = (const.desc, value.reshape(const.desc.shape))
+        if tensor.dim() == 0 or tensor.is_contiguous():
+            return const
+        # Downstream views use the constant's torch strides; copy it into a container with that layout
+        tv = ctx.add_tensor_like('t_' + name, tensor, source='const')
+        ctx.emit_copy(const, tv)
+        return tv
 
     def _lower_call(self, ctx: LoweringContext, node: torch.fx.Node) -> Value:
         from . import ops

@@ -8,8 +8,6 @@ import torch
 from dace import symbolic
 from dace.codegen.compiled_sdfg import CompiledSDFG
 
-from .dtypes import to_torch_dtype
-
 
 def _evaluate(expr, symvals: Dict[str, int]) -> int:
     if isinstance(expr, (int, bool)):
@@ -49,8 +47,6 @@ class CompiledGraph:
                 if t.dim() == 0:
                     t = t.reshape(1)  # rank-0 tensors are shape-(1,) containers in the SDFG
                 kwargs[spec.name] = t
-            elif spec.kind == 'const':
-                kwargs[spec.name] = spec.value
 
         results: List[Any] = []
         for out in self.outputs:

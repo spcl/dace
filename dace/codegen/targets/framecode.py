@@ -30,6 +30,21 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
+def _constant_element_to_cpp(value: Any) -> str:
+    """
+    Formats one element of a constant array as a C++ literal. Booleans and non-finite floating-point values have no
+    C++ spelling in their NumPy string form.
+
+    :param value: The element (a NumPy scalar).
+    :return: The C++ literal.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return 'true' if value else 'false'
+    if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+        return 'NAN' if np.isnan(value) else ('INFINITY' if value > 0 else '-INFINITY')
+    return str(value)
+
+
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
@@ -115,12 +130,8 @@ class DaCeCodeGenerator(object):
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
-                it = np.nditer(cstval, order='C')
-                for i in range(cstval.size - 1):
-                    const_str += str(it[0]) + ", "
-                    it.iternext()
-                const_str += str(it[0]) + "};\n"
+                elements = ', '.join(_constant_element_to_cpp(v) for v in np.asarray(cstval).flat)
+                const_str = f"constexpr {csttype.dtype.ctype} {cstname}[{cstval.size}] = {{{elements}}};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
