@@ -8,6 +8,7 @@ from typing import Dict, List, Set, Tuple, Union
 from functools import reduce
 import operator
 import copy
+import warnings
 
 from dace import memlet, Memlet, symbolic, dtypes
 from dace.sdfg import dealias, nodes, propagation, utils
@@ -293,7 +294,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         return False
 
         # Legacy nested SDFGs must first be converted with ``dealias.convert_legacy_nested_sdfgs``
-        if dealias.windowed_connectors(nested_sdfg.sdfg):
+        windowed = dealias.windowed_connectors(nested_sdfg.sdfg)
+        if windowed:
+            warnings.warn(f'Nested SDFG "{nested_sdfg.label}" was not inlined because its connectors '
+                          f'{sorted(windowed)} describe a window of the outer container rather than the container '
+                          'itself, as nested SDFGs built under the earlier semantics do. Convert them first with '
+                          '`dace.sdfg.dealias.convert_legacy_nested_sdfgs(sdfg)`.')
             return False
 
         return True
