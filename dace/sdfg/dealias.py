@@ -1088,8 +1088,10 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) ->
     parent_types = symbols.defined_at(sdfg.parent, parent_node)
     replacements = {}
     for outer in folded.values():
-        replacements[outer] = (symbolic.symbol(outer, parent_types[outer])
-                               if outer in parent_types else symbolic.pystr_to_symbolic(outer))
+        if outer in parent_types and not isinstance(parent_types[outer], dtypes.callback):
+            replacements[outer] = symbolic.symbol(outer, parent_types[outer])
+        else:  # Callbacks (and symbols of unknown type) are passed along by name
+            replacements[outer] = symbolic.pystr_to_symbolic(outer)
     typed = {inner: replacements[outer] for inner, outer in folded.items()}
     symbolic.safe_replace(typed, lambda m: sdfg.replace_dict(m))
 
