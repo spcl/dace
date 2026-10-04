@@ -45,6 +45,9 @@ class SourceRef:
     text: str
     #: Dimension of a ``size``/``stride`` source
     dim: Optional[int] = None
+    #: Accessors as Dynamo spelled them, including ``torch.nn.Module`` containers (``_modules``, ``_parameters``,
+    #: ``_buffers``) that :attr:`path` omits; ``None`` if equal to :attr:`path`
+    raw_path: Optional[Tuple[Any, ...]] = None
 
     @property
     def qualname(self) -> str:
@@ -67,7 +70,7 @@ class SourceRef:
             value = global_vars[self.root]
         else:
             value = arguments[self.root]
-        for accessor in self.path:
+        for accessor in (self.raw_path if self.raw_path is not None else self.path):
             value = value[accessor] if isinstance(value, (dict, list, tuple)) else getattr(value, accessor)
         if self.kind == 'size':
             return value.size(self.dim)
@@ -151,7 +154,7 @@ class SourceResolver:
             if root in self.parameter_names or (not self.has_signature and not module_relative):
                 kind = 'argument'
             else:  # The module itself (``self`` of ``forward``)
-                kind, root = 'attribute', None
+                kind, root, raw_path = 'attribute', None, path
                 stripped = []
                 for p in path:
                     if isinstance(p, str) and p in _MODULE_CONTAINERS:
@@ -159,6 +162,8 @@ class SourceResolver:
                     else:
                         stripped.append(p)
                 path = tuple(stripped)
+                if path != raw_path:
+                    return SourceRef(prop[0] if prop else kind, root, path, text, prop[1] if prop else None, raw_path)
         if prop is not None:
             return SourceRef(prop[0], root, path, text, prop[1])
         return SourceRef(kind, root, path, text)

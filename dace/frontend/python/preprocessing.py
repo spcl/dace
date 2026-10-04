@@ -9,6 +9,7 @@ import numbers
 import numpy
 import re
 import sympy
+import sys
 import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
@@ -427,6 +428,19 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     return make_cb(keywords, poscount, unflatten_instructions)
 
 
+def _torch_module_as_convertible(value: Any) -> Any:
+    """
+    Returns an SDFG-convertible view of a ``torch.nn.Module`` that is not SDFG-convertible itself, or ``value``
+    unchanged. PyTorch is only inspected if the program's environment already imported it.
+    """
+    torch = sys.modules.get('torch')
+    if torch is None or isinstance(value, SDFGConvertible) or not isinstance(value, torch.nn.Module):
+        return value
+    # Deferred import: the TorchDynamo frontend imports PyTorch, which only programs that use it should load
+    from dace.frontend.ml.torch.dynamo import convertible
+    return convertible.as_sdfg_convertible(value)
+
+
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
@@ -473,6 +487,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                              recurse=False,
                              detect_callables=False,
                              keep_object=False):
+        # PyTorch modules are converted through the TorchDynamo frontend
+        value = _torch_module_as_convertible(value)
+
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists

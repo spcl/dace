@@ -64,6 +64,8 @@ def _dim_hint_type(entry: Any) -> Optional[str]:
 
 def parse_dim(entry: Any) -> Optional[DimSpec]:
     """Translates one per-dimension entry of a ``dynamic_shapes`` specification. ``None`` means static."""
+    if isinstance(entry, DimSpec):
+        return entry
     if entry is None or isinstance(entry, int):
         return None
     if entry == ALL:

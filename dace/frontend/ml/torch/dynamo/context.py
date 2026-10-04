@@ -179,13 +179,23 @@ class LoweringContext:
                   transient: bool = True,
                   device=None,
                   source: Optional[str] = None,
-                  storage: Optional[dtypes.StorageType] = None) -> TensorValue:
-        """Registers a new array container. ``tstrides=None`` yields a C-contiguous layout."""
+                  storage: Optional[dtypes.StorageType] = None,
+                  exact_name: bool = False) -> TensorValue:
+        """
+        Registers a new array container. ``tstrides=None`` yields a C-contiguous layout. With ``exact_name``, the
+        container is called ``prefix`` verbatim (e.g., ``__return``), which must not be in use.
+        """
         tshape = tuple(tshape)
         if tstrides is None:
             tstrides = contiguous_strides(tshape)
         shape, strides = _container_shape(tshape, tstrides)
-        name = self.new_name(prefix)
+        if exact_name:
+            if prefix in self.containers or prefix in self._names:
+                raise ValueError(f'Container name {prefix} is already in use')
+            self._names.add(prefix)
+            name = prefix
+        else:
+            name = self.new_name(prefix)
         desc = data.Array(to_dace_dtype(torch_dtype),
                           shape,
                           strides=strides,

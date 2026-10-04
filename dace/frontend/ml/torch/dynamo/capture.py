@@ -57,14 +57,21 @@ class CapturedProgram:
 
         return call
 
-    def import_graph(self, name: str) -> ImportResult:
-        """Lowers the graph to an SDFG (simplified and validated according to the capture options)."""
+    def import_graph(self, name: str, return_arrays: bool = False) -> ImportResult:
+        """
+        Lowers the graph to an SDFG (simplified and validated according to the capture options).
+
+        :param name: Name of the SDFG.
+        :param return_arrays: Name the outputs ``__return``/``__return_<i>``, as for an SDFG called from a
+                              ``@dace.program``.
+        """
         importer = GraphImporter(self.options)
         self.import_result = importer.import_graph(self.graph,
                                                    self.example_inputs,
                                                    name,
                                                    symbol_names=self.symbol_names,
-                                                   input_names=self.input_names())
+                                                   input_names=self.input_names(),
+                                                   return_arrays=return_arrays)
         return self.import_result
 
     def to_sdfg(self, name: str = 'captured') -> SDFG:
@@ -118,6 +125,7 @@ def capture(fn: Callable,
             extra_decompositions: Optional[Sequence] = None,
             native_ops: Optional[Sequence] = None,
             simplify: bool = True,
+            specialize_float: bool = False,
             **kwargs) -> CapturedProgram:
     """
     Captures the functional ATen graph of ``fn(*args, **kwargs)`` (a ``torch.nn.Module`` or function) as TorchDynamo
@@ -134,6 +142,8 @@ def capture(fn: Callable,
     :param extra_decompositions: Additional ATen operators to decompose.
     :param native_ops: ATen operators that must not be decomposed.
     :param simplify: Whether SDFGs built from the capture are simplified.
+    :param specialize_float: Treat Python floats (arguments, module attributes) as constants guarded by value, instead
+                             of tracing them as 0-d tensor inputs.
     :param kwargs: Example keyword arguments.
     :return: The captured program.
     """
@@ -151,7 +161,7 @@ def capture(fn: Callable,
     if spec is not None:
         shapes.mark_arguments(signature.bind(*args, **kwargs), spec)
     try:
-        with torch.no_grad():
+        with torch.no_grad(), torch._dynamo.config.patch(specialize_float=specialize_float):
             compiled(*args, **kwargs)
     except BackendCompilerFailed as ex:
         if isinstance(ex.inner_exception, _CaptureComplete):

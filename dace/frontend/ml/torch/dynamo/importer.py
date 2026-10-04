@@ -63,7 +63,8 @@ class GraphImporter:
                      example_inputs: Sequence[Any],
                      name: str,
                      symbol_names: Optional[Dict[str, str]] = None,
-                     input_names: Optional[Sequence[Optional[str]]] = None) -> ImportResult:
+                     input_names: Optional[Sequence[Optional[str]]] = None,
+                     return_arrays: bool = False) -> ImportResult:
         """
         Lowers an ATen graph into a schedule tree and converts it to an SDFG.
 
@@ -73,6 +74,9 @@ class GraphImporter:
         :param symbol_names: Optional renaming of Dynamo shape symbols (``s77``) to user-facing DaCe symbol names.
         :param input_names: Optional container name per placeholder (``None`` entries keep the FX node name), e.g.
                             the qualified names of the arguments and parameters the placeholders come from.
+        :param return_arrays: Write every output into its own ``__return`` (one output) or ``__return_<i>`` container,
+                              the convention for SDFGs called from a ``@dace.program``. Symbolic and constant outputs
+                              become rank-0 containers.
         """
         from . import ops  # noqa: F401 (registers lowerings)
 
@@ -83,7 +87,10 @@ class GraphImporter:
 
         inputs = self._bind_placeholders(ctx, gm, example_inputs, input_names)
         output_values = self.walk(ctx, gm)
-        outputs = self._finalize_outputs(ctx, output_values, inputs)
+        if return_arrays:
+            outputs = self._return_outputs(ctx, output_values)
+        else:
+            outputs = self._finalize_outputs(ctx, output_values, inputs)
 
         arg_names = [spec.name for spec in inputs if spec.kind == 'tensor']
         arg_names += [spec.name for spec in outputs if spec.kind == 'tensor']
@@ -243,6 +250,32 @@ class GraphImporter:
                 specs.append(OutputSpec('none'))
             else:
                 raise UnsupportedOpError('output', f'cannot return value of type {type(v).__name__}')
+        return specs
+
+    def _return_outputs(self, ctx: LoweringContext, values: List[Value]) -> List[OutputSpec]:
+        """Copies every output into a ``__return``/``__return_<i>`` container (see ``return_arrays``)."""
+        specs: List[OutputSpec] = []
+        for i, v in enumerate(values):
+            name = '__return' if len(values) == 1 else f'__return_{i}'
+            if isinstance(v, TensorValue):
+                strides = dense_strides(v.tstrides, v.tshape)
+                out = ctx.add_array(name,
+                                    v.tshape,
+                                    v.torch_dtype,
+                                    strides,
+                                    transient=False,
+                                    device=v.device,
+                                    exact_name=True)
+                ctx.emit_copy(v, out)
+            elif isinstance(v, (SymValue, ConstValue)) and not (isinstance(v, ConstValue) and v.value is None):
+                value = v.expr if isinstance(v, SymValue) else v.value
+                dtype = torch.float64 if isinstance(value, float) else torch.bool if isinstance(value, bool) else \
+                    torch.int64
+                out = ctx.add_array(name, (), dtype, transient=False, exact_name=True)
+                ctx.emit_tasklet(f'{name}_set', {}, f'__out = {value}', {'__out': out.memlet()})
+            else:
+                raise UnsupportedOpError('output', f'cannot return a value of type {type(v).__name__} as an array')
+            specs.append(OutputSpec('tensor', out.name, out.tshape, out.tstrides, out.torch_dtype, out.device))
         return specs
 
 

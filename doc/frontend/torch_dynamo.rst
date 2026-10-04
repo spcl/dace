@@ -56,6 +56,30 @@ symbols, which matters when the SDFG is used from a ``@dace.program`` or inspect
 first call stay static under ``'all'`` (PyTorch specializes them and treats size-1 operands as broadcasting), and two
 dimensions only share a symbol if the program constrains them to be equal.
 
+Modules inside DaCe programs
+----------------------------
+
+A ``torch.nn.Module`` can be called from a ``@dace.program`` directly. The module is captured with TorchDynamo for
+the argument types of the call (including symbolic sizes, which keep their names) and nested into the program's SDFG,
+so DaCe optimizes across the boundary:
+
+.. code-block:: python
+
+    model = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.ReLU(), torch.nn.Linear(8, 3)).eval()
+    N = dace.symbol('N')
+
+    @dace.program
+    def prog(x: dace.float32[N, 4]):
+        return model(x) * 2
+
+Parameters and buffers are passed by reference, so updating them does not require parsing the program again. The
+assumptions TorchDynamo made about the module (attribute values such as ``training``, submodule types, global state)
+are part of the program's cache: if one changes, the program is parsed and compiled again. The module must be
+captured as a single graph (graph breaks raise an error), and the captured graph is an inference graph.
+
+To obtain the captured graph without compiling it, use :func:`dace.frontend.ml.torch.dynamo.capture`, which returns
+the ATen graph, the source of every input (argument, parameter, buffer, ...), and TorchDynamo's guards.
+
 How programs are lowered
 ------------------------
 
