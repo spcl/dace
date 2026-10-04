@@ -1045,7 +1045,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = No
     return widened
 
 
-def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
+def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Dict[str, str]:
     """
     Folds the entries of a nested SDFG's symbol mapping that map one of its symbols to a symbol of the parent into
     the nested SDFG, renaming the inner symbol to the parent's.
@@ -1059,6 +1059,7 @@ def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
     Internal names that would clash with the parent symbols are renamed first (see ``remove_symbol_aliases``).
 
     :param sdfg: The nested SDFG whose parent node's symbol mapping is folded.
+    :param symbols: A resolver for the symbols defined in the parent, for their types; one is made if not given.
     :return: The folded entries, mapping inner symbol names to the parent symbol names that replaced them.
     :note: This function operates in-place, on the nested SDFG and on the symbol mapping of its node.
     """
@@ -1081,12 +1082,23 @@ def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
     if remove_symbol_aliases(sdfg, folded):
         # Internal names that clashed were renamed, possibly along with entries of the mapping
         folded = foldable()
-    symbolic.safe_replace(folded, lambda m: sdfg.replace_dict(m))
+    # A symbol's type is part of its identity, so the inner symbols become the parent's as it types them
+    if symbols is None:
+        symbols = SymbolResolver()
+    parent_types = symbols.defined_at(sdfg.parent, parent_node)
+    replacements = {}
+    for outer in folded.values():
+        replacements[outer] = (symbolic.symbol(outer, parent_types[outer])
+                               if outer in parent_types else symbolic.pystr_to_symbolic(outer))
+    typed = {inner: replacements[outer] for inner, outer in folded.items()}
+    symbolic.safe_replace(typed, lambda m: sdfg.replace_dict(m))
 
     for inner in folded:
         del parent_node.symbol_mapping[inner]
-    for outer in folded.values():
-        parent_node.symbol_mapping[outer] = symbolic.pystr_to_symbolic(outer)
+    for outer, replacement in replacements.items():
+        parent_node.symbol_mapping[outer] = replacement
+        if outer in parent_types and outer in sdfg.symbols:
+            sdfg.symbols[outer] = parent_types[outer]
 
     # The nested SDFGs below are connected to containers whose descriptors were just restated
     integrate_nested_sdfgs_within(sdfg)
@@ -1140,7 +1152,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     if symbols is None:
         symbols = SymbolResolver()
 
-    fold_symbol_mapping(sdfg)
+    fold_symbol_mapping(sdfg, symbols)
 
     parent_sdfg = sdfg.parent_sdfg
     parent_state = sdfg.parent

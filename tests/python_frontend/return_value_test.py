@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -149,6 +149,49 @@ def test_return_void_in_for():
     assert np.allclose(a, ref)
 
 
+N, M, K = (dace.symbol(name, dtype=dace.int64) for name in 'NMK')
+
+
+@dace.program
+def _relu(x: dace.float32[M, K]):
+    return np.maximum(x, 0)
+
+
+def _check_nested_returns(sdfg: dace.SDFG):
+    """ Checks that the return values of the nested SDFGs are the containers they are returned into. """
+    sdfg.validate()
+    nested = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)]
+    assert nested
+    for node in nested:
+        assert not node.sdfg.arrays['__return'].transient
+
+
+def test_return_from_nested_call_with_typed_symbols():
+    """ The nested program's sizes are typed symbols that the call maps to the caller's. """
+
+    @dace.program
+    def nested_return_typed_symbols(a: dace.float32[N, N]):
+        y = _relu(a - 1)
+        return y + 1
+
+    _check_nested_returns(nested_return_typed_symbols.to_sdfg(simplify=False))
+    a = np.random.rand(5, 5).astype(np.float32)
+    assert np.allclose(nested_return_typed_symbols(a), np.maximum(a - 1, 0) + 1)
+
+
+def test_return_from_nested_call_with_constant_sizes():
+    """ The nested program's sizes are typed symbols that the call maps to constants. """
+
+    @dace.program
+    def nested_return_constant_sizes(a: dace.float32[4, 3]):
+        y = _relu(a - 1)
+        return y + 1
+
+    _check_nested_returns(nested_return_constant_sizes.to_sdfg(simplify=False))
+    a = np.random.rand(4, 3).astype(np.float32)
+    assert np.allclose(nested_return_constant_sizes(a), np.maximum(a - 1, 0) + 1)
+
+
 if __name__ == '__main__':
     test_return_scalar()
     test_return_scalar_in_nested_function()
@@ -158,3 +201,5 @@ if __name__ == '__main__':
     test_return_void()
     test_return_void_in_if()
     test_return_void_in_for()
+    test_return_from_nested_call_with_typed_symbols()
+    test_return_from_nested_call_with_constant_sizes()
