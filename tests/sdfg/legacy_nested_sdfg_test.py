@@ -105,9 +105,9 @@ def test_inline_windowed_connector():
     edges = {e.dst_conn: e.data for e in state.in_edges(child)}
     assert edges['a'].data == 'A'
     assert str(edges['a'].subset) == 'i + 3, j + 2'
-    inner_reads = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == 'a']
+    inner_reads = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'a']
     assert inner_reads and all(str(m.subset) == 'i + 3, j + 2' for m in inner_reads)
-    inner_writes = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == 'b']
+    inner_writes = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'b']
     assert inner_writes and all(str(m.subset) == 'i + 1, j + 4' for m in inner_writes)
     condition = next(e.data.condition.as_string for e in child.sdfg.edges() if not e.data.is_unconditional())
     assert condition.replace(' ', '').replace('(', '').replace(')', '') == 'a[i+3,j+2]>0'

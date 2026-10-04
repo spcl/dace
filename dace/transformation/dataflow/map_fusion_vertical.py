@@ -1745,7 +1745,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # which also restates the views of it whose rank matches the reduced intermediate, with or without its
             # degenerate dimensions (depending on `strict_dataflow`). A view of a single element has no strides.
             allowed_view_ranks = {len(reduced_intermediate_shape), sum(1 for s in reduced_intermediate_shape if s != 1)}
-            for inner_state in inner_sdfg.states():
+            for inner_state in inner_sdfg.all_states():
                 for inner_node in inner_state.data_nodes():
                     if inner_node.data != inner_data:
                         continue
