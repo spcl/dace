@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 def test_return_scalar():
@@ -192,6 +193,19 @@ def test_return_from_nested_call_with_constant_sizes():
     assert np.allclose(nested_return_constant_sizes(a), np.maximum(a - 1, 0) + 1)
 
 
+@pytest.mark.parametrize('name, message', [
+    ('__return', 'can not be a transient'),
+    ('__return_1', 'not consecutively named'),
+])
+def test_invalid_return_value_reports_sdfg(name: str, message: str):
+    """ Invalid return values are reported as validation errors of the SDFG declaring them. """
+    sdfg = dace.SDFG('invalid_return_value')
+    sdfg.add_array(name, [2], dace.float64, transient=name == '__return')
+    sdfg.add_state()
+    with pytest.raises(dace.sdfg.InvalidSDFGError, match=message):
+        sdfg.validate()
+
+
 if __name__ == '__main__':
     test_return_scalar()
     test_return_scalar_in_nested_function()
@@ -203,3 +217,5 @@ if __name__ == '__main__':
     test_return_void_in_for()
     test_return_from_nested_call_with_typed_symbols()
     test_return_from_nested_call_with_constant_sizes()
+    test_invalid_return_value_reports_sdfg('__return', 'can not be a transient')
+    test_invalid_return_value_reports_sdfg('__return_1', 'not consecutively named')
