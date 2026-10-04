@@ -72,7 +72,7 @@ def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
     if not isinstance(node, nd.NestedSDFG) or connector is None:
         return False
     inner = node.sdfg.arrays.get(connector)
-    return inner is not None and inner.is_equivalent(window)
+    return inner is not None and inner.is_equivalent(window, symbol_mapping=node.symbol_mapping)
 
 
 def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
@@ -154,7 +154,8 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             # The names coinciding does not mean there is nothing to do: a connector can carry
             # the container's name while still describing a narrower window of it, in which case
             # the memlets inside are in the window's coordinates and still have to be unsqueezed.
-            equivalent = parent_sdfg.arrays[parent_name].is_equivalent(sdfg.arrays[name])
+            equivalent = sdfg.arrays[name].is_equivalent(parent_sdfg.arrays[parent_name],
+                                                         symbol_mapping=parent_node.symbol_mapping)
             if name != parent_name or not equivalent:
                 if name != parent_name:
                     replacements[name] = parent_name
@@ -477,6 +478,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 if connector is None or '.' in connector or connector not in node.sdfg.arrays:
                     continue
                 inner_desc = node.sdfg.arrays[connector]
+                # Literally the same descriptor: the replacement below is written in this SDFG's symbols, which a
                 # connector written in symbols of its own (mapped to these) would not know
                 if not inner_desc.is_equivalent(old_desc):
                     continue
