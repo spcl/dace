@@ -2669,6 +2669,15 @@ class SymbolResolver:
             state_symbols = self._per_state[state] = state.symbols_defined_at_state(sdfg_symbols=sdfg_symbols)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
+    def forget(self, sdfg: 'SDFG') -> None:
+        """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
+
+        :param sdfg: The SDFG that changed. The SDFGs nested in it are resolved separately and kept.
+        """
+        if self._per_sdfg.pop(sdfg, None) is None:
+            return
+        self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+
 
 @make_properties
 class ContinueBlock(ControlFlowBlock):

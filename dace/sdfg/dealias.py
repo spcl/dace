@@ -8,6 +8,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SymbolResolver
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -50,8 +51,9 @@ def dealias_sdfg_recursive(sdfg: SDFG):
 
     :param sdfg: The SDFG to operate on.
     """
+    symbols = SymbolResolver()
     for nsdfg in sdfg.all_sdfgs_recursive():
-        dealias_sdfg(nsdfg)
+        dealias_sdfg(nsdfg, symbols)
 
 
 def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
@@ -73,7 +75,7 @@ def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
     return inner is not None and inner.is_equivalent(window)
 
 
-def dealias_sdfg(sdfg: SDFG):
+def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     """
     Renames all data containers in an SDFG to match the same data descriptors
     as its parent SDFG, if exists. This function takes care of offsetting memlets and internal
@@ -82,9 +84,13 @@ def dealias_sdfg(sdfg: SDFG):
     This function operates in-place.
 
     :param sdfg: The SDFG to operate on.
+    :param symbols: A resolver for the symbols defined in the parent, shared by callers that dealias many nested
+                    SDFGs; one is made if not given.
     """
     if sdfg.parent is None:
         return
+    if symbols is None:
+        symbols = SymbolResolver()
 
     parent_sdfg = sdfg.parent_sdfg
     parent_state = sdfg.parent
@@ -162,8 +168,9 @@ def dealias_sdfg(sdfg: SDFG):
     if to_unsqueeze:
         # Symbols used by the parent's data descriptors may be defined by an enclosing scope (e.g., map
         # parameters or dynamic map inputs) rather than by the parent SDFG's symbol repository, so the
-        # scope-aware set of defined symbols is the correct source of truth here.
-        defined_symbols = parent_state.symbols_defined_at(parent_node)
+        # scope-aware set of defined symbols is the correct source of truth here. It includes the
+        # parent SDFG's own symbols.
+        defined_symbols = symbols.defined_at(parent_state, parent_node)
 
         for parent_name in to_unsqueeze:
             parent_arr = parent_sdfg.arrays[parent_name]
@@ -315,6 +322,9 @@ def dealias_sdfg(sdfg: SDFG):
                 for edge in out_edges[1:]:
                     parent_state.remove_memlet_path(edge)
 
+    # The symbols and containers of this SDFG changed
+    symbols.forget(sdfg)
+
 
 def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_symbols: Set[str],
                     parent_node: nd.NestedSDFG) -> bool:
@@ -461,6 +471,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 if connector is None or '.' in connector or connector not in node.sdfg.arrays:
                     continue
                 inner_desc = node.sdfg.arrays[connector]
+                # connector written in symbols of its own (mapped to these) would not know
                 if not inner_desc.is_equivalent(old_desc):
                     continue
                 replacement = copy.deepcopy(_as_container(new_desc))
@@ -937,22 +948,25 @@ def _windowed_edges(sdfg: SDFG, symbol_types: Dict[str, dtypes.typeclass]):
         yield connector, edge, outer
 
 
-def windowed_connectors(sdfg: SDFG) -> Dict[str, str]:
+def windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Dict[str, str]:
     """
     Collects the connectors of a nested SDFG that describe a window of the container they are
     connected to rather than the container itself, as legacy nested SDFGs do.
 
     :param sdfg: The nested SDFG to inspect. A top-level SDFG has no connectors, and yields nothing.
+    :param symbols: A resolver for the symbols defined in the parent; one is made if not given.
     :return: A mapping from connector name to the name of the container in the parent it is
              connected to, for every connector that does not follow the contract.
     """
     if sdfg.parent is None:
         return {}
-    symbol_types = sdfg.parent.symbols_defined_at(sdfg.parent_nsdfg_node)
+    if symbols is None:
+        symbols = SymbolResolver()
+    symbol_types = symbols.defined_at(sdfg.parent, sdfg.parent_nsdfg_node)
     return {connector: edge.data.data for connector, edge, _ in _windowed_edges(sdfg, symbol_types)}
 
 
-def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
+def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Set[str]:
     """
     Restates connectors that describe only the window their edge memlet selects as the whole
     container they are connected to, offsetting the memlets inside to match.
@@ -964,14 +978,17 @@ def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
     Precondition: The nested SDFG node must already be connected within the parent SDFG state.
 
     :param sdfg: The nested SDFG to operate on.
+    :param symbols: A resolver for the symbols defined in the parent; one is made if not given.
     :return: The names of the connectors that were restated.
     :note: This function operates in-place.
     """
     if sdfg.parent is None:
         return set()
+    if symbols is None:
+        symbols = SymbolResolver()
 
     parent_node = sdfg.parent_nsdfg_node
-    symbol_types = sdfg.parent.symbols_defined_at(parent_node)
+    symbol_types = symbols.defined_at(sdfg.parent, parent_node)
 
     windows: Dict[str, Tuple[data.Data, Memlet]] = {}
     rejected: Set[str] = set()
@@ -1007,6 +1024,8 @@ def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
             continue
         if not _widening_feasible(sdfg, connector, old_desc, passed_symbols):
             continue
+        # The window's symbols are the parent's. A name this SDFG defines itself -- a map parameter or a loop
+        # variable shadowing the parent's map parameter, say -- would capture them once the memlets move in.
         window = Memlet(data=connector, subset=copy.deepcopy(memlet.subset))
         for sym in passed_symbols:
             if sym not in sdfg.symbols:
@@ -1015,6 +1034,9 @@ def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
                 parent_node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
         _widen_container(sdfg, connector, old_desc, new_desc, window, symbol_types)
         widened.add(connector)
+    if widened:
+        # The symbols and containers of this SDFG changed
+        symbols.forget(sdfg)
     return widened
 
 
@@ -1066,7 +1088,7 @@ def fold_symbol_mapping(sdfg: SDFG) -> Dict[str, str]:
     return folded
 
 
-def integrate_nested_sdfgs_within(sdfg: SDFG) -> None:
+def integrate_nested_sdfgs_within(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> None:
     """
     Integrates every nested SDFG directly within ``sdfg`` (see ``integrate_nested_sdfg``).
 
@@ -1077,15 +1099,18 @@ def integrate_nested_sdfgs_within(sdfg: SDFG) -> None:
     containers they are connected to.
 
     :param sdfg: The SDFG whose nested SDFGs are integrated.
+    :param symbols: A resolver for the symbols defined in ``sdfg``; one is made if not given.
     :note: This function operates in-place.
     """
+    if symbols is None:
+        symbols = SymbolResolver()
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
-                integrate_nested_sdfg(node.sdfg)
+                integrate_nested_sdfg(node.sdfg, symbols)
 
 
-def integrate_nested_sdfg(sdfg: SDFG):
+def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     """
     Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
     the nested SDFG are shared with the parent SDFG. This function adds data containers to the nested
@@ -1100,10 +1125,14 @@ def integrate_nested_sdfg(sdfg: SDFG):
     Precondition: The nested SDFG node must already be connected within the parent SDFG state.
 
     :param sdfg: The SDFG to operate on.
+    :param symbols: A resolver for the symbols defined in the parent, shared by callers that integrate many nested
+                    SDFGs; one is made if not given.
     :note: This function operates in-place.
     """
     if sdfg.parent is None:
         return
+    if symbols is None:
+        symbols = SymbolResolver()
 
     fold_symbol_mapping(sdfg)
 
@@ -1133,7 +1162,8 @@ def integrate_nested_sdfg(sdfg: SDFG):
 
     # A descriptor adopted from the parent may be written in symbols the nested SDFG does not hold
     # yet; the loop at the end of this function gives it the ones the parent defines here.
-    available_symbols = set(sdfg.symbols.keys()) | set(parent_state.symbols_defined_at(parent_node).keys())
+    symbol_types = symbols.defined_at(parent_state, parent_node)
+    available_symbols = set(sdfg.symbols.keys()) | set(symbol_types.keys())
 
     # Collect all edges connected to the nested SDFG node
     for edge in parent_state.all_edges(parent_node):
@@ -1345,9 +1375,8 @@ def integrate_nested_sdfg(sdfg: SDFG):
             if edge.src_conn in parent_mapping:
                 edge.src_conn = parent_mapping[edge.src_conn]
 
-    # Add remaining symbols to symbol mapping using symbols_defined_at
-    symtypes = parent_state.symbols_defined_at(parent_node)
-    for sym_name, sym_type in symtypes.items():
+    # Add remaining symbols to symbol mapping using the symbols defined at the node, which integration did not change
+    for sym_name, sym_type in symbol_types.items():
         # Skip parent symbols that are shadowed by unrelated internal data containers or constants
         if sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
             continue
@@ -1364,8 +1393,12 @@ def integrate_nested_sdfg(sdfg: SDFG):
     # accesses to the parent container they alias.
     redirect_meta_accesses(sdfg, to_add_and_view)
 
+    # The symbols and containers of this SDFG changed
+    symbols.forget(sdfg)
 
-def convert_legacy_nested_sdfgs(sdfg: SDFG) -> List[Tuple[nd.NestedSDFG, str]]:
+
+def convert_legacy_nested_sdfgs(sdfg: SDFG,
+                                symbols: Optional[SymbolResolver] = None) -> List[Tuple[nd.NestedSDFG, str]]:
     """
     Restates the nested SDFGs below ``sdfg`` that were assembled under the earlier semantics so that
     they follow the nested SDFG contract.
@@ -1387,19 +1420,22 @@ def convert_legacy_nested_sdfgs(sdfg: SDFG) -> List[Tuple[nd.NestedSDFG, str]]:
     would otherwise lose the window.
 
     :param sdfg: The SDFG at the root of the tree to convert.
+    :param symbols: A resolver for the symbols defined in the tree, shared by the recursion; one is made if not given.
     :return: The ``(nested SDFG node, connector)`` pairs that did not follow the contract.
     :note: This function operates in-place.
     """
+    if symbols is None:
+        symbols = SymbolResolver()
     converted: List[Tuple[nd.NestedSDFG, str]] = []
     for state in sdfg.all_states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
                 continue
-            before = windowed_connectors(node.sdfg)
-            widen_windowed_connectors(node.sdfg)
-            integrate_nested_sdfg(node.sdfg)
+            before = windowed_connectors(node.sdfg, symbols)
+            widen_windowed_connectors(node.sdfg, symbols)
+            integrate_nested_sdfg(node.sdfg, symbols)
             converted.extend((node, connector) for connector in before)
-            converted.extend(convert_legacy_nested_sdfgs(node.sdfg))
+            converted.extend(convert_legacy_nested_sdfgs(node.sdfg, symbols))
     return converted
 
 
