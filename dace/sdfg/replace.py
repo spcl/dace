@@ -77,11 +77,12 @@ def replace_dict(subgraph: 'StateSubgraphView',
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname):
+            symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+            for symname, new_name in repl.items()
+        }
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -248,11 +249,12 @@ def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
                             symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                             sdfg: Optional['dace.SDFG'] = None):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname):
+            symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+            for symname, new_name in repl.items()
+        }
 
     for propclass, propval in node.properties():
         if propval is None:

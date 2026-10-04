@@ -1219,10 +1219,11 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                      replace_in_graph: bool = True,
                      replace_keys: bool = False):
-        symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repl.items()
-        }
+        if symrepl is None:
+            symrepl = {
+                symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repl.items()
+            }
 
         if replace_in_graph:
             # Replace in inter-state edges

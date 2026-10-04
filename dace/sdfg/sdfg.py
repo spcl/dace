@@ -971,13 +971,13 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
-        if symrepl:
+        if symrepl is None:
+            symrepl = {
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repldict.items()
+            }
+        else:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
-
-        symrepl = symrepl or {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repldict.items()
-        }
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
