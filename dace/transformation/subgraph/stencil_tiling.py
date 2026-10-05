@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     stencil tiling transformation. """
 
@@ -356,7 +356,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             # first find out variable mapping
             for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                 mapping = []
-                for dim in e.data.subset:
+                for dim in e.data.subset.ndrange():
                     syms = set()
                     for d in dim:
                         syms |= symbolic.symlist(d).keys()

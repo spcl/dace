@@ -1,15 +1,26 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement the GPU transformation
     (with local storage). """
 
 import copy
 import collections
+import dataclasses
+from typing import Dict, List
 
 from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.sdfg import nodes, SDFGState
+from dace.sdfg import dealias, nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import Property, make_properties
+
+
+@dataclasses.dataclass
+class CloneWindow:
+    """ Where a device clone sits in the container it was cloned from, to rebase connectors from one to the other. """
+    #: The clone's origin, one index per dimension of the original container
+    offset: sbs.Range
+    #: The dimensions of the original container that the clone does not have
+    lost_dims: List[int]
 
 
 def in_scope(graph, node, parent):
@@ -337,6 +348,9 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
             out_cloned_arraynodes[array_node.data] = cloned_node
 
+        # Origin and removed dimensions of each clone, relative to the original container
+        clone_windows: Dict[str, CloneWindow] = {}
+
         # Third, connect the cloned arrays to the originals
         for array_name, node in in_cloned_arraynodes.items():
             graph.add_node(node)
@@ -371,6 +385,8 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = CloneWindow(offset=sbs.Range.from_indices(offset),
+                                                               lost_dims=list(lost_dims))
 
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
@@ -448,6 +464,8 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = CloneWindow(offset=sbs.Range.from_indices(offset),
+                                                               lost_dims=list(lost_dims))
 
                     graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
@@ -500,3 +518,13 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             for edge in scope_subgraph.edges():
                 if edge.data.data is not None and edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
+
+            # Connectors inside the scope now read the device copies
+            for scope_node in scope_subgraph.nodes():
+                if not isinstance(scope_node, nodes.NestedSDFG):
+                    continue
+                for edge in graph.all_edges(scope_node):
+                    window = clone_windows.get(edge.data.data)
+                    connector = edge.dst_conn if edge.dst is scope_node else edge.src_conn
+                    if window is not None and connector:
+                        dealias.rebase_connector(scope_node, connector, offset=window.offset, squeeze=window.lost_dims)

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 DaCe Library Node Backward Pass Implementations for Automatic Differentiation.
 
@@ -28,7 +28,7 @@ from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, Back
 
 # Utility imports
 import dace.autodiff.utils as ad_utils
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name, out_edge_with_name
 
 
 @autoregister_params(node_type=dace.libraries.standard.nodes.Reduce, name="pure")
@@ -94,6 +94,44 @@ class ReverseReduce(BackwardImplementation):
                                                  in_desc, out_desc, all_axes, non_reduce_axes)
 
     @staticmethod
+    def _reduced_index(in_subset: dace.subsets.Range, out_subset: dace.subsets.Range,
+                       kept_axes: typing.List[int]) -> str:
+        """
+        Indexes the forward output container from the parameters ``i<d>`` of a map over the forward input subset.
+
+        The forward node writes the part of its output container that ``out_subset`` selects, with the dimensions of
+        size one squeezed away, and the reduced shape is the shape of ``in_subset`` without the reduced axes. Each
+        remaining dimension of the output subset is therefore one of the kept axes, in order.
+
+        :param in_subset: The subset the forward node reads, one range per dimension of its input container.
+        :param out_subset: The subset the forward node writes, one range per dimension of its output container.
+        :param kept_axes: The axes of the input that are not reduced.
+        :return: The comma-separated index of the output container.
+        :raises AutoDiffException: If the output subset does not have the reduced shape.
+        """
+        in_ranges = in_subset.ndrange()
+        in_sizes = in_subset.size()
+        kept = iter([d for d in kept_axes if (in_sizes[d] == 1) != True])
+        index = []
+        for (begin, _, step), size in zip(out_subset.ndrange(), out_subset.size()):
+            if (size == 1) == True:
+                index.append(begin)
+                continue
+            axis = next(kept, None)
+            if axis is None:
+                break
+            in_begin, _, in_step = in_ranges[axis]
+            position = dace.symbol(f"i{axis}") - in_begin
+            if (in_step == 1) != True:
+                position = dace.symbolic.int_floor(position, in_step)
+            index.append(begin + step * position)
+        else:
+            if next(kept, None) is None:
+                return ",".join(str(i) for i in index)
+        raise AutoDiffException(f"Reduction output {out_subset} does not have the shape of {in_subset} without the "
+                                f"reduced axes (keeping {kept_axes})")
+
+    @staticmethod
     def _backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
                             reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
                             all_axes: typing.List[int],
@@ -154,7 +192,14 @@ class ReverseReduce(BackwardImplementation):
                            transient=True,
                            lifetime=dtypes.AllocationLifetime.State)
 
-        reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
+        # The connectors are the containers the forward node reads and writes (see
+        # ``dace.sdfg.dealias.integrate_nested_sdfg``), which may hold more than it touches: its memlets select the
+        # part it reads, and the part it writes, possibly with the kept axes squeezed out of a larger container.
+        in_subset = in_edge_with_name(forward_node, context.forward_state, input_name).data.subset
+        out_subset = out_edge_with_name(forward_node, context.forward_state, output_name).data.subset
+        map_ranges = {f"i{d}": f"{b}:{e + 1}:{s}" for d, (b, e, s) in enumerate(in_subset.ndrange())}
+        in_index = ",".join(f"i{d}" for d in all_axes)
+        out_index = ReverseReduce._reduced_index(in_subset, out_subset, non_reduce_axes)
 
         if is_extremal:
             # max/min backward splits the incoming gradient between the elements tied for the
@@ -169,20 +214,15 @@ class ReverseReduce(BackwardImplementation):
             count_node.setzero = True
 
             # Count matching elements
-            count_memlet = Memlet.simple(count_arr_name,
-                                         "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes),
-                                         wcr_str="lambda x, y: x + y")
-            extremal_val_memlet_count = Memlet.simple(
-                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            extremal_idx_memlet_count = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
+            count_memlet = Memlet.simple(count_arr_name, out_index, wcr_str="lambda x, y: x + y")
+            extremal_val_memlet_count = Memlet.simple(extremal_conn_name, out_index)
+            extremal_idx_memlet_count = Memlet.simple(extremal_idx_conn_name, in_index)
 
-            count_grad_state.add_mapped_tasklet(f"_count_{type_name}_matches_", {
-                "i" + str(i): "0:{}".format(shape)
-                for i, shape in enumerate(in_desc.shape)
-            }, {
-                "__extremal_val": extremal_val_memlet_count,
-                "__extremal_val_idx": extremal_idx_memlet_count
-            },
+            count_grad_state.add_mapped_tasklet(f"_count_{type_name}_matches_",
+                                                map_ranges, {
+                                                    "__extremal_val": extremal_val_memlet_count,
+                                                    "__extremal_val_idx": extremal_idx_memlet_count
+                                                },
                                                 "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0",
                                                 {"__count": count_memlet},
                                                 external_edges=True,
@@ -190,16 +230,11 @@ class ReverseReduce(BackwardImplementation):
 
             # Compute the normalized gradient (grad / count). Reading through ``count_node`` is
             # what orders this map after the counting map above.
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
-            extremal_val_memlet = Memlet.simple(
-                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            extremal_idx_memlet = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
-            count_read_memlet = Memlet.simple(
-                count_arr_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+            reduction_memlet = Memlet.simple(rev_input_conn_name, out_index)
+            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name, in_index, wcr_str="lambda x, y: x + y")
+            extremal_val_memlet = Memlet.simple(extremal_conn_name, out_index)
+            extremal_idx_memlet = Memlet.simple(extremal_idx_conn_name, in_index)
+            count_read_memlet = Memlet.simple(count_arr_name, out_index)
 
             tasklet_inputs = {
                 "__in": reduction_memlet,
@@ -210,10 +245,8 @@ class ReverseReduce(BackwardImplementation):
             tasklet_code = "__out = __in / __count if __extremal_val == __extremal_val_idx else 0"
 
             _, _, exit_map = count_grad_state.add_mapped_tasklet(f"_{type_name}_grad_" +
-                                                                 str(reduction_type).replace(".", "_") + "_", {
-                                                                     "i" + str(i): "0:{}".format(shape)
-                                                                     for i, shape in enumerate(in_desc.shape)
-                                                                 },
+                                                                 str(reduction_type).replace(".", "_") + "_",
+                                                                 map_ranges,
                                                                  tasklet_inputs,
                                                                  tasklet_code, {"__out": reverse_reduction_memlet},
                                                                  external_edges=True,
@@ -223,19 +256,14 @@ class ReverseReduce(BackwardImplementation):
         else:
             # Sum reduction: simple broadcast
             state = sdfg.add_state(f"block_{id(forward_node)}")
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
+            reduction_memlet = Memlet.simple(rev_input_conn_name, out_index)
+            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name, in_index, wcr_str="lambda x, y: x + y")
             tasklet_inputs = {"__in": reduction_memlet}
             tasklet_code = "__out = __in"
 
             _, _, exit_map = state.add_mapped_tasklet(f"_{type_name}_grad_" + str(reduction_type).replace(".", "_") +
-                                                      "_", {
-                                                          "i" + str(i): "0:{}".format(shape)
-                                                          for i, shape in enumerate(in_desc.shape)
-                                                      },
+                                                      "_",
+                                                      map_ranges,
                                                       tasklet_inputs,
                                                       tasklet_code, {"__out": reverse_reduction_memlet},
                                                       external_edges=True)

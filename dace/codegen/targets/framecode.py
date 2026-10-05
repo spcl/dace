@@ -8,7 +8,7 @@ from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 import numpy as np
 
 import dace
-from dace import config, data, dtypes
+from dace import config, data, dtypes, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -77,8 +77,15 @@ class DaCeCodeGenerator(object):
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
+                # A symbol of the parent reaches the nested SDFG only through the symbol mapping, as a same-named one
+                # of the nested SDFG is its own, which the nested SDFG may assign itself.
                 parent_constants = self._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
-                result |= parent_constants
+                result |= {
+                    inner
+                    for inner, outer in nested.symbol_mapping.items()
+                    if {str(sym)
+                        for sym in symbolic.pystr_to_symbolic(outer).free_symbols} <= parent_constants
+                }
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):
@@ -451,7 +458,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
-            if arr.lifetime == dtypes.AllocationLifetime.External:
+            if arr.lifetime == dtypes.AllocationLifetime.External and arr.transient is True:
                 ext_arrays[arr.storage].append((subsdfg, aname, arr))
 
         # Only generate functions as necessary
