@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Resolves ``Data.stack_vla == Auto`` on register arrays to ``Stack`` or ``Heap``. """
+""" Resolves the stack placement of register arrays that leave it to the code generator. """
 
 from dataclasses import dataclass
 import sympy
@@ -11,32 +11,32 @@ from dace.transformation import pass_pipeline as ppl, transformation
 STACK_ARRAY_MAX_ELEMENTS = 2048
 
 
-def resolve_stack_allocation(desc: data.Data, constants: dict[str, object]) -> dtypes.StackAllocation:
-    """ The placement of a register array: an explicit choice is kept; ``Auto`` puts a constant size
-        below ``STACK_ARRAY_MAX_ELEMENTS`` elements and ``compiler.max_stack_array_size`` bytes on the
-        stack, and a symbolic size on the heap.
+def resolve_stack_allocation(desc: data.Data, constants: dict[str, object]) -> bool:
+    """ Whether a register array is placed on the stack: an explicit ``StorageType.Register(stack=...)`` is kept;
+        otherwise a constant size below ``STACK_ARRAY_MAX_ELEMENTS`` elements and ``compiler.max_stack_array_size``
+        bytes is on the stack, and a symbolic size on the heap.
     """
-    if desc.stack_vla is not dtypes.StackAllocation.Auto:
-        return desc.stack_vla
+    stack = dtypes.is_stack_register(desc.storage)
+    if stack is not None:
+        return stack
     size = desc.total_size
     if symbolic.issymbolic(size, constants):
-        return dtypes.StackAllocation.Heap
+        return False
     if isinstance(size, sympy.Basic):
         # By name: the constant's symbol may have another dtype than the one in the shape.
         size = size.subs({sym: constants[sym.name] for sym in size.free_symbols})
     size = int(size)
     size_bytes = size * desc.dtype.bytes if not isinstance(desc.dtype, dtypes.opaque) else 0
-    if size < STACK_ARRAY_MAX_ELEMENTS and size_bytes <= Config.get('compiler', 'max_stack_array_size'):
-        return dtypes.StackAllocation.Stack
-    return dtypes.StackAllocation.Heap
+    return size < STACK_ARRAY_MAX_ELEMENTS and size_bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ResolveStackAllocation(ppl.Pass):
-    """ Replaces ``Auto`` stack placement on every transient register array with the decision of
-        ``resolve_stack_allocation``, so the generated code follows a placement visible in the SDFG.
+    """ Replaces the undecided ``StorageType.Register`` of every transient register array with
+        ``StorageType.Register(stack=...)`` as decided by ``resolve_stack_allocation``, so the generated code follows
+        a placement visible in the SDFG.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -52,7 +52,7 @@ class ResolveStackAllocation(ppl.Pass):
             for name, desc in nsdfg.arrays.items():
                 if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and desc.transient
                         and desc.storage == dtypes.StorageType.Register
-                        and desc.stack_vla is dtypes.StackAllocation.Auto):
-                    desc.stack_vla = resolve_stack_allocation(desc, nsdfg.constants)
+                        and dtypes.is_stack_register(desc.storage) is None):
+                    desc.storage = dtypes.StorageType.Register(stack=resolve_stack_allocation(desc, nsdfg.constants))
                     resolved.add((nsdfg.cfg_id, name))
         return resolved or None
