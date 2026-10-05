@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -25,6 +25,7 @@ def _construct_sdfg():
     state.add_edge(r, None, n, 'a', dace.Memlet.simple('A', '1'))
     state.add_edge(n, 'b', w, None, dace.Memlet.simple('A', '0'))
 
+    n.integrate_into_parent()
     return sdfg
 
 
