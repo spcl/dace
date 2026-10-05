@@ -482,7 +482,6 @@ def state_has_reachable_cycle(state: 'dace.sdfg.SDFGState') -> bool:
     return False
 
 
-
 def mixed_symbol_dtypes(subset: subsets.Subset) -> Optional[str]:
     """A name ``subset`` carries at two dtypes, described; the two are distinct sympy symbols, so ``N - N``
     never cancels and bound comparisons silently fail."""
@@ -495,8 +494,6 @@ def mixed_symbol_dtypes(subset: subsets.Subset) -> Optional[str]:
             if first != sym.dtype:
                 return f'symbol {sym.name} appears with dtypes {first} and {sym.dtype}'
     return None
-
-
 
 
 def validate_state(state: 'dace.sdfg.SDFGState',

@@ -20,8 +20,6 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
 
 import numpy as np
 
-from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
-
 
 def mapfission_sdfg():
     sdfg = dace.SDFG('mapfission')

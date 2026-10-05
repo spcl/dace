@@ -12,8 +12,6 @@ import uuid
 import warnings
 import pytest
 
-from tests.cfg_tree import assert_tree_matches_a_reset, conditional, inner_sdfg, loop, spy_on_resets
-
 W = dace.symbol('W')
 H = dace.symbol('H')
 

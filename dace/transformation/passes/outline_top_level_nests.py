@@ -20,7 +20,7 @@ code generator.
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from dace import SDFG, dtypes
-from dace.properties import Property, make_properties
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import LoopRegion, SDFGState

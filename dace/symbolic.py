@@ -3715,6 +3715,8 @@ def sympify_text(text: str, evaluate: Optional[bool]) -> Any:
                                                      evaluate=evaluate)
     except (sympy.parsing.sympy_parser.TokenError, SyntaxError) as exc:
         raise sympy.SympifyError('could not parse %r' % text, exc)
+
+
 def symbol_replacements(
         symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]]) -> Optional[Dict[str, sympy.Basic]]:
     """

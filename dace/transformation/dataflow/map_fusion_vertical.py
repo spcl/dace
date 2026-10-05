@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
-from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
+from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock
 from dace.transformation.dataflow import map_fusion_helper as mfhelper

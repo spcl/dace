@@ -4,14 +4,13 @@
 from copy import deepcopy as dc
 import itertools
 from dace import graphlib as nx
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 from functools import reduce
 import operator
 import copy
 import warnings
 
-from dace import memlet, Memlet, symbolic, dtypes, subsets
-from dace.frontend.python import astutils
+from dace import memlet, Memlet, symbolic, dtypes
 from dace.sdfg import dealias, nodes, propagation, utils
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
