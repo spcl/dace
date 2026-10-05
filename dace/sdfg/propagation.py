@@ -1928,19 +1928,13 @@ def propagate_subset(memlets: List[Memlet],
             # free symbols list of the subset dimension or is undefined outside.
             tmp_subset_rng = []
             for s, ea in zip(subset, entire_array):
-                if isinstance(subset, subsets.Indices):
-                    fsyms = _freesyms(s)
+                contains_params = False
+                contains_undefs = False
+                for sdim in s:
+                    fsyms = _freesyms(sdim)
                     fsyms_str = set(map(str, fsyms))
-                    contains_params = len(fsyms_str & paramset) != 0
-                    contains_undefs = len(fsyms_str & undefined_names) != 0
-                else:
-                    contains_params = False
-                    contains_undefs = False
-                    for sdim in s:
-                        fsyms = _freesyms(sdim)
-                        fsyms_str = set(map(str, fsyms))
-                        contains_params |= len(fsyms_str & paramset) != 0
-                        contains_undefs |= len(fsyms_str & undefined_names) != 0
+                    contains_params |= len(fsyms_str & paramset) != 0
+                    contains_undefs |= len(fsyms_str & undefined_names) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:

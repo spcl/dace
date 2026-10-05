@@ -269,8 +269,6 @@ class PowerRelaxer:
     def relax_subset(self, sub, ranges: Ranges, facts: SignFacts) -> None:
         if isinstance(sub, subsets.Range):
             sub.ranges = [tuple(self.relax(component, ranges, facts) for component in rng) for rng in sub.ranges]
-        elif isinstance(sub, subsets.Indices):
-            sub.indices = [self.relax(idx, ranges, facts) for idx in sub.indices]
 
     def relax_descriptor(self, desc: data.Array, ranges: Ranges, facts: SignFacts) -> None:
         desc.shape = tuple(self.relax(item, ranges, facts) for item in desc.shape)

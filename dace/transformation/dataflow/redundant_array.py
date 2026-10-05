@@ -80,17 +80,11 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 padding = len(desc.shape) - len(src_subset)
                 if padding != 0:
                     if padding > 0:
-                        if isinstance(src_subset, subsets.Indices):
-                            indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(src_subset, subsets.Range):
+                        if isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
-                        if isinstance(src_subset, subsets.Indices):
-                            indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(src_subset, subsets.Range):
+                        if isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
                     src_subset.offset(src_subset, True)
@@ -111,17 +105,11 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 padding = len(desc.shape) - len(dst_subset)
                 if padding != 0:
                     if padding > 0:
-                        if isinstance(dst_subset, subsets.Indices):
-                            indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(dst_subset, subsets.Range):
+                        if isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
-                        if isinstance(dst_subset, subsets.Indices):
-                            indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(dst_subset, subsets.Range):
+                        if isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
                     dst_subset.offset(dst_subset, True)
@@ -260,32 +248,14 @@ def find_dims_to_pop2(
     return dims_to_pop
 
 
-#: A dimension removed by ``pop_dims()``: its ``(start, end, step)`` range and its tile size.
-PoppedDim = Tuple[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], symbolic.SymbolicType]
-
-
-def pop_dims(subset: subsets.Range, dims: Sequence[int]) -> Tuple[subsets.Range, List[PoppedDim]]:
-    """
-    Remove the dimensions listed in ``dims`` from ``subset``.
-
-    ``subsets.Indices`` is handled as well, in which case an ``Indices`` is returned, since it is a
-    ``subsets.Range`` whose every dimension is a single point.
-
-    Returns:
-        The reduced subset and the removed ``(range, tile_size)`` pairs, in removal order. Feed both,
-        together with the very same ``dims``, into ``compose_and_push_back()`` to restore them.
-
-    :param subset: The subset to remove dimensions from.
-    :param dims: Dimensions to remove, indexing ``subset`` as it is passed in.
-    """
-    popped: List[PoppedDim] = []
+def pop_dims(subset, dims):
+    popped = []
     ranges = copy.deepcopy(subset.ranges)
     tsizes = copy.deepcopy(subset.tile_sizes)
-    # `dims` indexes the original subset, so removing low-to-high would shift every later index.
-    for i in sorted(dims, reverse=True):
-        popped.append((ranges.pop(i), tsizes.pop(i)))
-    if isinstance(subset, subsets.Indices):
-        return subsets.Indices([rb for rb, _, _ in ranges]), popped
+    for i in dims:
+        r = ranges.pop(i)
+        t = tsizes.pop(i)
+        popped.append((r, t))
     new_subset = subsets.Range(ranges)
     new_subset.tile_sizes = tsizes
     return new_subset, popped

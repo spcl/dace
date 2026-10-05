@@ -3678,8 +3678,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 # TODO: Use _create_output_shape_from_advanced_indexing
                 rng = expr.subset
-                if isinstance(rng, subsets.Indices):
-                    rng = subsets.Range.from_indices(rng)
 
                 # Figure out whether the target subcript is an array-index
                 # indirection or a boolean array
@@ -4912,8 +4910,6 @@ class ProgramVisitor(ExtNodeVisitor):
                      (rname(arg) in self.variables.keys() and self.variables[rname(arg)] in self.sdfg.arrays.keys()))):
                     arg.slice = self.visit(arg.slice)
                     expr: MemletExpr = ParseMemlet(self, {**self.sdfg.arrays, **self.defined}, arg)
-                    if isinstance(expr.subset, subsets.Indices):
-                        expr.subset = subsets.Range.from_indices(expr.subset)
                     name = rname(arg)
                     if name in self.variables.keys():
                         name = self.variables[name]
@@ -4981,10 +4977,6 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
-            if isinstance(src_expr.subset, subsets.Indices):
-                src_expr.subset = subsets.Range.from_indices(src_expr.subset)
-            if isinstance(dst_expr.subset, subsets.Indices):
-                dst_expr.subset = subsets.Range.from_indices(dst_expr.subset)
             if src_expr.arrdims or dst_expr.arrdims:
                 raise NotImplementedError('Copying with array indices only allowed through assignment '
                                           'expressions ("A[...] = B[...]")')
@@ -5351,31 +5343,25 @@ class ProgramVisitor(ExtNodeVisitor):
             rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
 
-        is_index = False
-        if isinstance(expr.subset, subsets.Indices):
-            is_index = True
-            other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
-        else:
+        def range_is_index(range: subsets.Range) -> bool:
+            """
+            Check if the given subset range is an index.
 
-            def range_is_index(range: subsets.Range) -> bool:
-                """
-                Check if the given subset range is an index.
+            Conditions for an index are as follows:
+            - tile_size of each range has to be 1
+            - the range increment has to be 1
+            - start/stop element of the range have to be equal
+            """
+            for r, t in zip(range.ranges, range.tile_sizes):
+                if t != 1 or r[2] != 1 or r[0] != r[1]:
+                    return False
+            return True
 
-                Conditions for an index are as follows:
-                - tile_size of each range has to be 1
-                - the range increment has to be 1
-                - start/stop element of the range have to be equal
-                """
-                for r, t in zip(range.ranges, range.tile_sizes):
-                    if t != 1 or r[2] != 1 or r[0] != r[1]:
-                        return False
-                return True
-
-            # We also check the type of the slice attribute of the node
-            # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
-            # (the former is an index, the latter is a slice).
-            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
-            other_subset = copy.deepcopy(expr.subset)
+        # We also check the type of the slice attribute of the node
+        # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
+        # (the former is an index, the latter is a slice).
+        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+        other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
         # Make new axes and squeeze for scalar subsets (as per numpy behavior)

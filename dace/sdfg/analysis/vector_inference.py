@@ -5,7 +5,7 @@ from dace.memlet import Memlet
 from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.graph import MultiConnectorEdge
 import dace
-from dace import SDFG, SDFGState, subsets
+from dace import SDFG, SDFGState
 import dace.sdfg.nodes as nodes
 import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.dtypes as dtypes
@@ -440,8 +440,6 @@ class VectorInferenceGraph:
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
         subset = edge.data.subset
-        if isinstance(subset, subsets.Indices):
-            subset = subsets.Range.from_indices(subset)
         for dim, sub in enumerate(subset):
             if self.param in {sym.name for sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols}:
                 if vec_dim is None:
