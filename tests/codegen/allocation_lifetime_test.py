@@ -367,20 +367,20 @@ def test_nested_persistent():
 def test_persistent_scalar():
 
     @dace.program
-    def perscal(a: dace.float64[20]):
+    def persistent_scalar(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = a[1] + 1
         return tmp
 
     a = np.random.rand(20)
-    b = perscal(a)
+    b = persistent_scalar(a)
     assert np.allclose(b, a[1] + 1)
 
 
 def test_persistent_scalar_in_map():
 
     @dace.program
-    def perscal(a: dace.float64[20, 20]):
+    def persistent_scalar_in_map(a: dace.float64[20, 20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -392,14 +392,14 @@ def test_persistent_scalar_in_map():
                 aa = 5
 
     a = np.random.rand(20, 20)
-    perscal(a)
+    persistent_scalar_in_map(a)
     assert np.allclose(a[1, 2], 5)
 
 
 def test_persistent_array_access():
 
     @dace.program
-    def perscal(a: dace.float64[20]):
+    def persistent_array_access(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -410,7 +410,7 @@ def test_persistent_array_access():
             aa = 5
 
     a = np.random.rand(20)
-    perscal(a)
+    persistent_array_access(a)
     assert np.allclose(a[3], 5)
 
 
