@@ -298,10 +298,7 @@ def scope_misses(state: SDFGState,
         elif isinstance(node, nd.LibraryNode):
             # add a symbol to the top level sdfg, such that the user can define it in the extension
             top_level_sdfg = state.parent
-            try:
-                top_level_sdfg.add_symbol(f'{node.name}_misses', dtypes.int64)
-            except FileExistsError:
-                pass
+            top_level_sdfg.add_symbol(f'{node.name}_misses', dtypes.int64)
             lib_node_misses = symbol(f'{node.name}_misses', positive=True)
             lib_node_misses = lib_node_misses.subs(mapping)
             scope_misses += lib_node_misses

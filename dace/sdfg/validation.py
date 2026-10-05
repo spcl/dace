@@ -232,6 +232,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace import data as dt
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
+    from dace.sdfg.sdfg import relation_names
 
     references = references or set()
 
@@ -262,6 +263,18 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
                     'that the names of symbols and data descriptors are unique.', sdfg, None)
             seen_names.update(obj_names)
+
+        # Symbol facts may only name declared symbols, and must not contradict each other
+        undeclared = sorted(({*sdfg.symbol_predicates}
+                             | {name
+                                for relation in sdfg.symbol_relations
+                                for name in relation_names(relation)}) - sdfg.symbols.keys())
+        if undeclared:
+            raise InvalidSDFGError(f'Symbol facts name undeclared symbols {undeclared}', sdfg, None)
+        try:
+            sdfg.facts()
+        except symbolic.InconsistentAssumptionsError as error:
+            raise InvalidSDFGError(str(error), sdfg, None) from error
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():

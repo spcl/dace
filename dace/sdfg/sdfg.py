@@ -13,8 +13,10 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
+
+import sympy
 
 import dace
 from dace.sdfg.graph import generate_element_id, SubgraphView
@@ -136,6 +138,63 @@ def _nested_arrays_from_json(obj, context=None):
     if obj is None:
         return NestedDict({})
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
+
+
+class NameCollisionError(NameError):
+    """ Raised when a new symbol or data descriptor takes a name the SDFG already uses for the other kind. """
+
+
+def predicates_to_json(predicates: Dict[str, FrozenSet[symbolic.Predicate]]) -> Dict[str, List[str]]:
+    return {name: sorted(predicate.name for predicate in facts) for name, facts in predicates.items()}
+
+
+def predicates_from_json(obj: Optional[Dict[str, List[str]]], context=None) -> Dict[str, FrozenSet[symbolic.Predicate]]:
+    if obj is None:
+        return {}
+    return {name: frozenset(symbolic.Predicate[predicate] for predicate in names) for name, names in obj.items()}
+
+
+def relations_to_json(relations: List[symbolic.Relation]) -> List[Dict[str, str]]:
+    return [{
+        'kind': relation.kind.name,
+        'lhs': symbolic.serialize_symbolic(relation.lhs),
+        'rhs': symbolic.serialize_symbolic(relation.rhs)
+    } for relation in relations]
+
+
+def relations_from_json(obj: Optional[List[Dict[str, str]]], context=None) -> List[symbolic.Relation]:
+    if obj is None:
+        return []
+    return [
+        symbolic.Relation(symbolic.RelationKind[relation['kind']], symbolic.deserialize_symbolic(relation['lhs']),
+                          symbolic.deserialize_symbolic(relation['rhs'])) for relation in obj
+    ]
+
+
+def relation_names(relation: symbolic.Relation) -> Set[str]:
+    return {str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols}
+
+
+def predicate_as_relation(predicate: symbolic.Predicate, expr: sympy.Expr) -> symbolic.Relation:
+    """ The relation saying ``expr`` satisfies ``predicate`` (used when a symbol is replaced by an expression). """
+    zero = sympy.Integer(0)
+    if predicate is symbolic.Predicate.POSITIVE:
+        return symbolic.Relation(symbolic.RelationKind.LT, zero, expr)
+    if predicate is symbolic.Predicate.NONNEGATIVE:
+        return symbolic.Relation(symbolic.RelationKind.LE, zero, expr)
+    if predicate is symbolic.Predicate.NEGATIVE:
+        return symbolic.Relation(symbolic.RelationKind.LT, expr, zero)
+    if predicate is symbolic.Predicate.NONPOSITIVE:
+        return symbolic.Relation(symbolic.RelationKind.LE, expr, zero)
+    return symbolic.Relation(symbolic.RelationKind.NE, expr, zero)
+
+
+def symbol_facts(symbols: Dict[str, dtypes.typeclass], predicates: Dict[str, FrozenSet[symbolic.Predicate]],
+                 relations: List[symbolic.Relation]) -> symbolic.Facts:
+    """ Builds the facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict. """
+    integers = frozenset(name for name, stype in symbols.items()
+                         if stype in dtypes.INTEGER_TYPES and stype != dtypes.bool_)
+    return symbolic.Facts(dict(predicates), tuple(relations), integers)
 
 
 def _replace_dict_keys(d, old, new):
@@ -589,6 +648,18 @@ class SDFG(ControlFlowRegion):
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbol_predicates = Property(dtype=dict,
+                                 default={},
+                                 desc='Sign predicates assumed for the symbols, by name',
+                                 to_json=predicates_to_json,
+                                 from_json=predicates_from_json,
+                                 serialize_if=lambda sdfg: bool(sdfg.symbol_predicates))
+    symbol_relations = Property(dtype=list,
+                                default=[],
+                                desc='Relations assumed between the symbols',
+                                to_json=relations_to_json,
+                                from_json=relations_from_json,
+                                serialize_if=lambda sdfg: bool(sdfg.symbol_relations))
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -659,6 +730,8 @@ class SDFG(ControlFlowRegion):
         self._propagate = propagate
         self._parent = parent
         self.symbols = {}
+        self.symbol_predicates = {}
+        self.symbol_relations = []
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -962,7 +1035,6 @@ class SDFG(ControlFlowRegion):
 
             :param name: Name to find.
             :param new_name: Name to replace.
-            :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
         if name == new_name:
             return
@@ -997,10 +1069,17 @@ class SDFG(ControlFlowRegion):
         if replace_keys:
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            replacements = {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered}
+            self.symbol_relations = [
+                symbolic.Relation(relation.kind, symbolic.replace_symbols(relation.lhs, replacements),
+                                  symbolic.replace_symbols(relation.rhs, replacements))
+                for relation in self.symbol_relations
+            ]
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
+                    _replace_dict_keys(self.symbol_predicates, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
@@ -1011,6 +1090,8 @@ class SDFG(ControlFlowRegion):
                         del self.symbols[name]
                         new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
                         self.symbols.update({str(s): old_sym for s in new_syms})
+                    for predicate in sorted(self.symbol_predicates.pop(name, frozenset()), key=lambda p: p.name):
+                        self.symbol_relations.append(predicate_as_relation(predicate, replacements[name]))
 
                     _remove_dict_keys(self.constants_prop, name)
                     _remove_dict_keys(self.callback_mapping, name)
@@ -1021,32 +1102,88 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype, find_new_name: bool = False):
-        """ Adds a symbol to the SDFG.
+    def add_symbol(self,
+                   name,
+                   stype,
+                   find_new_name: bool = False,
+                   predicates: FrozenSet[symbolic.Predicate] = frozenset()):
+        """ Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
             :param name: Symbol name.
             :param stype: Symbol type.
             :param find_new_name: Find a new name.
+            :param predicates: Sign predicates assumed for the symbol.
+            :raise NameCollisionError: If the name is used by a data descriptor.
+            :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
+                                                 predicates contradict the SDFG's facts.
         """
-        if find_new_name:
-            name = self._find_new_name(name)
-        else:
-            # We do not check for data constant, because there is a link between the constants and
-            #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
+        if find_new_name:
+            name = self._find_new_name(name)
+        elif name in self.arrays:
+            # Data constants are not checked, as they are linked to the data descriptors.
+            raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+        elif name in self.symbols:
+            declared = self.symbol_predicates.get(name, frozenset())
+            if self.symbols[name] == stype and declared == predicates:
+                return name
+            raise symbolic.InconsistentAssumptionsError(name, [
+                f'declared {self.symbols[name]} {sorted(p.name for p in declared)}',
+                f're-added as {stype} {sorted(p.name for p in predicates)}'
+            ])
+        if predicates:
+            symbol_facts({
+                **self.symbols, name: stype
+            }, {
+                **self.symbol_predicates, name: predicates
+            }, self.symbol_relations)
+            self.symbol_predicates[name] = predicates
         self.symbols[name] = stype
         return name
+
+    def set_symbol_assumptions(self, name: str, predicates: FrozenSet[symbolic.Predicate]) -> None:
+        """ Replaces the sign predicates assumed for a declared symbol.
+
+            :raise KeyError: If the symbol is not declared.
+            :raise InconsistentAssumptionsError: If the predicates contradict the SDFG's facts.
+        """
+        if name not in self.symbols:
+            raise KeyError(f'Symbol "{name}" is not declared in SDFG "{self.name}"')
+        candidate = {**self.symbol_predicates, name: predicates}
+        if not predicates:
+            del candidate[name]
+        symbol_facts(self.symbols, candidate, self.symbol_relations)
+        self.symbol_predicates = candidate
+
+    def add_symbol_relation(self, relation: symbolic.Relation) -> None:
+        """ Assumes a relation between declared symbols; adding a known relation again does nothing.
+
+            :raise KeyError: If the relation names an undeclared symbol.
+            :raise InconsistentAssumptionsError: If the relation contradicts the SDFG's facts.
+        """
+        undeclared = sorted(relation_names(relation) - self.symbols.keys())
+        if undeclared:
+            raise KeyError(f'Relation {relation} names undeclared symbols {undeclared} of SDFG "{self.name}"')
+        if relation in self.symbol_relations:
+            return
+        symbol_facts(self.symbols, self.symbol_predicates, [*self.symbol_relations, relation])
+        self.symbol_relations.append(relation)
+
+    def facts(self) -> symbolic.Facts:
+        """ The facts assumed about this SDFG's symbols, for explicit use in proofs. """
+        return symbol_facts(self.symbols, self.symbol_predicates, self.symbol_relations)
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
 
             :param name: Symbol name.
+            :raise ValueError: If an assumed relation still names the symbol.
         """
+        mentioning = [relation for relation in self.symbol_relations if name in relation_names(relation)]
+        if mentioning:
+            raise ValueError(f'Cannot remove symbol "{name}": the relations {mentioning} still name it')
+        self.symbol_predicates.pop(name, None)
         del self.symbols[name]
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
@@ -2299,7 +2436,7 @@ class SDFG(ControlFlowRegion):
             if name in self.arrays:
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+                raise NameCollisionError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
 
         def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):

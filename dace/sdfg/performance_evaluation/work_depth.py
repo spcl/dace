@@ -1160,12 +1160,7 @@ def scope_work_depth(
                 # TODO: This symbol should now appear in the VS code extension in the SDFG analysis tab,
                 # such that the user can define its value. But it doesn't...
                 # How to achieve this?
-                try:
-                    top_level_sdfg.add_symbol(f'{node.name}_work', dtypes.int64)
-                except FileExistsError:
-                    # Such a library node was already encountered by the analysis.
-                    # Hence, we don't need to add anyting.
-                    pass
+                top_level_sdfg.add_symbol(f'{node.name}_work', dtypes.int64)
                 lib_node_work = symbol(f'{node.name}_work', positive=True)
             lib_node_depth = pystr_to_symbolic(-1)
             if analyze_tasklet != get_tasklet_work:
@@ -1174,10 +1169,7 @@ def scope_work_depth(
                     lib_node_depth = LIBNODES_TO_DEPTH[type(node)](node, symbols, state)
                 except KeyError:
                     top_level_sdfg = state.parent
-                    try:
-                        top_level_sdfg.add_symbol(f'{node.name}_depth', dtypes.int64)
-                    except FileExistsError:
-                        pass
+                    top_level_sdfg.add_symbol(f'{node.name}_depth', dtypes.int64)
                     lib_node_depth = symbol(f'{node.name}_depth', positive=True)
             lib_node_work, lib_node_depth = do_initial_subs(lib_node_work, lib_node_depth, equality_subs, subs1)
             work += lib_node_work

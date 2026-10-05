@@ -331,11 +331,8 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
         Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
         Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
-        try:
-            sdfg.add_symbol('Px', dace.int32)
-            sdfg.add_symbol('Py', dace.int32)
-        except FileExistsError:
-            pass
+        sdfg.add_symbol('Px', dace.int32)
+        sdfg.add_symbol('Py', dace.int32)
 
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):

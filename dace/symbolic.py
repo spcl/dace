@@ -19,6 +19,10 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+# Re-exported so callers reach the facts API as ``symbolic.ask``, ``symbolic.Facts``, ...
+from dace.symbolic_facts import (  # noqa: F401
+    Facts, InconsistentAssumptionsError, Predicate, Relation, RelationKind, Truth, ask, ask_predicate, provably_le,
+    provably_nonnegative)
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
