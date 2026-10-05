@@ -72,15 +72,15 @@ def nested_same_name_sdfg(name: str) -> dace.SDFG:
     """Build an outer SDFG whose transient ``T`` (size ``N*M``) nests an SDFG whose
     transient is also named ``T`` but sized ``N*N``.
 
-    DaCe qualifies the nested transient's name (``inner_T``), so the two heap
-    allocations resolve to distinct ``inner_T_size(N)`` and ``T_size(M, N)`` helpers
+    DaCe qualifies the nested transient's name (``nested_inner_T``), so the two heap
+    allocations resolve to distinct ``nested_inner_T_size(N)`` and ``T_size(M, N)`` helpers
     -- no arity/return collision.
 
     :param name: Outer SDFG name.
     :return: The validated outer SDFG.
     """
     inner_n = dace.symbol('N')
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('nested_inner')
     inner.add_array('a', [inner_n], dace.float64)
     inner.add_array('b', [inner_n], dace.float64)
     inner.add_transient('T', [inner_n * inner_n], dace.float64, storage=StorageType.CPU_Heap)
@@ -174,7 +174,7 @@ def size_helper_definition(code: str, array: str) -> str:
     """The single-line definition of the emitted ``<array>_size`` helper.
 
     Matches ``<array>_size`` at a word boundary so a helper for ``T`` is not
-    confused with one for ``inner_T``.
+    confused with one for ``nested_inner_T``.
 
     :param code: Generated C++.
     :param array: Array base name.
@@ -199,9 +199,10 @@ def allocation_line(code: str, array: str) -> str:
 # #
 def test_symbolic_size_helper(require_experimental):
     """Symbolic ``T[N*M]`` heap transient -> ``constexpr T_size(int64_t M, int64_t N)``."""
+    rng = np.random.default_rng(42)
     n, m = dace.symbol('N'), dace.symbol('M')
     build = lambda name: heap_pipeline_1d(name, n * m, '0:N*M')
-    base = dict(A=np.random.rand(48), B=np.zeros(48), N=6, M=8)
+    base = dict(A=rng.random(48), B=np.zeros(48), N=6, M=8)
 
     experimental = assert_bit_exact(build, 'symsize', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
@@ -216,9 +217,10 @@ def test_symbolic_size_helper(require_experimental):
 
 def test_ipow_size_helper(require_experimental):
     """``total_size = ipow(N, 2)`` (``T[N*N]``) -> single-symbol ``constexpr T_size(int64_t N)``."""
+    rng = np.random.default_rng(42)
     n = dace.symbol('N')
     build = lambda name: heap_pipeline_1d(name, n * n, '0:N*N')
-    base = dict(A=np.random.rand(49), B=np.zeros(49), N=7)
+    base = dict(A=rng.random(49), B=np.zeros(49), N=7)
 
     experimental = assert_bit_exact(build, 'ipowsize', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
@@ -235,8 +237,9 @@ def test_ipow_size_helper(require_experimental):
 def test_constant_size_helper(require_experimental):
     """Constant-size ``CPU_Heap`` transient -> nullary ``T_size()``: ``consteval`` under C++20,
     degrading to ``constexpr`` under C++17 (``consteval`` is not a keyword before C++20)."""
+    rng = np.random.default_rng(42)
     build = lambda name: heap_pipeline_1d(name, 200, '0:200')
-    base = dict(A=np.random.rand(200), B=np.zeros(200))
+    base = dict(A=rng.random(200), B=np.zeros(200))
 
     experimental = assert_bit_exact(build, 'constsize', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
@@ -251,9 +254,10 @@ def test_constant_size_helper(require_experimental):
 
 def test_bare_single_symbol_not_wrapped(require_experimental):
     """A bare single-symbol size ``T[N]`` is NOT wrapped (wrapping ``N`` is no win)."""
+    rng = np.random.default_rng(42)
     n = dace.symbol('N')
     build = lambda name: heap_pipeline_1d(name, n, '0:N')
-    base = dict(A=np.random.rand(64), B=np.zeros(64), N=64)
+    base = dict(A=rng.random(64), B=np.zeros(64), N=64)
 
     experimental = assert_bit_exact(build, 'baresize', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
@@ -265,8 +269,9 @@ def test_bare_single_symbol_not_wrapped(require_experimental):
 
 def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
     """Same transient name ``T`` at two sizes across a nested SDFG -> distinct helpers."""
+    rng = np.random.default_rng(42)
     build = nested_same_name_sdfg
-    base = dict(A=np.random.rand(5), B=np.zeros(5), N=5, M=3)
+    base = dict(A=rng.random(5), B=np.zeros(5), N=5, M=3)
 
     experimental = assert_bit_exact(build, 'nestedsize', base)
     assert np.array_equal(experimental['B'][0], base['A'][0])
@@ -274,11 +279,11 @@ def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
     code = experimental_code(build, 'nestedsize_inspect')
     # The inner (N*N) and outer (N*M) sizes yield distinct helpers with
     # distinct arities -- no collision.
-    inner_def = size_helper_definition(code, 'inner_T')
+    inner_def = size_helper_definition(code, 'nested_inner_T')
     outer_def = size_helper_definition(code, 'T')
     assert 'ipow(N, 2)' in inner_def, inner_def  # N**2 -> ipow (constexpr)
     assert '(M * N)' in outer_def, outer_def  # distinct symbols -> plain product, no power
-    assert 'inner_T_size(N)' in allocation_line(code, 'inner_T')
+    assert 'nested_inner_T_size(N)' in allocation_line(code, 'nested_inner_T')
     assert 'T_size(M, N)' in allocation_line(code, 'T')
 
 

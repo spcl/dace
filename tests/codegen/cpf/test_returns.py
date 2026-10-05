@@ -36,6 +36,8 @@ def render(program, name: str):
 def test_returned_array_is_an_out_parameter():
     """A returned array round-trips: the caller allocates, the entry point writes through."""
 
+    rng = np.random.default_rng(42)
+
     @dace.program
     def returns_array(a: dace.float64[20]):
         return a + 1.0
@@ -46,7 +48,7 @@ def test_returned_array_is_an_out_parameter():
                                                       'caller could not read the result')
     assert_standalone(code, 'cpf_ret_array')
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     result = np.zeros(20)
     call_standalone(build_standalone(code, 'cpf_ret_array'), sdfg, {'a': a, '__return': result})
     assert np.allclose(result, a + 1.0)
@@ -54,6 +56,8 @@ def test_returned_array_is_an_out_parameter():
 
 def test_returned_tuple_becomes_one_out_parameter_each():
     """A returned tuple is ``__return_0``, ``__return_1``: both must be present and both written."""
+
+    rng = np.random.default_rng(42)
 
     @dace.program
     def returns_tuple(a: dace.float64[20]):
@@ -64,7 +68,7 @@ def test_returned_tuple_becomes_one_out_parameter_each():
     assert '__return_0' in arglist and '__return_1' in arglist, f'a return container was dropped: {list(arglist)}'
     assert '__return' not in arglist, 'the single-value name must not appear alongside the tuple names'
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     first, second = np.zeros(20), np.zeros(20)
     call_standalone(build_standalone(code, 'cpf_ret_tuple'), sdfg, {'a': a, '__return_0': first, '__return_1': second})
     assert np.allclose(first, a + 1.0)
@@ -78,6 +82,8 @@ def test_scalar_return_from_the_frontend_is_widened_to_an_array():
     is what makes that claim checkable rather than remembered.
     """
 
+    rng = np.random.default_rng(42)
+
     @dace.program
     def returns_scalar(a: dace.float64[20]):
         return np.sum(a)
@@ -87,7 +93,7 @@ def test_scalar_return_from_the_frontend_is_widened_to_an_array():
     assert isinstance(descriptor, dace.data.Array), f'__return is a {type(descriptor).__name__}, not an Array'
     assert descriptor.shape == (1, ), descriptor.shape
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     result = np.zeros(1)
     call_standalone(build_standalone(code, 'cpf_ret_scalar'), sdfg, {'a': a, '__return': result})
     assert np.allclose(result[0], a.sum())
@@ -111,6 +117,7 @@ def test_written_scalar_return_is_promoted_to_an_out_parameter():
     This is the same rewrite ``PromoteScalarOutputsToArrays(gpu)`` performs for device memory; CPF reaches
     it through ``PromoteScalarOutputsToArrays``, which the GPU pass now wraps.
     """
+    rng = np.random.default_rng(42)
     sdfg = written_scalar_return_sdfg('cpf_ret_promoted')
     assert 'double __return' in sdfg.signature(), ('the premise is gone: a Scalar return is no longer passed by '
                                                    'value, so there is nothing to promote')
@@ -121,7 +128,7 @@ def test_written_scalar_return_is_promoted_to_an_out_parameter():
                                                                 'parameter, so the result cannot leave the callee')
     assert_standalone(rendering.code, 'cpf_ret_promoted')
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     result = np.zeros(1)
     call_standalone(build_standalone(rendering.code, 'cpf_ret_promoted'), rendering.sdfg, {'a': a, '__return': result})
     assert np.allclose(result[0], a[0] * 3.0)
@@ -134,6 +141,7 @@ def test_promotion_leaves_no_reference_parameter():
     valid C++ and invalid C, so the promotion has to remove it rather than the C dialect papering
     over it later.
     """
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('cpf_ret_nested_scalar')
     sdfg.add_array('a', [20], dace.float64)
     sdfg.add_scalar('__return', dace.float64, transient=False)
@@ -148,7 +156,7 @@ def test_promotion_leaves_no_reference_parameter():
     assert not re.search(r'\w+\s*&\s*\w+\s*[,)]', rendering.code), ('a C++ reference parameter survived the '
                                                                     'promotion, so this cannot render as C')
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     result = np.zeros(1)
     call_standalone(build_standalone(rendering.code, 'cpf_ret_nested_scalar'), rendering.sdfg, {
         'a': a,
@@ -194,13 +202,15 @@ def test_unwritten_scalar_return_is_refused():
 def test_nested_return_connector_is_allowed():
     """A nested SDFG's ``__return`` is its out-connector, not an entry parameter -- it must render."""
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def inner(a: dace.float64[20]):
+    def inner_nested_return_connector_is_allowed(a: dace.float64[20]):
         return a + 1.0
 
     @dace.program
     def nests_a_return(a: dace.float64[20]):
-        return inner(a) * 2.0
+        return inner_nested_return_connector_is_allowed(a) * 2.0
 
     sdfg = nests_a_return.to_sdfg(simplify=False)
     sdfg.name = 'cpf_ret_nested'
@@ -211,7 +221,7 @@ def test_nested_return_connector_is_allowed():
     rendering = render_sdfg(sdfg, validate=False)
     assert_standalone(rendering.code, 'cpf_ret_nested')
 
-    a = np.random.rand(20)
+    a = rng.random(20)
     result = np.zeros(20)
     call_standalone(build_standalone(rendering.code, 'cpf_ret_nested'), rendering.sdfg, {'a': a, '__return': result})
     assert np.allclose(result, (a + 1.0) * 2.0)
@@ -223,7 +233,7 @@ def test_transient_return_inside_a_nested_sdfg_is_refused():
     sdfg.add_array('a', [20], dace.float64)
     state = sdfg.add_state()
 
-    nested = dace.SDFG('inner')
+    nested = dace.SDFG('inner_transient_return_inside_a_nested_sdfg_is_refused')
     nested.add_array('a', [20], dace.float64)
     nested.add_array('__return', [20], dace.float64, transient=True)
     inner_state = nested.add_state()
@@ -233,7 +243,9 @@ def test_transient_return_inside_a_nested_sdfg_is_refused():
     state.add_edge(state.add_access('a'), None, node, 'a', dace.Memlet('a[0:20]'))
 
     owners = dict((name, owner.name) for owner, name in return_containers(sdfg))
-    assert owners == {'__return': 'inner'}, f'the nested return container was not found: {owners}'
+    assert owners == {
+        '__return': 'inner_transient_return_inside_a_nested_sdfg_is_refused'
+    }, f'the nested return container was not found: {owners}'
 
     with pytest.raises(NotImplementedError, match='nested SDFG'):
         render_sdfg(sdfg, validate=False)
@@ -264,14 +276,15 @@ def test_a_read_only_scalar_argument_of_an_inlined_program_stays_by_value():
     N = dace.symbol('N', dtype=dace.int64)
 
     @dace.program
-    def inner(s: dace.float64, a: dace.float64[N], out: dace.float64[N]):
+    def inner_a_read_only_scalar_argument_of_an_inlined_program_stays_by_value(s: dace.float64, a: dace.float64[N],
+                                                                               out: dace.float64[N]):
         b = np.zeros_like(a)
         b[1:-1] = s * a[1:-1]
         out[:] = b
 
     @dace.program
     def outer(a: dace.float64[N], out: dace.float64[N], s: dace.float64):
-        inner(s, a, out)
+        inner_a_read_only_scalar_argument_of_an_inlined_program_stays_by_value(s, a, out)
 
     signature = re.search(r'void \w*outer\([^)]*\)', render(outer.to_sdfg(simplify=True), language='c').code).group(0)
     assert re.search(r'\bdouble s\b', signature), signature

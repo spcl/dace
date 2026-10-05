@@ -39,10 +39,10 @@ def _all_edges_wcr_free(sdfg: dace.SDFG) -> bool:
 def _outer_with_body_nsdfg():
     """``(outer, body, body_state)`` -- a body NSDFG to host fixtures (the
     bypass pass is body-NSDFG-scoped)."""
-    outer = dace.SDFG("outer")
+    outer = dace.SDFG('outer_outer_with_body_nsdfg')
     outer.add_array("X", (1, ), dace.float64)
     ostate = outer.add_state("o")
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_outer_with_body_nsdfg')
     bstate = body.add_state("b")
     ostate.add_nested_sdfg(body, set(), set(), {})
     return outer, body, bstate
@@ -198,7 +198,7 @@ def test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out():
     me, mx = ostate.add_map("m", dict(i="0:8"))
 
     # Body NSDFG: reads a tile element, writes a scalar out connector. NO WCR inside.
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out')
     body.add_array("_in", (1, ), dace.float64)
     body.add_array("_out", (1, ), dace.float64)
     bstate = body.add_state("b")
@@ -234,9 +234,10 @@ def _run_inplace_rmw(config: str):
     """``a[i] = a[i] + b[i]`` must compute ``a + b`` after vectorization (the
     reduction must not be dropped). Exercises the full WCR-elimination path
     (bypass-WCR-carry + WCRToAugAssign) on the given vectorizer."""
+    rng = np.random.default_rng(42)
     Nv = 16
-    a = np.random.random((Nv, ))
-    b = np.random.random((Nv, ))
+    a = rng.random((Nv, ))
+    b = rng.random((Nv, ))
     run_vectorization_test(dace_func=inplace_rmw,
                            arrays={
                                "a": a,

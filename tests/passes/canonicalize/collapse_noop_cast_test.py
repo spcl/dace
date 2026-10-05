@@ -22,7 +22,7 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 
 def build_cast_sdfg(src_ty, dst_ty, body):
     """AccessNode(src_ty) -> tasklet(body) -> AccessNode(dst_ty), a single scalar copy."""
-    sdfg = dace.SDFG('cast')
+    sdfg = dace.SDFG('cast_build_cast_sdfg')
     sdfg.add_scalar('a', src_ty, transient=True)
     sdfg.add_scalar('b', dst_ty, transient=True)
     st = sdfg.add_state()
@@ -110,24 +110,26 @@ def cast_tasklet_bodies(sdfg):
 
 
 def test_program_noop_astype_collapsed_and_correct():
+    rng = np.random.default_rng(42)
     sdfg = noop_astype_prog.to_sdfg(simplify=False)
     # The frontend emits a no-op cast tasklet ``__out = dace.float64(__inp)``.
     assert any('dace.float64' in body for body in cast_tasklet_bodies(sdfg))
     assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
     assert not any('dace.float64' in body for body in cast_tasklet_bodies(sdfg))
 
-    a = np.random.rand(8).astype(np.float64)
+    a = rng.random(8).astype(np.float64)
     b = np.zeros(8, dtype=np.float64)
     sdfg(a=a, b=b)
     assert np.allclose(b, a)
 
 
 def test_program_genuine_astype_kept_and_correct():
+    rng = np.random.default_rng(42)
     sdfg = genuine_astype_prog.to_sdfg(simplify=False)
     assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
     assert any('dace.float64' in body for body in cast_tasklet_bodies(sdfg))
 
-    a = (np.random.rand(8) * 1e8).astype(np.float32)
+    a = (rng.random(8) * 1e8).astype(np.float32)
     b = np.zeros(8, dtype=np.float64)
     sdfg(a=a, b=b)
     # The narrowing to float32 then widening must be preserved -- b equals the float32 view.

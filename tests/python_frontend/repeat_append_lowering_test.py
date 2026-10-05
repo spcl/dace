@@ -35,10 +35,10 @@ def libnode_names(sdfg: dace.SDFG) -> list:
 def test_repeat_lowers_to_a_broadcast_library_node():
 
     @dace.program
-    def prog(a: dace.float64[N], out: dace.float64[3 * N]):
+    def prog_repeat_lowers_to_a_broadcast_library_node(a: dace.float64[N], out: dace.float64[3 * N]):
         out[:] = np.repeat(a, 3)
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_repeat_lowers_to_a_broadcast_library_node.to_sdfg(simplify=False)
     assert callback_tasklets(sdfg) == []
     assert '__pystate' not in sdfg.arrays
     assert 'Broadcast' in libnode_names(sdfg)
@@ -46,72 +46,83 @@ def test_repeat_lowers_to_a_broadcast_library_node():
 
 def test_repeat_matches_numpy():
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def prog(a: dace.float64[N], out: dace.float64[3 * N]):
+    def prog_repeat_matches_numpy(a: dace.float64[N], out: dace.float64[3 * N]):
         out[:] = np.repeat(a, 3)
 
-    a = np.random.rand(7)
+    a = rng.random(7)
     out = np.zeros(21)
-    prog(a=a, out=out, N=7)
+    prog_repeat_matches_numpy(a=a, out=out, N=7)
     assert np.allclose(out, np.repeat(a, 3))
 
 
 def test_repeat_along_an_axis_matches_numpy():
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def prog(a: dace.float64[N, 4], out: dace.float64[N, 8]):
+    def prog_repeat_along_an_axis_matches_numpy(a: dace.float64[N, 4], out: dace.float64[N, 8]):
         out[:] = np.repeat(a, 2, axis=1)
 
-    a = np.random.rand(5, 4)
+    a = rng.random((5, 4))
     out = np.zeros((5, 8))
-    prog(a=a, out=out, N=5)
+    prog_repeat_along_an_axis_matches_numpy(a=a, out=out, N=5)
     assert np.allclose(out, np.repeat(a, 2, axis=1))
 
 
 def test_repeat_on_the_leading_axis_matches_numpy():
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def prog(a: dace.float64[N, 4], out: dace.float64[2 * N, 4]):
+    def prog_repeat_on_the_leading_axis_matches_numpy(a: dace.float64[N, 4], out: dace.float64[2 * N, 4]):
         out[:] = np.repeat(a, 2, axis=0)
 
-    a = np.random.rand(5, 4)
+    a = rng.random((5, 4))
     out = np.zeros((10, 4))
-    prog(a=a, out=out, N=5)
+    prog_repeat_on_the_leading_axis_matches_numpy(a=a, out=out, N=5)
     assert np.allclose(out, np.repeat(a, 2, axis=0))
 
 
 def test_append_lowers_without_a_callback():
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], out: dace.float64[2 * N]):
+    def prog_append_lowers_without_a_callback(a: dace.float64[N], b: dace.float64[N], out: dace.float64[2 * N]):
         out[:] = np.append(a, b)
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_append_lowers_without_a_callback.to_sdfg(simplify=False)
     assert callback_tasklets(sdfg) == []
     assert '__pystate' not in sdfg.arrays
 
 
 def test_append_matches_numpy():
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], out: dace.float64[2 * N]):
+    def prog_append_matches_numpy(a: dace.float64[N], b: dace.float64[N], out: dace.float64[2 * N]):
         out[:] = np.append(a, b)
 
-    a, b = np.random.rand(6), np.random.rand(6)
+    a, b = rng.random(6), rng.random(6)
     out = np.zeros(12)
-    prog(a=a, b=b, out=out, N=6)
+    prog_append_matches_numpy(a=a, b=b, out=out, N=6)
     assert np.allclose(out, np.append(a, b))
 
 
 def test_append_along_an_axis_matches_numpy():
 
+    rng = np.random.default_rng(42)
+
     @dace.program
-    def prog(a: dace.float64[N, 3], b: dace.float64[N, 3], out: dace.float64[2 * N, 3]):
+    def prog_append_along_an_axis_matches_numpy(a: dace.float64[N, 3], b: dace.float64[N, 3], out: dace.float64[2 * N,
+                                                                                                                3]):
         out[:] = np.append(a, b, axis=0)
 
-    a, b = np.random.rand(4, 3), np.random.rand(4, 3)
+    a, b = rng.random((4, 3)), rng.random((4, 3))
     out = np.zeros((8, 3))
-    prog(a=a, b=b, out=out, N=4)
+    prog_append_along_an_axis_matches_numpy(a=a, b=b, out=out, N=4)
     assert np.allclose(out, np.append(a, b, axis=0))
 
 
@@ -119,11 +130,11 @@ def test_repeat_refuses_a_per_element_repeat_count():
     """A repeats ARRAY makes the output extent data-dependent; refuse it by name."""
 
     @dace.program
-    def prog(a: dace.float64[N], r: dace.int64[N], out: dace.float64[2 * N]):
+    def prog_repeat_refuses_a_per_element_repeat_count(a: dace.float64[N], r: dace.int64[N], out: dace.float64[2 * N]):
         out[:] = np.repeat(a, r)
 
     with pytest.raises(Exception, match='repeat'):
-        prog.to_sdfg(simplify=False)
+        prog_repeat_refuses_a_per_element_repeat_count.to_sdfg(simplify=False)
 
 
 if __name__ == '__main__':

@@ -58,7 +58,7 @@ def test_prune_unused_input_connector():
     connectors are cleaned up as well."""
 
     N = 8
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_prune_unused_input_connector')
     outer.add_symbol('N', dace.int64)
     for name in ('A', 'B', 'C'):
         outer.add_array(name, [dace.symbol('N')], dace.float64)
@@ -125,6 +125,7 @@ def test_prune_recursive_preserves_used_connectors():
     """Running the recursive variant on an SDFG with nested layers prunes
     the dead connectors but keeps the used ones intact."""
 
+    rng = np.random.default_rng(42)
     N = 4
     outer = dace.SDFG('outer_rec')
     outer.add_symbol('N', dace.int64)
@@ -146,7 +147,7 @@ def test_prune_recursive_preserves_used_connectors():
 
     outer.validate()
 
-    A = np.random.rand(N).astype(np.float64)
+    A = rng.random(N).astype(np.float64)
     B = np.zeros(N, dtype=np.float64)
     X = np.zeros(N, dtype=np.float64)
     Y = np.zeros(N, dtype=np.float64)
