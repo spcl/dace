@@ -1076,6 +1076,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
     def _candidates(
             state: SDFGState,
             nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
+
+        def own_access(memlet: Memlet) -> Memlet:
+            """The memlet's access to its own data alone: the other side of a copy (``inp[2 * i] -> tmp[0]``)
+            is not part of it, and unsqueezing would take that side for the outer subset."""
+            return Memlet(data=memlet.data, subset=dc(memlet.subset))
+
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
@@ -1104,7 +1110,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                             ignore.add(e.data.data)
                         out_candidates[e.data.data] = (memlet, ns, indices)
                         continue
-                    out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
+                    out_candidates[e.data.data] = (own_access(e.data), nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
                     if e.data.data not in read_set:
                         # Skip data which is not in the read and write set of the state -> there also won't be a
@@ -1123,7 +1129,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                             ignore.add(e.data.data)
                         in_candidates[e.data.data] = (memlet, ns, indices)
                         continue
-                    in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
+                    in_candidates[e.data.data] = (own_access(e.data), nstate, set(range(len(e.data.subset))))
 
         # Check read memlets in interstate edges for candidates
         for e in nsdfg.sdfg.all_interstate_edges():
