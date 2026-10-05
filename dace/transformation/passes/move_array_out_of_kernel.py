@@ -278,6 +278,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     if edge.data.is_empty() or edge.data.wcr is not None:
                         continue
                     descs = (nsdfg.arrays[edge.src.data], nsdfg.arrays[edge.dst.data])
+                    # An edge into or out of a view aliases its data; it copies nothing.
+                    if any(isinstance(desc, dt.View) for desc in descs):
+                        continue
                     if (all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
                             and any(desc.transient for desc in descs) and
                         (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst))):
