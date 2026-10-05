@@ -67,9 +67,6 @@ class Data:
     lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
                             desc='Data allocation span',
                             default=dtypes.AllocationLifetime.Scope)
-    stack_vla = EnumProperty(dtype=dtypes.StackAllocation,
-                             desc='Stack or heap placement of a register array',
-                             default=dtypes.StackAllocation.Auto)
     location = DictProperty(key_type=str, value_type=str, desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 
@@ -722,11 +719,9 @@ class Array(Data):
         return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype, self.shape)
 
     def clone(self):
-        result = type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
-                            self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                            self.total_size, self.start_offset, self.optional, self.pool)
-        result.stack_vla = self.stack_vla
-        return result
+        return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
+                          self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
+                          self.total_size, self.start_offset, self.optional, self.pool)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)

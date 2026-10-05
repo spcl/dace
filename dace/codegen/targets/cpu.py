@@ -26,11 +26,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
-from dace.transformation.passes.resolve_stack_allocation import resolve_stack_allocation
-from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, Union
-
-import re
+from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cuda import CUDACodeGen
@@ -39,19 +35,26 @@ if TYPE_CHECKING:
 
 
 def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
-    """ Whether a register array is declared on the stack rather than allocated on the heap. A symbolic
-        size makes it a variable-length array, which dies with its block, so a lifetime that outlives
-        the block keeps the heap, and so does a split declare/allocate: ``declare_array`` has already
-        emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and deallocation both
-        ask here so they cannot disagree.
+    """ Whether a register array is declared on the stack rather than allocated on the heap. Under
+        ``StorageType.Register(dynamic=True)`` every size is, a symbolic one as a variable-length array; otherwise a
+        constant size is up to ``compiler.max_stack_array_size`` bytes and a symbolic one never is. A VLA dies with
+        its block, so a lifetime that outlives the block keeps the heap, and so does a split declare/allocate:
+        ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and
+        deallocation both ask here so they cannot disagree.
     """
-    if (nodedesc.storage != dtypes.StorageType.Register
-            or resolve_stack_allocation(nodedesc, sdfg.constants) is not dtypes.StackAllocation.Stack):
+    if nodedesc.storage != dtypes.StorageType.Register:
         return False
-    if not symbolic.issymbolic(arrsize, sdfg.constants):
+    dynamic = dtypes.is_dynamic_register(nodedesc.storage) is True
+    if symbolic.issymbolic(arrsize, sdfg.constants):
+        return dynamic and not declared and lifetime in (dtypes.AllocationLifetime.Scope,
+                                                         dtypes.AllocationLifetime.State,
+                                                         dtypes.AllocationLifetime.SDFG)
+    if dynamic or isinstance(nodedesc.dtype, dtypes.opaque):
         return True
-    return not declared and lifetime in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State,
-                                         dtypes.AllocationLifetime.SDFG)
+    if isinstance(arrsize, symbolic.sympy.Basic):
+        # By name: the constant's symbol may have another dtype than the one in the shape.
+        arrsize = arrsize.subs({sym: sdfg.constants[sym.name] for sym in arrsize.free_symbols})
+    return int(arrsize) * nodedesc.dtype.bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
 def use_aligned_operator_new(desc: data.Data) -> bool:
@@ -1346,7 +1349,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 else:
                     warnings.warn(f'Register array {name} with {cpp.sym2cpp(arrsize)} elements was allocated on the '
-                                  f'heap instead of the stack (stack_vla={nodedesc.stack_vla.name})')
+                                  'heap instead of the stack')
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
