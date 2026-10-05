@@ -34,6 +34,7 @@ def tile_subset(shape):
 
 def lane_mask(mask, shape):
     """The mask over the lanes of a tile of ``shape``; the 2-D tile repeats the 1-D pattern along its rows."""
+    # ``np.resize`` returns a reshaped view, and programs take arrays that own their memory
     return np.resize(np.array(mask, dtype=bool), shape).copy()
 
 

@@ -18,6 +18,8 @@ from dace.libraries.tileops.lanes import (GATHER_INDEX_DTYPES, gather_lane_offse
                                           resolve_gather_deps, tile_offset)
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 
 
 @library.expansion
@@ -212,15 +214,15 @@ class TileScatter(TileOp):
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         if self.has_mask:
-            mask_arr = sdfg.arrays[in_e["_mask"].data.data]
+            mask_arr = sdfg.arrays[required(in_e["_mask"].data.data)]
             validate_mask_descriptor_lock(self.label, "_mask", mask_arr, tuple(self.widths))
         # Packed-layout lock (design section 2.3): refuse non-C non-Fortran dest strides.
-        dst_arr = sdfg.arrays[out_e["_dst"].data.data]
+        dst_arr = sdfg.arrays[required(out_e["_dst"].data.data)]
         validate_packed_layout(self.label, "_dst", dst_arr)
         # gather_dims dest-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
         if self.gather_dims:
-            dst_arr = sdfg.arrays[out_e["_dst"].data.data]
+            dst_arr = sdfg.arrays[required(out_e["_dst"].data.data)]
             dst_ndim = len(dst_arr.shape)
             if any(d >= dst_ndim for d in self.gather_dims):
                 raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
@@ -230,7 +232,7 @@ class TileScatter(TileOp):
             conn = f"_idx_{d}"
             if conn not in in_e:
                 raise ValueError(f"{self.label}: gather_dims includes {d} but '{conn}' is not connected")
-            desc = sdfg.arrays[in_e[conn].data.data]
+            desc = sdfg.arrays[required(in_e[conn].data.data)]
             shape = tuple(desc.shape)
             if resolve_gather_deps(shape, widths) is None:
                 raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
@@ -273,7 +275,7 @@ class TileScatter(TileOp):
             # innermost K dims in order.
             dims = list(self.dst_dims) if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape)))
             try:
-                subset_sizes = tuple(dst_subset.size())
+                subset_sizes = tuple(as_range(dst_subset).size())
             except Exception:
                 subset_sizes = None
             if subset_sizes is not None:
@@ -302,7 +304,7 @@ class TileScatter(TileOp):
         widths = list(self.widths)
         K = len(widths)
         dst_edge = next(e for e in state.out_edges(self) if e.src_conn == "_dst")
-        dst_arr = sdfg.arrays[dst_edge.data.data]
+        dst_arr = sdfg.arrays[required(dst_edge.data.data)]
         ndim = len(dst_arr.strides)
         # Step along the array dim each tile dim maps to (``dst_dims``);
         # default to the last K dims in order (a plain row-major tile).
@@ -322,7 +324,7 @@ class TileScatter(TileOp):
             for k in self.gather_dims:
                 conn = f"_idx_{k}"
                 edge = next(e for e in state.in_edges(self) if e.dst_conn == conn)
-                idx_shape = tuple(sdfg.arrays[edge.data.data].shape)
+                idx_shape = tuple(required(sdfg.arrays[required(edge.data.data)]).shape)
                 deps_d = resolve_gather_deps(idx_shape, widths)
                 if deps_d is None:
                     raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
@@ -353,7 +355,7 @@ class TileScatter(TileOp):
             # A volume-1 source is passed by value (bare ``_src``); a tile-shape
             # source widened upstream is a pointer read per lane (``_src[off]``).
             # ``[0]`` is a memlet concern, not a tasklet-body one.
-            src_desc = sdfg.arrays[next(e for e in state.in_edges(self) if e.dst_conn == "_src").data.data]
+            src_desc = sdfg.arrays[required(next(e for e in state.in_edges(self) if e.dst_conn == "_src").data.data)]
             ref, broadcast = scalar_operand_ref(src_desc, "_src", widths, src_off)
             src_ref = f"({out_dtype})({ref})" if broadcast else ref
         else:

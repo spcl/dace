@@ -23,14 +23,15 @@ import dace
 from dace.libraries.tileops import (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather,
                                     TileMaskGen, TileMMA, TileReduce, TileScatter, TileUnop)
 import dace.libraries.tileops.dispatch as dispatch
+from dace.libraries.tileops.dispatch import ISA
 from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
 
 DIGEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_lowering_digests.json")
 
 #: The implementation-selection ISAs; ``AUTO`` resolves to the host ISA, pinned below.
-ISAS = ("SCALAR", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "CUDA", "AUTO")
+ISAS = (ISA.SCALAR, ISA.AVX512, ISA.AVX2, ISA.ARM_SVE, ISA.ARM_NEON, ISA.CUDA, ISA.AUTO)
 #: What the host-feature probes answer while lowering, so the snapshot does not depend on the machine.
-HOST_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR"})
+HOST_ISAS = frozenset({ISA.AVX512, ISA.AVX2, ISA.ARM_SVE, ISA.ARM_NEON, ISA.SCALAR})
 
 BINARY_OPS = ("+", "-", "*", "/", "%", "py_mod", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "&", "|", "^", "min",
               "max", "**", "pow", "ipow", "atan2", "hypot", "fmod")
@@ -151,7 +152,7 @@ def lower_everywhere(builder: Builder) -> dict[str, object]:
             }) for env in expansion.environments]
         except Exception as error:  # the error a configuration raises is part of its lowering
             entry["error"] = f"{type(error).__name__}: {str(error).splitlines()[0] if str(error) else ''}"
-        results[isa] = entry
+        results[isa.name] = entry
     return results
 
 
@@ -623,7 +624,7 @@ def lowerings(key: ShardKey) -> dict[str, dict[str, object]]:
     """Every recorded lowering of one digest entry, keyed by configuration."""
     results = {}
     with mock.patch.object(dispatch, "host_supported_isas", lambda: HOST_ISAS), \
-            mock.patch.object(dispatch, "detect_host_isa", lambda: "AVX512"), warnings.catch_warnings():
+            mock.patch.object(dispatch, "detect_host_isa", lambda: ISA.AVX512), warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for name, builder in itertools.islice(CASES[key.node_type](), key.index, None, key.count):
             results[name] = lower_everywhere(builder)

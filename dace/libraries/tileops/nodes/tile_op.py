@@ -2,6 +2,7 @@
 """The base of the tile library nodes."""
 import dace
 from dace import properties
+from dace.libraries.tileops.dispatch import ISA
 from dace.sdfg import nodes
 
 
@@ -16,12 +17,11 @@ class TileOp(nodes.LibraryNode):
 
     auto_select_implementation = False
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="Target ISA the implementation is selected for, stamped by the vectorizer before expansion: one of "
-        "SCALAR, AVX512, AVX2, ARM_SVE, ARM_NEON, CUDA or AUTO for the host's. Tiles of more than one dim are pure.",
+    target_isa = properties.EnumProperty(
+        dtype=ISA,
+        default=ISA.SCALAR,
+        desc="Target ISA the implementation is selected for, stamped by the vectorizer before expansion; AUTO picks "
+        "the host's. Tiles of more than one dim are pure.",
     )
     widths = properties.ListProperty(
         element_type=int,
