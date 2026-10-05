@@ -13,10 +13,10 @@ import random
 import re
 import shutil
 import sys
-from typing import AbstractSet, Any, AnyStr, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+import types
+from typing import (AbstractSet, Any, AnyStr, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Type,
+                    TYPE_CHECKING, Union)
 import warnings
-
-from ordered_set import OrderedSet
 
 import dace
 from dace.sdfg.graph import generate_element_id, SubgraphView
@@ -28,6 +28,7 @@ from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion, LoopRegion
+from dace.sdfg.symbol_repo import SymbolRepo
 from dace.sdfg.type_inference import infer_expr_type
 from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -162,49 +163,6 @@ def scope_bound_names(sdfg: 'SDFG') -> Set[str]:
             if isinstance(node, nd.EntryNode):
                 names.update(conn for conn in node.in_connectors if not conn.startswith('IN_'))
     return names
-
-
-def predicates_to_json(predicates: Dict[str, FrozenSet[symbolic.Predicate]]) -> Dict[str, List[str]]:
-    return {name: sorted(predicate.name for predicate in facts) for name, facts in predicates.items()}
-
-
-def predicates_from_json(obj: Optional[Dict[str, List[str]]], context=None) -> Dict[str, FrozenSet[symbolic.Predicate]]:
-    if obj is None:
-        return {}
-    return {name: frozenset(symbolic.Predicate[predicate] for predicate in names) for name, names in obj.items()}
-
-
-def relations_to_json(relations: OrderedSet[symbolic.Relation]) -> List[Dict[str, str]]:
-    return [{
-        'kind': relation.kind.name,
-        'lhs': symbolic.serialize_symbolic(relation.lhs),
-        'rhs': symbolic.serialize_symbolic(relation.rhs)
-    } for relation in relations]
-
-
-def relations_from_json(obj: Optional[List[Dict[str, str]]], context=None) -> OrderedSet[symbolic.Relation]:
-    if obj is None:
-        return OrderedSet()
-    return OrderedSet(
-        symbolic.Relation(symbolic.RelationKind[relation['kind']], symbolic.deserialize_symbolic(relation['lhs']),
-                          symbolic.deserialize_symbolic(relation['rhs'])) for relation in obj)
-
-
-def symbol_facts(symbols: Dict[str, dtypes.typeclass], predicates: Dict[str, FrozenSet[symbolic.Predicate]],
-                 relations: Iterable[symbolic.Relation]) -> symbolic.Facts:
-    """ Builds the facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict. """
-    integers = frozenset(name for name, stype in symbols.items()
-                         if stype in dtypes.INTEGER_TYPES and stype != dtypes.bool_)
-    # An unsigned type is a sign fact of its own
-    unsigned = {
-        name: frozenset({symbolic.Predicate.NONNEGATIVE})
-        for name, stype in symbols.items() if stype in (dtypes.uint8, dtypes.uint16, dtypes.uint32, dtypes.uint64)
-    }
-    every = [
-        symbolic.predicate_relation(predicate, symbolic.symbol(name))
-        for name, named in [*predicates.items(), *unsigned.items()] for predicate in named
-    ]
-    return symbolic.Facts((*every, *relations), integers)
 
 
 def _replace_dict_keys(d, old, new):
@@ -657,19 +615,6 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
-    symbol_predicates = Property(dtype=dict,
-                                 default={},
-                                 desc='Sign predicates assumed for the symbols, by name',
-                                 to_json=predicates_to_json,
-                                 from_json=predicates_from_json,
-                                 serialize_if=lambda sdfg: bool(sdfg.symbol_predicates))
-    symbol_relations = Property(dtype=OrderedSet,
-                                default=OrderedSet(),
-                                desc='Relations assumed between the symbols',
-                                to_json=relations_to_json,
-                                from_json=relations_from_json,
-                                serialize_if=lambda sdfg: bool(sdfg.symbol_relations))
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -739,9 +684,7 @@ class SDFG(ControlFlowRegion):
 
         self._propagate = propagate
         self._parent = parent
-        self.symbols = {}
-        self.symbol_predicates = {}
-        self.symbol_relations = OrderedSet()
+        self._symbol_repo = SymbolRepo()
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -773,12 +716,14 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist', 'guid'):
+                     '_cfg_list', '_transformation_hist', 'guid', '_symbol_repo'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
+        # After the graph, so that the repository is keyed by the copied scope owners, each copied in its own graph
+        result._symbol_repo = copy.deepcopy(self._symbol_repo, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         result._parent = memo.get(id(self._parent))
@@ -872,13 +817,8 @@ class SDFG(ControlFlowRegion):
             self.reset_cfg_list()
             source_files = self.compute_debuginfo_files()
 
-        # Serialize the control-flow graph (states and interstate edges) under this
-        # SDFG's declared symbols, so symbolic expressions outside any dataflow scope
-        # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
-        # Each nested SDFG re-pushes its own symbols, and the previous authority is
-        # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols):
-            tmp = super().to_json()
+        tmp = super().to_json()
+        tmp['attributes']['symbol_repo'] = self._symbol_repo.to_json(self)
         if is_root:
             tmp['source_files'] = source_files
 
@@ -922,6 +862,7 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj['attributes'])
+        repo_json = attrs.pop('symbol_repo')
         json_obj = dict(json_obj)
         json_obj['attributes'] = attrs
         nodes = json_obj['nodes']
@@ -956,6 +897,7 @@ class SDFG(ControlFlowRegion):
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
 
+        ret._symbol_repo = SymbolRepo.from_json(repo_json, ret, context)
         ret.reset_cfg_list()
 
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
@@ -1079,29 +1021,17 @@ class SDFG(ControlFlowRegion):
         if replace_keys:
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
-            replacements = {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered}
-            self.symbol_relations = OrderedSet(
-                symbolic.Relation(relation.kind, symbolic.replace_symbols(relation.lhs, replacements),
-                                  symbolic.replace_symbols(relation.rhs, replacements))
-                for relation in self.symbol_relations)
+            self._symbol_repo.replace(repldict_filtered,
+                                      {name: symrepl[symbolic.pystr_to_symbolic(name)]
+                                       for name in repldict_filtered})
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
-                    _replace_dict_keys(self.symbols, name, new_name)
-                    _replace_dict_keys(self.symbol_predicates, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
                 else:
                     _remove_dict_keys(self._arrays, name)
-                    if name in self.symbols:
-                        old_sym = self.symbols[name]
-                        del self.symbols[name]
-                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
-                        self.symbols.update({str(s): old_sym for s in new_syms})
-                    for predicate in sorted(self.symbol_predicates.pop(name, frozenset()), key=lambda p: p.name):
-                        self.symbol_relations.add(symbolic.predicate_relation(predicate, replacements[name]))
-
                     _remove_dict_keys(self.constants_prop, name)
                     _remove_dict_keys(self.callback_mapping, name)
 
@@ -1132,8 +1062,9 @@ class SDFG(ControlFlowRegion):
             predicates = frozenset(predicate for predicate in symbolic.Predicate
                                    if declared.get(predicate.name.lower()))
             name, stype = name.name, name.dtype
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
+        dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Invalid type {stype} for symbol "{name}"')
         if find_new_name:
             name = self._find_new_name(name)
         elif name in self.arrays:
@@ -1142,22 +1073,7 @@ class SDFG(ControlFlowRegion):
         elif name in scope_bound_names(self):
             raise NameCollisionError(f'Cannot create symbol "{name}", a loop or map scope binds it; '
                                      'its facts come from the scope.')
-        elif name in self.symbols:
-            declared = self.symbol_predicates.get(name, frozenset())
-            if self.symbols[name] == stype and declared == predicates:
-                return name
-            raise symbolic.InconsistentAssumptionsError(name, [
-                f'declared {self.symbols[name]} {sorted(p.name for p in declared)}',
-                f're-added as {stype} {sorted(p.name for p in predicates)}'
-            ])
-        if predicates:
-            symbol_facts({
-                **self.symbols, name: stype
-            }, {
-                **self.symbol_predicates, name: predicates
-            }, self.symbol_relations)
-            self.symbol_predicates[name] = predicates
-        self.symbols[name] = stype
+        self._symbol_repo.add(name, dtype, predicates)
         return name
 
     def set_symbol_assumptions(self, name: str, predicates: FrozenSet[symbolic.Predicate]) -> None:
@@ -1166,13 +1082,7 @@ class SDFG(ControlFlowRegion):
             :raise KeyError: If the symbol is not declared.
             :raise InconsistentAssumptionsError: If the predicates contradict the SDFG's facts.
         """
-        if name not in self.symbols:
-            raise KeyError(f'Symbol "{name}" is not declared in SDFG "{self.name}"')
-        candidate = {**self.symbol_predicates, name: predicates}
-        if not predicates:
-            del candidate[name]
-        symbol_facts(self.symbols, candidate, self.symbol_relations)
-        self.symbol_predicates = candidate
+        self._symbol_repo.set_predicates(name, predicates)
 
     def add_symbol_relation(self, relation: symbolic.Relation) -> None:
         """ Assumes a relation between declared symbols; adding a known relation again does nothing.
@@ -1180,17 +1090,22 @@ class SDFG(ControlFlowRegion):
             :raise KeyError: If the relation names an undeclared symbol.
             :raise InconsistentAssumptionsError: If the relation contradicts the SDFG's facts.
         """
-        undeclared = sorted(symbolic.relation_names(relation) - self.symbols.keys())
-        if undeclared:
-            raise KeyError(f'Relation {relation} names undeclared symbols {undeclared} of SDFG "{self.name}"')
-        if relation in self.symbol_relations:
-            return
-        symbol_facts(self.symbols, self.symbol_predicates, [*self.symbol_relations, relation])
-        self.symbol_relations.add(relation)
+        self._symbol_repo.add_relation(relation)
 
     def facts(self) -> symbolic.Facts:
         """ The facts assumed about this SDFG's symbols, for explicit use in proofs. """
-        return symbol_facts(self.symbols, self.symbol_predicates, self.symbol_relations)
+        return self._symbol_repo.facts()
+
+    @property
+    def symbol_repo(self) -> SymbolRepo:
+        """ The dtypes and facts of this SDFG's symbols and of the names its scopes open. """
+        return self._symbol_repo
+
+    @property
+    def symbols(self) -> Mapping[str, dtypes.typeclass]:
+        """ The symbols passed into this SDFG, by name: a read-only view of the parameters of its symbol repository,
+        which every change goes through. """
+        return types.MappingProxyType(self._symbol_repo.params.types)
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
@@ -1198,11 +1113,7 @@ class SDFG(ControlFlowRegion):
             :param name: Symbol name.
             :raise ValueError: If an assumed relation still names the symbol.
         """
-        mentioning = [relation for relation in self.symbol_relations if name in symbolic.relation_names(relation)]
-        if mentioning:
-            raise ValueError(f'Cannot remove symbol "{name}": the relations {mentioning} still name it')
-        self.symbol_predicates.pop(name, None)
-        del self.symbols[name]
+        self._symbol_repo.remove(name)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
@@ -1702,10 +1613,11 @@ class SDFG(ControlFlowRegion):
         defined_syms |= set(self.constants_prop.keys())
 
         # Add used symbols from init and exit code
+        declared = set(self.symbols)
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
 
         # Snapshot the set so super() can filter array names out of
         # ``free_syms``; we re-extract them from internal references below.
@@ -1723,7 +1635,8 @@ class SDFG(ControlFlowRegion):
             read_set, write_set = self.read_and_write_sets()
             for name in (read_set | write_set) & self.arrays.keys():
                 res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
-            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
+            # Drop symbols defined inside (e.g. loop variables) and those a scope binds (e.g. map parameters)
+            res_free -= res_defined | scope_bound_names(self)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
@@ -2466,8 +2379,10 @@ class SDFG(ControlFlowRegion):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
-            # A shape may name a scoped symbol (e.g. a transient sized by a map parameter), which is not an SDFG symbol
+            # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
+            # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | bound_names
+            scoped.update(name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments)
             for sym in desc.free_symbols:
                 if (isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
                         and sym.name not in scoped):

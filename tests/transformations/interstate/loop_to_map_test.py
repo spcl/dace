@@ -638,7 +638,6 @@ def test_thread_local_transient_single_state():
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
 
-    sdfg.add_symbol('i', dace.int32)
     i = dace.symbol('i', dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))
@@ -717,7 +716,6 @@ def test_thread_local_transient_multi_state():
     body1 = sdfg.add_state('body1')
     end = sdfg.add_state('end')
 
-    sdfg.add_symbol('i', dace.int32)
     i = dace.symbol('i', dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))

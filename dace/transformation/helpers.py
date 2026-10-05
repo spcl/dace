@@ -221,11 +221,9 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         ndefined_symbols = set()
         out_mapping = {}
         out_state = None
+        # A loop that initializes its variable binds it, so the variable is not visible after the loop
         for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
-        for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '' and b.init_statement:
-                ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
             out_state = nsdfg.add_state('symbolic_output')
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
@@ -1952,7 +1950,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
     # Swap symbols
     for sym_name, sym_type in sdfg.symbols.items():
         if sym_type == from_type:
-            sdfg.symbols[sym_name] = to_type
+            sdfg.symbol_repo.set_type(sym_name, to_type)
             swaps_count += 1
 
     # Swap array types

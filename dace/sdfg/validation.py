@@ -264,18 +264,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     'that the names of symbols and data descriptors are unique.', sdfg, None)
             seen_names.update(obj_names)
 
-        # Symbol facts may only name declared symbols, and must not contradict each other
-        undeclared = sorted(
-            ({*sdfg.symbol_predicates}
-             | {name
-                for relation in sdfg.symbol_relations
-                for name in symbolic.relation_names(relation)}) - sdfg.symbols.keys())
-        if undeclared:
-            raise InvalidSDFGError(f'Symbol facts name undeclared symbols {undeclared}', sdfg, None)
-        try:
-            sdfg.facts()
-        except symbolic.InconsistentAssumptionsError as error:
-            raise InvalidSDFGError(str(error), sdfg, None) from error
+        sdfg.symbol_repo.validate(sdfg)
         scoped = sorted(scope_bound_names(sdfg) & sdfg.symbols.keys())
         if scoped:
             raise InvalidSDFGError(
@@ -375,7 +364,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         initialized_transients = {'__pystate'}
         initialized_transients.update(sdfg.constants_prop.keys())
-        symbols = copy.deepcopy(sdfg.symbols)
+        symbols = dict(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
         for desc in sdfg.arrays.values():

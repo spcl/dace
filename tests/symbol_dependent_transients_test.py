@@ -185,9 +185,6 @@ def test_symbol_dependent_array_in_map():
     sdfg = symbol_dependent_array_in_map.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)
     sdfg.apply_transformations_repeated(interstate.InlineSDFG)
-    # NOTE: Temporary fix for issue with symbols/free_symbols
-    if 'i' in sdfg.free_symbols:
-        sdfg.remove_symbol('i')
     func = sdfg.compile()
     A = np.random.randn(10).astype(np.float32)
     val = func(A=A)

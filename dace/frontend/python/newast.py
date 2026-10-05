@@ -1680,7 +1680,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 syms_to_remove.add(stream_elem)
                 for sym in syms_to_remove:
                     del internal_node.symbol_mapping[sym]
-                    del sdfg.symbols[sym]
+                    sdfg.symbol_repo.remove(sym)
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs, outputs, map_inputs)

@@ -188,7 +188,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         graph.remove_node(self.loop)
 
         if itervar in sdfg.symbols:
-            del sdfg.symbols[itervar]
+            sdfg.symbol_repo.remove(itervar)
 
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:

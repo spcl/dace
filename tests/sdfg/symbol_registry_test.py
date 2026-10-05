@@ -38,7 +38,7 @@ def less_than(lhs: str, rhs: str) -> symbolic.Relation:
 def test_identical_readd_is_a_no_op():
     sdfg = symbols_sdfg('identical_readd')
     assert sdfg.add_symbol('N', dace.int64, predicates=POSITIVE) == 'N'
-    assert sdfg.symbol_predicates == {'N': POSITIVE}
+    assert sdfg.symbol_repo.params.predicates == {'N': POSITIVE}
 
 
 def test_readd_with_other_predicates_raises():
@@ -59,7 +59,7 @@ def test_add_symbol_takes_dtype_and_declared_assumptions_of_a_symbol():
     by_name = dace.SDFG('add_by_name')
     by_name.add_symbol('Px', dace.int32, predicates=POSITIVE)
     assert by_symbol.symbols == by_name.symbols == {'Px': dace.int32}
-    assert by_symbol.symbol_predicates == by_name.symbol_predicates == {'Px': POSITIVE}
+    assert by_symbol.symbol_repo.params.predicates == by_name.symbol_repo.params.predicates == {'Px': POSITIVE}
     assert by_name.add_symbol(dace.symbol('Px', dtype=dace.int32, positive=True)) == 'Px'
 
 
@@ -79,7 +79,7 @@ def test_contradicting_add_leaves_sdfg_unchanged():
                         dace.int64,
                         predicates=frozenset({symbolic.Predicate.POSITIVE, symbolic.Predicate.NEGATIVE}))
     assert 'M' not in sdfg.symbols
-    assert 'M' not in sdfg.symbol_predicates
+    assert 'M' not in sdfg.symbol_repo.params.predicates
 
 
 def test_set_symbol_assumptions():
@@ -88,26 +88,26 @@ def test_set_symbol_assumptions():
         sdfg.set_symbol_assumptions('M', POSITIVE)
     sdfg.set_symbol_assumptions('K', NONNEGATIVE)
     sdfg.set_symbol_assumptions('N', frozenset())
-    assert sdfg.symbol_predicates == {'K': NONNEGATIVE}
+    assert sdfg.symbol_repo.params.predicates == {'K': NONNEGATIVE}
 
 
 def test_add_symbol_relation():
     sdfg = symbols_sdfg('add_relation')
-    with pytest.raises(KeyError, match='undeclared symbols'):
+    with pytest.raises(KeyError, match='"M" is not declared'):
         sdfg.add_symbol_relation(less_than('K', 'M'))
     sdfg.add_symbol_relation(less_than('K', 'N'))
     sdfg.add_symbol_relation(less_than('K', 'N'))
-    assert sdfg.symbol_relations == [less_than('K', 'N')]
+    assert sdfg.symbol_repo.params.relations == [less_than('K', 'N')]
     with pytest.raises(symbolic.InconsistentAssumptionsError):
         sdfg.add_symbol_relation(less_than('N', 'K'))
-    assert sdfg.symbol_relations == [less_than('K', 'N')]
+    assert sdfg.symbol_repo.params.relations == [less_than('K', 'N')]
 
 
 def test_remove_symbol_drops_predicates_and_refuses_named_ones():
     sdfg = symbols_sdfg('remove_symbol')
     sdfg.add_symbol('M', dace.int64, predicates=POSITIVE)
     sdfg.remove_symbol('M')
-    assert 'M' not in sdfg.symbol_predicates
+    assert 'M' not in sdfg.symbol_repo.params.predicates
     sdfg.add_symbol_relation(less_than('K', 'N'))
     with pytest.raises(ValueError, match='still name it'):
         sdfg.remove_symbol('K')
@@ -117,15 +117,15 @@ def test_rename_moves_predicates_and_rewrites_relations():
     sdfg = symbols_sdfg('rename_symbols')
     sdfg.add_symbol_relation(less_than('K', 'N'))
     sdfg.replace_dict({'N': 'M'})
-    assert sdfg.symbol_predicates == {'M': POSITIVE}
-    assert [str(relation) for relation in sdfg.symbol_relations] == [str(less_than('K', 'M'))]
+    assert sdfg.symbol_repo.params.predicates == {'M': POSITIVE}
+    assert [str(relation) for relation in sdfg.symbol_repo.params.relations] == [str(less_than('K', 'M'))]
 
 
 def test_replacing_by_expression_turns_predicates_into_relations():
     sdfg = symbols_sdfg('replace_by_expression')
     sdfg.replace_dict({'N': 'K + 1'})
-    assert 'N' not in sdfg.symbol_predicates
-    assert sdfg.symbol_relations == [
+    assert 'N' not in sdfg.symbol_repo.params.predicates
+    assert sdfg.symbol_repo.params.relations == [
         symbolic.Relation(symbolic.RelationKind.LT, sympy.Integer(0), symbolic.pystr_to_symbolic('K + 1'))
     ]
 
@@ -145,23 +145,21 @@ def test_json_round_trip_keeps_facts():
     sdfg = symbols_sdfg('json_round_trip')
     sdfg.add_symbol_relation(less_than('K', 'N'))
     loaded = dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json())))
-    assert loaded.symbol_predicates == {'N': POSITIVE}
+    assert loaded.symbol_repo.params.predicates == {'N': POSITIVE}
     # Compared by name: a symbol's dtype is still part of its identity until symbols become names only
-    assert [str(relation) for relation in loaded.symbol_relations] == [str(less_than('K', 'N'))]
+    assert [str(relation) for relation in loaded.symbol_repo.params.relations] == [str(less_than('K', 'N'))]
 
 
 def test_sdfg_without_facts_serializes_no_fact_keys():
     sdfg = dace.SDFG('no_facts')
     sdfg.add_state(is_start_block=True)
     sdfg.add_symbol('N', dace.int64)
-    attributes = sdfg.to_json()['attributes']
-    assert 'symbol_predicates' not in attributes
-    assert 'symbol_relations' not in attributes
+    assert sdfg.to_json()['attributes']['symbol_repo'] == {'params': {'types': {'N': 'int64'}}}
 
 
 def test_validation_rejects_facts_on_undeclared_symbols():
     sdfg = symbols_sdfg('undeclared_facts')
-    sdfg.symbol_predicates['M'] = POSITIVE
+    sdfg.symbol_repo.params.predicates['M'] = POSITIVE
     with pytest.raises(InvalidSDFGError, match='undeclared symbols'):
         sdfg.validate()
 
@@ -186,7 +184,7 @@ def test_validation_rejects_symbol_bound_by_a_map():
     sdfg.add_array('A', [10], dace.float64)
     state = sdfg.add_state(is_start_block=True)
     state.add_mapped_tasklet('m', {'j': '0:10'}, {}, 'a = 1.0', {'a': dace.Memlet('A[j]')}, external_edges=True)
-    sdfg.symbols['j'] = dace.int64
+    sdfg.symbol_repo.add('j', dace.int64)
     with pytest.raises(InvalidSDFGError, match='bound by a loop or map scope'):
         sdfg.validate()
 
