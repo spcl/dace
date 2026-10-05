@@ -39,8 +39,6 @@ class ResolveStackAllocation(ppl.Pass):
         ``resolve_stack_allocation``, so the generated code follows a placement visible in the SDFG.
     """
 
-    CATEGORY: str = 'Code Generation'
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
 
