@@ -15,16 +15,6 @@ import dace
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 
 
-def gpu_available() -> bool:
-    """True if a CUDA/HIP device is usable for compilation + execution."""
-    try:
-        import cupy  # noqa: F401  # a working cupy implies a usable device
-
-        return cupy.cuda.runtime.getDeviceCount() > 0
-    except Exception:
-        return False
-
-
 def run_on_gpu(program, inputs: dict) -> tuple:
     """Build ``program`` for the GPU (cuSOLVER/cuBLAS/GPUAuto selection) and run
     it on a copy of ``inputs``; return (outputs, warnings)."""
@@ -66,7 +56,7 @@ def reduce_pooling_windows(x: dace.float64[2, 8, 8, 3], y: dace.float64[2, 4, 4,
 
 
 def test_reduce_strided_view_cpu():
-    x = np.random.rand(8, 16)
+    x = np.random.default_rng(0).random((8, 16))
     y = np.zeros(8)
     reduce_strided_view(x=x.copy(), y=y)
     assert np.allclose(y, np.sum(x[:, ::2], axis=1))
@@ -74,9 +64,7 @@ def test_reduce_strided_view_cpu():
 
 @pytest.mark.gpu
 def test_reduce_strided_view_gpu():
-    if not gpu_available():
-        pytest.skip('no CUDA/HIP device')
-    x = np.random.rand(8, 16)
+    x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_strided_view, dict(x=x, y=np.zeros(8)))
     assert not view_pure_fallback(caught), 'GPUAuto reduction fell back to Pure on a View input'
     assert np.allclose(out['y'], np.sum(x[:, ::2], axis=1))
@@ -84,9 +72,7 @@ def test_reduce_strided_view_gpu():
 
 @pytest.mark.gpu
 def test_reduce_sliced_view_gpu():
-    if not gpu_available():
-        pytest.skip('no CUDA/HIP device')
-    x = np.random.rand(8, 16)
+    x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_sliced_view, dict(x=x, y=np.zeros(7)))
     assert not view_pure_fallback(caught)
     assert np.allclose(out['y'], np.sum(x[1:8, 2:14], axis=1))
@@ -94,9 +80,7 @@ def test_reduce_sliced_view_gpu():
 
 @pytest.mark.gpu
 def test_reduce_strided_view_full_gpu():
-    if not gpu_available():
-        pytest.skip('no CUDA/HIP device')
-    x = np.random.rand(8, 16)
+    x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_strided_view_full, dict(x=x, s=np.zeros(1)))
     assert not view_pure_fallback(caught)
     assert np.allclose(out['s'][0], np.sum(x[:, ::2]))
@@ -104,7 +88,7 @@ def test_reduce_strided_view_full_gpu():
 
 @pytest.mark.gpu
 def test_reduce_over_pooling_windows_gpu():
-    x = np.random.rand(2, 8, 8, 3)
+    x = np.random.default_rng(0).random((2, 8, 8, 3))
     out, _ = run_on_gpu(reduce_pooling_windows, dict(x=x, y=np.zeros((2, 4, 4, 3))))
     assert np.allclose(out['y'], x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4)))
 

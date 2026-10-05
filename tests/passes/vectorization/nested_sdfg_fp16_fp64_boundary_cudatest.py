@@ -24,14 +24,11 @@ run the same program and are expected to fail the same way until the literal (or
 implied by the original ``float64`` body) carries an explicit dtype.
 """
 import re
-import shutil
 
 import numpy as np
 import pytest
 
 import dace
-
-HAS_NVCC = shutil.which("nvcc") is not None
 
 #: The whole module is about float16, so it carries the marker the fp16 CI leg selects on.
 pytestmark = pytest.mark.fp16
@@ -93,14 +90,12 @@ def test_boundary_division_operand_is_explicitly_typed():
 
 # GPU: compiling and running the same program
 @pytest.mark.gpu
-@pytest.mark.skipif(not HAS_NVCC, reason="nvcc required to compile the generated device code")
 def test_generated_code_compiles():
     """nvcc is where the ambiguous ``operator/`` overload surfaces; the host compiler never sees it."""
     offloaded(1024, name="nested_fp16_fp64_boundary_compile").compile()
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not HAS_NVCC, reason="nvcc required to compile the generated device code")
 @pytest.mark.parametrize("n", EXTENTS)
 def test_numeric_matches_fp64_then_fp16_cast(n):
     """The nested program's body is ``float64``: the intended result is ``1.0 / a`` computed in

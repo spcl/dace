@@ -1,84 +1,72 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Walker-primary pipeline smoke tests (post-descent migration).
+"""The walker-primary ``VectorizeCPUMultiDim`` pipeline on minimal kernels: it leaves an empty SDFG alone,
+vectorizes 1-D and 2-D copies into programs that still copy, and refuses tile ranks it does not support."""
+import numpy as np
+import pytest
 
-After the legacy ``PromoteNSDFGBodyToTiles`` + ``EmitTileOps`` descent
-was deleted, ``VectorizeCPUMultiDim`` runs a walker-primary pipeline:
-``MarkTileDims`` -> ``GenerateTileIterationMask`` ->
-``StrideMapByTileWidths`` -> ``PreparePerLaneIndices`` ->
-``InsertTileLoadStore`` -> lib-node expansion -> ``ClearPerLaneIndexSymbols``.
-
-This file pins minimum-viable invariants on the walker-primary
-orchestrator -- it imports, instantiates, and runs without crashing
-on a trivial SDFG. Numerical equivalence end-to-end will land once
-the walker handles tasklet -> TileBinop / TileITE / TileReduce
-conversion (currently in scope).
-"""
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 
-def test_orchestrator_runs_on_empty_sdfg():
-    """An empty SDFG triggers no pipeline rewrites; orchestrator returns cleanly."""
-    sdfg = dace.SDFG("empty")
-    sdfg.add_state("s")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
-
-
-def test_orchestrator_K1_runs_on_trivial_array_copy_kernel():
-    """K=1 orchestrator over a minimal array-copy kernel (B[i] = A[i]) passes cleanly."""
-    sdfg = dace.SDFG("copy_k1")
-    sdfg.add_array("A", (16, ), dace.float64, transient=False)
-    sdfg.add_array("B", (16, ), dace.float64, transient=False)
+def copy_kernel(name: str, shape: tuple[int, ...]) -> dace.SDFG:
+    """``B[idx] = A[idx]`` over one map spanning ``shape``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", shape, dace.float64)
+    sdfg.add_array("B", shape, dace.float64)
     state = sdfg.add_state("s")
-    me, mx = state.add_map("k", {"ii": "0:16"})
-    a = state.add_access("A")
-    b = state.add_access("B")
+    params = [f"i{d}" for d in range(len(shape))]
+    me, mx = state.add_map("k", {p: f"0:{n}" for p, n in zip(params, shape)})
     tasklet = state.add_tasklet("body", {"_a"}, {"_b"}, "_b = _a")
-    state.add_memlet_path(a, me, tasklet, dst_conn="_a", memlet=dace.Memlet("A[ii]"))
-    state.add_memlet_path(tasklet, mx, b, src_conn="_b", memlet=dace.Memlet("B[ii]"))
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    index = ", ".join(params)
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="_a", memlet=dace.Memlet(f"A[{index}]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("B"), src_conn="_b", memlet=dace.Memlet(f"B[{index}]"))
+    return sdfg
 
 
-def test_orchestrator_K2_runs_on_trivial_2d_copy_kernel():
-    """K=2 orchestrator over a 2-D copy kernel (B[i, j] = A[i, j]) passes cleanly."""
-    sdfg = dace.SDFG("copy_k2")
-    sdfg.add_array("A", (16, 32), dace.float64, transient=False)
-    sdfg.add_array("B", (16, 32), dace.float64, transient=False)
-    state = sdfg.add_state("s")
-    me, mx = state.add_map("k", {"ii": "0:16", "jj": "0:32"})
-    a = state.add_access("A")
-    b = state.add_access("B")
-    tasklet = state.add_tasklet("body", {"_a"}, {"_b"}, "_b = _a")
-    state.add_memlet_path(a, me, tasklet, dst_conn="_a", memlet=dace.Memlet("A[ii, jj]"))
-    state.add_memlet_path(tasklet, mx, b, src_conn="_b", memlet=dace.Memlet("B[ii, jj]"))
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
-
-
-def test_orchestrator_constructor_refuses_invalid_widths():
-    """Pipeline-level knob validation still loud-fails on bad widths."""
-    import pytest
-    # K=0 (empty widths) -- the first check that fires depends on the validator's order.
-    # Just verify NotImplementedError is raised.
-    with pytest.raises((NotImplementedError, IndexError)):
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(), target_isa=ISA.SCALAR))
-    with pytest.raises(NotImplementedError):
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8, 8, 8), target_isa=ISA.SCALAR))
-
-
-def test_orchestrator_supports_branch_modes():
-    """Both ``merge`` (default) and ``fp_factor`` branch modes still construct cleanly."""
-    sdfg = dace.SDFG("branch_modes")
+def test_an_empty_sdfg_is_left_unchanged_and_reported_untiled():
+    sdfg = dace.SDFG("vectorize_empty")
     sdfg.add_state("s")
-    for branch_mode in ("merge", "fp_factor"):
-        # fp_factor requires K=1 + scalar_postamble; merge accepts any combo.
-        if branch_mode == "fp_factor":
-            VectorizeCPUMultiDim(
-                VectorizeConfig(widths=(8, ),
-                                target_isa=ISA.SCALAR,
-                                branch_mode=branch_mode,
-                                remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
-        else:
-            VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                                                 branch_mode=branch_mode)).apply_pass(sdfg, {})
+    with pytest.warns(UserWarning, match="tiled nothing"):
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert [len(state.nodes()) for state in sdfg.states()] == [0]
+
+
+@pytest.mark.parametrize("shape,widths", [((16, ), (8, )), ((16, 32), (4, 8))], ids=["k1", "k2"])
+def test_a_vectorized_copy_still_copies(shape, widths):
+    sdfg = copy_kernel(f"vectorize_copy_k{len(widths)}", shape)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    a = np.random.default_rng(0).random(shape)
+    b = np.zeros(shape)
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, a)
+
+
+@pytest.mark.parametrize("widths,rank", [((), 0), ((8, 8, 8, 8), 4)], ids=["k0", "k4"])
+def test_a_tile_rank_outside_one_to_three_is_refused(widths, rank):
+    with pytest.raises(NotImplementedError, match=f"K={rank} not in"):
+        VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR))
+
+
+@pytest.mark.parametrize("branch_mode,remainder", [(BranchMode.MERGE, RemainderStrategy.SCALAR_POSTAMBLE),
+                                                   (BranchMode.FP_FACTOR, RemainderStrategy.SCALAR_POSTAMBLE)],
+                         ids=["merge", "fp_factor"])
+def test_every_branch_mode_runs_on_an_empty_sdfg(branch_mode, remainder):
+    """``fp_factor`` needs K=1 and a scalar postamble; ``merge`` accepts any combination."""
+    sdfg = dace.SDFG(f"vectorize_branch_{branch_mode.name.lower()}")
+    sdfg.add_state("s")
+    config = VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, branch_mode=branch_mode, remainder_strategy=remainder)
+    with pytest.warns(UserWarning, match="tiled nothing"):
+        VectorizeCPUMultiDim(config).apply_pass(sdfg, {})
+    assert config.branch_mode is branch_mode
+
+
+if __name__ == "__main__":
+    test_an_empty_sdfg_is_left_unchanged_and_reported_untiled()
+    test_a_vectorized_copy_still_copies((16, ), (8, ))
+    test_a_vectorized_copy_still_copies((16, 32), (4, 8))
+    test_a_tile_rank_outside_one_to_three_is_refused((), 0)
+    test_a_tile_rank_outside_one_to_three_is_refused((8, 8, 8, 8), 4)
+    test_every_branch_mode_runs_on_an_empty_sdfg(BranchMode.MERGE, RemainderStrategy.SCALAR_POSTAMBLE)
+    test_every_branch_mode_runs_on_an_empty_sdfg(BranchMode.FP_FACTOR, RemainderStrategy.SCALAR_POSTAMBLE)

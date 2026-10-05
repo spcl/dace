@@ -6,7 +6,6 @@ The block-atomic reduce folds each thread's partial across the thread block with
 output. We assert the emitted CUDA (the cub call + the thread-0 ``reduce_atomic``)
 without a GPU; when ``nvcc`` is present we also compile the generated TU.
 """
-import shutil
 import warnings
 
 import numpy as np
@@ -14,8 +13,6 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-
-_HAS_NVCC = shutil.which("nvcc") is not None
 
 
 def _build_block_atomic_sum_sdfg():
@@ -74,7 +71,7 @@ def test_block_atomic_emits_cub_and_atomic():
     assert "__shared__" in code, "block-reduce temp storage not in shared memory"
 
 
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
+@pytest.mark.gpu
 def test_block_atomic_compiles():
     sdfg = _build_block_atomic_sum_sdfg()
     sdfg.compile()
@@ -165,7 +162,7 @@ def test_a_complex_fold_seeds_its_partial_with_both_parts():
     assert 'dace::complex128(0.0, 0.0)' in code, 'the complex identity lost a part'
 
 
-@pytest.mark.skipif(not (_HAS_NVCC or shutil.which('hipcc')), reason='no GPU compiler; compile check skipped')
+@pytest.mark.gpu
 @pytest.mark.parametrize('key', list(DEVICE_FOLDS))
 def test_a_device_fold_without_a_native_atomic_compiles(key):
     """There is no atomicAdd for a complex operand, no 16-byte atomicCAS for the fallback to

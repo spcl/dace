@@ -96,6 +96,15 @@ def test_refusal_keys_on_the_permuted_array_only():
     rank-collapsing slice, but only A is permuted (and A arrives at full rank), so no refusal."""
     sdfg = _mixed_rank_cube()
     PermuteDimensions(permute_map={"A": [2, 1, 0]}, add_permute_maps=True).apply_pass(sdfg, {})
+    assert "permuted_A" in sdfg.arrays and "permuted_B" not in sdfg.arrays
+
+    n = 4
+    A = numpy.random.default_rng(0).random((n, n, n))
+    expect = numpy.zeros((n, n, n))
+    expect[0, :, :] = A[0, :, :] * 2.0
+    B = numpy.zeros((n, n, n))
+    sdfg(A=A.copy(), B=B, N=n)
+    assert numpy.array_equal(B, expect)
 
 
 @pytest.mark.parametrize("permutation", [[2, 1, 0], [1, 0, 2], [0, 2, 1]])
@@ -126,7 +135,7 @@ def test_prepare_for_layout_widens_nested_inputs_so_the_pass_never_refuses(permu
 if __name__ == "__main__":
     test_partial_slice_into_nested_sdfg_is_refused()
     test_single_surviving_axis_needs_no_inner_permutation()
-    test_unpermuted_array_through_a_partial_slice_is_not_refused()
+    test_refusal_keys_on_the_permuted_array_only()
     for p in ([2, 1, 0], [1, 0, 2], [0, 2, 1]):
         test_prepare_for_layout_widens_nested_inputs_so_the_pass_never_refuses(p)
     print("permute nested-rank tests PASS")

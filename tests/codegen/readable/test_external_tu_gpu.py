@@ -14,8 +14,7 @@ The fixtures build the device programs DIRECTLY -- ``GPU_Global`` arrays and map
 ``apply_gpu_transformations``. That is exactly the shape a lifted child has (a standalone kernel over
 device pointers), it keeps the nestedness the test intends, and the device arguments are passed as
 cupy arrays at call time. Coverage: flat sibling kernels, a kernel inside a top-level loop, and a
-host/device hybrid, x both builders (``cmake`` / ``native``). The whole file is gated on
-:func:`external_tu_available`, so it skips until the feature lands and never reports a false green.
+host/device hybrid, x both builders (``cmake`` / ``native``).
 """
 import re
 
@@ -24,7 +23,6 @@ import pytest
 
 import dace
 from dace.codegen import codegen
-from dace.config import Config
 
 from tests.codegen.readable.conftest import to_host
 
@@ -128,28 +126,6 @@ def generate_with_ext_tu(sdfg, on):
         return codegen.generate_code(sdfg)
 
 
-def external_tu_available():
-    """True iff the GPU external-TU feature is wired: the knob exists AND turning it on splits a
-    2-kernel program's single ``.cu`` into one ``.cu`` per kernel (codegen-only; needs no GPU)."""
-    try:
-        Config.get(*EXT_TU_KEY)
-    except Exception:  # noqa: BLE001 - key absent -> feature not present
-        return False
-    try:
-        off = kernel_cu_objects(generate_with_ext_tu(two_sibling_kernels("ext_tu_probe"), on=False))
-        on = kernel_cu_objects(generate_with_ext_tu(two_sibling_kernels("ext_tu_probe"), on=True))
-    except Exception:  # noqa: BLE001 - feature under development raised -> not ready
-        return False
-    # Off: both kernels share one .cu. On: each kernel gets its own .cu (Model 2).
-    return len(off) == 1 and len(on) == 2
-
-
-@pytest.fixture
-def require_external_tu():
-    if not external_tu_available():
-        pytest.skip("GPU external translation units (Model 2) not wired up yet")
-
-
 def device_array(host):
     """A cupy device array holding ``host`` (the fixtures' GPU_Global args take device pointers)."""
     import cupy as cp
@@ -159,14 +135,14 @@ def device_array(host):
 # #
 # Codegen-shape tests (no GPU device needed) -- assert the per-kernel .cu split.
 # #
-def test_flag_off_single_cu(require_external_tu):
+def test_flag_off_single_cu():
     """Off (default): one ``.cu`` carrying both kernels -- byte-for-byte the untouched generator."""
     objects = generate_with_ext_tu(two_sibling_kernels("off_one_cu"), on=False)
     assert len(cu_objects(objects)) == 1
     assert count_global_kernels(objects) == 2
 
 
-def test_two_siblings_two_cu(require_external_tu):
+def test_two_siblings_two_cu():
     """On: two top-level sibling kernels -> two kernel-bearing ``.cu`` TUs, one ``__global__`` each."""
     objects = generate_with_ext_tu(two_sibling_kernels("two_cu"), on=True)
     kernel_cus = kernel_cu_objects(objects)
@@ -177,14 +153,14 @@ def test_two_siblings_two_cu(require_external_tu):
     assert count_global_kernels(objects) == 2
 
 
-def test_loop_nested_one_kernel_cu(require_external_tu):
+def test_loop_nested_one_kernel_cu():
     """A kernel inside a top-level loop -> exactly one kernel ``.cu`` for the whole loop (depth 1)."""
     objects = generate_with_ext_tu(kernel_in_loop("loop_cu"), on=True)
     assert len(kernel_cu_objects(objects)) == 1, [o.name for o in kernel_cu_objects(objects)]
     assert count_global_kernels(objects) == 1
 
 
-def test_hybrid_only_gpu_externalized(require_external_tu):
+def test_hybrid_only_gpu_externalized():
     """Hybrid host+device program: only the GPU nest becomes its own kernel ``.cu``; the CPU map stays
     in the parent (a CPU-only nest is never lifted -- that is the ``split_nsdfg`` path, off here)."""
     objects = generate_with_ext_tu(hybrid_cpu_gpu("hybrid_cu"), on=True)
@@ -192,7 +168,7 @@ def test_hybrid_only_gpu_externalized(require_external_tu):
     assert count_global_kernels(objects) == 1
 
 
-def test_external_call_emitted(require_external_tu):
+def test_external_call_emitted():
     """The parent calls each lifted child through its public handle ABI: an ``extern "C"`` declaration
     of ``__dace_init`` / ``__program`` / ``__dace_exit`` for the child, then an init -> program -> exit
     sequence over a local handle -- the in-binary cross-TU call the static linker resolves."""
@@ -214,7 +190,7 @@ def test_external_call_emitted(require_external_tu):
 # #
 @pytest.mark.gpu
 @pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_two_siblings_run_matches_single_tu(require_external_tu, build_mode):
+def test_two_siblings_run_matches_single_tu(build_mode):
     """The split library must LINK (child extern-C entry points resolve in-binary) and compute exactly
     what the single-TU build computes -- under both the cmake and native builders."""
     rng = np.random.default_rng(0)
@@ -236,7 +212,7 @@ def test_two_siblings_run_matches_single_tu(require_external_tu, build_mode):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_loop_nested_run(require_external_tu, build_mode):
+def test_loop_nested_run(build_mode):
     """The lifted loop-child must link + run: final value is the last iteration (t=3), matching single-TU."""
     rng = np.random.default_rng(1)
     A = rng.random(256)
@@ -255,7 +231,7 @@ def test_loop_nested_run(require_external_tu, build_mode):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_hybrid_run(require_external_tu, build_mode):
+def test_hybrid_run(build_mode):
     """Hybrid host+device program links + runs: the host (CPU) map and the lifted GPU child both
     compute, and both match the single-TU build, under either builder."""
     rng = np.random.default_rng(2)
@@ -278,5 +254,12 @@ def test_hybrid_run(require_external_tu, build_mode):
 
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(pytest.main([__file__, "-q"]))
+    test_flag_off_single_cu()
+    test_two_siblings_two_cu()
+    test_loop_nested_one_kernel_cu()
+    test_hybrid_only_gpu_externalized()
+    test_external_call_emitted()
+    for mode in ("cmake", "native"):
+        test_two_siblings_run_matches_single_tu(mode)
+        test_loop_nested_run(mode)
+        test_hybrid_run(mode)

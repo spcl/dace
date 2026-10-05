@@ -26,7 +26,6 @@ os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import re
-import shutil
 
 import numpy as np
 import pytest
@@ -40,7 +39,6 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileReduce
 
-HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 
 
@@ -162,12 +160,10 @@ def test_emits_block_reduce_and_single_atomic(kind):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; compile check skipped")
 @pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_compiles(kind):
     sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_compile_{kind}"
-    shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     sdfg.compile()
 
 
@@ -185,7 +181,6 @@ def test_runs_exact_multiblock(kind):
     cupy = pytest.importorskip("cupy")
     sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_run_{kind}"
-    shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     csdfg = sdfg.compile()
     # Even extents only: width-2 half2 tiling under assume_even requires N % 2 == 0 (an odd N
     # trips the even-extent guard). Sizes span several thread-blocks / a non-block-aligned tail.

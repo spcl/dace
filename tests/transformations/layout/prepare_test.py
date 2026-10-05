@@ -88,7 +88,8 @@ def test_fortran_strides_are_accepted():
     sdfg = dace.SDFG("fortran")
     sdfg.add_array("A", [N, N], dace.float64, strides=[1, N])
     sdfg.add_state("s", is_start_block=True)
-    normalize_to_packed_c(sdfg)  # must not raise
+    normalize_to_packed_c(sdfg)
+    assert tuple(sdfg.arrays["A"].strides) == (1, N)  # accepted as is, not relaid out  # must not raise
 
 
 if __name__ == "__main__":

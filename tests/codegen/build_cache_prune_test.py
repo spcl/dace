@@ -92,8 +92,10 @@ def test_prune_keeps_everything_under_budget(tmp_path, monkeypatch):
 
 
 def test_prune_on_missing_root_is_silent(tmp_path):
-    """A cache kind that has never been written yet must not raise."""
-    build_cache.prune(os.path.join(str(tmp_path), 'never-created'))
+    """A cache kind that has never been written yet must not raise, nor be created by the prune."""
+    root = os.path.join(str(tmp_path), 'never-created')
+    build_cache.prune(root)
+    assert not os.path.exists(root)
 
 
 if __name__ == '__main__':
