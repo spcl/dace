@@ -270,9 +270,10 @@ class DaceNodeBackwardImplementations:
             if else_expression:
                 else_code, else_rev_inputs, else_rev_outputs, else_result = self._differentiate_code_symbolically(
                     self.bwd_engine.sdfg, else_expression, state, tasklet, given_gradients, required_gradients)
-                assert else_rev_inputs == if_rev_inputs
-                assert if_rev_outputs == else_rev_outputs
-                assert else_result == if_result
+                if if_rev_outputs != else_rev_outputs or else_result != if_result:
+                    raise AutoDiffException(f'The branches of conditional tasklet {tasklet} have different gradients')
+                # The branches may read different inputs (e.g., a constant in one branch)
+                if_rev_inputs |= else_rev_inputs
 
             # prepare the tasklet code depending on the conditional type
             # add the same conditional to the if_code
@@ -280,8 +281,8 @@ class DaceNodeBackwardImplementations:
             if_code = if_code.replace("\n", "\n\t")
             if_code = f"if {conditional}:\n{if_code}"
 
-            # add the conditional to the in connectors
-            if_rev_inputs.add(conditional)
+            # the backward tasklet evaluates the same condition, so it reads the same input connectors
+            if_rev_inputs |= ad_utils.conditional_connectors(conditional, tasklet)
             joint_code = if_code
 
             if ":" not in code_str:

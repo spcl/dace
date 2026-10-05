@@ -5,7 +5,7 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import astunparse
 import sympy as sp
@@ -409,6 +409,30 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
     return index_map
 
 
+class _CastRemover(ast.NodeTransformer):
+    """
+    Replaces casts with their argument: casts to DaCe types (``dace.float64(x)``) and floating-point casts with C type
+    names, which the Python frontend emits for casts through variables that hold a DaCe type (``double(x)``).
+    """
+    _FLOAT_CASTS = ('float', 'double')
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        func = node.func
+        is_dace_cast = (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 'dace'
+                        and isinstance(vars(dace).get(func.attr), dtypes.typeclass))
+        is_float_cast = isinstance(func, ast.Name) and func.id in self._FLOAT_CASTS
+        if (is_dace_cast or is_float_cast) and len(node.args) == 1 and not node.keywords:
+            return node.args[0]
+        return node
+
+
+def _strip_casts(code: str) -> str:
+    """Removes casts to DaCe types from tasklet code, keeping the grouping of the expressions they wrap."""
+    tree = _CastRemover().visit(ast.parse(code))
+    return astunparse.unparse(tree).strip()
+
+
 def code_to_exprs(code: str, tasklet: nd.Tasklet,
                   symbols: Dict[str, dtypes.typeclass]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
@@ -477,6 +501,8 @@ def symbolic_execution({}):
 {}
     return {}
     """
+    # Clean out type conversions from the code (they do not change the value symbolically)
+    code = _strip_casts(code)
     code_fn = code_fn.format(
         ", ".join(inputs),
         symbol_code,
@@ -484,9 +510,6 @@ def symbolic_execution({}):
         "\n".join("    " + line.strip() for line in code.split("\n")),
         ", ".join(outputs),
     )
-
-    # Clean out type conversions from the code
-    code_fn = re.sub(r"dace\.(float32|int32|float64|int64)\((.*?)\)", r"\2", code_fn)
 
     try:
         # need to have dace so things like `dace.float32(1)` work
@@ -715,118 +738,86 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
     raise AutoDiffException("Can't easily find path. Upgrade function.")
 
 
-def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
+def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, Optional[str], str]:
     """
-        Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
-        The else statement could be None in case there is only an if statement. The current supported formats are the following:
-        1 - if cond:
-                out = expression_1
-        which would return ("out = expression_1", None, "if cond")
-        2- out = expression_1 if cond else expression 2
-        """
+    Given a conditional tasklet node, extract the if and else assignments and the condition. The else assignment is
+    None if there is only an if statement. The supported formats are:
 
+    1. ``out = expression_1 if condition else expression_2``, also wrapped in a call such as a cast
+       (``out = dace.float32(expression_1 if condition else expression_2)``), which is applied to both branches.
+    2. ``if condition: out = expression_1``
+
+    The condition may be any expression of the tasklet's inputs (see :func:`conditional_connectors`).
+
+    :return: A tuple ``(if assignment, else assignment or None, condition)``.
+    """
     tasklet_code = tasklet_node.code.as_string
+    try:
+        body = ast.parse(tasklet_code).body
+    except SyntaxError as ex:
+        raise AutoDiffException(f'Could not parse conditional tasklet code: {tasklet_code}') from ex
+    if len(body) != 1:
+        raise AutoDiffException(f'Expected a single conditional statement in tasklet code: {tasklet_code}')
+    stmt = body[0]
 
-    # check which type of assignment this is
-    if ":" in tasklet_code:
-        # get the conditional input connector through regular expression matching
-        matches = re.search(r"if (.)*:", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find 'if' statement in conditional tasklet code: {tasklet_code}")
-        conditional = matches.group()
-
-        # remove the conditional from the code to get the expression
-        if_statement = tasklet_code.replace(conditional, "")
-        if_statement = if_statement.replace("\n", "")
-
-        # remove indentation
-        if_statement = if_statement[3:]
-
-        # extract the in connector only
-        conditional = conditional.replace(":", "")
-        conditional = conditional.replace("if ", "")
-        if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(
-                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
-            )
-
-        else_statement = None
-
-        # match the out connector
-        matches = re.search(r"^(.)* =", if_statement)
-        if not matches:
-            raise AutoDiffException(f"Could not find output assignment in if statement: {if_statement}")
-        out_connector = matches.group()
-
-        # remove the assignment from the if statement
-        if_statement = if_statement.replace(out_connector, "")
-
-        # extract the out connector only
-        out_connector = out_connector[1:].replace(" =", "")
-
+    if isinstance(stmt, ast.If):
+        if stmt.orelse or len(stmt.body) != 1 or not isinstance(stmt.body[0], ast.Assign):
+            raise AutoDiffException(f'Expected a single assignment in the if statement of tasklet code: {tasklet_code}')
+        out_connector = _single_target(stmt.body[0], tasklet_code)
+        if_value, else_value, condition = stmt.body[0].value, None, stmt.test
+    elif isinstance(stmt, ast.Assign):
+        out_connector = _single_target(stmt, tasklet_code)
+        value, wrappers = stmt.value, []
+        # Unwrap single-argument calls (e.g., casts) around the conditional expression
+        while isinstance(value, ast.Call) and len(value.args) == 1 and not value.keywords:
+            wrappers.append(value)
+            value = value.args[0]
+        if not isinstance(value, ast.IfExp):
+            raise AutoDiffException(f'Could not find a conditional expression in tasklet code: {tasklet_code}')
+        if_value, else_value, condition = value.body, value.orelse, value.test
+        for wrapper in reversed(wrappers):
+            if_value = ast.Call(func=wrapper.func, args=[if_value], keywords=[])
+            else_value = ast.Call(func=wrapper.func, args=[else_value], keywords=[])
     else:
-        # get the conditional input connector through regular expression matching
-        matches = re.search(r"if (.)* else", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find 'if...else' statement in conditional tasklet code: {tasklet_code}")
-        conditional = matches.group()
+        raise AutoDiffException(f'Unsupported conditional tasklet code: {tasklet_code}')
 
-        # extract the in connector only
-        conditional = conditional.replace("if ", "")
-        conditional = conditional.replace(" else", "")
-
-        if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(
-                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
-            )
-
-        # get the if statement by matching what comes before the if until we encounter a parenthesis or =
-        matches = re.search(r"= \((.)* if", tasklet_code)
-        if not matches:
-            # try without the parenthesis
-            matches = re.search(r"= (.)* if", tasklet_code)
-            if not matches:
-                raise AutoDiffException(f"Could not find if expression pattern in tasklet code: {tasklet_code}")
-
-        if_statement = matches.group()
-
-        # extract the in statement only
-        if_statement = if_statement.replace("= (", "")
-        if_statement = if_statement.replace(" if", "")
-
-        # get the else statement by matching the else and what comes after it until we encounter a parenthesis
-        matches = re.search(r"else (.)*\)", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find else expression pattern in tasklet code: {tasklet_code}")
-        else_statement = matches.group()
-
-        # extract the in statement only
-        else_statement = else_statement.replace("else ", "")
-
-        # remove the last closing parenthesis if it exists
-        if else_statement.endswith(")"):
-            else_statement = else_statement[:-1]
-
-        # match the out connector
-        matches = re.search(r"^(.)* =", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find output assignment in tasklet code: {tasklet_code}")
-        out_connector = matches.group()
-
-        # extract the in statement only
-        out_connector = out_connector.replace(" =", "")
-
-    # sanity check this should be in the out connectors of the tasklet
     if out_connector not in tasklet_node.out_connectors:
         raise AutoDiffException(
             f"Output connector '{out_connector}' not found in tasklet output connectors: {list(tasklet_node.out_connectors.keys())}"
         )
+    conditional = astunparse.unparse(condition).strip()
+    conditional_connectors(conditional, tasklet_node)  # Validates the names the condition uses
 
-    # create the return expressions
-    if_expression = f"{out_connector} = {if_statement}"
-    else_expression = f"{out_connector} = {else_statement}" if else_statement else None
-
+    if_expression = f'{out_connector} = {astunparse.unparse(if_value).strip()}'
+    else_expression = f'{out_connector} = {astunparse.unparse(else_value).strip()}' if else_value is not None else None
     return if_expression, else_expression, conditional
+
+
+def _single_target(assign: ast.Assign, code: str) -> str:
+    if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+        raise AutoDiffException(f'Expected an assignment to a single output connector in tasklet code: {code}')
+    return assign.targets[0].id
+
+
+def conditional_connectors(conditional: str, tasklet_node: nd.Tasklet) -> Set[str]:
+    """
+    Returns the input connectors that the condition of a conditional tasklet reads (the backward tasklet evaluates the
+    same condition, so it needs them as inputs).
+
+    :raises AutoDiffException: If the condition reads names that are neither input connectors nor known functions.
+    """
+    names = {node.id for node in ast.walk(ast.parse(conditional)) if isinstance(node, ast.Name)}
+    connectors = names & set(tasklet_node.in_connectors.keys())
+    calls = {
+        node.func.id
+        for node in ast.walk(ast.parse(conditional)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    unknown = names - connectors - calls - {'True', 'False', 'None', 'dace', 'math', 'np', 'numpy'}
+    if unknown and not connectors and not calls:
+        raise AutoDiffException(
+            f"Conditional '{conditional}' reads {sorted(unknown)}, which are not tasklet input connectors: "
+            f"{list(tasklet_node.in_connectors.keys())}")
+    return connectors
 
 
 def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:

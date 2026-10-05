@@ -1384,6 +1384,21 @@ class BackwardPassGenerator:
         # TODO: How to more accurately check this?
         return "if" in tasklet_node.code.as_string
 
+    def _is_conditional_assignment(self, forward_state: SDFGState, node: nodes.Node) -> bool:
+        """Check if a node is the tasklet or nested SDFG of a conditional array assignment (``A[mask] = value``)."""
+        if isinstance(node, nodes.Tasklet):
+            return self._conditional_tasklet(node) and self._has_boolean_input(forward_state, node)
+        return isinstance(node, nodes.NestedSDFG) and self._conditional_nested_sdfg(forward_state, node)
+
+    def _has_boolean_input(self, forward_state: SDFGState, node: nodes.Node) -> bool:
+        """
+        Check if a node reads boolean data, as the tasklet of a conditional array assignment (``A[mask] = value``)
+        does. Conditional tasklets that compute their condition from their other inputs are differentiated like any
+        other tasklet (the backward tasklet evaluates the same condition).
+        """
+        return any(edge.data.data is not None and self.sdfg.arrays[edge.data.data].dtype == dace.bool
+                   for edge in forward_state.in_edges(node))
+
     def _conditional_nested_sdfg(self, forward_state: SDFGState, node: nodes.NestedSDFG):
         """Check if this NestedSDFG contains a conditional.
 
@@ -1583,9 +1598,7 @@ class BackwardPassGenerator:
                                 tree_edge.data.wcr = "lambda x, y: x + y"
 
                 # If this node is a tasklet with a condition, we add some modification to the backward state
-                elif (isinstance(node, nodes.Tasklet)
-                      and self._conditional_tasklet(node)) or (isinstance(node, nodes.NestedSDFG)
-                                                               and self._conditional_nested_sdfg(forward_state, node)):
+                elif self._is_conditional_assignment(forward_state, node):
                     # extract the conditional assignment block or fail if this is an unexpected structure
                     conditional_block = self._extract_conditional_array_assignment_block(forward_state=forward_state,
                                                                                          tasklet_node=node,
