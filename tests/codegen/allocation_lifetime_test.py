@@ -399,7 +399,7 @@ def test_persistent_scalar_in_map():
 def test_persistent_array_access():
 
     @dace.program
-    def perscal(a: dace.float64[20]):
+    def persistent_array_access(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -410,7 +410,7 @@ def test_persistent_array_access():
             aa = 5
 
     a = np.random.rand(20)
-    perscal(a)
+    persistent_array_access(a)
     assert np.allclose(a[3], 5)
 
 
