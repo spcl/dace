@@ -17,6 +17,7 @@ from dace.memlet import Memlet
 from ..context import LoweringContext, TensorValue, TupleValue, UnsupportedOpError, as_sym, index_memlet
 from ..dtypes import is_floating
 from .pointwise import cast_expr, emit_elementwise, literal
+from .reduction import emit_reduce_into
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
@@ -216,3 +217,113 @@ def lower_avg_pool(ctx: LoweringContext,
 
     _window_tasklet(ctx, node, x, kernel, stride, padding, [1] * nd, 0, code, [out], {})
     return out
+
+
+# ---------------------------------------------------------------------- backward operators
+def _window_extents(spatial, padding, ospatial, stride, kernel, dilation) -> List:
+    """Spatial extents of a padded input that covers every window position (see ``_pad_input``)."""
+    return [
+        sympy.Max(s + 2 * p, (o - 1) * st + (k - 1) * d + 1)
+        for s, p, o, st, k, d in zip(spatial, padding, ospatial, stride, kernel, dilation)
+    ]
+
+
+def _zeros(ctx: LoweringContext, name: str, out: TensorValue) -> None:
+    emit_elementwise(ctx, name, out, [], f'__out = {cast_expr("0", out.dtype)}')
+
+
+@register_lowering(
+    *resolve('aten.max_pool2d_with_indices_backward.default', 'aten.max_pool3d_with_indices_backward.default'))
+def lower_max_pool_backward(ctx: LoweringContext, node, grad_output: TensorValue, x: TensorValue, kernel_size, stride,
+                            padding, dilation, ceil_mode, indices: TensorValue):
+    """Scatters each output gradient to the input element its window selected (``indices`` are flat per plane)."""
+    grad_input = ctx.add_tensor_like('t_' + node.name, node.meta['val'])
+    _zeros(ctx, node.name + '_init', grad_input)
+    lead = grad_input.tshape[:2]
+    plane = 1
+    for s in grad_input.tshape[2:]:
+        plane = plane * s
+    # Flat view over the spatial dimensions (indices are positions within one plane)
+    flat = ctx.emit_view_raw('v_' + node.name + '_flat', grad_input,
+                             tuple(lead) + (plane, ), (lead[1] * plane, plane, 1), grad_input.torch_dtype)
+    params = [f'__i{k}' for k in range(grad_output.rank)]
+    out_memlet = Memlet.simple(flat.name, f'{params[0]}, {params[1]}, 0:{plane}')
+    out_memlet.dynamic = True
+    out_memlet.wcr = 'lambda a, b: a + b'
+    ctx.emit_mapped_tasklet(node.name, params, [(0, s - 1, 1) for s in grad_output.tshape], {
+        '__g': index_memlet(grad_output.name, params),
+        '__ix': index_memlet(indices.name, params)
+    }, f'__out[__ix] = {cast_expr("__g", grad_input.dtype)}', {'__out': out_memlet})
+    return grad_input
+
+
+@register_lowering(*resolve('aten.convolution_backward.default'))
+def lower_convolution_backward(ctx: LoweringContext, node, grad_output: TensorValue, x: TensorValue, w: TensorValue,
+                               bias_sizes, stride, padding, dilation, transposed, output_padding, groups, output_mask):
+    """
+    Gradients of a (non-transposed) convolution with respect to its input, weight, and bias, each as maps with
+    write-conflict resolution (the input gradient scatters into a padded buffer).
+    """
+    if bool(as_sym(transposed)):
+        raise UnsupportedOpError(node.target, 'transposed convolution is not supported yet')
+    nd = w.rank - 2
+    stride, padding, dilation = _ints(stride, nd), _ints(padding, nd), _ints(dilation, nd)
+    groups = as_sym(groups)
+    mask = [bool(as_sym(m)) for m in (output_mask.items if hasattr(output_mask, 'items') else output_mask)]
+    vals = list(node.meta['val'])
+    N = x.tshape[0]
+    Cout, Cg = w.tshape[0], w.tshape[1]
+    kernel = list(w.tshape[2:])
+    ospatial = list(grad_output.tshape[2:])
+    cout_per_group = Cout // groups if isinstance(Cout, int) and isinstance(groups, int) else Cout / groups
+    group = '0' if (isinstance(groups, int) and groups == 1) else f'int_floor(__co, {cout_per_group})'
+    o_params = [f'__o{k}' for k in range(nd)]
+    k_params = [f'__k{k}' for k in range(nd)]
+    o_ranges = [(0, o - 1, 1) for o in ospatial]
+    k_ranges = [(0, k - 1, 1) for k in kernel]
+    window = [f'{o} * {st} + {k} * {d}' for o, k, st, d in zip(o_params, k_params, stride, dilation)]
+    extents = _window_extents(x.tshape[2:], padding, ospatial, stride, kernel, dilation)
+    results = [None, None, None]
+
+    if mask[0]:  # grad_input: scatter grad_output * weight into a padded buffer
+        grad_input = ctx.add_tensor_like('t_' + node.name + '_input', vals[0])
+        padded = ctx.add_array(f't_{node.name}_input_padded',
+                               tuple(x.tshape[:2]) + tuple(extents),
+                               grad_input.torch_dtype,
+                               device=grad_input.device)
+        _zeros(ctx, node.name + '_input_init', padded)
+        gi_memlet = index_memlet(padded.name, ['__n', f'({group}) * ({Cg}) + __ci'] + window)
+        gi_memlet.wcr = 'lambda a, b: a + b'
+        code = f'__out = {cast_expr("__g", padded.dtype)} * {cast_expr("__w", padded.dtype)}'
+        ctx.emit_nested_mapped_tasklet(
+            node.name + '_input', ['__n', '__co'] + o_params, [(0, N - 1, 1), (0, Cout - 1, 1)] + o_ranges,
+            ['__ci'] + k_params, [(0, Cg - 1, 1)] + k_ranges, {
+                '__g': index_memlet(grad_output.name, ['__n', '__co'] + o_params),
+                '__w': index_memlet(w.name, ['__co', '__ci'] + k_params)
+            }, code, {'__out': gi_memlet})
+        src = subsets.Range([(0, s - 1, 1) for s in x.tshape[:2]] + [(p, p + s - 1, 1)
+                                                                     for p, s in zip(padding, x.tshape[2:])])
+        ctx.emit_copy(padded, grad_input, src_subset=src)
+        results[0] = grad_input
+
+    if mask[1]:  # grad_weight: correlate the padded input with grad_output
+        grad_weight = ctx.add_tensor_like('t_' + node.name + '_weight', vals[1])
+        _zeros(ctx, node.name + '_weight_init', grad_weight)
+        xp = _pad_input(ctx, node.name + '_bw', x, 2, padding, extents, 0)
+        gw_memlet = index_memlet(grad_weight.name, ['__co', '__ci'] + k_params)
+        gw_memlet.wcr = 'lambda a, b: a + b'
+        code = f'__out = {cast_expr("__g", grad_weight.dtype)} * {cast_expr("__x", grad_weight.dtype)}'
+        ctx.emit_nested_mapped_tasklet(
+            node.name + '_weight', ['__co', '__ci'] + k_params, [(0, Cout - 1, 1), (0, Cg - 1, 1)] + k_ranges,
+            ['__n'] + o_params, [(0, N - 1, 1)] + o_ranges, {
+                '__g': index_memlet(grad_output.name, ['__n', '__co'] + o_params),
+                '__x': index_memlet(xp.name, ['__n', f'({group}) * ({Cg}) + __ci'] + window)
+            }, code, {'__out': gw_memlet})
+        results[1] = grad_weight
+
+    if mask[2]:  # grad_bias: sum of grad_output over all but the channel dimension
+        grad_bias = ctx.add_tensor_like('t_' + node.name + '_bias', vals[2])
+        emit_reduce_into(ctx, node.name + '_bias', grad_output, 'sum', [0] + list(range(2, grad_output.rank)),
+                         grad_bias)
+        results[2] = grad_bias
+    return TupleValue(results)

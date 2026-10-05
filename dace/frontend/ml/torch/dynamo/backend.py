@@ -2,6 +2,7 @@
 """The ``dace`` TorchDynamo backend."""
 import contextlib
 import dataclasses
+import functools
 import hashlib
 import os
 from collections import Counter
@@ -9,6 +10,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import torch
 from torch._dynamo.backends.common import aot_autograd
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from dace import dtypes
 from dace.config import Config
@@ -81,32 +83,48 @@ class DaceBackend:
     def __call__(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
         # The Dynamo-level graph knows which argument, parameter, or buffer each placeholder came from; the AOT graphs
         # below do not (their placeholders correspond to the Dynamo-level ones positionally)
-        self.last_description = describe_graph(gm, self.options.signature, self.options.dynamic_shapes)
+        description = describe_graph(gm, self.options.signature, self.options.dynamic_shapes)
+        self.last_description = description
         self.last_dynamo_graph = gm
-        return aot_autograd(fw_compiler=self._compile_forward,
-                            bw_compiler=self._compile_backward,
-                            decompositions=self.decomposition_table)(gm, example_inputs)
+        # AOTAutograd may compile the backward graph lazily (on the first backward call), after other graphs.
+        # Attention is traced with the math kernel, so that its backward consists of operators the frontend lowers.
+        compiler = aot_autograd(fw_compiler=functools.partial(self._compile_forward, description=description),
+                                bw_compiler=functools.partial(self._compile_backward, description=description),
+                                decompositions=self.decomposition_table)
+        with sdpa_kernel(SDPBackend.MATH):
+            return compiler(gm, example_inputs)
 
     # ------------------------------------------------------------------ compilers
-    def _graph_name(self, gm: torch.fx.GraphModule) -> str:
+    def _graph_name(self, gm: torch.fx.GraphModule, suffix: str = '') -> str:
         base = self.options.sdfg_name or 'dace_dynamo'
         digest = hashlib.sha1(gm.code.encode()).hexdigest()[:8]
-        name = f'{base}_{digest}'
+        name = f'{base}_{suffix}_{digest}' if suffix else f'{base}_{digest}'
         n = self._name_counter.get(name, 0)
         self._name_counter[name] = n + 1
         return name if n == 0 else f'{name}_{n}'
 
-    def _compile_forward(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
+    def _compile_forward(self,
+                         gm: torch.fx.GraphModule,
+                         example_inputs: List[Any],
+                         description: Optional[GraphDescription] = None) -> Callable:
+        description = description or self.last_description
+        input_names = description.input_names() if len(description.inputs) == len(example_inputs) else None
+        return self._compile_graph(gm, example_inputs, self._graph_name(gm), description.symbol_names, input_names)
+
+    def _compile_backward(self,
+                          gm: torch.fx.GraphModule,
+                          example_inputs: List[Any],
+                          description: Optional[GraphDescription] = None) -> Callable:
+        # The inputs of a backward graph are saved values and output gradients, which have no user-facing names
+        description = description or self.last_description
+        return self._compile_graph(gm, example_inputs, self._graph_name(gm, 'backward'), description.symbol_names, None)
+
+    def _compile_graph(self, gm: torch.fx.GraphModule, example_inputs: List[Any], name: str,
+                       symbol_names: Dict[str, str], input_names: Optional[List[Optional[str]]]) -> Callable:
         if self.options.print_ops:
             _print_op_histogram(gm)
-        description = self.last_description
-        input_names = description.input_names() if len(description.inputs) == len(example_inputs) else None
         importer = GraphImporter(self.options)
-        result = importer.import_graph(gm,
-                                       example_inputs,
-                                       self._graph_name(gm),
-                                       symbol_names=description.symbol_names,
-                                       input_names=input_names)
+        result = importer.import_graph(gm, example_inputs, name, symbol_names=symbol_names, input_names=input_names)
         sdfg = result.sdfg
         self.last_sdfg = sdfg
         self.last_result = result
@@ -119,11 +137,6 @@ class DaceBackend:
         csdfg = sdfg.compile()
         self.compile_count += 1
         return CompiledGraph(csdfg, result)
-
-    def _compile_backward(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
-        # For now, backward graphs run eagerly. They are ATen graphs like the forward ones and can be lowered with the
-        # same importer once training support is enabled.
-        return gm.forward
 
 
 def sdfg_device(sdfg):

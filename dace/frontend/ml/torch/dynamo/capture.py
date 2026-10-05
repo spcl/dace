@@ -106,8 +106,11 @@ class _CaptureComplete(Exception):
 class _CaptureBackend(DaceBackend):
     """A ``DaceBackend`` that stops after AOTAutograd produced the forward graph and returns it instead."""
 
-    def _compile_forward(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
-        description = self.last_description
+    def _compile_forward(self,
+                         gm: torch.fx.GraphModule,
+                         example_inputs: List[Any],
+                         description: Optional[GraphDescription] = None) -> Callable:
+        description = description or self.last_description
         inputs = description.inputs
         if len(inputs) != len(example_inputs):
             # AOTAutograd changed the inputs (e.g., deduplicated aliased arguments): sources are not positional

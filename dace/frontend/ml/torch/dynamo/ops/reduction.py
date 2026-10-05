@@ -69,7 +69,7 @@ def emit_reduce(ctx: LoweringContext, node, tensor: TensorValue, kind: str, dims
         target = ctx.emit_view_raw('v_' + node.name + '_red', out, red_shape, red_strides, out.torch_dtype)
     else:
         target = out
-    _emit_reduce_into(ctx, node.name, tensor, kind, dims, target)
+    emit_reduce_into(ctx, node.name, tensor, kind, dims, target)
     return out
 
 
@@ -158,7 +158,7 @@ def lower_prims_var(ctx: LoweringContext,
     keep_shape = tuple(1 if k in dims else s for k, s in enumerate(tensor.tshape))
     mean = ctx.add_array('t_' + node.name + '_mean', red_shape, tensor.torch_dtype, device=tensor.device)
     summed = ctx.add_array('t_' + node.name + '_sum', red_shape, tensor.torch_dtype, device=tensor.device)
-    _emit_reduce_into(ctx, node.name + '_sum', tensor, 'sum', dims, summed)
+    emit_reduce_into(ctx, node.name + '_sum', tensor, 'sum', dims, summed)
     pointwise_into(ctx, node.name + '_mean', mean, [summed], f'{{0}} / ({count})')
     from ..context import contiguous_strides
     mean_k = ctx.emit_view_raw('v_' + node.name + '_mean', mean, keep_shape, contiguous_strides(keep_shape),
@@ -168,13 +168,13 @@ def lower_prims_var(ctx: LoweringContext,
     pointwise_into(ctx, node.name + '_sq', sq, [tensor, mean_k], '(({0}) - ({1})) * (({0}) - ({1}))')
     out = ctx.add_tensor_like('t_' + node.name, val)
     sqsum = ctx.add_array('t_' + node.name + '_sqsum', red_shape, tensor.torch_dtype, device=tensor.device)
-    _emit_reduce_into(ctx, node.name + '_sqsum', sq, 'sum', dims, sqsum)
+    emit_reduce_into(ctx, node.name + '_sqsum', sq, 'sum', dims, sqsum)
     pointwise_into(ctx, node.name, out, [sqsum], f'{{0}} / ({count} - ({correction}))')
     return out
 
 
-def _emit_reduce_into(ctx: LoweringContext, name: str, tensor: TensorValue, kind: str, dims: List[int],
-                      out: TensorValue) -> None:
+def emit_reduce_into(ctx: LoweringContext, name: str, tensor: TensorValue, kind: str, dims: List[int],
+                     out: TensorValue) -> None:
     from dace.libraries.standard import Reduce
     wcr = _REDUCTIONS[kind][0]
     identity = _identity(kind, tensor.dtype)

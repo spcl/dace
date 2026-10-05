@@ -21,11 +21,16 @@ class CompiledGraph:
     """
     Callable returned to AOTAutograd for one captured graph.
 
-    Positional arguments follow the FX placeholder order: SymInt sizes first (as Python ints), then tensors. Outputs
-    are allocated as torch tensors (so torch owns the memory and the device) and passed to the SDFG as arguments.
+    The inputs follow the FX placeholder order (SymInt sizes as Python ints, tensors). They are given either positionally
+    or, in AOTAutograd's boxed calling convention, as one list that the call empties so that AOTAutograd can free saved
+    activations as early as possible. Outputs are allocated as torch tensors (so torch owns the memory and the device) and passed to
+    the SDFG as arguments.
     """
 
     def __init__(self, csdfg: CompiledSDFG, result):
+        # Tells AOTAutograd to pass the inputs as one list. An instance attribute, so that it survives the
+        # ``functools.wraps`` wrappers AOTAutograd puts around compiled functions (they copy ``__dict__`` only).
+        self._boxed_call = True
         self.csdfg = csdfg
         self.result = result
         self.inputs = result.inputs
@@ -33,8 +38,10 @@ class CompiledGraph:
         self.name = result.sdfg.name
 
     def __call__(self, *args) -> List[Any]:
-        if len(args) == 1 and isinstance(args[0], (list, tuple)) and len(self.inputs) != 1:
-            args = tuple(args[0])
+        if len(args) == 1 and isinstance(args[0], list):  # Boxed: graph inputs are tensors and numbers, never lists
+            inputs = args[0]
+            args = tuple(inputs)
+            inputs.clear()
         kwargs: Dict[str, Any] = {}
         symvals: Dict[str, int] = {}
         for spec in self.inputs:
