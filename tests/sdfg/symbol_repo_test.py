@@ -73,6 +73,15 @@ def test_params_and_facts_round_trip():
     assert json.dumps(loaded.to_json()) == json.dumps(sdfg.to_json())
 
 
+def test_symbols_is_a_read_only_view_of_the_params():
+    sdfg = dace.SDFG('read_only_symbols')
+    sdfg.add_symbol('N', dace.int64)
+    with pytest.raises(TypeError):
+        sdfg.symbols['M'] = dace.int64
+    sdfg.symbol_repo.add('M', dace.int32)
+    assert sdfg.symbols == {'N': dace.int64, 'M': dace.int32}
+
+
 def test_scopes_round_trip_to_their_owners():
     sdfg = loop_in_loop_sdfg()
     loaded = reloaded(sdfg)
@@ -143,6 +152,7 @@ def test_validation_rejects_scopes_that_do_not_match_their_owners():
 
 if __name__ == '__main__':
     test_params_and_facts_round_trip()
+    test_symbols_is_a_read_only_view_of_the_params()
     test_scopes_round_trip_to_their_owners()
     test_inner_scope_shadows_outer_after_round_trip()
     test_deepcopy_keys_scopes_by_the_copied_owners()

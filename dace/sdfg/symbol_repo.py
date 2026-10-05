@@ -354,6 +354,8 @@ class SymbolRepo:
             named = {*scope.predicates, *(name for relation in scope.relations for name in relation_names(relation))}
             if not named <= visible:
                 raise InvalidSDFGError(f'Symbol facts name undeclared symbols {sorted(named - visible)}', sdfg, None)
+            if owner is not None and not named:
+                continue
             try:
                 self.facts(owner)
             except InconsistentAssumptionsError as error:
