@@ -4,6 +4,7 @@ import dace
 from dace.frontend.python import astutils
 from dace.frontend.python.common import SDFGConvertible
 from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
+from dace.sdfg.state import LoopRegion
 import numpy as np
 import pytest
 
@@ -245,6 +246,10 @@ def test_tuple_elements_zip():
     assert np.allclose(a, (2 + 3 + 4) * 2 + (4 + 5 + 6))
 
 
+def loop_variables(sdfg: dace.SDFG) -> set[str]:
+    return {region.loop_variable for region in sdfg.all_control_flow_regions() if isinstance(region, LoopRegion)}
+
+
 @pytest.mark.parametrize('thres', [-1, 0, 5])
 def test_unroll_threshold(thres):
     with dace.config.set_temporary('frontend', 'unroll_threshold', value=thres):
@@ -258,11 +263,11 @@ def test_unroll_threshold(thres):
 
         sdfg = tounroll.to_sdfg()
         if thres < 0:
-            assert 'i' in sdfg.symbols and 'j' in sdfg.symbols
+            assert loop_variables(sdfg) == {'i', 'j'}
         elif thres == 0:
-            assert 'i' not in sdfg.symbols and 'j' not in sdfg.symbols
+            assert loop_variables(sdfg) == set()
         elif thres == 5:
-            assert 'i' not in sdfg.symbols and 'j' in sdfg.symbols
+            assert loop_variables(sdfg) == {'j'}
 
         A = np.random.rand(10)
         ref = np.copy(A)
@@ -400,7 +405,7 @@ def test_nounroll():
                 A[j] = j + 1
 
         sdfg = tounroll.to_sdfg()
-        assert 'i' in sdfg.symbols and 'j' not in sdfg.symbols
+        assert loop_variables(sdfg) == {'i'}
 
         A = np.random.rand(10)
         ref = np.copy(A)

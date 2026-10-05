@@ -144,6 +144,24 @@ class NameCollisionError(NameError):
     """ Raised when a new symbol or data descriptor takes a name the SDFG already uses for the other kind. """
 
 
+def scope_bound_names(sdfg: 'SDFG') -> Set[str]:
+    """ The names a scope of ``sdfg`` binds (not those of its nested SDFGs): loop variables, map and consume
+    parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG symbol. """
+    names = {
+        region.loop_variable
+        for region in sdfg.all_control_flow_regions() if isinstance(region, LoopRegion) and region.loop_variable
+    }
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                names.update(node.map.params)
+            elif isinstance(node, nd.ConsumeEntry):
+                names.add(node.consume.pe_index)
+            if isinstance(node, nd.EntryNode):
+                names.update(conn for conn in node.in_connectors if not conn.startswith('IN_'))
+    return names
+
+
 def predicates_to_json(predicates: Dict[str, FrozenSet[symbolic.Predicate]]) -> Dict[str, List[str]]:
     return {name: sorted(predicate.name for predicate in facts) for name, facts in predicates.items()}
 
@@ -1119,6 +1137,9 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+        elif name in scope_bound_names(self):
+            raise NameCollisionError(f'Cannot create symbol "{name}", a loop or map scope binds it; '
+                                     'its facts come from the scope.')
         elif name in self.symbols:
             declared = self.symbol_predicates.get(name, frozenset())
             if self.symbols[name] == stype and declared == predicates:
@@ -2438,8 +2459,11 @@ class SDFG(ControlFlowRegion):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
+            # A shape may name a scoped symbol (e.g. a transient sized by a map parameter), which is not an SDFG symbol
+            scoped = scope_bound_names(sdfg)
             for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
+                if (isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
+                        and sym.name not in scoped):
                     sdfg.add_symbol(sym)  # the symbol's declared facts come with it
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.

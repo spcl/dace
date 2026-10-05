@@ -6,7 +6,7 @@ import functools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import networkx as nx
 
@@ -232,6 +232,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace import data as dt
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
+    from dace.sdfg.sdfg import scope_bound_names
 
     references = references or set()
 
@@ -275,6 +276,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             sdfg.facts()
         except symbolic.InconsistentAssumptionsError as error:
             raise InvalidSDFGError(str(error), sdfg, None) from error
+        scoped = sorted(scope_bound_names(sdfg) & sdfg.symbols.keys())
+        if scoped:
+            raise InvalidSDFGError(
+                f'Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols', sdfg, None)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
@@ -1054,7 +1059,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
 
-    def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: Optional[int]):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id

@@ -29,6 +29,7 @@ from dace.sdfg.propagation import (propagate_memlet, propagate_memlets_map_scope
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
@@ -692,6 +693,12 @@ def add_indirection_subgraph(sdfg: SDFG,
     return tmp_name
 
 
+def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
+    """ Declares a symbol the program reads on the SDFG, unless a loop or map scope of the SDFG binds it. """
+    if name not in sdfg.symbols and name not in scope_bound_names(sdfg):
+        sdfg.add_symbol(name, dtype)
+
+
 class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
@@ -856,8 +863,7 @@ class TaskletTransformer(ExtNodeTransformer):
         # If accessing a symbol, add it to the SDFG symbol list
         if (isinstance(node.ctx, ast.Load) and node.id in self.defined
                 and isinstance(self.defined[node.id], symbolic.symbol)):
-            if node.id not in self.sdfg.symbols:
-                self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+            declare_read_symbol(self.sdfg, node.id, self.defined[node.id].dtype)
             return self.generic_visit(node)
         # Storing into a symbol is not allowed
         if (isinstance(node.ctx, ast.Store) and node.id in self.defined
@@ -1066,6 +1072,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Tmp fix for missing state symbol propagation
         self.symbols = dict()
+        # Loop iterators whose loop has ended (Python keeps them readable), and the copies read in their place
+        self.ended_loops: Dict[str, Tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]] = {}
+        self.iterator_copies: Dict[str, str] = {}
 
         # Indirections
         self.indirections = dict()
@@ -1394,6 +1403,30 @@ class ProgramVisitor(ExtNodeVisitor):
         state = self.cfg_target.add_state(label, is_start_block=is_start)
         self._on_block_added(state)
         return state
+
+    def _copy_out_iterator(self, name: str, node: ast.AST) -> str:
+        """ Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
+        iteration, so the copy holds the last iterated value, also after a ``break``. A loop that may not run would
+        leave the iterator unbound, so it is refused. """
+        loop, start, stop, step = self.ended_loops[name]
+        zero = sympy.Integer(0)
+        facts = self.sdfg.facts()
+        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts) is symbolic.Truth.TRUE:
+            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
+        elif symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts) is symbolic.Truth.TRUE:
+            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
+        else:
+            runs = symbolic.Truth.UNKNOWN
+        if runs is not symbolic.Truth.TRUE:
+            raise DaceSyntaxError(
+                self, node, f'Loop iterator "{name}" is read after a loop that may not run, which leaves it unbound')
+        copy = self.sdfg.find_new_symbol(f'{name}_last')
+        self.sdfg.add_symbol(copy, loop.new_symbols(self.sdfg.symbols)[name])
+        first = loop.start_block
+        entry = loop.add_state(f'{name}_copy', is_start_block=True)
+        loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy: name}))
+        self.iterator_copies[name] = copy
+        return copy
 
     def _add_loop_region(self,
                          condition_expr: str,
@@ -1954,7 +1987,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
                         elif candidate not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
+                            declare_read_symbol(self.sdfg, atomstr, self.defined[candidate].dtype)
 
                 for expr in symbolic.swalk(symval):
                     # An array access in a bound (legacy ``arr(i)`` or ``Subscript(arr, i)``)
@@ -2287,9 +2320,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if sym.name not in self.sdfg.symbols:
                     if (sym.name in self.globals and isinstance(self.globals[sym.name], symbolic.symbol)):
-                        self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
+                        declare_read_symbol(self.sdfg, sym.name, self.globals[sym.name].dtype)
                     elif sym.name in self.closure.callbacks:
-                        self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
+                        declare_read_symbol(self.sdfg, sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
     def _recursive_visit(self,
                          body: List[ast.AST],
@@ -2426,9 +2459,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                       nonnegative=nonnegative,
                                       positive=positive)
 
-            if sym_name not in self.sdfg.symbols:
-                sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
-
             extra_syms = {sym_name: sym_obj}
 
             self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
@@ -2443,8 +2473,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
-                            self.sdfg.add_symbol(astr, atom.dtype)
+                        if isinstance(atom,
+                                      symbolic.symbol) and not (astr in self.variables or astr in self.sdfg.arrays):
+                            declare_read_symbol(self.sdfg, astr, atom.dtype)
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
@@ -2474,6 +2505,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
+            self.ended_loops[indices[0]] = (loop_region, start, stop, step)
+            self.iterator_copies.pop(indices[0], None)
             # Handle else clause
             if node.orelse:
                 # Continue visiting body
@@ -2582,7 +2615,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # string creates a fresh symbol with the default dtype.
                 defined = self.defined.get(astr, None)
                 dtype = defined.dtype if isinstance(defined, symbolic.symbol) else atom.dtype
-                self.sdfg.add_symbol(astr, dtype)
+                declare_read_symbol(self.sdfg, astr, dtype)
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2788,8 +2821,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    if str(sym) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                    declare_read_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}
@@ -3020,8 +3052,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    if str(sym) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                    declare_read_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}
@@ -4974,8 +5005,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.globals:
             result = inner_eval_ast(self.globals, node)
             # If a symbol, add to symbols
-            if (isinstance(result, symbolic.symbol) and name not in self.sdfg.symbols.keys()):
-                self.sdfg.add_symbol(result.name, result.dtype)
+            if isinstance(result, symbolic.symbol):
+                declare_read_symbol(self.sdfg, result.name, result.dtype)
             return result
 
         if name in self.closure.callbacks:
@@ -4989,6 +5020,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if name in __builtins__:
             return name
+
+        if name in self.iterator_copies:
+            return self.iterator_copies[name]
+        if name in self.ended_loops:
+            return self._copy_out_iterator(name, node)
 
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)

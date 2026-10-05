@@ -7,10 +7,20 @@ import sympy
 import dace
 from dace import symbolic
 from dace.sdfg.sdfg import NameCollisionError
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.validation import InvalidSDFGError
 
 POSITIVE = frozenset({symbolic.Predicate.POSITIVE})
 NONNEGATIVE = frozenset({symbolic.Predicate.NONNEGATIVE})
+N = dace.symbol('N')
+
+
+@dace.program
+def loops_program(A: dace.float64[N]):
+    for i in range(N):
+        A[i] = A[i] + 1
+    for k in range(1, N):
+        A[k] += A[k - 1]
 
 
 def symbols_sdfg(name: str) -> dace.SDFG:
@@ -156,7 +166,45 @@ def test_validation_rejects_facts_on_undeclared_symbols():
         sdfg.validate()
 
 
+def test_loop_variable_cannot_be_added_as_symbol():
+    sdfg = dace.SDFG('loop_variable_symbol')
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True)
+    with pytest.raises(NameCollisionError, match='a loop or map scope binds it'):
+        sdfg.add_symbol('i', dace.int64)
+
+
+def test_frontend_loop_iterators_are_not_symbols():
+    sdfg = loops_program.to_sdfg(simplify=False)
+    sdfg.validate()
+    assert set(sdfg.symbols) == {'N'}
+
+
+def test_validation_rejects_symbol_bound_by_a_map():
+    sdfg = dace.SDFG('map_parameter_symbol')
+    sdfg.add_array('A', [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    state.add_mapped_tasklet('m', {'j': '0:10'}, {}, 'a = 1.0', {'a': dace.Memlet('A[j]')}, external_edges=True)
+    sdfg.symbols['j'] = dace.int64
+    with pytest.raises(InvalidSDFGError, match='bound by a loop or map scope'):
+        sdfg.validate()
+
+
+def test_descriptor_sized_by_a_map_parameter_does_not_register_it():
+    sdfg = dace.SDFG('scoped_shape')
+    sdfg.add_array('A', [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    state.add_mapped_tasklet('m', {'j': '0:10'}, {}, 'a = 1.0', {'a': dace.Memlet('A[j]')}, external_edges=True)
+    sdfg.add_transient('T', [dace.symbol('j') + 1], dace.float64)
+    assert 'j' not in sdfg.symbols
+
+
 if __name__ == '__main__':
+    test_loop_variable_cannot_be_added_as_symbol()
+    test_frontend_loop_iterators_are_not_symbols()
+    test_validation_rejects_symbol_bound_by_a_map()
+    test_descriptor_sized_by_a_map_parameter_does_not_register_it()
     test_identical_readd_is_a_no_op()
     test_readd_with_other_predicates_raises()
     test_readd_with_other_type_raises()

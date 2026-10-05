@@ -171,6 +171,7 @@ class symbol(sympy.Symbol):
         information. """
 
     s_currentsymbol = 0
+    dtype: dtypes.typeclass
 
     def __new__(cls, name=None, dtype=None, **assumptions):
         if dtype is None:
