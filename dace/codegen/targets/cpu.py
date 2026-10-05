@@ -24,29 +24,28 @@ from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
-#: Constant-sized register arrays below this many elements are placed on the stack.
-STACK_ARRAY_MAX_ELEMENTS = 2048
-
 
 def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
-    """ Whether a register array is declared on the stack rather than allocated on the heap. A constant size
-        is on the stack below ``STACK_ARRAY_MAX_ELEMENTS`` elements and ``compiler.max_stack_array_size`` bytes.
-        A symbolic size is a variable-length array only under ``StorageType.Register(dynamic=True)``; it dies
-        with its block, so a lifetime that outlives the block keeps the heap, and so does a split
-        declare/allocate: ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would
-        shadow it. Allocation and deallocation both ask here so they cannot disagree.
+    """ Whether a register array is declared on the stack rather than allocated on the heap. Under
+        ``StorageType.Register(dynamic=True)`` every size is, a symbolic one as a variable-length array; otherwise a
+        constant size is up to ``compiler.max_stack_array_size`` bytes and a symbolic one never is. A VLA dies with
+        its block, so a lifetime that outlives the block keeps the heap, and so does a split declare/allocate:
+        ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and
+        deallocation both ask here so they cannot disagree.
     """
     if nodedesc.storage != dtypes.StorageType.Register:
         return False
+    dynamic = dtypes.is_dynamic_register(nodedesc.storage) is True
     if symbolic.issymbolic(arrsize, sdfg.constants):
-        return (dtypes.is_dynamic_register(nodedesc.storage) is True and not declared and lifetime
-                in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
+        return dynamic and not declared and lifetime in (dtypes.AllocationLifetime.Scope,
+                                                         dtypes.AllocationLifetime.State,
+                                                         dtypes.AllocationLifetime.SDFG)
+    if dynamic or isinstance(nodedesc.dtype, dtypes.opaque):
+        return True
     if isinstance(arrsize, symbolic.sympy.Basic):
         # By name: the constant's symbol may have another dtype than the one in the shape.
         arrsize = arrsize.subs({sym: sdfg.constants[sym.name] for sym in arrsize.free_symbols})
-    size = int(arrsize)
-    size_bytes = 0 if isinstance(nodedesc.dtype, dtypes.opaque) else size * nodedesc.dtype.bytes
-    return size < STACK_ARRAY_MAX_ELEMENTS and size_bytes <= Config.get('compiler', 'max_stack_array_size')
+    return int(arrsize) * nodedesc.dtype.bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:

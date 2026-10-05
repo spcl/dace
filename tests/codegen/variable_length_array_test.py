@@ -52,13 +52,13 @@ STATIC = StorageType.Register(dynamic=False)
 
 PLACEMENT_CASES = [
     (16, AUTO, True),
-    (2047, AUTO, True),
-    (2048, AUTO, False),
+    (8192, AUTO, True),
+    (8193, AUTO, False),
     (N, AUTO, False),
     (16, STATIC, True),
     (N, STATIC, False),
     (16, DYNAMIC, True),
-    (4096, DYNAMIC, False),
+    (8193, DYNAMIC, True),
     (N, DYNAMIC, True),
 ]
 
@@ -93,13 +93,13 @@ def test_constant_sizes_follow_the_size_limit_and_only_dynamic_puts_a_symbolic_s
 
 
 def test_a_large_constant_array_respects_max_stack_array_size():
-    """A byte limit lowered below 2048 elements must still move the array to the heap."""
+    """Lowering the byte limit moves a constant-sized array to the heap."""
     sdfg = register_scratch_sdfg('placement_bytes', 1024, AUTO)
     with dace.config.set_temporary('compiler', 'max_stack_array_size', value=1024):
         assert not on_stack(sdfg)
 
 
-@pytest.mark.parametrize('value, stack', [(16, True), (4096, False)])
+@pytest.mark.parametrize('value, stack', [(16, True), (8193, False)])
 def test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(value, stack):
     """The constant's dtype differs from the symbol's, as for the Polybench sizes."""
     sdfg = register_scratch_sdfg(f'placement_constant_{value}', dace.symbol('NC', dace.int32), AUTO)
@@ -152,11 +152,11 @@ def test_a_small_constant_register_array_stays_aligned_on_the_stack():
 
 
 def test_a_large_constant_register_array_moves_to_the_heap():
-    sdfg = register_scratch_sdfg('heap_constant', 4096, AUTO)
+    sdfg = register_scratch_sdfg('heap_constant', 8193, AUTO)
     with pytest.warns(UserWarning,
-                      match='Register array tmp with 4096 elements was allocated on the heap instead of the stack'):
+                      match='Register array tmp with 8193 elements was allocated on the heap instead of the stack'):
         code = sdfg.generate_code()[0].clean_code
-        run_scratch(sdfg, 4096)
+        run_scratch(sdfg, 8193)
     assert 'tmp = new' in code, code
 
 
@@ -221,7 +221,7 @@ if __name__ == '__main__':
         test_constant_sizes_follow_the_size_limit_and_only_dynamic_puts_a_symbolic_size_on_the_stack(*case)
     test_a_large_constant_array_respects_max_stack_array_size()
     test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(16, True)
-    test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(4096, False)
+    test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(8193, False)
     test_a_symbolic_stack_array_is_a_variable_length_array()
     test_a_zero_extent_stack_array_has_a_positive_bound()
     test_a_zeroed_symbolic_stack_array_is_cleared_by_memset()

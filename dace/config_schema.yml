@@ -285,10 +285,9 @@ required:
                 default: 65536
                 title: Max stack-allocated array size (bytes)
                 description: >
-                    Constant-sized register arrays are allocated on the heap if they are
-                    larger than this or have at least 2048 elements. Symbolically-sized
-                    ones are allocated on the heap unless their storage is
-                    StorageType.Register(dynamic=True), which makes them stack VLAs.
+                    Constant-sized register arrays larger than this are allocated on the
+                    heap, as are symbolically-sized ones. StorageType.Register(dynamic=True)
+                    lifts both: such arrays are always on the stack, symbolic sizes as VLAs.
 
             extra_cmake_args:
                 type: str
