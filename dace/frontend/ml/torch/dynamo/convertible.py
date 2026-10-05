@@ -16,14 +16,14 @@ import inspect
 import itertools
 import warnings
 import weakref
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import numpy
 import sympy
 import torch
 
 from dace import data, dtypes, symbolic
-from dace.frontend.python.common import SDFGClosure, SDFGConvertible
+from dace.frontend.python.common import SDFGClosure, SDFGConvertible, structured_argument_name
 from dace.sdfg import SDFG
 
 from .capture import CapturedProgram, capture
@@ -63,7 +63,7 @@ _GLOBAL_STATE_GUARDS: Dict[str, Callable[[], Any]] = {
 _IMPLIED_GUARDS = {'TENSOR_MATCH', 'GRAD_MODE', 'SHAPE_ENV'}
 
 #: Graph inputs that a module conversion can provide
-_SUPPORTED_INPUTS = ('argument', 'parameter', 'buffer', 'size', 'stride', 'storage_offset')
+_SUPPORTED_INPUTS = ('argument', 'parameter', 'buffer', 'attribute', 'global', 'size', 'stride', 'storage_offset')
 
 
 def as_sdfg_convertible(module: torch.nn.Module) -> 'ModuleConvertible':
@@ -121,17 +121,22 @@ class ModuleConvertible(SDFGConvertible):
         program = capture(self.module, *bound.args, dynamic_shapes=spec, specialize_float=True, **bound.kwargs)
 
         for ref in program.inputs:
-            if ref.kind not in _SUPPORTED_INPUTS or (ref.kind == 'argument' and ref.path):
+            if ref.kind not in _SUPPORTED_INPUTS:
                 raise NotImplementedError(f'{type(self.module).__name__}: graph input {ref.text} ({ref.kind}) cannot '
                                           'be passed from a @dace.program yet')
         result = program.import_graph(self.name, return_arrays=True)
 
-        # Closure arrays under their container names in the SDFG
+        # Closure arrays under their container names in the SDFG. Parameters and buffers were declared to the program
+        # before parsing; tensors in plain attributes and globals are reported now and passed from then on.
         self._closure = {}
         for spec in result.inputs:
             ref = program.inputs[spec.position]
-            if spec.kind == 'tensor' and ref.kind in ('parameter', 'buffer'):
+            if spec.kind != 'tensor':
+                continue
+            if ref.kind in ('parameter', 'buffer'):
                 self._closure[spec.name] = _state_getter(self.module, ref.qualname)
+            elif ref.kind in ('attribute', 'global'):
+                self._closure[spec.name] = _source_evaluator(ref, _identity, self.module, program.global_vars)
 
         self._guards, self.unchecked_guards = guard_evaluators(program, self.module, f'__torch_{id(self.module):x}')
         _warn_on_symbolic_assumptions(program, type(self.module).__name__)
@@ -161,56 +166,77 @@ def _state_getter(module: torch.nn.Module, qualname: str) -> Callable[[], torch.
 def example_arguments(arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Creates example values for capturing from the arguments of a call site in a ``@dace.program``, which are data
-    descriptors (possibly with symbolic sizes) or constants, and the ``dynamic_shapes`` specification that names the
-    resulting Dynamo symbols after the DaCe symbols.
+    descriptors (possibly with symbolic sizes), constants, or lists, tuples, and dicts of those, and the
+    ``dynamic_shapes`` specification that names the resulting Dynamo symbols after the DaCe symbols.
 
     Symbolic sizes get distinct example values (hints) of at least 2 that differ from every static size of the
     arguments, so that Dynamo neither specializes them nor unifies them with unrelated sizes ("duck shaping").
-    Arguments that are scalars or symbols become symbolic integers named after the argument.
+    Arguments that are integer scalars or symbols become symbolic integers named after the argument (or the element,
+    e.g., ``xs_0``).
 
     :return: A tuple of (example values by argument name, ``dynamic_shapes`` specification by argument name).
     """
     static: Set[int] = set()
     symbols: List[str] = []
-    for value in arguments.values():
-        if isinstance(value, data.Array):
-            for size in itertools.chain(value.shape, value.strides):
+    for leaf in _leaves(arguments):
+        if isinstance(leaf, data.Array):
+            for size in itertools.chain(leaf.shape, leaf.strides):
                 if symbolic.issymbolic(size):
                     symbols.extend(sorted(free_symbol_names(sympy.sympify(size))))
                 else:
                     static.add(int(size))
-        elif symbolic.issymbolic(value):
-            symbols.extend(sorted(free_symbol_names(value)))
-        elif isinstance(value, int) and not isinstance(value, bool):
-            static.add(value)
-    hints: Dict[str, int] = {}
+        elif symbolic.issymbolic(leaf):
+            symbols.extend(sorted(free_symbol_names(leaf)))
+        elif isinstance(leaf, int) and not isinstance(leaf, bool):
+            static.add(leaf)
     candidates = (h for h in itertools.count(2) if h not in static)
-    for sym in dict.fromkeys(symbols):
-        hints[sym] = next(candidates)
+    hints: Dict[str, int] = {sym: next(candidates) for sym in dict.fromkeys(symbols)}
 
     examples: Dict[str, Any] = {}
     spec: Dict[str, Any] = {}
     for name, value in arguments.items():
-        if isinstance(value, data.Scalar):
-            if numpy.issubdtype(value.dtype.type, numpy.integer):
-                examples[name] = next(candidates)  # A runtime integer: symbolic
-                spec[name] = DimSpec(name=name, strict=False)
-            else:  # Other runtime scalars are traced as 0-d tensors (not specialized to the example value)
-                examples[name] = torch.zeros((), dtype=to_torch_dtype(value.dtype))
-        elif isinstance(value, data.Array):
-            examples[name] = _example_tensor(value, hints)
-            spec[name] = {
-                k: DimSpec(name=str(size) if isinstance(size, sympy.Symbol) else f'{name}_dim{k}', strict=False)
-                for k, size in enumerate(value.shape) if symbolic.issymbolic(size)
-            }
-        elif symbolic.issymbolic(value):
-            examples[name] = int(symbolic.evaluate(value, hints))
-            spec[name] = DimSpec(name=name, strict=False)
-        else:
-            examples[name] = value
-            if isinstance(value, int) and not isinstance(value, bool):
-                spec[name] = DimSpec(name=name, strict=False)
+        examples[name], spec[name] = _example(value, name, (), hints, candidates)
     return examples, spec
+
+
+def _leaves(value: Any) -> Iterator[Any]:
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from _leaves(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _leaves(v)
+    else:
+        yield value
+
+
+def _example(value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int],
+             candidates: Iterator[int]) -> Tuple[Any, Any]:
+    """Example value and ``dynamic_shapes`` entry of one (possibly structured) argument; see :func:`example_arguments`."""
+    if isinstance(value, dict):
+        pairs = {k: _example(v, name, path + (k, ), hints, candidates) for k, v in value.items()}
+        return {k: e for k, (e, _) in pairs.items()}, {k: s for k, (_, s) in pairs.items()}
+    if isinstance(value, (list, tuple)):
+        pairs = [_example(v, name, path + (k, ), hints, candidates) for k, v in enumerate(value)]
+        return type(value)(e for e, _ in pairs), [s for _, s in pairs]
+
+    element = structured_argument_name(name, path)
+    if isinstance(value, data.Scalar):
+        if numpy.issubdtype(value.dtype.type, numpy.integer):
+            return next(candidates), DimSpec(name=element, strict=False)  # A runtime integer: symbolic
+        # Other runtime scalars are traced as 0-d tensors (not specialized to the example value)
+        return torch.zeros((), dtype=to_torch_dtype(value.dtype)), None
+    if isinstance(value, data.Array):
+        dims = {
+            k: DimSpec(name=str(size) if isinstance(size, sympy.Symbol) else f'{element}_dim{k}', strict=False)
+            for k, size in enumerate(value.shape) if symbolic.issymbolic(size)
+        }
+        return _example_tensor(value, hints), dims
+    if symbolic.issymbolic(value):
+        return int(symbolic.evaluate(value, hints)), DimSpec(name=element, strict=False)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value, DimSpec(name=element, strict=False)
+    return value, None
 
 
 def _example_tensor(desc: data.Array, hints: Dict[str, int]) -> torch.Tensor:
@@ -248,6 +274,10 @@ def guard_evaluators(program: CapturedProgram, module: torch.nn.Module,
         else:
             evaluators[f'{prefix}_guard_{index}'] = evaluator
     return evaluators, unchecked
+
+
+def _identity(value: Any) -> Any:
+    return value
 
 
 def _source_evaluator(ref: SourceRef, projection: Callable[[Any], Any], module: torch.nn.Module,

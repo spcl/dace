@@ -13,6 +13,9 @@ from dace.frontend.ml.torch.dynamo import convertible  # noqa: E402
 
 N = dace.symbol('N')
 
+#: A global tensor read inside a module's forward (not visible to the program itself)
+OFFSETS = torch.linspace(0, 1, 4)
+
 
 class _Scaled(nn.Module):
     """A module whose output depends on Python attributes (guarded by Dynamo) and a buffer."""
@@ -35,6 +38,22 @@ class _TwoOutputs(nn.Module):
 
     def forward(self, x, n: int):
         return torch.sin(x) + n, x.sum(dim=1)
+
+
+class _ListDict(nn.Module):
+
+    def forward(self, xs, d):
+        return xs[0] + xs[1] * d['w']
+
+
+class _UsesGlobal(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.mask = torch.tensor([1.0, 0.0, 1.0, 0.0])  # A plain tensor attribute (not a parameter or buffer)
+
+    def forward(self, x):
+        return (x + OFFSETS) * self.mask
 
 
 def _rand(*shape):
@@ -135,9 +154,45 @@ def test_submodule_call_without_annotations():
     np.testing.assert_allclose(prog(x), _eager(model[0], x) + 1, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.torch
+def test_list_and_dict_arguments():
+    module = _ListDict()
+    weights = _rand(6)
+
+    @dace.program
+    def prog(a: dace.float32[N, 6], b: dace.float32[N, 6]):
+        return module([a, b], {'w': weights})
+
+    a, b = _rand(3, 6), _rand(3, 6)
+    np.testing.assert_allclose(prog(a, b), a + b * weights, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.torch
+def test_global_and_attribute_tensors():
+    """Tensors that only the module's code reads (globals, plain attributes) are passed and re-evaluated per call."""
+    global OFFSETS
+    module = _UsesGlobal()
+
+    @dace.program
+    def prog(x: dace.float32[N, 4]):
+        return module(x)
+
+    original = OFFSETS
+    try:
+        x = _rand(5, 4)
+        np.testing.assert_allclose(prog(x), _eager(module, x), rtol=1e-5, atol=1e-6)
+        OFFSETS = torch.full((4, ), 10.0)
+        module.mask = torch.tensor([0.0, 2.0, 0.0, 2.0])
+        np.testing.assert_allclose(prog(x), _eager(module, x), rtol=1e-5, atol=1e-6)
+    finally:
+        OFFSETS = original
+
+
 if __name__ == '__main__':
     test_module_symbolic_sizes_compile_once()
     test_parameters_by_reference()
     test_guards_reparse_on_module_state_change()
     test_integer_argument_and_tuple_return()
     test_submodule_call_without_annotations()
+    test_list_and_dict_arguments()
+    test_global_and_attribute_tensors()

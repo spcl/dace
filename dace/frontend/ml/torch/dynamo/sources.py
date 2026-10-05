@@ -17,6 +17,8 @@ import torch
 from torch._dynamo import source as dsource
 from torch._guards import ChainedSource, TracingContext
 
+from dace.frontend.python.common import structured_argument_name
+
 from . import shapes
 from .context import sanitize_name
 from .symbols import SymbolTable, UnsupportedSymbolicExpression
@@ -96,11 +98,21 @@ class GraphDescription:
     guards: List[CapturedGuard]
 
     def input_names(self) -> List[Optional[str]]:
-        """Container names for the placeholders: qualified names of arguments, parameters, buffers, and attributes."""
-        return [
-            sanitize_name(ref.qualname) if ref.kind in ('argument', 'parameter', 'buffer', 'attribute',
-                                                        'global') else None for ref in self.inputs
-        ]
+        """
+        Container names for the placeholders: arguments (elements of list, tuple, and dict arguments are named as the
+        Python frontend binds them, e.g., ``xs_0``), and qualified names of parameters, buffers, attributes, and
+        globals.
+        """
+        return [input_name(ref) for ref in self.inputs]
+
+
+def input_name(ref: SourceRef) -> Optional[str]:
+    """The container name of a graph input from ``ref``, or ``None`` if it is not a container (e.g., a size)."""
+    if ref.kind == 'argument':
+        return sanitize_name(structured_argument_name(ref.root, ref.path))
+    if ref.kind in ('parameter', 'buffer', 'attribute', 'global'):
+        return sanitize_name(ref.qualname)
+    return None
 
 
 class SourceResolver:
@@ -221,12 +233,18 @@ def shape_assumptions(symbol_names: Dict[str, str]) -> Tuple[List[Any], Dict[str
     symtab = SymbolTable(names=symbol_names)
     relations = []
     for guard in shape_env.guards:
+        # Apply the symbol replacements Dynamo found later (e.g., two sizes unified into one symbol)
+        expr = shape_env.simplify(guard.expr)
+        if expr == sympy.true:
+            continue
         try:
-            relations.append(symtab.to_dace(guard.expr))
+            relations.append(symtab.to_dace(expr))
         except UnsupportedSymbolicExpression:
-            relations.append(str(guard.expr))
+            relations.append(str(expr))
     ranges = {}
     for sym, value_range in shape_env.var_to_range.items():
+        if sym in shape_env.replacements:
+            continue
         ranges[symbol_names.get(str(sym), str(sym))] = (_bound(value_range.lower), _bound(value_range.upper))
     return relations, ranges
 
