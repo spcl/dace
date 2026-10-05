@@ -13,15 +13,14 @@ class ExpandPure(ExpandTransformation):
     """One map doing the per-element select."""
     environments = []
 
-    @staticmethod
-    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+    @classmethod
+    def expansion(cls, node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         t, f, mask, out = node.validate(parent_sdfg, parent_state)
-        cls = MergeLibraryNode
-        inputs = {cls.TRUE_CONNECTOR_NAME: t, cls.FALSE_CONNECTOR_NAME: f, cls.MASK_CONNECTOR_NAME: mask}
+        inputs = {node.TRUE_CONNECTOR_NAME: t, node.FALSE_CONNECTOR_NAME: f, node.MASK_CONNECTOR_NAME: mask}
         return broadcast_map_expansion(node.label, parent_sdfg, {
             c: (e.data, None)
             for c, e in inputs.items()
-        }, (cls.OUTPUT_CONNECTOR_NAME, out.data), '_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v')
+        }, (node.OUTPUT_CONNECTOR_NAME, out.data), '_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v')
 
 
 @library.node
