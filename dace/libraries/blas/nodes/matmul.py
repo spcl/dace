@@ -36,6 +36,7 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
+    res_out = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()

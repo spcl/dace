@@ -5372,54 +5372,51 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
-    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
-        :param fresh: A shape promotion: one suffixed symbol per VERSION of the scalar, shared by every shape
-                      sized from it until the scalar is written again, so two shapes sized from the same
-                      reassigned scalar keep their own values.
+        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key it is a
+                    shape promotion: one symbol per VERSION of the scalar, shared by every shape sized from it until
+                    the scalar is written again, so two shapes sized from the same reassigned scalar keep their own
+                    values.
         :return: The symbol carrying the scalar's value.
         """
-        key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
         # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
         # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
         # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
         # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
-        version = fresh or key == scalar or self.variables.get(key) == scalar
+        version = key in (None, scalar) or self.variables.get(key) == scalar
         if version and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
             if self.nested_in_region(region):
-                if fresh:
+                if key is None:
                     self.globals[str(version_sym)] = version_sym
                 return version_sym
+        base = f'__sym_{scalar}'
         # A computed index follows No-View nested SDFGs: one symbol per scalar, re-assigned at every promotion.
         sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
         if sym is None:
-            base = f'__sym_{scalar}'
             if version:
-                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
-                # reuses; a later index on the same scalar would otherwise re-bind the extent.
-                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
-                name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
+                # A minted shape symbol never takes the bare name the computed-index promotion reuses
+                name = find_new_name(base, self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base})
             else:
                 # A name that already means something else here would shadow it
                 name = base if base not in self.sdfg.symbols else find_new_name(
                     base,
                     set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
-                self.sdfg.add_symbol(name, desc.dtype)
+            self.sdfg.add_symbol(name, desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
             if not version:
                 self.promoted_scalars[scalar] = sym
                 self.indirections[key] = sym
-            elif fresh:
-                # Shape symbols must resolve inside nested scopes, which look up free symbols in
-                # ``globals``. Subscript promotions must stay out: they shadow names there.
-                self.globals[str(sym)] = sym
-        state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+            elif key is None:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in ``globals``.
+                # Subscript promotions stay out: they shadow names there.
+                self.globals[name] = sym
+        state = self._add_state(f'promote_{scalar}_to_{sym}')
         if version:
             # A call region runs once, in sequence, so its symbol holds for the rest of the caller's region.
             region = self.cfg_target
