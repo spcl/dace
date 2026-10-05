@@ -22,7 +22,7 @@ from dace import dtypes
 # Re-exported so callers reach the facts API as ``symbolic.ask``, ``symbolic.Facts``, ...
 from dace.symbolic_facts import (  # noqa: F401
     Facts, InconsistentAssumptionsError, Predicate, Relation, RelationKind, Truth, ask, predicate_relation, provably_le,
-    provably_nonnegative)
+    provably_nonnegative, relation_names)
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 

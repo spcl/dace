@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Facts about symbols (sign predicates and relations) and the prover that answers questions under them. """
-import dataclasses
 import enum
 from collections.abc import Iterable
 from typing import NamedTuple, cast
@@ -58,33 +57,37 @@ def predicate_relation(predicate: Predicate, expr: sympy.Expr) -> Relation:
     return Relation(RelationKind.NE, expr, zero)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
 class Facts:
     """
     Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every
     proof; ``Facts.none()`` assumes nothing. The relations are solved once, on construction, into ``substitution``,
     which rewrites a symbol as an expression of nonnegative slack variables; ``nonzero`` keeps the ``!=`` facts.
     """
+    __slots__ = ('relations', 'integers', 'substitution', 'nonzero')
+
     relations: tuple[Relation, ...]
     integers: frozenset[str]
-    substitution: dict[sympy.Symbol, sympy.Expr] = dataclasses.field(init=False, compare=False, repr=False)
-    nonzero: tuple[sympy.Expr, ...] = dataclasses.field(init=False, compare=False, repr=False)
+    substitution: dict[sympy.Symbol, sympy.Expr]
+    nonzero: tuple[sympy.Expr, ...]
 
-    def __post_init__(self) -> None:
-        substitution = eliminate(self.relations, self.integers)
-        object.__setattr__(self, 'substitution', substitution)
-        object.__setattr__(
-            self, 'nonzero',
-            tuple(
-                reduced(relation, self.integers, substitution) for relation in self.relations
-                if relation.kind is RelationKind.NE))
+    def __init__(self, relations: Iterable[Relation], integers: frozenset[str]) -> None:
+        # A canonical order, so that what is proven does not depend on the order the facts were given in
+        self.relations = tuple(
+            sorted(dict.fromkeys(relations),
+                   key=lambda relation: (relation.kind.name, str(relation.lhs), str(relation.rhs))))
+        self.integers = integers
+        self.substitution = eliminate(self.relations, integers)
+        self.nonzero = tuple(
+            reduced(relation, integers, self.substitution) for relation in self.relations
+            if relation.kind is RelationKind.NE)
 
     @staticmethod
     def none() -> 'Facts':
         return Facts((), frozenset())
 
-    def merged(self, other: 'Facts') -> 'Facts':
-        return Facts(tuple(dict.fromkeys(self.relations + other.relations)), self.integers | other.integers)
+
+def relation_names(relation: Relation) -> set[str]:
+    return {str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols}
 
 
 def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:

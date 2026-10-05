@@ -16,7 +16,6 @@ import sys
 from typing import Any, AnyStr, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
-import sympy
 from ordered_set import OrderedSet
 
 import dace
@@ -171,24 +170,21 @@ def relations_from_json(obj: Optional[List[Dict[str, str]]], context=None) -> Or
                           symbolic.deserialize_symbolic(relation['rhs'])) for relation in obj)
 
 
-def relation_names(relation: symbolic.Relation) -> Set[str]:
-    return {str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols}
-
-
 def symbol_facts(symbols: Dict[str, dtypes.typeclass], predicates: Dict[str, FrozenSet[symbolic.Predicate]],
                  relations: Iterable[symbolic.Relation]) -> symbolic.Facts:
     """ Builds the facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict. """
     integers = frozenset(name for name, stype in symbols.items()
                          if stype in dtypes.INTEGER_TYPES and stype != dtypes.bool_)
+    # An unsigned type is a sign fact of its own
+    unsigned = {
+        name: frozenset({symbolic.Predicate.NONNEGATIVE})
+        for name, stype in symbols.items() if stype in (dtypes.uint8, dtypes.uint16, dtypes.uint32, dtypes.uint64)
+    }
     every = [
-        symbolic.predicate_relation(predicate, symbolic.symbol(name)) for name, named in predicates.items()
-        for predicate in named
+        symbolic.predicate_relation(predicate, symbolic.symbol(name))
+        for name, named in [*predicates.items(), *unsigned.items()] for predicate in named
     ]
-    # A canonical order, so that what is proven does not depend on the order the facts were added in
-    ordered = tuple(
-        sorted([*every, *relations],
-               key=lambda relation: (relation.kind.name, symbolic.symstr(relation.lhs), symbolic.symstr(relation.rhs))))
-    return symbolic.Facts(ordered, integers)
+    return symbolic.Facts((*every, *relations), integers)
 
 
 def _replace_dict_keys(d, old, new):
@@ -1161,7 +1157,7 @@ class SDFG(ControlFlowRegion):
             :raise KeyError: If the relation names an undeclared symbol.
             :raise InconsistentAssumptionsError: If the relation contradicts the SDFG's facts.
         """
-        undeclared = sorted(relation_names(relation) - self.symbols.keys())
+        undeclared = sorted(symbolic.relation_names(relation) - self.symbols.keys())
         if undeclared:
             raise KeyError(f'Relation {relation} names undeclared symbols {undeclared} of SDFG "{self.name}"')
         if relation in self.symbol_relations:
@@ -1179,7 +1175,7 @@ class SDFG(ControlFlowRegion):
             :param name: Symbol name.
             :raise ValueError: If an assumed relation still names the symbol.
         """
-        mentioning = [relation for relation in self.symbol_relations if name in relation_names(relation)]
+        mentioning = [relation for relation in self.symbol_relations if name in symbolic.relation_names(relation)]
         if mentioning:
             raise ValueError(f'Cannot remove symbol "{name}": the relations {mentioning} still name it')
         self.symbol_predicates.pop(name, None)
@@ -2444,7 +2440,7 @@ class SDFG(ControlFlowRegion):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
                 if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
-                    sdfg.add_symbol(sym.name, sym.dtype)
+                    sdfg.add_symbol(sym)  # the symbol's declared facts come with it
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

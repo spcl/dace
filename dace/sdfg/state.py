@@ -2705,6 +2705,7 @@ class SymbolResolver:
         self._per_state: Dict['SDFGState', Dict[str, dtypes.typeclass]] = {}
         self._region_updates: Dict[Tuple['ControlFlowBlock', Optional['ControlFlowBlock']],
                                    List[Dict[str, dtypes.typeclass]]] = {}
+        self._facts: Dict[Tuple['ControlFlowBlock', Optional[nd.EntryNode]], symbolic.Facts] = {}
 
     def defined_at(self, state: 'SDFGState', node: nd.Node) -> Dict[str, dtypes.typeclass]:
         state_symbols = self._per_state.get(state)
@@ -2716,11 +2717,88 @@ class SymbolResolver:
                                                                                     region_updates=self._region_updates)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
+    def facts_at(self, block: 'ControlFlowBlock', node: Optional[nd.Node] = None) -> symbolic.Facts:
+        """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
+        SDFG's own facts, the ranges of the enclosing loops and maps whose step has a known sign, and the facts of an
+        enclosing SDFG, translated through the nested SDFG node's symbol mapping."""
+        entry = block.scope_dict()[node] if node is not None else None
+        key = (block, entry)
+        if key not in self._facts:
+            self._facts[key] = self.derive_facts(block, entry)
+        return self._facts[key]
+
+    def derive_facts(self, block: 'ControlFlowBlock', entry: Optional[nd.EntryNode]) -> symbolic.Facts:
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        sdfg = block.sdfg
+        own = sdfg.facts()
+        relations, integers = self.outer_facts(sdfg)
+        relations.extend(own.relations)
+        integers |= own.integers
+        scopes: List[Tuple[Dict[str, dtypes.typeclass], List[Tuple[str, Any, Any, Any]]]] = []
+        region = block
+        while region is not None and region is not sdfg:
+            if isinstance(region, LoopRegion) and region.loop_variable:
+                bounds = (loop_analysis.get_init_assignment(region), loop_analysis.get_loop_end(region),
+                          loop_analysis.get_loop_stride(region))
+                scopes.append(
+                    (region.new_symbols(sdfg.symbols), [(region.loop_variable, *bounds)] if None not in bounds else []))
+            region = region.parent_graph
+        scopes.reverse()
+        maps = []
+        while entry is not None:
+            maps.append(entry)
+            entry = block.scope_dict()[entry]
+        for map_entry in reversed(maps):
+            bound = map_entry.new_symbols(sdfg, block, self.defined_at(block, map_entry))
+            ranges = [(param, *rng[:3]) for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)]
+            scopes.append((bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
+        for bound, ranges in scopes:
+            # A scope rebinds its names: what held for an outer symbol of the same name no longer does
+            relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
+            integers = (integers -
+                        bound.keys()) | {name
+                                         for name, stype in bound.items() if stype in dtypes.INTEGER_TYPES}
+            for name, low, high, step in ranges:
+                sign = sympy.sympify(step)
+                low, high = (low, high) if sign.is_positive else (high, low) if sign.is_negative else (None, None)
+                if low is not None:
+                    relations += [
+                        symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
+                        symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high))
+                    ]
+        return symbolic.Facts(tuple(relations), frozenset(integers))
+
+    def outer_facts(self, sdfg: 'SDFG') -> Tuple[List[symbolic.Relation], Set[str]]:
+        """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
+        renamed expression."""
+        nsdfg = sdfg.parent_nsdfg_node
+        if nsdfg is None:
+            return [], set()
+        outer = self.facts_at(sdfg.parent, nsdfg)
+        mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in nsdfg.symbol_mapping.items()}
+        names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
+        names |= {str(free) for value in mapped.values() for free in value.free_symbols}
+        # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
+        renamed = {name: sympy.Symbol(f'outer:{name}') for name in names}
+        relations = [
+            symbolic.Relation(relation.kind, symbolic.replace_symbols(relation.lhs, renamed),
+                              symbolic.replace_symbols(relation.rhs, renamed)) for relation in outer.relations
+        ]
+        relations += [
+            symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
+            for name, value in mapped.items()
+        ]
+        return relations, {f'outer:{name}' for name in outer.integers}
+
     def forget(self, sdfg: 'SDFG') -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
 
         :param sdfg: The SDFG that changed. The SDFGs nested in it are resolved separately and kept.
         """
+        # Nested SDFGs derive their facts from the enclosing ones, so none of them is kept
+        self._facts.clear()
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}

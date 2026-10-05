@@ -232,7 +232,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace import data as dt
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
-    from dace.sdfg.sdfg import relation_names
 
     references = references or set()
 
@@ -265,10 +264,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             seen_names.update(obj_names)
 
         # Symbol facts may only name declared symbols, and must not contradict each other
-        undeclared = sorted(({*sdfg.symbol_predicates}
-                             | {name
-                                for relation in sdfg.symbol_relations
-                                for name in relation_names(relation)}) - sdfg.symbols.keys())
+        undeclared = sorted(
+            ({*sdfg.symbol_predicates}
+             | {name
+                for relation in sdfg.symbol_relations
+                for name in symbolic.relation_names(relation)}) - sdfg.symbols.keys())
         if undeclared:
             raise InvalidSDFGError(f'Symbol facts name undeclared symbols {undeclared}', sdfg, None)
         try:
