@@ -9,6 +9,7 @@ import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
 import dace  # noqa: E402
+from dace.autodiff import add_backward_pass  # noqa: E402
 from dace.frontend.ml.torch.dynamo import convertible  # noqa: E402
 
 N = dace.symbol('N')
@@ -188,6 +189,58 @@ def test_global_and_attribute_tensors():
         OFFSETS = original
 
 
+def _dace_gradients(model, x):
+    """
+    Differentiates ``sum(model(x)**2)`` with DaCe's autodiff on a program that uses ``model`` and compares the input
+    and parameter gradients with PyTorch's.
+    """
+    rows = x.shape[0]
+
+    @dace.program
+    def loss_program(x: dace.float32[rows, x.shape[1]], loss: dace.float32[1]):
+        y = model(x)
+        loss[0] = np.sum(y * y)
+
+    sdfg = loss_program.to_sdfg(simplify=True)
+    closure = loss_program.__sdfg_closure__()
+    parameters = {name: value for name, value in closure.items() if isinstance(value, torch.nn.Parameter)}
+    add_backward_pass(sdfg, outputs=['loss'], inputs=['x'] + list(parameters))
+
+    arguments = {name: value.detach().numpy().copy() for name, value in parameters.items()}
+    gradients = {
+        name: np.zeros(desc.shape, np.float32)
+        for name, desc in sdfg.arglist().items() if name.startswith('gradient_')
+    }
+    gradients['gradient_loss'][:] = 1
+    loss = np.zeros(1, np.float32)
+    sdfg(x=x.copy(), loss=loss, **arguments, **gradients)
+
+    x_torch = torch.from_numpy(x.copy()).requires_grad_(True)
+    reference = model(x_torch).square().sum()
+    reference.backward()
+    np.testing.assert_allclose(loss[0], reference.item(), rtol=1e-4)
+    np.testing.assert_allclose(gradients['gradient_x'], x_torch.grad.numpy(), rtol=1e-4, atol=1e-5)
+    for name, value in parameters.items():
+        np.testing.assert_allclose(gradients[f'gradient_{name}'],
+                                   value.grad.numpy(),
+                                   rtol=1e-4,
+                                   atol=1e-5,
+                                   err_msg=name)
+
+
+@pytest.mark.torch
+def test_dace_autodiff_through_module():
+    """Inside a program, gradients come from DaCe's autodiff on the captured forward graph (ReLU, linear layers)."""
+    torch.manual_seed(4)
+    _dace_gradients(nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 3)), _rand(5, 4))
+
+
+@pytest.mark.torch
+def test_dace_autodiff_layernorm_softmax():
+    torch.manual_seed(5)
+    _dace_gradients(nn.Sequential(nn.LayerNorm(6), nn.Linear(6, 6), nn.Softmax(-1)), _rand(4, 6))
+
+
 if __name__ == '__main__':
     test_module_symbolic_sizes_compile_once()
     test_parameters_by_reference()
@@ -196,3 +249,5 @@ if __name__ == '__main__':
     test_submodule_call_without_annotations()
     test_list_and_dict_arguments()
     test_global_and_attribute_tensors()
+    test_dace_autodiff_through_module()
+    test_dace_autodiff_layernorm_softmax()
