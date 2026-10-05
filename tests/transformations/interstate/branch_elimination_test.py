@@ -772,7 +772,7 @@ def test_try_clean_as_pass():
 
 
 def _get_sdfg_with_interstate_array_condition():
-    sdfg = dace.SDFG("sd1")
+    sdfg = dace.SDFG('sd1_get_sdfg_with_interstate_array_condition')
     sdfg.add_array("llindex", (4, 4, 4), dtype=dace.int64)
     sdfg.add_array("zratio", (4, 4, 4), dtype=dace.float64)
     sdfg.add_array("zsolqa", (4, 4, 4), dtype=dace.float64)
@@ -1509,7 +1509,7 @@ def test_single_assignment_cond_from_scalar():
 
 
 def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
-    sdfg = dace.SDFG("sd1")
+    sdfg = dace.SDFG('sd1_get_sdfg_with_condition_from_transient_scalar')
 
     sdfg.add_scalar("zacond_0", transient=True, dtype=dace.float64)
     sdfg.add_scalar("_if_cond_41", transient=True, dtype=dace.float64)
@@ -1584,7 +1584,7 @@ def test_condition_from_transient_scalar():
 
 
 def _get_disjoint_chain_sdfg() -> dace.SDFG:
-    sd1 = dace.SDFG("disjoint_chain")
+    sd1 = dace.SDFG('disjoint_chain_get_disjoint_chain_sdfg')
     cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
     ss1 = sd1.add_state(label="pre", is_start_block=True)
     sd1.add_node(cb1, is_start_block=False)
@@ -1641,7 +1641,7 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 
     sd1.validate()
 
-    sd2 = dace.SDFG("sd2")
+    sd2 = dace.SDFG('sd2_get_disjoint_chain_sdfg')
     p_s1 = sd2.add_state("p_s1", is_start_block=True)
 
     map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, N - 1, 1)])})
@@ -1823,8 +1823,8 @@ def test_can_be_applied_on_map_param_usage():
 
 
 def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
-    inner_sdfg = dace.SDFG("inner")
-    outer_sdfg = dace.SDFG("outer")
+    inner_sdfg = dace.SDFG('inner_get_safe_map_param_use_in_nested_sdfg')
+    outer_sdfg = dace.SDFG('outer_get_safe_map_param_use_in_nested_sdfg')
 
     inner_symbol_mapping = {
         "_for_it_37": "_for_it_37",
@@ -1910,8 +1910,8 @@ def test_safe_map_param_use_in_nested_sdfg():
 
 
 def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
-    inner_sdfg = dace.SDFG("inner")
-    outer_sdfg = dace.SDFG("outer")
+    inner_sdfg = dace.SDFG('inner_get_nsdfg_with_return')
+    outer_sdfg = dace.SDFG('outer_get_nsdfg_with_return')
 
     inner_symbol_mapping = {}
     for outer_arr_name in ["ztp"]:

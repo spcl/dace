@@ -21,7 +21,7 @@ N = dace.symbol('N')
 def _map_with_wcr_writes(map_params, writes):
     """Build a one-state SDFG with a single map whose exit carries a ``+=`` WCR write per
     ``(array, subset)`` in ``writes``; return ``(state, map_exit, params)``."""
-    sdfg = dace.SDFG('t')
+    sdfg = dace.SDFG('t_map_with_wcr_writes')
     for arr, _ in writes:
         if arr not in sdfg.arrays:
             sdfg.add_array(arr, [N, N], dace.float64)

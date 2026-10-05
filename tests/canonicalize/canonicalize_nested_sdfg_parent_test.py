@@ -58,7 +58,7 @@ def writer_sdfg(name: str) -> dace.SDFG:
 
 def loop_with_nested_sdfgs() -> tuple[dace.SDFG, LoopRegion]:
     """An SDFG holding one loop whose two body states each hold a nested SDFG."""
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_loop_with_nested_sdfgs')
     sdfg.add_array('a', [10], dace.float64)
     sdfg.add_array('b', [10], dace.float64)
     loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
@@ -82,7 +82,7 @@ def test_add_node_rehomes_nested_sdfgs_of_a_detached_region():
     _, loop = loop_with_nested_sdfgs()
     detached = copy.deepcopy(loop)
 
-    host = dace.SDFG('host')
+    host = dace.SDFG('host_add_node_rehomes_nested_sdfgs_of_a_detached_region')
     host.add_array('a', [10], dace.float64)
     host.add_array('b', [10], dace.float64)
     region = ControlFlowRegion('region')

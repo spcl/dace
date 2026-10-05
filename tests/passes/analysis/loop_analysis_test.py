@@ -80,7 +80,7 @@ def test_derived_iv_chained():
 
 
 def test_derived_iv_tasklet_scalar():
-    sdfg = dace.SDFG('t')
+    sdfg = dace.SDFG('t_derived_iv_tasklet_scalar')
     loop = LoopRegion('L',
                       condition_expr='i < N',
                       loop_var='i',
@@ -124,21 +124,21 @@ def test_self_referential_step_rejects_loop():
 
 
 def test_missing_loop_variable_returns_empty():
-    sdfg = dace.SDFG('t')
+    sdfg = dace.SDFG('t_missing_loop_variable_returns_empty')
     loop = LoopRegion('L', sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     assert loop_analysis.detect_induction_variables(loop) == {}
 
 
 def test_missing_init_returns_empty():
-    sdfg = dace.SDFG('t')
+    sdfg = dace.SDFG('t_missing_init_returns_empty')
     loop = LoopRegion('L', condition_expr='i < N', loop_var='i', update_expr='i = i + 1', sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     assert loop_analysis.detect_induction_variables(loop) == {}
 
 
 def test_nested_loops_outer_iv_invariant_to_inner():
-    sdfg = dace.SDFG('t')
+    sdfg = dace.SDFG('t_nested_loops_outer_iv_invariant_to_inner')
     outer = LoopRegion('outer',
                        condition_expr='i < N',
                        loop_var='i',

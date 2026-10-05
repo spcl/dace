@@ -102,7 +102,7 @@ def _blocked_sdfg(ii_stride, block_bytes=64):
     """A 4D tiled access C[I,J,ii,jj] whose physical layout is what a Block transform materializes;
     ii_stride < inner-block => a contiguous tile, else a scattered one."""
     T = dace.symbol("T")
-    sdfg = dace.SDFG("blocked")
+    sdfg = dace.SDFG('blocked_blocked_sdfg')
     sdfg.add_array("C", [T, T, 4, 4], dace.float64, strides=(T * 16, 16, ii_stride, 1))
     sdfg.add_array("D", [T, T, 4, 4], dace.float64)
     st = sdfg.add_state("s", is_start_block=True)

@@ -82,7 +82,7 @@ def kernel_with_internal_transient() -> dace.SDFG:
 
 def transient_body() -> dace.SDFG:
     """Nested body writing ``a_out[0]`` through its own ``buf[1024]`` transient."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_transient_body')
     inner.add_array('a_out', [1], dace.float64, storage=GLOBAL)
     inner.add_transient('buf', [1024], dace.float64, storage=GLOBAL)
     inner_state = inner.add_state('i', is_start_block=True)
@@ -417,7 +417,7 @@ def kernel_with_scratch_below_a_nested_sdfg() -> dace.SDFG:
                        'out[i, k]',
                        code='__in + 1.0')
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_kernel_with_scratch_below_a_nested_sdfg')
     body.add_array('a', [NX, NZ], dace.float64, storage=GLOBAL)
     body.add_array('out', [NX, NZ], dace.float64, storage=GLOBAL)
     body.add_array('tmp', [NZ], dace.float64, transient=True, storage=GLOBAL)
@@ -462,7 +462,12 @@ def test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank():
             for edge in state.edges():
                 if edge.data.data == 'tmp':
                     assert edge.data.subset.dims() == rank, (nested.name, str(edge.data))
-    assert ranks == {'scratch_below_a_nested_sdfg': 2, 'body': 2, 'producer': 1, 'consumer': 1}, ranks
+    assert ranks == {
+        'scratch_below_a_nested_sdfg': 2,
+        'body_kernel_with_scratch_below_a_nested_sdfg': 2,
+        'producer': 1,
+        'consumer': 1
+    }, ranks
     sdfg.validate()
 
 
@@ -639,7 +644,7 @@ def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
     """A nest bound to ``order[1]`` must keep reading one element of the now rank-2 buffer."""
     sdfg = kernel_with_interstate_buffer_read()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
-    leaf = dace.SDFG('leaf')
+    leaf = dace.SDFG('leaf_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index')
     leaf.add_symbol('s', dace.int64)
     leaf.add_array('o', [1], dace.float64, storage=GLOBAL)
     leaf_state = leaf.add_state()

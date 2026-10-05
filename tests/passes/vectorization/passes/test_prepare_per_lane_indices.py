@@ -20,7 +20,7 @@ def test_widen_accesses_returns_none_on_empty_sdfg():
     unified ``WidenAccesses`` per user direction 2026-06-11.
     """
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
-    sdfg = dace.SDFG("empty")
+    sdfg = dace.SDFG('empty_widen_accesses_returns_none_on_empty_sdfg')
     sdfg.add_state("s")
     assert WidenAccesses(widths=(8, )).apply_pass(sdfg, {}) is None
 
@@ -34,13 +34,13 @@ def test_widen_accesses_does_not_materialise_idx_tile_for_gather_access():
     from dace.memlet import Memlet
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 
-    sdfg = dace.SDFG("walker_gather_fixture")
+    sdfg = dace.SDFG('walker_gather_fixture_widen_accesses_does_not_materialise_idx_tile_for_gather_access')
     sdfg.add_array("A", (32, ), dace.float64, transient=False)
     sdfg.add_array("idx", (32, ), dace.int64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_widen_accesses_does_not_materialise_idx_tile_for_gather_access')
     inner.add_array("A", (32, ), dace.float64, transient=False)
     inner.add_array("idx", (32, ), dace.int64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)

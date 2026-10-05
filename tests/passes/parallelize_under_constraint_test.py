@@ -74,7 +74,7 @@ def _single_state_stride_loop(read_subset):
     ``read_subset=None`` = plain store, ``'S*i'`` = in-place RMW, ``'S*i - 1'`` =
     loop-carried recurrence.
     """
-    sdfg = dace.SDFG('stride_loop')
+    sdfg = dace.SDFG('stride_loop_single_state_stride_loop')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     loop = LoopRegion('L', 'i < N', 'i', 'i = 0', 'i = i + 1')

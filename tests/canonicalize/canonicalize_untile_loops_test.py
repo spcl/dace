@@ -31,7 +31,7 @@ def test_case_a_combined_access_K4_collapses_to_single_loop():
     whose body sees the same memlets with ``i + ii`` substituted by ``k``."""
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_case_a_combined_access_K4_collapses_to_single_loop(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, 4):
             for ii in range(4):
                 a[i + ii] = b[i + ii]
@@ -42,7 +42,7 @@ def test_case_a_combined_access_K4_collapses_to_single_loop():
     b = rng.standard_normal(n)
     ref_a = b.copy()
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_case_a_combined_access_K4_collapses_to_single_loop.to_sdfg(simplify=True)
     assert len(_loops(sdfg)) == 2
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
@@ -61,7 +61,7 @@ def test_case_a_with_arithmetic_combination_collapses():
     appearance of ``i`` co-occurs with ``ii`` and vice-versa."""
 
     @dace.program
-    def tiled(a: dace.float64[2 * N], b: dace.float64[N]):
+    def tiled_case_a_with_arithmetic_combination_collapses(a: dace.float64[2 * N], b: dace.float64[N]):
         for i in range(0, N, 4):
             for ii in range(4):
                 a[2 * (i + ii)] = b[i + ii]
@@ -74,7 +74,7 @@ def test_case_a_with_arithmetic_combination_collapses():
     for k in range(n):
         ref_a[2 * k] = b[k]
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_case_a_with_arithmetic_combination_collapses.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -90,7 +90,7 @@ def test_case_b_absolute_inner_collapses_to_single_loop():
     """``for i in range(0, N, 4): for ii in range(i, i+4): a[ii] = b[ii]``."""
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_case_b_absolute_inner_collapses_to_single_loop(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, 4):
             for ii in range(i, i + 4):
                 a[ii] = b[ii]
@@ -101,7 +101,7 @@ def test_case_b_absolute_inner_collapses_to_single_loop():
     b = rng.standard_normal(n)
     ref_a = b.copy()
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_case_b_absolute_inner_collapses_to_single_loop.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -125,7 +125,7 @@ def test_case_b_inner_stride_2_collapses_preserving_step():
     a[k] = b[k] * 2.0``."""
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_case_b_inner_stride_2_collapses_preserving_step(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, 32):
             for ii in range(i, i + 32, 2):
                 a[ii] = b[ii] * 2.0
@@ -138,7 +138,7 @@ def test_case_b_inner_stride_2_collapses_preserving_step():
     for i in range(0, n, 2):
         ref_a[i] = b[i] * 2.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_case_b_inner_stride_2_collapses_preserving_step.to_sdfg(simplify=True)
     assert len(_loops(sdfg)) == 2
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
@@ -205,12 +205,12 @@ def test_untiles_when_outer_stride_is_bare_symbol():
     BS = dace.symbol('BS')
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_untiles_when_outer_stride_is_bare_symbol(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, BS):
             for ii in range(BS):
                 a[i + ii] = b[i + ii] * 2.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_untiles_when_outer_stride_is_bare_symbol.to_sdfg(simplify=True)
     assert len(_loops(sdfg)) == 2
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
@@ -233,12 +233,12 @@ def test_untiles_when_outer_stride_is_bare_symbol_case_b():
     BS = dace.symbol('BS')
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_untiles_when_outer_stride_is_bare_symbol_case_b(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, BS):
             for ii in range(i, i + BS):
                 a[ii] = b[ii] + 1.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_untiles_when_outer_stride_is_bare_symbol_case_b.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -258,12 +258,12 @@ def test_refuses_when_outer_stride_is_compound_symbolic_expr():
     expression, and such an expression is not a plausible tile size."""
 
     @dace.program
-    def tiled(a: dace.float64[N]):
+    def tiled_refuses_when_outer_stride_is_compound_symbolic_expr(a: dace.float64[N]):
         for i in range(0, N, M - 2):
             for ii in range(M - 2):
                 a[i + ii] = 1.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_refuses_when_outer_stride_is_compound_symbolic_expr.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is None
 
@@ -273,12 +273,12 @@ def test_refuses_when_outer_stride_is_one():
     doesn't endlessly rename loops that are already in canonical form."""
 
     @dace.program
-    def tiled(a: dace.float64[N]):
+    def tiled_refuses_when_outer_stride_is_one(a: dace.float64[N]):
         for i in range(0, N):
             for ii in range(1):
                 a[i + ii] = 1.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_refuses_when_outer_stride_is_one.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is None
 
@@ -288,12 +288,12 @@ def test_refuses_when_inner_trip_does_not_match_outer_stride():
     nest doesn't represent a complete tiling and UntileLoops refuses."""
 
     @dace.program
-    def tiled(a: dace.float64[N]):
+    def tiled_refuses_when_inner_trip_does_not_match_outer_stride(a: dace.float64[N]):
         for i in range(0, N, 4):
             for ii in range(3):  # mismatched trip
                 a[i + ii] = 1.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_refuses_when_inner_trip_does_not_match_outer_stride.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is None
 
@@ -303,12 +303,12 @@ def test_refuses_when_body_uses_bare_outer_iterator():
     to ``k`` would lose the per-tile granularity. Refuse."""
 
     @dace.program
-    def tiled(a: dace.float64[N]):
+    def tiled_refuses_when_body_uses_bare_outer_iterator(a: dace.float64[N]):
         for i in range(0, N, 4):
             for ii in range(4):
                 a[i] = 1.0  # bare ``i`` without ``ii``
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_refuses_when_body_uses_bare_outer_iterator.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is None
 
@@ -318,12 +318,12 @@ def test_refuses_when_body_uses_bare_inner_iterator():
     access is tile-relative, not combined; refuse to keep the rewrite sound."""
 
     @dace.program
-    def tiled(a: dace.float64[4]):
+    def tiled_refuses_when_body_uses_bare_inner_iterator(a: dace.float64[4]):
         for i in range(0, N, 4):
             for ii in range(4):
                 a[ii] = 1.0  # bare ``ii`` without ``i``
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_refuses_when_body_uses_bare_inner_iterator.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is None
 
@@ -375,12 +375,12 @@ def test_untiles_when_outer_start_is_not_zero():
     import numpy as np
 
     @dace.program
-    def tiled(a: dace.float64[N + 8]):
+    def tiled_untiles_when_outer_start_is_not_zero(a: dace.float64[N + 8]):
         for i in range(8, N, 4):
             for ii in range(4):
                 a[i + ii] = 1.0
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_untiles_when_outer_start_is_not_zero.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res is not None, 'start!=0 tile nest must untile'
     # Exactly one collapsed unit-stride loop over [8, N) remains.
@@ -457,7 +457,7 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
     K = 4
 
     @dace.program
-    def jacobi2d_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
+    def jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest(a: dace.float64[N, M], b: dace.float64[N, M]):
         for ii in range(0, N - 2, K):
             for jj in range(0, M - 2, K):
                 for i in range(K):
@@ -471,9 +471,12 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
     a = rng.standard_normal((n, m))
     b = np.zeros((n, m))
     ref = b.copy()
-    copy.deepcopy(jacobi2d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m)
+    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest.to_sdfg(simplify=True))(a=a.copy(),
+                                                                                                        b=ref,
+                                                                                                        N=n,
+                                                                                                        M=m)
 
-    sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
+    sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert _count_loops(sdfg) == 2, f'expected 2 collapsed loops, got {_count_loops(sdfg)}'
@@ -491,7 +494,7 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     K = 4
 
     @dace.program
-    def jacobi2d_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
+    def jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map(a: dace.float64[N, M], b: dace.float64[N, M]):
         for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
             for i, j in dace.map[0:K, 0:K]:
                 b[ii + i + 1,
@@ -503,9 +506,12 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     a = rng.standard_normal((n, m))
     b = np.zeros((n, m))
     ref = b.copy()
-    copy.deepcopy(jacobi2d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m)
+    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True))(a=a.copy(),
+                                                                                                     b=ref,
+                                                                                                     N=n,
+                                                                                                     M=m)
 
-    sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
+    sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
     # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip NSDFGs, the multi-dim
@@ -563,7 +569,7 @@ def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
     K = 4
 
     @dace.program
-    def heat3d_tiled(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
+    def heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
         for ii in range(0, N - 2, K):
             for jj in range(0, M - 2, K):
                 for kk in range(0, P - 2, K):
@@ -582,9 +588,13 @@ def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m, P=p)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest.to_sdfg(simplify=True))(a=a.copy(),
+                                                                                                    b=ref,
+                                                                                                    N=n,
+                                                                                                    M=m,
+                                                                                                    P=p)
 
-    sdfg = heat3d_tiled.to_sdfg(simplify=True)
+    sdfg = heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert _count_loops(sdfg) == 3, f'expected 3 collapsed loops, got {_count_loops(sdfg)}'
@@ -599,7 +609,7 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     K = 4
 
     @dace.program
-    def heat3d_tiled(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
+    def heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
         for ii, jj, kk in dace.map[0:N - 2:K, 0:M - 2:K, 0:P - 2:K]:
             for i, j, k in dace.map[0:K, 0:K, 0:K]:
                 I = ii + i + 1
@@ -614,9 +624,13 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m, P=p)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True))(a=a.copy(),
+                                                                                                 b=ref,
+                                                                                                 N=n,
+                                                                                                 M=m,
+                                                                                                 P=p)
 
-    sdfg = heat3d_tiled.to_sdfg(simplify=True)
+    sdfg = heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
     # 3 axes -> one recovered Map each, and no orphan connective state from the general splice.
@@ -678,7 +692,7 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
     BS = dace.symbol('BS')
 
     @dace.program
-    def jacobi2d_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
+    def jacobi2d_tiled_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest(a: dace.float64[N, M], b: dace.float64[N, M]):
         for ii in range(0, N - 2, BS):
             for jj in range(0, M - 2, BS):
                 for i in range(BS):
@@ -696,7 +710,7 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
         for j in range(1, m - 1):
             ref[i, j] = 0.2 * (a[i, j] + a[i, j - 1] + a[i, j + 1] + a[i - 1, j] + a[i + 1, j])
 
-    sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
+    sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert _count_loops(sdfg) == 2, f'expected 2 collapsed loops, got {_count_loops(sdfg)}'
@@ -710,7 +724,8 @@ def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     BS = dace.symbol('BS')
 
     @dace.program
-    def heat3d_tiled(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
+    def heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest(a: dace.float64[N, M, P], b: dace.float64[N, M,
+                                                                                                                P]):
         for ii in range(0, N - 2, BS):
             for jj in range(0, M - 2, BS):
                 for kk in range(0, P - 2, BS):
@@ -729,9 +744,14 @@ def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m, P=p, BS=bs)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest.to_sdfg(simplify=True))(a=a.copy(),
+                                                                                                        b=ref,
+                                                                                                        N=n,
+                                                                                                        M=m,
+                                                                                                        P=p,
+                                                                                                        BS=bs)
 
-    sdfg = heat3d_tiled.to_sdfg(simplify=True)
+    sdfg = heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
     assert _count_loops(sdfg) == 3, f'expected 3 collapsed loops, got {_count_loops(sdfg)}'
@@ -751,12 +771,12 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
     BS = dace.symbol('BS')
 
     @dace.program
-    def tiled(a: dace.float64[N], b: dace.float64[N]):
+    def tiled_symbolic_tile_nonunit_inner_stride_collapses_under_assumption(a: dace.float64[N], b: dace.float64[N]):
         for i in range(0, N, BS):
             for ii in range(i, i + BS, 2):
                 a[ii] = b[ii]
 
-    sdfg = tiled.to_sdfg(simplify=True)
+    sdfg = tiled_symbolic_tile_nonunit_inner_stride_collapses_under_assumption.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
     assert res == 1, 'symbolic tile + non-unit inner stride should collapse (under assumption)'
     recorded = tracked_assumptions(sdfg)

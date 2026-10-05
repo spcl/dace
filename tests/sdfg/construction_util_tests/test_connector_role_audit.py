@@ -130,7 +130,7 @@ def test_passthrough_connector_on_nested_sdfg_is_validated():
     sdfg.add_array("c", shape=(1, ), dtype=dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
 
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_passthrough_connector_on_nested_sdfg_is_validated')
     inner.add_array("a", shape=(1, ), dtype=dace.float64)
     inner.add_array("c", shape=(1, ), dtype=dace.float64)
     inner_state = inner.add_state("is", is_start_block=True)

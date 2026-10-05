@@ -484,7 +484,7 @@ def transpose4(A: dace.float64[4, 4], B: dace.float64[4, 4]):
 def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog, lift):
     inner = prog.to_sdfg(simplify=True)
     inner.remove_symbol('i'), inner.remove_symbol('j')  # loop iterators, not free symbols
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays')
     state = outer.add_state()
     names = [n for n, d in inner.arrays.items() if not d.transient]
     call = state.add_nested_sdfg(inner, dict.fromkeys(names), dict.fromkeys(names), symbol_mapping={})

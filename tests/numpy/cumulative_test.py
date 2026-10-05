@@ -70,10 +70,10 @@ def test_cumsum_lowers_to_a_scan_libnode():
     not as a hand-lowered loop the GPU expansion can no longer recognise."""
 
     @dace.program
-    def prog(a: dace.float64[64], out: dace.float64[64]):
+    def prog_cumsum_lowers_to_a_scan_libnode(a: dace.float64[64], out: dace.float64[64]):
         out[:] = np.cumsum(a)
 
-    nodes = scan_nodes(prog)
+    nodes = scan_nodes(prog_cumsum_lowers_to_a_scan_libnode)
     assert len(nodes) == 1
     assert nodes[0].op == ScanOp.SUM
     assert not nodes[0].exclusive  # numpy's cumulative functions are inclusive
@@ -84,10 +84,10 @@ def test_cumprod_carries_the_product_op():
     its SUM default would still produce a Scan, and every numeric test above would still pass."""
 
     @dace.program
-    def prog(a: dace.float64[16], out: dace.float64[16]):
+    def prog_cumprod_carries_the_product_op(a: dace.float64[16], out: dace.float64[16]):
         out[:] = np.cumprod(a)
 
-    nodes = scan_nodes(prog)
+    nodes = scan_nodes(prog_cumprod_carries_the_product_op)
     assert len(nodes) == 1
     assert nodes[0].op == ScanOp.PRODUCT
 
@@ -98,10 +98,10 @@ def test_a_batched_scan_keeps_the_batch_axis_parallel():
     throw the only parallelism the op has."""
 
     @dace.program
-    def prog(a: dace.float64[5, 40], out: dace.float64[5, 40]):
+    def prog_a_batched_scan_keeps_the_batch_axis_parallel(a: dace.float64[5, 40], out: dace.float64[5, 40]):
         out[:] = np.cumsum(a, axis=1)
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_a_batched_scan_keeps_the_batch_axis_parallel.to_sdfg(simplify=False)
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
     assert len(scans) == 1
     state = next(s for s in sdfg.states() if scans[0] in s.nodes())
@@ -113,22 +113,22 @@ def test_an_inner_axis_is_refused_rather_than_scanned_as_the_last():
     instead would return the right SHAPE holding the wrong numbers."""
 
     @dace.program
-    def prog(a: dace.float64[5, 40], out: dace.float64[5, 40]):
+    def prog_an_inner_axis_is_refused_rather_than_scanned_as_the_last(a: dace.float64[5, 40], out: dace.float64[5, 40]):
         out[:] = np.cumsum(a, axis=0)
 
     with pytest.raises(Exception, match="last axis only"):
-        prog.to_sdfg()
+        prog_an_inner_axis_is_refused_rather_than_scanned_as_the_last.to_sdfg()
 
 
 def test_an_axis_less_scan_over_a_matrix_is_refused():
     """numpy FLATTENS here, which is a reshape only when the operand is contiguous."""
 
     @dace.program
-    def prog(a: dace.float64[5, 40], out: dace.float64[200]):
+    def prog_an_axis_less_scan_over_a_matrix_is_refused(a: dace.float64[5, 40], out: dace.float64[200]):
         out[:] = np.cumsum(a)
 
     with pytest.raises(Exception, match="flattens"):
-        prog.to_sdfg()
+        prog_an_axis_less_scan_over_a_matrix_is_refused.to_sdfg()
 
 
 if __name__ == '__main__':

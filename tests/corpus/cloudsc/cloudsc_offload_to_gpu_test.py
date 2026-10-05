@@ -41,7 +41,7 @@ def cloudsc_like(pin: dace.float64[klev, klon, nblocks], pout: dace.float64[klev
 def blocked_sdfg(inner: bool = True) -> dace.SDFG:
     """Hand-built twin of :func:`cloudsc_like`. ``inner=False`` drops the inner map, leaving a leaf
     map whose range still mentions ``nblocks``."""
-    sdfg = dace.SDFG('blocked')
+    sdfg = dace.SDFG('blocked_blocked_sdfg')
     for name in ('pin', 'pout'):
         sdfg.add_array(name, [klev, klon, nblocks], dace.float64)
     state = sdfg.add_state()
@@ -185,7 +185,7 @@ def test_nested_sdfg_under_block_map_is_offloaded():
     """The CloudSC Fortran frontend wraps the per-block body in a NestedSDFG. Its top map is still the
     outermost map strictly inside the block map, so it is the kernel -- and its own nested maps are
     device-level."""
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_nested_sdfg_under_block_map_is_offloaded')
     for name in ('a', 'b'):
         inner.add_array(name, [4, 4], dace.float64)
     istate = inner.add_state()
@@ -383,7 +383,7 @@ def test_excluded_array_stays_host_side():
 
 def test_host_only_array_is_not_mirrored():
     """An array touched only by a top-level tasklet never reaches the device."""
-    sdfg = dace.SDFG('host_only')
+    sdfg = dace.SDFG('host_only_host_only_array_is_not_mirrored')
     sdfg.add_array('probe', [1], dace.float64)
     state = sdfg.add_state()
     tasklet = state.add_tasklet('w', {}, {'o'}, 'o = 3.0')
@@ -395,7 +395,7 @@ def test_host_only_array_is_not_mirrored():
 def elementwise_producer_sdfg(count: int, size: int, dims=None) -> dace.SDFG:
     """``tab`` written by ``count`` single-element tasklets, then read by a kernel."""
     shape = dims if dims is not None else [size]
-    sdfg = dace.SDFG('elementwise')
+    sdfg = dace.SDFG('elementwise_elementwise_producer_sdfg')
     sdfg.add_array('tab', shape, dace.float64)
     sdfg.add_array('out', [size], dace.float64)
     produce = sdfg.add_state('produce', is_start_block=True)

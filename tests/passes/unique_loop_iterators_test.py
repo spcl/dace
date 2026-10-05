@@ -403,14 +403,14 @@ def test_no_postamble_drops_dead_symbol_declaration():
     (validation: ``Missing symbols on nested SDFG: ['i']``)."""
 
     @dace.program
-    def sibling_for_loops(x: dace.float64[10, 10]):
+    def sibling_for_loops_no_postamble_drops_dead_symbol_declaration(x: dace.float64[10, 10]):
         for j in dace.map[0:10]:
             for i in range(10):
                 x[i, j] = 1.0
             for i in range(10):
                 x[i, j] += 2.0
 
-    sdfg = sibling_for_loops.to_sdfg(simplify=False)
+    sdfg = sibling_for_loops_no_postamble_drops_dead_symbol_declaration.to_sdfg(simplify=False)
 
     # Pre-condition: the body NestedSDFG declares ``i`` in its symbol table
     # and the parent does not provide it via ``symbol_mapping``; the
@@ -508,14 +508,14 @@ def test_postamble_preserves_symbol_declaration():
     invalidate it."""
 
     @dace.program
-    def sibling_for_loops(x: dace.float64[10, 10]):
+    def sibling_for_loops_postamble_preserves_symbol_declaration(x: dace.float64[10, 10]):
         for j in dace.map[0:10]:
             for i in range(10):
                 x[i, j] = 1.0
             for i in range(10):
                 x[i, j] += 2.0
 
-    sdfg = sibling_for_loops.to_sdfg(simplify=False)
+    sdfg = sibling_for_loops_postamble_preserves_symbol_declaration.to_sdfg(simplify=False)
     body_nsdfgs_before = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert any('i' in n.sdfg.symbols for n in body_nsdfgs_before)
 

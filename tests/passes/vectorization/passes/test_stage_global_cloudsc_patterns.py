@@ -176,7 +176,7 @@ def _build_inmap_multi_state_propagation(N: int = 8):
     state = sdfg.add_state("compute")
     me, mx = state.add_map("m", dict(i="0:N"))
 
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_build_inmap_multi_state_propagation')
     body.add_array("input_in", [1], dace.float64)
     body.add_array("output_out", [1], dace.float64)
     body.add_array("A_io", [1], dace.float64)
@@ -285,7 +285,7 @@ def _build_nsdfg_single_bridge(N: int = 8):
     state = sdfg.add_state("compute")
     me, mx = state.add_map("m", dict(i="0:N"))
 
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_build_nsdfg_single_bridge')
     body.add_array("input_in", [1], dace.float64)
     body.add_array("output_out", [1], dace.float64)
     body.add_array("A_io", [1], dace.float64)

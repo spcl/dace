@@ -103,22 +103,25 @@ def test_normalized_inverse_fft_matches_numpy(ctype: type, cdtype: dace.typeclas
     """The pure DFT scales every element by a ``double`` factor, which zeroed a complex64 result."""
 
     @dace.program
-    def tester(x: cdtype[30]):
+    def tester_normalized_inverse_fft_matches_numpy(x: cdtype[30]):
         return np.fft.ifft(x)
 
     x = random_complex(30, ctype, 3)
-    np.testing.assert_allclose(tester(x.copy()), np.fft.ifft(x), rtol=tolerance(ctype) * 10, atol=tolerance(ctype))
+    np.testing.assert_allclose(tester_normalized_inverse_fft_matches_numpy(x.copy()),
+                               np.fft.ifft(x),
+                               rtol=tolerance(ctype) * 10,
+                               atol=tolerance(ctype))
 
 
 @pytest.mark.parametrize('ctype,cdtype', COMPLEX_TYPES)
 def test_orthonormal_fft_matches_numpy(ctype: type, cdtype: dace.typeclass):
 
     @dace.program
-    def tester(x: cdtype[30]):
+    def tester_orthonormal_fft_matches_numpy(x: cdtype[30]):
         return np.fft.fft(x, norm='ortho')
 
     x = random_complex(30, ctype, 4)
-    np.testing.assert_allclose(tester(x.copy()),
+    np.testing.assert_allclose(tester_orthonormal_fft_matches_numpy(x.copy()),
                                np.fft.fft(x, norm='ortho'),
                                rtol=tolerance(ctype) * 10,
                                atol=tolerance(ctype))
@@ -129,11 +132,11 @@ def test_orthonormal_fft_matches_numpy(ctype: type, cdtype: dace.typeclass):
 def test_normalized_inverse_fftn_matches_numpy(ctype: type, cdtype: dace.typeclass, axes):
 
     @dace.program
-    def tester(x: cdtype[4, 5, 6]):
+    def tester_normalized_inverse_fftn_matches_numpy(x: cdtype[4, 5, 6]):
         return np.fft.ifftn(x, axes=axes)
 
     x = random_complex((4, 5, 6), ctype, 5)
-    np.testing.assert_allclose(tester(x.copy()),
+    np.testing.assert_allclose(tester_normalized_inverse_fftn_matches_numpy(x.copy()),
                                np.fft.ifftn(x, axes=axes),
                                rtol=tolerance(ctype) * 10,
                                atol=tolerance(ctype))

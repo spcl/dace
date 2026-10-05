@@ -9,7 +9,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 def branch_into_a_sibling_arm_sdfg() -> dace.SDFG:
     """A three-way branch on ``n`` whose first arm can jump into the third arm, which no ConditionalBlock expresses."""
-    sdfg = dace.SDFG("branch_into_a_sibling_arm")
+    sdfg = dace.SDFG("structured_cf_branch_into_a_sibling_arm")
     sdfg.add_symbol("n", dace.int64)
     start = sdfg.add_state("start", is_start_block=True)
     first, second, third, end = (sdfg.add_state(label) for label in ("first", "second", "third", "end"))

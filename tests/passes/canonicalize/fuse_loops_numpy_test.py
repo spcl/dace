@@ -72,13 +72,13 @@ def test_two_sequential_recurrence_chain_fuses():
     """Two prefix-sum recurrences chained (body2 reads a[i], same index) -> fuse."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_two_sequential_recurrence_chain_fuses(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             a[i] = a[i - 1] + c[i]
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
 
-    applied, before, after, exact, *_ = _run(k, _mk(names=("a", "b", "c")), 48)
+    applied, before, after, exact, *_ = _run(k_two_sequential_recurrence_chain_fuses, _mk(names=("a", "b", "c")), 48)
     assert exact
     assert before == 2 and after == 1 and applied == 1
 
@@ -87,13 +87,14 @@ def test_two_independent_recurrences_fuse():
     """Disjoint prefix recurrences (c from a, d from b) -> independent, fuse."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_two_independent_recurrences_fuse(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
+                                           d: dace.float64[N]):
         for i in range(1, N):
             c[i] = c[i - 1] + a[i]
         for i in range(1, N):
             d[i] = d[i - 1] + b[i]
 
-    applied, before, after, exact, *_ = _run(k, _mk(), 48)
+    applied, before, after, exact, *_ = _run(k_two_independent_recurrences_fuse, _mk(), 48)
     assert exact
     assert before == 2 and after == 1
 
@@ -102,7 +103,8 @@ def test_three_sequential_recurrences_fuse_to_one():
     """A chain of three prefix recurrences collapses to a single loop."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_three_sequential_recurrences_fuse_to_one(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
+                                                   d: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
@@ -110,7 +112,7 @@ def test_three_sequential_recurrences_fuse_to_one():
         for i in range(1, N):
             d[i] = d[i - 1] + c[i]
 
-    applied, before, after, exact, *_ = _run(k, _mk(), 48)
+    applied, before, after, exact, *_ = _run(k_three_sequential_recurrences_fuse_to_one, _mk(), 48)
     assert exact
     assert before == 3 and after < before and applied >= 1  # at least one pair fused, value-preserving
 
@@ -119,13 +121,13 @@ def test_scan_then_same_index_reuse_fuses():
     """A sequential scan then a second recurrence reading a[i] at the same index."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N]):
+    def k_scan_then_same_index_reuse_fuses(a: dace.float64[N], b: dace.float64[N]):
         for i in range(1, N):
             a[i] = a[i - 1] * 0.5 + a[i]
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
 
-    applied, before, after, exact, *_ = _run(k, _mk(names=("a", "b")), 48)
+    applied, before, after, exact, *_ = _run(k_scan_then_same_index_reuse_fuses, _mk(names=("a", "b")), 48)
     assert exact
     assert after == 1
 
@@ -135,13 +137,14 @@ def test_parallel_elementwise_loops_left_for_loop_to_map():
     become Maps (LoopToMap), so it leaves them untouched. Still value-preserving."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_parallel_elementwise_loops_left_for_loop_to_map(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] + 1.0
         for i in range(N):
             c[i] = b[i] * 2.0
 
-    applied, before, after, exact, *_ = _run(k, _mk(names=("a", "b", "c")), 48)
+    applied, before, after, exact, *_ = _run(k_parallel_elementwise_loops_left_for_loop_to_map,
+                                             _mk(names=("a", "b", "c")), 48)
     assert exact
     assert after == before  # parallel loops are not loop-fused
 
@@ -154,13 +157,13 @@ def test_forward_read_ahead_refused():
     value -> must NOT fuse; still value-preserving (nothing changed)."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N]):
+    def k_forward_read_ahead_refused(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N):
             a[i] = a[i] * 2.0
         for i in range(0, N - 1):
             b[i] = a[i + 1] + 1.0
 
-    applied, before, after, exact, *_ = _run(k, _mk(names=("a", "b")), 48)
+    applied, before, after, exact, *_ = _run(k_forward_read_ahead_refused, _mk(names=("a", "b")), 48)
     assert exact
     assert after == 2  # refused
 
@@ -169,13 +172,13 @@ def test_mismatched_ranges_refused():
     """Different loop ranges cannot be fused."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_mismatched_ranges_refused(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] + 1.0
         for i in range(1, N):
             c[i] = a[i] * 2.0
 
-    applied, before, after, exact, *_ = _run(k, _mk(names=("a", "b", "c")), 48)
+    applied, before, after, exact, *_ = _run(k_mismatched_ranges_refused, _mk(names=("a", "b", "c")), 48)
     assert exact
     assert after == 2  # refused
 
@@ -188,7 +191,7 @@ def test_two_2d_row_loops_fuse():
     M = dace.symbol("M")
 
     @dace.program
-    def k(a: dace.float64[N, N], b: dace.float64[N, N]):
+    def k_two_2d_row_loops_fuse(a: dace.float64[N, N], b: dace.float64[N, N]):
         for i in range(N):
             for j in range(N):
                 a[i, j] = a[i, j] + 1.0
@@ -198,11 +201,11 @@ def test_two_2d_row_loops_fuse():
 
     rng = np.random.default_rng(1)
     inp = {"a": rng.random((16, 16)), "b": rng.random((16, 16))}
-    ref = k.to_sdfg(simplify=True)
+    ref = k_two_2d_row_loops_fuse.to_sdfg(simplify=True)
     ref.name = "k2d_ref"
     rb = {kk: v.copy() for kk, v in inp.items()}
     ref(**rb, N=16)
-    sd = k.to_sdfg(simplify=True)
+    sd = k_two_2d_row_loops_fuse.to_sdfg(simplify=True)
     FuseLoops().apply_pass(sd, {})
     sd.name = "k2d_fused"
     fb = {kk: v.copy() for kk, v in inp.items()}
@@ -219,14 +222,14 @@ def test_does_not_fuse_map_with_loop():
     from dace.sdfg import nodes
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_does_not_fuse_map_with_loop(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in dace.map[0:N]:  # parallel map -- NOT a LoopRegion
             b[i] = a[i] + 1.0
         for i in range(1, N):  # sequential recurrence -- a LoopRegion
             c[i] = c[i - 1] + b[i]
 
     inputs = _mk(names=("a", "b", "c"))
-    sd = k.to_sdfg(simplify=True)
+    sd = k_does_not_fuse_map_with_loop.to_sdfg(simplify=True)
     maps_before = sum(1 for n, _ in sd.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     loops_before = _nloops(sd)
     applied = FuseLoops().apply_pass(sd, {}) or 0
@@ -240,7 +243,7 @@ def test_does_not_fuse_map_with_loop():
     sd.name = "map_vs_loop_fused"
     fb = {kk: v.copy() for kk, v in inputs.items()}
     sd(**fb, N=48)
-    ref = k.to_sdfg(simplify=True)
+    ref = k_does_not_fuse_map_with_loop.to_sdfg(simplify=True)
     ref.name = "map_vs_loop_ref"
     rb = {kk: v.copy() for kk, v in inputs.items()}
     ref(**rb, N=48)
@@ -252,13 +255,13 @@ def test_does_not_loop_fuse_two_maps():
     FuseLoops sees zero LoopRegions and is a no-op (value-preserving)."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_does_not_loop_fuse_two_maps(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in dace.map[0:N]:
             b[i] = a[i] + 1.0
         for i in dace.map[0:N]:
             c[i] = b[i] * 2.0
 
-    sd = k.to_sdfg(simplify=True)
+    sd = k_does_not_loop_fuse_two_maps.to_sdfg(simplify=True)
     assert _nloops(sd) == 0  # both are maps, no LoopRegion
     applied = FuseLoops().apply_pass(sd, {}) or 0
     assert applied == 0  # nothing for FuseLoops to do
@@ -268,7 +271,7 @@ def test_four_loops_partial_chain():
     """Four loops: a->b->c chain fuses, d independent; all value-preserving."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_four_loops_partial_chain(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] + 1.0
         for i in range(N):
@@ -278,7 +281,7 @@ def test_four_loops_partial_chain():
         for i in range(N):
             a[i] = d[i] * 0.5
 
-    applied, before, after, exact, *_ = _run(k, _mk(), 48)
+    applied, before, after, exact, *_ = _run(k_four_loops_partial_chain, _mk(), 48)
     assert exact
     assert after < before
 
@@ -288,13 +291,13 @@ def test_value_preserving_across_sizes(n):
     """Fusion is value-preserving across a spread of sizes incl. tiny ones."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def k_value_preserving_across_sizes(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] * a[i] + 1.0
         for i in range(N):
             c[i] = b[i] - a[i]
 
-    applied, before, after, exact, *_ = _run(k, _mk(n=n, names=("a", "b", "c")), n)
+    applied, before, after, exact, *_ = _run(k_value_preserving_across_sizes, _mk(n=n, names=("a", "b", "c")), n)
     assert exact
 
 

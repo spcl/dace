@@ -22,7 +22,7 @@ from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops impor
 
 
 def _tasklet(in_conns, out_conn, code):
-    sdfg = dace.SDFG("t")
+    sdfg = dace.SDFG('t_tasklet')
     state = sdfg.add_state("s", is_start_block=True)
     return state.add_tasklet("tk", set(in_conns), {out_conn}, code)
 
@@ -84,7 +84,7 @@ def _state_with_mask_edge(mask_dtype):
     """Build a state with a TileBinop whose ``_mask`` connector is fed by an
     array of ``mask_dtype``."""
     from dace.libraries.tileops import TileBinop
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG('m_state_with_mask_edge')
     sdfg.add_array("a", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("b", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("c", [8], dtype=dace.float64, transient=True)
@@ -151,7 +151,7 @@ def test_no_bool_cast_in_comparison_codegen():
     """A ``double > Symbol`` comparison must NOT emit a ``(bool)`` cast of the
     symbol operand; it casts to the operand (double) dtype instead."""
     from dace.libraries.tileops import TileBinop
-    sdfg = dace.SDFG("cmp")
+    sdfg = dace.SDFG('cmp_no_bool_cast_in_comparison_codegen')
     sdfg.add_symbol("RLMIN", dace.float64)
     sdfg.add_array("a", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("c", [8], dtype=dace.bool_, transient=True)

@@ -529,7 +529,7 @@ def test_an_indirection_in_an_outlined_body_reads_a_const_parameter_once_qualifi
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
     N = dace.symbol('N', dtype=dace.int64)
-    inner = dace.SDFG('loop_body')
+    inner = dace.SDFG('loop_body_an_indirection_in_an_outlined_body_reads_a_const_parameter_once_qualified')
     inner.add_symbol('i', dace.int64)
     inner.add_symbol('okvan', dace.bool_)
     for name, dtype in (('rho', dace.complex128), ('nl', dace.int32), ('out', dace.complex128)):

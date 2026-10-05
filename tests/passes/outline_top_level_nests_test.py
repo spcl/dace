@@ -69,7 +69,7 @@ def test_idempotent():
 
 
 def test_no_op_on_flat_sdfg():
-    sdfg = dace.SDFG('flat')
+    sdfg = dace.SDFG('flat_no_op_on_flat_sdfg')
     sdfg.add_array('A', [1], dace.float64)
     state = sdfg.add_state()
     state.add_edge(state.add_read('A'), None, state.add_write('A'), None, dace.Memlet('A[0]'))

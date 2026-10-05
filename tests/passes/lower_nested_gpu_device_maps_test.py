@@ -27,7 +27,7 @@ def build_outer_with_two_sibling_inner_gpu_kernels(j_ranges: tuple[str, str] = (
     state = sdfg.add_state('s')
     outer_me, outer_mx = state.add_map('vertical_loop', dict(__k='0:K'), schedule=GPU_DEVICE)
 
-    inner = dace.SDFG('nested_sdfg')
+    inner = dace.SDFG('nested_sdfg_build_outer_with_two_sibling_inner_gpu_kernels')
     inner.add_symbol('__k', dace.int32)
     inner.add_array('a_in', [J + 1, I_SIZE], dace.float64, storage=GPU_GLOBAL)
     inner.add_array('b_out', [J, I_SIZE], dace.float64, storage=GPU_GLOBAL)
@@ -108,7 +108,7 @@ def build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
     state = sdfg.add_state('s')
     outer_me, outer_mx = state.add_map('vertical_loop', dict(__k='0:K'), schedule=GPU_DEVICE)
 
-    inner = dace.SDFG('nested_sdfg')
+    inner = dace.SDFG('nested_sdfg_build_nested_kernel_with_internal_inout_node')
     inner.add_symbol('__k', dace.int32)
     inner.add_array('c_io', [J], dace.float64, storage=GPU_GLOBAL)
     inner_state = inner.add_state('nested_root', is_start_block=True)
@@ -165,7 +165,7 @@ def build_inner_kernel_with_range(inner_range: str,
     state = sdfg.add_state('s')
     outer_me, outer_mx = state.add_map('vertical', dict(__k='0:K'), schedule=GPU_DEVICE)
 
-    inner = dace.SDFG('nested')
+    inner = dace.SDFG('nested_build_inner_kernel_with_range')
     for name in symbol_mapping:
         inner.add_symbol(name, dace.int32)
     inner.add_array('a_out', [32], dace.float64, storage=GPU_GLOBAL)

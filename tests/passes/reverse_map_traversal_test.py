@@ -23,11 +23,11 @@ def test_a_reversed_stream_is_re_expressed_forwards():
     """``for i in range(N-1, -1, -1): a[i] = b[i] + 1`` must emit ``a[p]``, not ``a[N-1-p]``."""
 
     @dace.program
-    def reverse_stream(a: dace.float64[N], b: dace.float64[N]):
+    def reverse_stream_a_reversed_stream_is_re_expressed_forwards(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - 1, -1, -1):
             a[i] = b[i] + 1.0
 
-    sdfg = reverse_stream.to_sdfg(simplify=False)
+    sdfg = reverse_stream_a_reversed_stream_is_re_expressed_forwards.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     code = emitted(sdfg)
     assert 'a_idx(_loop_it_0)' in code or 'a[_loop_it_0]' in code, f'access is still reversed:\n{code}'
@@ -38,14 +38,14 @@ def test_the_result_is_unchanged():
     """The flip is a bijection of the range: same elements, same values."""
 
     @dace.program
-    def reverse_stream(a: dace.float64[N], b: dace.float64[N]):
+    def reverse_stream_the_result_is_unchanged(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - 1, -1, -1):
             a[i] = b[i] + 1.0
 
     n = 257
     b = np.arange(n, dtype=np.float64)
     got = np.zeros(n, dtype=np.float64)
-    sdfg = reverse_stream.to_sdfg(simplify=False)
+    sdfg = reverse_stream_the_result_is_unchanged.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     sdfg(a=got, b=b, N=n)
     assert np.allclose(got, b + 1.0)

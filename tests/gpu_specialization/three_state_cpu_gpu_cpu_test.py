@@ -40,7 +40,7 @@ def _build_simple_three_state_sdfg() -> dace.SDFG:
     cpu_pre.add_edge(t_pre, '__out', cpu_pre.add_write('host_in'), None, dace.Memlet('host_in[0]'))
 
     gpu_mid = sdfg.add_state('gpu_mid')
-    inner = dace.SDFG('inner_kernel')
+    inner = dace.SDFG('inner_kernel_build_simple_three_state_sdfg')
     inner.add_array('a_in', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner.add_array('b_out', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner_st = inner.add_state('inner_state')

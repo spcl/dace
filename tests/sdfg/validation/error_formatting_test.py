@@ -244,7 +244,7 @@ def test_interstate_edge_error_in_nested_region_names_the_failing_edge():
 
 def test_sdfg_level_error_still_formats():
     """Errors with no ``state_id`` (SDFG-level checks) are unaffected."""
-    sdfg = dace.SDFG('empty_sdfg')
+    sdfg = dace.SDFG('empty_sdfg_sdfg_level_error_still_formats')
     with pytest.raises(InvalidSDFGError) as info:
         sdfg.validate()
     assert 'at least one state' in str(info.value)
@@ -325,7 +325,7 @@ def test_unserializable_invalid_sdfg_still_reports():
     sdfg.add_array('A', [4], dace.float64)
     sdfg.add_array('B', [4], dace.float64)
 
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_unserializable_invalid_sdfg_still_reports')
     inner.add_array('A', [4], dace.float64)
     inner.add_array('B', [4], dace.float64)
     istate = inner.add_state('istate', is_start_block=True)

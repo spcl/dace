@@ -27,7 +27,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import is_gpu
 
 def _single_map_sdfg(sched):
     """A single innermost map ``j -> B[j] = A[j]`` scheduled ``sched``."""
-    sdfg = dace.SDFG("single_map")
+    sdfg = dace.SDFG("single_map_single_map_sdfg")
     sdfg.add_array("A", [8], dace.float16)
     sdfg.add_array("B", [8], dace.float16)
     state = sdfg.add_state()

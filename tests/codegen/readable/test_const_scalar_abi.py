@@ -27,7 +27,7 @@ BY_REF, BY_VALUE = "const double& ", "const double "
 
 def _nsdfg_scalar_arg_sdfg(name="abi"):
     """out[j] *= s, with `s` a READ-ONLY scalar argument of a (non-inlined) nested SDFG."""
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG("inner_nsdfg_scalar_arg_sdfg")
     inner.add_scalar("sc", dace.float64)
     inner.add_array("io", [N], dace.float64)
     ist = inner.add_state("n")

@@ -34,11 +34,11 @@ def test_nonnegativity_uses_the_positive_symbol_assumption():
 
 def _guarded_map(then_index: str, else_index: str):
     """``for i: if i + 1 < N: a[i] = b[<then_index>] else: a[i] = b[<else_index>]``."""
-    sdfg = dace.SDFG('guarded')
+    sdfg = dace.SDFG('guarded_guarded_map')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
 
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_guarded_map')
     inner.add_symbol('i', dace.int64)
     inner.add_array('a', [N], dace.float64)
     inner.add_array('b', [N], dace.float64)

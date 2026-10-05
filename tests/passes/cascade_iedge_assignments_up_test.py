@@ -256,10 +256,10 @@ def test_cross_nsdfg_hoist_l6_stops_at_boundary():
     ``_find_destination`` stops once it leaves the owning SDFG). A v2 that
     routes through ``symbol_mapping`` and drops the shadowed inner
     declaration is future work; this pins the current, intended refusal."""
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_cross_nsdfg_hoist_l6_stops_at_boundary')
     outer.add_symbol('K', dace.int64)
     outer.add_symbol('N', dace.int64)
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_cross_nsdfg_hoist_l6_stops_at_boundary')
     inner.add_symbol('K', dace.int64)
     inner.add_symbol('kp1', dace.int64)
     inner.add_symbol('N', dace.int64)
@@ -372,7 +372,7 @@ def test_all_or_nothing_two_enclosing_loops_invariant_both_hoist():
 
 
 def test_idempotent_second_application_noop():
-    sdfg = dace.SDFG('idempotent')
+    sdfg = dace.SDFG('idempotent_idempotent_second_application_noop')
     sdfg.add_symbol('K', dace.int64)
     sdfg.add_symbol('kp1', dace.int64)
     loop = _make_loop_with_iedge('idem_loop', 'kp1', 'K + 1')
@@ -456,7 +456,7 @@ def test_icon_pattern_per_i_beg_end_is_noop():
     sound when the moving symbol is truly invariant on every level we
     cross. The pass refuses every other move, including this one.
     """
-    sdfg = dace.SDFG('icon_pattern')
+    sdfg = dace.SDFG('icon_pattern_icon_pattern_per_i_beg_end_is_noop')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_symbol('beg', dace.int64)
     sdfg.add_symbol('end', dace.int64)

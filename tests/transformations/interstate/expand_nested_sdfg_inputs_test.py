@@ -194,7 +194,7 @@ def test_expand_terminates_on_wcr_reduction_out_edge():
     st = sdfg.add_state()
     me, mx = st.add_map("m", {"i": "0:M"})
 
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_expand_terminates_on_wcr_reduction_out_edge')
     body.add_array("a", [M], dace.float64)
     body.add_scalar("o", dace.float64)
     bst = body.add_state()
@@ -227,7 +227,7 @@ def per_iteration_nsdfg_in_an_int32_loop() -> tuple[dace.SDFG, dace.SDFGState, d
     Symbolic bounds and stride with no integer literal, so the loop types ``it`` as int32; ``it`` is
     bound by the loop and registered in no symbol table.
     """
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_per_iteration_nsdfg_in_an_int32_loop')
     inner.add_array('x', [1], dace.float64)
     inner.add_array('y', [1], dace.float64)
     inner_state = inner.add_state('compute', is_start_block=True)
@@ -235,7 +235,7 @@ def per_iteration_nsdfg_in_an_int32_loop() -> tuple[dace.SDFG, dace.SDFGState, d
     inner_state.add_edge(inner_state.add_read('x'), None, tasklet, 'a', dace.Memlet('x[0]'))
     inner_state.add_edge(tasklet, 'b', inner_state.add_write('y'), None, dace.Memlet('y[0]'))
 
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_per_iteration_nsdfg_in_an_int32_loop')
     for name in ('M32', 'N32', 'S32'):
         sdfg.add_symbol(name, dace.int32)
     sdfg.add_array('A', ['N32 + 1'], dace.float64)
@@ -270,7 +270,7 @@ def test_an_introduced_loop_iterator_is_declared_inside_at_the_width_its_loop_gi
 
 def strided_window_sdfg() -> dace.SDFG:
     """``b[k] = x[k]`` in a nested SDFG whose ``x`` is the strided window ``a[0:N:2]``."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_strided_window_sdfg')
     inner.add_array('x', [N // 2], dace.float64, strides=[2])
     inner.add_array('y', [N // 2], dace.float64)
     inner.add_state().add_mapped_tasklet('copy', {'k': '0:N//2'}, {'v': dace.Memlet('x[k]')},

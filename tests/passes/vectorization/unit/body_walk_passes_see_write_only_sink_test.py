@@ -59,7 +59,7 @@ def walk_is_degenerate(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
 
 def elementwise_map(with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
     """``B[i] = A[i, 0] * 2`` -- an innermost, flat, WCR-free body."""
-    sdfg = dace.SDFG('elementwise')
+    sdfg = dace.SDFG('elementwise_elementwise_map')
     sdfg.add_array('A', [N, N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
     state = sdfg.add_state('main', is_start_block=True)
@@ -95,7 +95,7 @@ def scatter_wcr_map(with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEnt
 
 
 def body_nest() -> dace.SDFG:
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_body_nest')
     inner.add_symbol('i', dace.int64)
     inner.add_array('p', [N, N], dace.float64)
     inner.add_array('q', [N], dace.float64)
@@ -108,7 +108,7 @@ def body_nest() -> dace.SDFG:
 
 def nested_body_map(with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
     """A map whose body is one NestedSDFG -- the shape the tile emitters require."""
-    sdfg = dace.SDFG('nested_body')
+    sdfg = dace.SDFG('nested_body_nested_body_map')
     sdfg.add_array('A', [N, N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
     state = sdfg.add_state('main', is_start_block=True)
@@ -168,7 +168,7 @@ def map_nesting_a_map(with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapE
 def lifted_reduction_with_dynamic_trip(
         with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEntry, nodes.MapExit, nodes.AccessNode, Reduce]:
     """The post-lift shape: a product-fill map over a data-dependent trip, its buffer, and Reduce."""
-    sdfg = dace.SDFG('lifted')
+    sdfg = dace.SDFG('lifted_lifted_reduction_with_dynamic_trip')
     sdfg.add_symbol('row_end', dace.int64)
     sdfg.add_scalar('re_s', dace.int64)
     sdfg.add_array('A', [N], dace.float64)
@@ -424,7 +424,7 @@ def gather_body_nest() -> dace.SDFG:
 
 
 def test_an_opaque_body_nest_carrying_a_scalar_accumulator_is_recognized_as_a_reduction() -> None:
-    sdfg = dace.SDFG('carried')
+    sdfg = dace.SDFG('carried_an_opaque_body_nest_carrying_a_scalar_accumulator_is_recognized_as_a_reduction')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('acc', [1], dace.float64)
     state = sdfg.add_state('main', is_start_block=True)

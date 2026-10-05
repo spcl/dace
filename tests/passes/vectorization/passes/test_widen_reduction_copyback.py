@@ -21,7 +21,7 @@ def _make_seeded_reduction_body() -> "tuple[dace.SDFG, dace.SDFGState, nodes.Nes
     """A body NSDFG holding a seeded reduction: transient ``priv`` copied (plain) into the
     write-only output connector ``oc``, whose boundary is ``NSDFG[oc] -> acc -[wcr:+]-> acc2`` (the
     ``_boundary_reduction_wcr`` walk needs only the WCR one hop past the connector -- no Map)."""
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_make_seeded_reduction_body')
     inner.add_scalar('priv', dace.float64, transient=True)
     inner.add_scalar('oc', dace.float64, transient=False)  # write-only output connector
     st = inner.add_state('copyback', is_start_block=True)
@@ -29,7 +29,7 @@ def _make_seeded_reduction_body() -> "tuple[dace.SDFG, dace.SDFGState, nodes.Nes
     o = st.add_access('oc')
     st.add_nedge(p, o, Memlet(data='priv', subset=subsets.Range([(0, 0, 1)]), other_subset=subsets.Range([(0, 0, 1)])))
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_make_seeded_reduction_body')
     outer.add_scalar('acc', dace.float64, transient=True)
     outer.add_array('res', [1], dace.float64)
     state = outer.add_state('s', is_start_block=True)
@@ -76,7 +76,7 @@ def test_no_boundary_wcr_leaves_copyback_untouched():
 def test_other_endpoint_widens_guard():
     """``_other_endpoint_widens`` keeps a single-element scalar sink un-widened but widens a
     tile-bound endpoint."""
-    sd = dace.SDFG('g')
+    sd = dace.SDFG('g_other_endpoint_widens_guard')
     sd.add_array('priv', [8], dace.float64, transient=True)
     sd.add_scalar('scalar_sink', dace.float64, transient=True)
     sd.add_array('tileB', [8], dace.float64, transient=True)

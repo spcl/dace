@@ -74,7 +74,7 @@ def test_min_max_use_function_form():
 
 def test_transient_sink_untouched():
     """A WCR into a TRANSIENT sink is not a reduction output -- left alone."""
-    sdfg = dace.SDFG("t")
+    sdfg = dace.SDFG("t_transient_sink_untouched")
     sdfg.add_array("v", [1], dace.float32, transient=True)
     sdfg.add_array("acc", [1], dace.float32, transient=True)  # transient sink
     state = sdfg.add_state()

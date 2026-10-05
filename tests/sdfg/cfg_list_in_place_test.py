@@ -14,7 +14,7 @@ from tests.cfg_tree import (assert_tree_consistent, assert_tree_matches_a_reset,
 
 
 def two_level_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_two_level_sdfg')
     sdfg.add_symbol('n', dace.int64)
     entry = sdfg.add_state('entry', is_start_block=True)
     entry.add_nested_sdfg(inner_sdfg('a', 1), {}, {}, symbol_mapping={'n': 'n'})
@@ -98,7 +98,7 @@ def move_blocks_into_a_new_nested_sdfg_before_dropping_their_region(sdfg):
     """What a lift does: a loop's blocks join a fresh body SDFG, which is nested, then the loop leaves."""
     moved_loop = find(sdfg, 'top_loop')
     body = sdfg.add_state_before(moved_loop, 'lifted_body')
-    fresh = dace.SDFG('lifted', parent=body)
+    fresh = dace.SDFG('lifted_move_blocks_into_a_new_nested_sdfg_before_dropping_their_region', parent=body)
     fresh.add_symbol('n', dace.int64)
     for k, block in enumerate(list(moved_loop.nodes())):
         fresh.add_node(block, is_start_block=k == 0)

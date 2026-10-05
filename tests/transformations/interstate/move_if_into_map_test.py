@@ -72,7 +72,7 @@ def test_move_if_into_map_basic():
     N, M = 6, 5
 
     @dace.program
-    def tester(A: dace.float64[N, M], cond: dace.int32):
+    def tester_move_if_into_map_basic(A: dace.float64[N, M], cond: dace.int32):
         for i in dace.map[0:N]:
             if cond == 1:
                 for j in dace.map[0:M]:
@@ -88,8 +88,8 @@ def test_move_if_into_map_basic():
         "cond": np.int32(0),
     }
 
-    sdfg_on = _run_and_compare(tester, inputs_on, expected_apps=1)
-    _run_and_compare(tester, inputs_off, expected_apps=1)
+    sdfg_on = _run_and_compare(tester_move_if_into_map_basic, inputs_on, expected_apps=1)
+    _run_and_compare(tester_move_if_into_map_basic, inputs_off, expected_apps=1)
 
     assert _count_conditional_blocks(sdfg_on) == 1
     assert _inner_nsdfg_contains_conditional(sdfg_on)
@@ -101,7 +101,7 @@ def test_move_if_into_map_symbolic_condition():
     N, M = 8, 4
 
     @dace.program
-    def tester(A: dace.float64[N, M], threshold: dace.int32):
+    def tester_move_if_into_map_symbolic_condition(A: dace.float64[N, M], threshold: dace.int32):
         for i in dace.map[0:N]:
             if i < threshold:
                 for j in dace.map[0:M]:
@@ -113,7 +113,7 @@ def test_move_if_into_map_symbolic_condition():
         "threshold": np.int32(5),
     }
 
-    sdfg = _run_and_compare(tester, inputs, expected_apps=1)
+    sdfg = _run_and_compare(tester_move_if_into_map_symbolic_condition, inputs, expected_apps=1)
     assert _inner_nsdfg_contains_conditional(sdfg)
 
 
@@ -123,7 +123,8 @@ def test_move_if_into_map_multiple_reads_and_writes():
     N, M = 4, 4
 
     @dace.program
-    def tester(A: dace.float64[N, M], B: dace.float64[N, M], cond: dace.int32):
+    def tester_move_if_into_map_multiple_reads_and_writes(A: dace.float64[N, M], B: dace.float64[N, M],
+                                                          cond: dace.int32):
         for i in dace.map[0:N]:
             if cond == 1:
                 for j in dace.map[0:M]:
@@ -136,7 +137,7 @@ def test_move_if_into_map_multiple_reads_and_writes():
         "cond": np.int32(1),
     }
 
-    sdfg = _run_and_compare(tester, inputs, expected_apps=1)
+    sdfg = _run_and_compare(tester_move_if_into_map_multiple_reads_and_writes, inputs, expected_apps=1)
     assert _inner_nsdfg_contains_conditional(sdfg)
 
 
@@ -146,12 +147,12 @@ def test_move_if_into_map_no_apply_missing_inner_map():
     N = 6
 
     @dace.program
-    def tester(A: dace.float64[N], cond: dace.int32):
+    def tester_move_if_into_map_no_apply_missing_inner_map(A: dace.float64[N], cond: dace.int32):
         for i in dace.map[0:N]:
             if cond == 1:
                 A[i] = A[i] + 1.0
 
-    sdfg: dace.SDFG = tester.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = tester_move_if_into_map_no_apply_missing_inner_map.to_sdfg(simplify=False)
     applied = sdfg.apply_transformations_repeated(MoveIfIntoMap)
     assert applied == 0
 
@@ -162,7 +163,7 @@ def test_move_if_into_map_no_apply_else_branch():
     N, M = 4, 4
 
     @dace.program
-    def tester(A: dace.float64[N, M], cond: dace.int32):
+    def tester_move_if_into_map_no_apply_else_branch(A: dace.float64[N, M], cond: dace.int32):
         for i in dace.map[0:N]:
             if cond == 1:
                 for j in dace.map[0:M]:
@@ -171,7 +172,7 @@ def test_move_if_into_map_no_apply_else_branch():
                 for j in dace.map[0:M]:
                     A[i, j] = A[i, j] - 1.0
 
-    sdfg: dace.SDFG = tester.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = tester_move_if_into_map_no_apply_else_branch.to_sdfg(simplify=False)
     applied = sdfg.apply_transformations_repeated(MoveIfIntoMap)
     assert applied == 0
 
@@ -414,13 +415,13 @@ def test_move_if_into_map_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     N, M = 6, 5
 
     @dace.program
-    def tester(A: dace.float64[N, M], cond: dace.int32):
+    def tester_move_if_into_map_keeps_the_cfg_list_of_a_fresh_reset(A: dace.float64[N, M], cond: dace.int32):
         for i in dace.map[0:N]:
             if cond == 1:
                 for j in dace.map[0:M]:
                     A[i, j] = A[i, j] + 1.0
 
-    sdfg = tester.to_sdfg(simplify=False)
+    sdfg = tester_move_if_into_map_keeps_the_cfg_list_of_a_fresh_reset.to_sdfg(simplify=False)
     resets = spy_on_resets(monkeypatch)
     assert sdfg.apply_transformations_repeated(MoveIfIntoMap) == 1
     monkeypatch.undo()

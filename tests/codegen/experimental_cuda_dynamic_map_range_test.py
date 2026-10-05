@@ -18,7 +18,7 @@ N = dace.symbol('N', dace.int64)
 
 def build_dynamic_range_kernel_sdfg() -> dace.SDFG:
     """One GPU_Device map over ``kidia:kfdia + 1``, both bounds read from scalar arguments."""
-    sdfg = dace.SDFG('dynamic_range_kernel')
+    sdfg = dace.SDFG('dynamic_range_kernel_build_dynamic_range_kernel_sdfg')
     sdfg.add_scalar('kidia', dace.int32)
     sdfg.add_scalar('kfdia', dace.int32)
     sdfg.add_array('a', (N, ), dace.float64, storage=dtypes.StorageType.GPU_Global)

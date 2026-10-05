@@ -53,7 +53,7 @@ def mixed_conditional_tasklet_body(sdfg: dace.SDFG, state: SDFGState, me: dace.n
 
 
 def body_sdfg_shell() -> dace.SDFG:
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_body_sdfg_shell')
     inner.add_symbol('i', dace.int64)
     inner.add_array('p', [N, N], dace.float64)
     inner.add_array('q', [N], dace.float64)

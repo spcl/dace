@@ -13,7 +13,7 @@ import pytest
 
 
 def test_add_mask_creates_bool_register_transient_with_correct_shape():
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG("m_add_mask_creates_bool_register_transient_with_correct_shape")
     name = dace.data.add_mask(sdfg, "_mask", vector_width=8)
     assert name in sdfg.arrays
     arr = sdfg.arrays[name]
@@ -25,7 +25,7 @@ def test_add_mask_creates_bool_register_transient_with_correct_shape():
 
 
 def test_add_mask_avoids_collisions_via_find_new_name():
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG("m_add_mask_avoids_collisions_via_find_new_name")
     sdfg.add_array("_mask", shape=(1, ), dtype=dace.float64)
     name = dace.data.add_mask(sdfg, "_mask", vector_width=4)
     assert name != "_mask"
@@ -35,7 +35,7 @@ def test_add_mask_avoids_collisions_via_find_new_name():
 
 
 def test_add_mask_rejects_non_positive_width():
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG("m_add_mask_rejects_non_positive_width")
     with pytest.raises(ValueError):
         dace.data.add_mask(sdfg, "_mask", vector_width=0)
     with pytest.raises(ValueError):
@@ -46,7 +46,7 @@ def test_add_mask_descriptor_has_no_typeclass_flag():
     """Masks are identified by topology, not by a flag on the descriptor.
     Anyone checking ``isinstance(arr, dace.data.Array) and arr.dtype == dace.bool_``
     should be enough; explicit ``is_mask``-style properties are out of scope."""
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG("m_add_mask_descriptor_has_no_typeclass_flag")
     name = dace.data.add_mask(sdfg, "_mask", vector_width=8)
     arr = sdfg.arrays[name]
     # No new attributes invented; just the standard descriptor surface.
@@ -54,7 +54,7 @@ def test_add_mask_descriptor_has_no_typeclass_flag():
 
 
 def test_add_mask_can_be_allocated_multiple_times_independently():
-    sdfg = dace.SDFG("m")
+    sdfg = dace.SDFG("m_add_mask_can_be_allocated_multiple_times_independently")
     a = dace.data.add_mask(sdfg, "iter_mask", vector_width=8)
     b = dace.data.add_mask(sdfg, "iter_mask", vector_width=8)
     c = dace.data.add_mask(sdfg, "cond_mask", vector_width=8)

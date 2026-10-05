@@ -39,7 +39,7 @@ def body_nest() -> dace.SDFG:
     Connectors carry the OUTER array names, the way ``nest_state_subgraph`` leaves them: the tail
     fuser reads the enclosing SDFG's descriptor by connector name to build the fused body.
     """
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_body_nest')
     inner.add_symbol('i', dace.int64)
     inner.add_array('A', [N, N], dace.float64)
     inner.add_array('B', [N], dace.float64)
@@ -83,7 +83,7 @@ def add_nested_body_map(sdfg: dace.SDFG, state: SDFGState, label: str, rng: str,
 
 def nested_body_map(label: str, with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
     """A single-kernel SDFG holding one such map."""
-    sdfg = dace.SDFG('nested_body')
+    sdfg = dace.SDFG('nested_body_nested_body_map')
     sdfg.add_array('A', [N, N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
     state = sdfg.add_state('main', is_start_block=True)

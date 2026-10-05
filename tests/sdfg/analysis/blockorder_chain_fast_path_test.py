@@ -26,7 +26,7 @@ def general_order(cfg):
 
 
 def test_a_chain_takes_the_fast_path_and_agrees_with_the_dominator_walk():
-    sdfg = dace.SDFG('chain')
+    sdfg = dace.SDFG('chain_a_chain_takes_the_fast_path_and_agrees_with_the_dominator_walk')
     first = sdfg.add_state('first', is_start_block=True)
     second = sdfg.add_state('second')
     third = sdfg.add_state('third')

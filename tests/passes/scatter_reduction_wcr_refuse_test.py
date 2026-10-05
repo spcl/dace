@@ -119,7 +119,7 @@ def build_scatter(schedule, wcr: str = 'lambda x, y: (x + y)') -> dace.SDFG:
     sdfg.add_array('acc', [bins], dace.float64)
     st = sdfg.add_state('main')
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_scatter')
     body.add_scalar('b_in', dace.int64)
     body.add_scalar('w_in', dace.float64)
     body.add_array('oc', [bins], dace.float64)
@@ -164,7 +164,7 @@ def build_self_ref_via_view() -> dace.SDFG:
     sdfg.add_view('acc_view', [bins], dace.float64)
     st = sdfg.add_state('main')
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_self_ref_via_view')
     body.add_scalar('b_in', dace.int64)
     body.add_scalar('w_in', dace.float64)
     body.add_array('oc', [bins], dace.float64)

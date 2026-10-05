@@ -7,7 +7,7 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 
 def _chain(first_assign, second_assign, second_cond=None):
     """``head -[first]-> empty -[second]-> tail`` with a symbol read in ``tail``."""
-    sdfg = dace.SDFG('chain')
+    sdfg = dace.SDFG('chain_chain')
     sdfg.add_symbol('k', dace.int64)
     sdfg.add_symbol('m', dace.int64)
     sdfg.add_array('A', [2], dace.int64)

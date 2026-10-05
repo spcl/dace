@@ -56,11 +56,11 @@ def test_nondividing_stride_readback_is_not_eliminated():
     """
 
     @dace.program
-    def tester(A: dace.float64[10]):
+    def tester_nondividing_stride_readback_is_not_eliminated(A: dace.float64[10]):
         for i in range(0, 10, 2):
             A[8] = A[i] * 2.0
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester_nondividing_stride_readback_is_not_eliminated.to_sdfg(simplify=True)
     assert len(_loops(sdfg)) == 1
 
     applied = sdfg.apply_transformations_repeated(LoopOverwriteElimination)
@@ -77,12 +77,12 @@ def test_nondividing_stride_readback_is_value_preserving():
     """
 
     @dace.program
-    def tester(A: dace.float64[10]):
+    def tester_nondividing_stride_readback_is_value_preserving(A: dace.float64[10]):
         for i in range(0, 10, 2):
             A[8] = A[i] * 2.0
 
-    ref_sdfg = tester.to_sdfg(simplify=True)
-    xf_sdfg = tester.to_sdfg(simplify=True)
+    ref_sdfg = tester_nondividing_stride_readback_is_value_preserving.to_sdfg(simplify=True)
+    xf_sdfg = tester_nondividing_stride_readback_is_value_preserving.to_sdfg(simplify=True)
     xf_sdfg.apply_transformations_repeated(LoopOverwriteElimination)
 
     base = np.arange(1.0, 11.0, dtype=np.float64)
@@ -102,12 +102,12 @@ def test_nondividing_stride_without_readback_still_eliminates():
     """
 
     @dace.program
-    def tester(A: dace.float64[10]):
+    def tester_nondividing_stride_without_readback_still_eliminates(A: dace.float64[10]):
         for i in range(0, 10, 2):
             A[9] = A[i] * 2.0
 
-    ref_sdfg = tester.to_sdfg(simplify=True)
-    xf_sdfg = tester.to_sdfg(simplify=True)
+    ref_sdfg = tester_nondividing_stride_without_readback_still_eliminates.to_sdfg(simplify=True)
+    xf_sdfg = tester_nondividing_stride_without_readback_still_eliminates.to_sdfg(simplify=True)
 
     base = np.arange(1.0, 11.0, dtype=np.float64)
     ref, got = base.copy(), base.copy()
@@ -131,7 +131,7 @@ def test_symbolic_bound_nonunit_stride_is_value_preserving():
     N = dace.symbol('N')
 
     @dace.program
-    def tester(A: dace.float64[64], B: dace.float64[1]):
+    def tester_symbolic_bound_nonunit_stride_is_value_preserving(A: dace.float64[64], B: dace.float64[1]):
         for i in range(0, N, 2):
             B[0] = A[i]
 
@@ -139,7 +139,7 @@ def test_symbolic_bound_nonunit_stride_is_value_preserving():
         A = (np.arange(64.0, dtype=np.float64) * 1.25).copy()
         expected = np.array([A[max(range(0, n, 2))]], dtype=np.float64)
 
-        xf_sdfg = tester.to_sdfg(simplify=True)
+        xf_sdfg = tester_symbolic_bound_nonunit_stride_is_value_preserving.to_sdfg(simplify=True)
         xf_sdfg.apply_transformations_repeated(LoopOverwriteElimination)
         got = np.zeros(1, dtype=np.float64)
         xf_sdfg(A=A.copy(), B=got, N=n)

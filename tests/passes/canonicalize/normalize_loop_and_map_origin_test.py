@@ -237,7 +237,7 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     """``scope_children`` restarts at every NestedSDFG, so the walk recurses into
     one as its own root -- from the scope level it sits at, i.e. after every Map
     enclosing it has already been shifted."""
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_nested_sdfg_map_is_rebased_after_its_enclosing_map')
     inner.add_array("A", [16, 16], dace.float64)
     istate = inner.add_state("ibody", is_start_block=True)
     ime, imx = istate.add_map("inner_map", {"j": "3:9"})
@@ -248,7 +248,7 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     imx.add_out_connector("OUT_A")
     istate.add_edge(imx, "OUT_A", istate.add_write("A"), None, dace.Memlet("A[i, 3:9]"))
 
-    sdfg = dace.SDFG("outer")
+    sdfg = dace.SDFG('outer_nested_sdfg_map_is_rebased_after_its_enclosing_map')
     sdfg.add_array("A", [16, 16], dace.float64)
     state = sdfg.add_state("body", is_start_block=True)
     ome, omx = state.add_map("outer_map", {"i": "2:10"})

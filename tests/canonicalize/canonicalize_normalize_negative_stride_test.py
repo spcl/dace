@@ -22,11 +22,11 @@ def test_reverse_loop_normalizes_to_positive_stride():
     (and therefore semantics) is preserved."""
 
     @dace.program
-    def reverse_recurrence(a: dace.float64[N], b: dace.float64[N]):
+    def reverse_recurrence_reverse_loop_normalizes_to_positive_stride(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - 2, -1, -1):
             a[i + 1] = a[i] + b[i]
 
-    sdfg = reverse_recurrence.to_sdfg(simplify=True)
+    sdfg = reverse_recurrence_reverse_loop_normalizes_to_positive_stride.to_sdfg(simplify=True)
     res = NormalizeNegativeStride().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -43,7 +43,7 @@ def test_reverse_recurrence_value_preserving():
     original Python reference (iteration order preserved by the rebinding)."""
 
     @dace.program
-    def reverse_recurrence(a: dace.float64[N], b: dace.float64[N]):
+    def reverse_recurrence_reverse_recurrence_value_preserving(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - 2, -1, -1):
             a[i + 1] = a[i] + b[i]
 
@@ -56,7 +56,7 @@ def test_reverse_recurrence_value_preserving():
     for i in range(n - 2, -1, -1):
         ref[i + 1] = ref[i] + b0[i]
 
-    sdfg = reverse_recurrence.to_sdfg(simplify=True)
+    sdfg = reverse_recurrence_reverse_recurrence_value_preserving.to_sdfg(simplify=True)
     NormalizeNegativeStride().apply_pass(sdfg, {})
     sdfg.validate()
     got = a0.copy()

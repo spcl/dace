@@ -86,10 +86,10 @@ def forward_and_inverse(axes, norm):
     """``fftn`` and ``ifftn`` of a rank-3 array over ``axes`` under ``norm``, as one program."""
 
     @dace.program
-    def transforms(x: dace.complex128[6, 10, 8]):
+    def transforms_forward_and_inverse(x: dace.complex128[6, 10, 8]):
         return np.fft.fftn(x, axes=axes, norm=norm), np.fft.ifftn(x, axes=axes, norm=norm)
 
-    return transforms
+    return transforms_forward_and_inverse
 
 
 def check_norms_and_axes(implementation: str, axes, gpu: bool = False):
@@ -106,11 +106,13 @@ def check_single_precision(implementation: str, gpu: bool = False):
     """complex64 stays complex64 through the transform and its normalisation."""
 
     @dace.program
-    def transforms(x: dace.complex64[N]):
+    def transforms_check_single_precision(x: dace.complex64[N]):
         return np.fft.fft(x), np.fft.ifft(x)
 
     x = rng_complex((256, ), np.complex64)
-    forward, inverse = run_without_fallback(compile_with(transforms, implementation, gpu), x=x.copy(), N=256)
+    forward, inverse = run_without_fallback(compile_with(transforms_check_single_precision, implementation, gpu),
+                                            x=x.copy(),
+                                            N=256)
     assert forward.dtype == np.complex64 and inverse.dtype == np.complex64
     np.testing.assert_allclose(forward, np.fft.fft(x), rtol=1e-4, atol=1e-3)
     np.testing.assert_allclose(inverse, np.fft.ifft(x), rtol=1e-4, atol=1e-5)
@@ -120,11 +122,11 @@ def check_leading_axis(implementation: str, gpu: bool = False):
     """``fft(x, axis=0)`` of a matrix: each transform steps by the row length, the batch by one."""
 
     @dace.program
-    def transform(x: dace.complex128[16, 12]):
+    def transform_check_leading_axis(x: dace.complex128[16, 12]):
         return np.fft.fft(x, axis=0)
 
     x = rng_complex((16, 12))
-    got = run_without_fallback(compile_with(transform, implementation, gpu), x=x.copy())
+    got = run_without_fallback(compile_with(transform_check_leading_axis, implementation, gpu), x=x.copy())
     np.testing.assert_allclose(got, np.fft.fft(x, axis=0), rtol=1e-12, atol=1e-12)
 
 
@@ -132,12 +134,12 @@ def check_in_place(implementation: str, gpu: bool = False):
     """``x[:] = fft(x)`` overwrites the operand it reads."""
 
     @dace.program
-    def transform(x: dace.complex128[N]):
+    def transform_check_in_place(x: dace.complex128[N]):
         x[:] = np.fft.fft(x)
 
     x = rng_complex((300, ))
     want = np.fft.fft(x)
-    run_without_fallback(compile_with(transform, implementation, gpu), x=x, N=300)
+    run_without_fallback(compile_with(transform_check_in_place, implementation, gpu), x=x, N=300)
     np.testing.assert_allclose(x, want, rtol=1e-12, atol=1e-10)
 
 
@@ -177,11 +179,11 @@ def test_fftw3_falls_back_to_pure_for_a_repeated_axis():
     """numpy transforms a repeated axis twice; one FFTW plan cannot, so the expansion hands it to ``pure``."""
 
     @dace.program
-    def transform(x: dace.complex128[8, 6]):
+    def transform_fftw3_falls_back_to_pure_for_a_repeated_axis(x: dace.complex128[8, 6]):
         return np.fft.fftn(x, axes=(1, 1))
 
     x = rng_complex((8, 6))
-    sdfg = compile_with(transform, 'FFTW3')
+    sdfg = compile_with(transform_fftw3_falls_back_to_pure_for_a_repeated_axis, 'FFTW3')
     with pytest.warns(UserWarning, match='FFTW3 cannot transform axes'):
         sdfg.expand_library_nodes()
     np.testing.assert_allclose(sdfg(x=x.copy()), np.fft.fftn(x, axes=(1, 1)), rtol=1e-12, atol=1e-12)
@@ -252,11 +254,11 @@ def test_gpu_fft_falls_back_to_pure_for_a_middle_axis():
     """A middle axis leaves two batch strides, which no ``MakePlanMany`` layout expresses."""
 
     @dace.program
-    def transform(x: dace.complex128[4, 6, 8]):
+    def transform_gpu_fft_falls_back_to_pure_for_a_middle_axis(x: dace.complex128[4, 6, 8]):
         return np.fft.fft(x, axis=1)
 
     x = rng_complex((4, 6, 8))
-    sdfg = compile_with(transform, gpu_implementation(), gpu=True)
+    sdfg = compile_with(transform_gpu_fft_falls_back_to_pure_for_a_middle_axis, gpu_implementation(), gpu=True)
     with pytest.warns(UserWarning, match='cannot transform axes'):
         sdfg.expand_library_nodes()
     np.testing.assert_allclose(sdfg(x=x.copy()), np.fft.fft(x, axis=1), rtol=1e-12, atol=1e-12)

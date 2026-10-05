@@ -117,7 +117,7 @@ def test_answers_match_a_search_per_query_across_breaks_and_sibling_loops():
 def test_a_foreign_state_reaches_nothing():
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
-    other = dace.SDFG('other').add_state('alone', is_start_block=True)
+    other = dace.SDFG('other_a_foreign_state_reaches_nothing').add_state('alone', is_start_block=True)
     states = list(sdfg.all_states())
     assert not flow.reaches_avoiding(other, states[0], states[1])
     assert not flow.reaches_avoiding(states[0], other, states[1])

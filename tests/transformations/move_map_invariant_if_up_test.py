@@ -57,13 +57,13 @@ def test_chain_guard_lands_between_maps():
     hoisted out of j only and comes to rest between the two maps."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_chain_guard_lands_between_maps(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[i] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_chain_guard_lands_between_maps.to_sdfg(simplify=True)
     a = np.array([1.0, -1.0] * (N // 2))
     before = _run(sdfg, a=a)
 
@@ -78,7 +78,7 @@ def test_chain_guard_value_preserving_both_branches():
     """A guard with an else branch keeps both branches' values."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_chain_guard_value_preserving_both_branches(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[i] > 0.0:
@@ -86,7 +86,7 @@ def test_chain_guard_value_preserving_both_branches():
                 else:
                     b[i, j] = -3.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_chain_guard_value_preserving_both_branches.to_sdfg(simplify=True)
     a = np.array([1.0, -1.0] * (N // 2))
     before = _run(sdfg, a=a)
 
@@ -105,13 +105,13 @@ def test_symbolic_condition_leaves_every_map():
     K = dace.symbol('K')
 
     @dace.program
-    def kern(b: dace.float64[N, N]):
+    def kern_symbolic_condition_leaves_every_map(b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if K > 0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_symbolic_condition_leaves_every_map.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 2, "one hoist per map level"
     sdfg.validate()
     assert _guard_depth(sdfg) == 0, "a fully invariant guard must clear the whole chain"
@@ -130,13 +130,13 @@ def test_inner_param_dependent_guard_is_not_hoisted():
     per-element mask that must stay inside."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_inner_param_dependent_guard_is_not_hoisted(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[j] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_inner_param_dependent_guard_is_not_hoisted.to_sdfg(simplify=True)
     before = copy.deepcopy(sdfg)
     a = np.array([1.0, -1.0] * (N // 2))
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
@@ -147,13 +147,13 @@ def test_two_dimensional_guard_is_not_hoisted():
     """``if a2[i, j]`` depends on both parameters; neither level accepts it."""
 
     @dace.program
-    def kern(a2: dace.float64[N, N], b: dace.float64[N, N]):
+    def kern_two_dimensional_guard_is_not_hoisted(a2: dace.float64[N, N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a2[i, j] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_two_dimensional_guard_is_not_hoisted.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
 
 
@@ -162,12 +162,12 @@ def test_collapsed_map_checks_every_parameter():
     *all* of its parameters, not just the first."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_collapsed_map_checks_every_parameter(a: dace.float64[N], b: dace.float64[N, N]):
         for i, j in dace.map[0:N, 0:N]:
             if a[j] > 0.0:
                 b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_collapsed_map_checks_every_parameter.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None, "j is a parameter of the collapsed map"
 
 
@@ -176,12 +176,12 @@ def test_collapsed_map_invariant_condition_hoists():
     K = dace.symbol('K')
 
     @dace.program
-    def kern(b: dace.float64[N, N]):
+    def kern_collapsed_map_invariant_condition_hoists(b: dace.float64[N, N]):
         for i, j in dace.map[0:N, 0:N]:
             if K > 0:
                 b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_collapsed_map_invariant_condition_hoists.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is not None
     sdfg.validate()
     assert _guard_depth(sdfg) == 0, "a single collapsed map has no chain to stall in"
@@ -191,13 +191,13 @@ def test_no_match_leaves_graph_untouched():
     """A pass that does not apply must not mutate the graph."""
 
     @dace.program
-    def kern(a2: dace.float64[N, N], b: dace.float64[N, N]):
+    def kern_no_match_leaves_graph_untouched(a2: dace.float64[N, N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a2[i, j] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_no_match_leaves_graph_untouched.to_sdfg(simplify=True)
     before = sdfg.to_json()
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before, "no-apply must be a no-op on the graph"
@@ -209,13 +209,13 @@ def test_guard_whose_branch_holds_a_map_is_value_preserving():
     result must still compute the same values."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_guard_whose_branch_holds_a_map_is_value_preserving(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             if a[i] > 0.0:
                 for j in dace.map[0:N]:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_guard_whose_branch_holds_a_map_is_value_preserving.to_sdfg(simplify=True)
     a = np.array([1.0, -1.0] * (N // 2))
     before = _run(sdfg, a=a)
     MoveMapInvariantIfUp().apply_pass(sdfg, {})
@@ -238,13 +238,13 @@ def test_body_defined_condition_symbol_is_never_stranded():
     """
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_body_defined_condition_symbol_is_never_stranded(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[i] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_body_defined_condition_symbol_is_never_stranded.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1, "must stop at the map its condition reads"
     sdfg.validate()
     # Code generation resolves every free symbol -- this is what regressed.
@@ -264,13 +264,13 @@ def test_require_full_hoist_refuses_a_partial_hoist():
     """
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_require_full_hoist_refuses_a_partial_hoist(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[i] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_require_full_hoist_refuses_a_partial_hoist.to_sdfg(simplify=True)
     before = sdfg.to_json()
     assert MoveMapInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before, "declining must not mutate the graph"
@@ -283,13 +283,13 @@ def test_require_full_hoist_takes_a_whole_chain_hoist():
     K = dace.symbol('K')
 
     @dace.program
-    def kern(b: dace.float64[N, N]):
+    def kern_require_full_hoist_takes_a_whole_chain_hoist(b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if K > 0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_require_full_hoist_takes_a_whole_chain_hoist.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 2
     sdfg.validate()
     assert _guard_depth(sdfg) == 0
@@ -312,13 +312,13 @@ def test_does_not_ping_pong_with_move_if_into_map():
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N], thr: dace.float64):
+    def kern_does_not_ping_pong_with_move_if_into_map(a: dace.float64[N], b: dace.float64[N, N], thr: dace.float64):
         for i in dace.map[0:N]:
             if a[i] > thr:
                 for j in dace.map[0:N]:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_does_not_ping_pong_with_move_if_into_map.to_sdfg(simplify=True)
     a = np.array([1.0, -1.0] * (N // 2))
     ref = np.where((a > 0.0)[:, None], 1.0, 0.0)
 
@@ -341,13 +341,13 @@ def test_partial_hoist_over_a_branch_with_maps_is_refused():
     whole chain; a partial hoist would undo ``MoveIfIntoMap``'s co-location."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_partial_hoist_over_a_branch_with_maps_is_refused(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             if a[i] > 0.0:
                 for j in dace.map[0:N]:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_partial_hoist_over_a_branch_with_maps_is_refused.to_sdfg(simplify=True)
     before = sdfg.to_json()
     # ``a[i]`` cannot clear ``map i``, and its branch holds ``map j``.
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
@@ -371,7 +371,7 @@ def test_unrelated_dataflow_in_the_state_blocks_the_hoist():
     st = sdfg.add_state('main', is_start_block=True)
 
     # Guarded map writing b from a.
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_unrelated_dataflow_in_the_state_blocks_the_hoist')
     inner.add_array('ai', [1], dace.float64)
     inner.add_array('bo', [1], dace.float64)
     cb = ConditionalBlock('guard')
@@ -400,13 +400,13 @@ def test_idempotent():
     """Re-running finds nothing new once the guard has settled."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+    def kern_idempotent(a: dace.float64[N], b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if a[i] > 0.0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_idempotent.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
     sdfg.validate()
@@ -417,13 +417,13 @@ def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(mo
     K = dace.symbol('K')
 
     @dace.program
-    def kern(b: dace.float64[N, N]):
+    def kern_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(b: dace.float64[N, N]):
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 if K > 0:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset.to_sdfg(simplify=True)
     resets = spy_on_resets(monkeypatch)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 2
     monkeypatch.undo()

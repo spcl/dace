@@ -47,7 +47,7 @@ def nested_guarded_sdfg() -> dace.SDFG:
     """The same guard, one nesting level down: an outer SDFG whose only payload is a
     NestedSDFG holding it."""
     inner = guarded_sdfg('inner', 'a')
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_nested_guarded_sdfg')
     outer.add_array('A', [N], dace.float64)
     state = outer.add_state('s')
     nested = state.add_nested_sdfg(inner, {}, {'a'})

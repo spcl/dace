@@ -46,7 +46,7 @@ def nested_sdfg_nodes(sdfg: dace.SDFG) -> list:
 
 def leaf_with_an_unused_input() -> dace.SDFG:
     """Reads ``c`` into ``b``; its ``a`` input is connected but never read."""
-    leaf = dace.SDFG('leaf')
+    leaf = dace.SDFG('leaf_leaf_with_an_unused_input')
     for name in ('a', 'b', 'c'):
         leaf.add_array(name, [N], dace.float64)
     state = leaf.add_state('leaf_body')
@@ -68,7 +68,7 @@ def two_level_nest() -> dace.SDFG:
     body.add_edge(body.add_read('c'), None, leaf_node, 'c', dace.Memlet(f'c[0:{N}]'))
     body.add_edge(leaf_node, 'b', body.add_write('b'), None, dace.Memlet(f'b[0:{N}]'))
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_two_level_nest')
     for name in ('a', 'b', 'c'):
         outer.add_array(name, [N], dace.float64)
     state = outer.add_state('outer_body')
@@ -131,7 +131,7 @@ def test_every_mapped_body_in_a_state_is_inlined_as_the_wrapper_does():
 
 
 def test_nothing_accepted_returns_none_and_leaves_the_graph_alone():
-    sdfg = dace.SDFG('flat')
+    sdfg = dace.SDFG('flat_nothing_accepted_returns_none_and_leaves_the_graph_alone')
     sdfg.add_array('a', [N], dace.float64)
     state = sdfg.add_state()
     tasklet = state.add_tasklet('t', {}, {'out': None}, 'out = 1.0')

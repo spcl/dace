@@ -3,7 +3,7 @@ import dace.sdfg.construction_utils as cutil
 
 
 def _get_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG("sd1")
+    sdfg = dace.SDFG('sd1_get_sdfg')
     s1 = sdfg.add_state("s1", is_start_block=True)
 
     sdfg.add_array("A", (5, 5), dace.float64)

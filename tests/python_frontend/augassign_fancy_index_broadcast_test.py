@@ -17,7 +17,8 @@ C = dace.symbol('C')
 def test_fancy_indexed_target_broadcasts_a_declared_one_axis():
 
     @dace.program
-    def scatter(pf: dace.float64[N, 8, 3], area: dace.float64[N], corners: dace.int64[4]):
+    def scatter_fancy_indexed_target_broadcasts_a_declared_one_axis(pf: dace.float64[N, 8, 3], area: dace.float64[N],
+                                                                    corners: dace.int64[4]):
         pf[:, corners, 0] += area[:, None]
 
     rng = np.random.default_rng(0)
@@ -26,7 +27,7 @@ def test_fancy_indexed_target_broadcasts_a_declared_one_axis():
     corners = np.array([0, 2, 4, 6], dtype=np.int64)
     ref = pf.copy()
     ref[:, corners, 0] += area[:, None]
-    scatter(pf=pf, area=area, corners=corners, N=5)
+    scatter_fancy_indexed_target_broadcasts_a_declared_one_axis(pf=pf, area=area, corners=corners, N=5)
     assert np.allclose(pf, ref)
 
 
@@ -34,7 +35,8 @@ def test_fancy_indexed_target_without_an_integer_axis():
     """The same alignment with nothing squeezed on the target -- the operand keeps its axis too."""
 
     @dace.program
-    def scatter(pf: dace.float64[N, 8], area: dace.float64[N], corners: dace.int64[4]):
+    def scatter_fancy_indexed_target_without_an_integer_axis(pf: dace.float64[N, 8], area: dace.float64[N],
+                                                             corners: dace.int64[4]):
         pf[:, corners] += area[:, None]
 
     rng = np.random.default_rng(1)
@@ -43,7 +45,7 @@ def test_fancy_indexed_target_without_an_integer_axis():
     corners = np.array([0, 2, 4, 6], dtype=np.int64)
     ref = pf.copy()
     ref[:, corners] += area[:, None]
-    scatter(pf=pf, area=area, corners=corners, N=5)
+    scatter_fancy_indexed_target_without_an_integer_axis(pf=pf, area=area, corners=corners, N=5)
     assert np.allclose(pf, ref)
 
 

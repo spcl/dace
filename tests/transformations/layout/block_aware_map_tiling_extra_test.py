@@ -287,7 +287,7 @@ def test_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not():
     N = dace.symbol("N")
 
     def map_entry(ranges):
-        sdfg = dace.SDFG("g")
+        sdfg = dace.SDFG('g_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not')
         state = sdfg.add_state("s", is_start_block=True)
         me, _ = state.add_map("m", ranges)
         return me

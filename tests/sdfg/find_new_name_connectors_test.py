@@ -60,7 +60,7 @@ def test_the_connector_avoiding_name_is_safe_to_add():
 
 def test_inlining_lifts_a_nested_transient_past_an_outer_connector_name() -> None:
     sdfg = sdfg_with_a_tmp_connector()
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_inlining_lifts_a_nested_transient_past_an_outer_connector_name')
     inner.add_array('x', [4], dace.float64)
     inner.add_array('y', [4], dace.float64)
     inner.add_scalar('tmp', dace.float64, transient=True)

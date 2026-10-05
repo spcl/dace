@@ -17,16 +17,16 @@ import dace
 def test_numpy_empty_default_dtype_matches_numpy():
 
     @dace.program
-    def f(x: dace.float64[10]):
+    def f_numpy_empty_default_dtype_matches_numpy(x: dace.float64[10]):
         y = np.empty(10)
         y[:] = 1.0
         x[:] = y
 
     x = np.zeros(10)
-    f(x)
+    f_numpy_empty_default_dtype_matches_numpy(x)
     assert np.array_equal(x, np.ones(10))
 
-    sdfg = f.to_sdfg(simplify=False)
+    sdfg = f_numpy_empty_default_dtype_matches_numpy.to_sdfg(simplify=False)
     transients = [d.dtype for d in sdfg.arrays.values() if d.transient]
     assert any(dt == dace.float64 for dt in transients)
 
@@ -34,16 +34,16 @@ def test_numpy_empty_default_dtype_matches_numpy():
 def test_numpy_empty_explicit_dtype_still_honoured():
 
     @dace.program
-    def f(x: dace.int32[10]):
+    def f_numpy_empty_explicit_dtype_still_honoured(x: dace.int32[10]):
         y = np.empty(10, dtype=np.int32)
         y[:] = 3
         x[:] = y
 
     x = np.zeros(10, dtype=np.int32)
-    f(x)
+    f_numpy_empty_explicit_dtype_still_honoured(x)
     assert np.array_equal(x, np.full(10, 3, dtype=np.int32))
 
-    sdfg = f.to_sdfg(simplify=False)
+    sdfg = f_numpy_empty_explicit_dtype_still_honoured.to_sdfg(simplify=False)
     transients = [d.dtype for d in sdfg.arrays.values() if d.transient]
     assert any(dt == dace.int32 for dt in transients)
 
@@ -51,52 +51,52 @@ def test_numpy_empty_explicit_dtype_still_honoured():
 def test_numpy_empty_like_unaffected():
 
     @dace.program
-    def f(x: dace.float64[10]):
+    def f_numpy_empty_like_unaffected(x: dace.float64[10]):
         y = np.empty_like(x)
         y[:] = 2.0
         x[:] = y
 
     x = np.zeros(10)
-    f(x)
+    f_numpy_empty_like_unaffected(x)
     assert np.array_equal(x, np.full(10, 2.0))
 
 
 def test_copy_of_column_slice_matches_numpy():
 
     @dace.program
-    def f(path: dace.float64[10, 10], out: dace.float64[10]):
+    def f_copy_of_column_slice_matches_numpy(path: dace.float64[10, 10], out: dace.float64[10]):
         out[:] = path[:, 1].copy()
 
     rng = np.random.default_rng(0)
     path = rng.random((10, 10))
     out = np.zeros(10)
-    f(path, out)
+    f_copy_of_column_slice_matches_numpy(path, out)
     assert np.allclose(out, path[:, 1])
 
 
 def test_copy_of_row_slice_matches_numpy():
 
     @dace.program
-    def f(path: dace.float64[10, 10], out: dace.float64[10]):
+    def f_copy_of_row_slice_matches_numpy(path: dace.float64[10, 10], out: dace.float64[10]):
         out[:] = path[1, :].copy()
 
     rng = np.random.default_rng(0)
     path = rng.random((10, 10))
     out = np.zeros(10)
-    f(path, out)
+    f_copy_of_row_slice_matches_numpy(path, out)
     assert np.allclose(out, path[1, :])
 
 
 def test_numpy_copy_function_on_slice_matches_numpy():
 
     @dace.program
-    def f(path: dace.float64[10, 10], out: dace.float64[10]):
+    def f_numpy_copy_function_on_slice_matches_numpy(path: dace.float64[10, 10], out: dace.float64[10]):
         out[:] = np.copy(path[:, 1])
 
     rng = np.random.default_rng(0)
     path = rng.random((10, 10))
     out = np.zeros(10)
-    f(path, out)
+    f_numpy_copy_function_on_slice_matches_numpy(path, out)
     assert np.allclose(out, path[:, 1])
 
 
@@ -104,13 +104,13 @@ def test_copy_of_whole_array_still_works():
     """Control: copying a plain (non-view) array must remain unaffected."""
 
     @dace.program
-    def f(path: dace.float64[10, 10], out: dace.float64[10, 10]):
+    def f_copy_of_whole_array_still_works(path: dace.float64[10, 10], out: dace.float64[10, 10]):
         out[:] = path.copy()
 
     rng = np.random.default_rng(0)
     path = rng.random((10, 10))
     out = np.zeros((10, 10))
-    f(path, out)
+    f_copy_of_whole_array_still_works(path, out)
     assert np.allclose(out, path)
 
 

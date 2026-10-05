@@ -302,7 +302,7 @@ def test_data_dependent_siblings_merge_without_a_cycle():
 
 def _inner_read_write() -> dace.SDFG:
     """Sibling body ``b = a + 1``."""
-    inner = dace.SDFG('inner_rw')
+    inner = dace.SDFG('inner_rw_inner_read_write')
     inner.add_array('a', [1], dace.float64)
     inner.add_array('b', [1], dace.float64)
     st = inner.add_state()

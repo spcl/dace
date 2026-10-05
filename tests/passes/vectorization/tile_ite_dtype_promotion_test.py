@@ -31,7 +31,7 @@ def _build_sdfg(kind_t: str, t_dtype, e_dtype, out_dtype):
     kind_e='Tile')`` node: a bool ``mask`` array, an ``e`` array (``_e``, always Tile-kind),
     a ``t`` array (``_t``, only when ``kind_t == 'Tile'``) and an ``o`` output array. Returns
     ``(sdfg, state, ite)`` with the node wired but NOT validated -- the caller validates."""
-    sdfg = dace.SDFG("probe")
+    sdfg = dace.SDFG("probe_build_sdfg")
     sdfg.add_array("mask", (2, ), dace.bool_, transient=False)
     if kind_t == "Tile":
         sdfg.add_array("t", (2, ), t_dtype, transient=False)

@@ -42,7 +42,7 @@ def _build(gather: bool) -> dace.SDFG:
     st = sdfg.add_state('main', is_start_block=True)
     me, mx = st.add_map('m', {'i': '0:N'})
 
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_build')
     inner.add_array('A', [N], dace.float64)
     inner.add_array('out', [N], dace.float64)
     inner.add_scalar('idxval', dace.int64, transient=True)

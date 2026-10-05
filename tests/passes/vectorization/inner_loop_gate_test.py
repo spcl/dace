@@ -58,7 +58,7 @@ def _elementwise_state(container, arr: str, label: str, index: str):
 
 def _flat_body():
     """A body NSDFG that is pure dataflow -- the tileable shape."""
-    inner = dace.SDFG('flat')
+    inner = dace.SDFG('flat_flat_body')
     inner.add_symbol('i', dace.int64)
     inner.add_array('p', [N, N], dace.float64)
     _elementwise_state(inner, 'p', 'body', '0')
@@ -96,7 +96,7 @@ def _conditional_body(guard: str = 'lim > 0'):
     for all W lanes -- the maskable shape this gate must let through. Pass ``'i > 0'`` for the
     opposite case: a guard over the param striding rebinds to the tile base.
     """
-    inner = dace.SDFG('guarded')
+    inner = dace.SDFG('guarded_conditional_body')
     inner.add_symbol('i', dace.int64)
     inner.add_symbol('lim', dace.int64)
     inner.add_array('p', [N, N], dace.float64)

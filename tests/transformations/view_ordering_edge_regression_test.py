@@ -55,7 +55,7 @@ def test_partial_view_write_survives_simplify() -> None:
     """The ordering out-edges of a partially written view used to make simplify() reject it."""
 
     @dace.program
-    def partial_view_write(A: dace.float64[2, 2], B: dace.float64[2]):
+    def partial_view_write_partial_view_write_survives_simplify(A: dace.float64[2, 2], B: dace.float64[2]):
         v = A[1, :]
         v[0] = B[0]
         v[1] = B[1]
@@ -65,7 +65,7 @@ def test_partial_view_write_survives_simplify() -> None:
     expected = a.copy()
     expected[1, :] = b
     got = a.copy()
-    partial_view_write(got, b)
+    partial_view_write_partial_view_write_survives_simplify(got, b)
     assert np.allclose(got, expected), got
 
 
@@ -232,14 +232,14 @@ def test_redundant_array_race_guard_skips_ordering_edges() -> None:
     """The data-race guards fed ordering memlets to _validate_subsets, which warned and refused."""
 
     @dace.program
-    def partial_view_write(A: dace.float64[2, 2], B: dace.float64[2]):
+    def partial_view_write_redundant_array_race_guard_skips_ordering_edges(A: dace.float64[2, 2], B: dace.float64[2]):
         v = A[1, :]
         v[0] = B[0]
         v[1] = B[1]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        sdfg = partial_view_write.to_sdfg(simplify=True)
+        sdfg = partial_view_write_redundant_array_race_guard_skips_ordering_edges.to_sdfg(simplify=True)
     offenders = [str(w.message) for w in caught if 'validate_subsets failed' in str(w.message)]
     assert not offenders, offenders
     sdfg.validate()

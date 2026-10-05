@@ -121,7 +121,7 @@ def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False) -> dace.SDFG:
     sdfg.add_array('acc', [bins], dace.float64)
     st = sdfg.add_state('main')
 
-    nsdfg = dace.SDFG('body')
+    nsdfg = dace.SDFG('body_build_scatter_nsdfg')
     nsdfg.add_scalar('b_in', dace.int64)
     nsdfg.add_scalar('w_in', dace.float64)
     nsdfg.add_array('oc', [bins], dace.float64)

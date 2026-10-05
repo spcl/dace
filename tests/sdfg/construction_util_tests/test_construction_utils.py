@@ -108,13 +108,13 @@ def test_copy_state_contents_into_empty_state_idempotent_on_source():
 
 def test_copy_graph_contents_preserves_start_block():
     """The start block of ``old_graph`` must map to the start block of ``new_graph``."""
-    src = dace.SDFG("src")
+    src = dace.SDFG('src_copy_graph_contents_preserves_start_block')
     src.add_array("a", shape=(1, ), dtype=dace.float64)
     s0 = src.add_state("s0", is_start_block=True)
     s1 = src.add_state("s1")
     src.add_edge(s0, s1, dace.InterstateEdge())
 
-    dst = dace.SDFG("dst")
+    dst = dace.SDFG('dst_copy_graph_contents_preserves_start_block')
     dst.add_array("a", shape=(1, ), dtype=dace.float64)
 
     node_map = copy_graph_contents(src, dst)
@@ -126,13 +126,13 @@ def test_copy_graph_contents_preserves_start_block():
 
 def test_copy_graph_contents_copies_interstate_edge_assignments():
     """Interstate edge ``assignments`` must come across deep-copied, not aliased."""
-    src = dace.SDFG("src")
+    src = dace.SDFG('src_copy_graph_contents_copies_interstate_edge_assignments')
     src.add_symbol("k", dace.int64)
     s0 = src.add_state("s0", is_start_block=True)
     s1 = src.add_state("s1")
     src.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "5"}))
 
-    dst = dace.SDFG("dst")
+    dst = dace.SDFG('dst_copy_graph_contents_copies_interstate_edge_assignments')
     dst.add_symbol("k", dace.int64)
 
     copy_graph_contents(src, dst)
@@ -145,9 +145,9 @@ def test_copy_graph_contents_copies_interstate_edge_assignments():
 
 def test_copy_graph_contents_rejects_non_cfr():
     """The helper has explicit ``assert isinstance(... ControlFlowRegion)`` guards."""
-    src = dace.SDFG("src")
+    src = dace.SDFG('src_copy_graph_contents_rejects_non_cfr')
     state = src.add_state("only_state", is_start_block=True)
-    dst = dace.SDFG("dst")
+    dst = dace.SDFG('dst_copy_graph_contents_rejects_non_cfr')
     with pytest.raises(AssertionError):
         copy_graph_contents(state, dst)
     with pytest.raises(AssertionError):
@@ -210,7 +210,7 @@ def test_move_state_after_rejects_self_move():
 
 def test_move_state_after_rejects_foreign_state():
     sdfg = dace.SDFG("mv_after_foreign")
-    other = dace.SDFG("other")
+    other = dace.SDFG('other_move_state_after_rejects_foreign_state')
     s_local, = _linear_chain(sdfg, ["local"])
     s_foreign, = _linear_chain(other, ["foreign"])
     with pytest.raises(ValueError):
@@ -388,7 +388,7 @@ def test_copy_graph_contents_numerical_correctness():
     """Compute ``c = (a + b) * 2`` in a source SDFG (two states), copy that
     graph into a fresh SDFG, and verify the copied SDFG produces the
     same result."""
-    src = dace.SDFG("src")
+    src = dace.SDFG('src_copy_graph_contents_numerical_correctness')
     for n in ("a", "b", "tmp", "c"):
         src.add_array(n, shape=(1, ), dtype=dace.float64)
     src.arrays["tmp"].transient = True
@@ -413,7 +413,7 @@ def test_copy_graph_contents_numerical_correctness():
     s1.add_edge(t1, "_c", sc, None, dace.Memlet("c[0]"))
 
     # Fresh SDFG with the same descriptors and an empty body.
-    dst = dace.SDFG("dst")
+    dst = dace.SDFG('dst_copy_graph_contents_numerical_correctness')
     for n in ("a", "b", "tmp", "c"):
         dst.add_array(n, shape=(1, ), dtype=dace.float64)
     dst.arrays["tmp"].transient = True

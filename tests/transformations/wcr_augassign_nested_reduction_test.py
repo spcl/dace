@@ -33,7 +33,7 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     """
     cshape = [N] if reduce_over_i else [N, N]
     cidx = "c[k]" if reduce_over_i else "c[i, k]"
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_nested_reduction_sdfg')
     inner.add_symbol("i", dace.int64)
     inner.add_array("arow", [N], dace.float64)
     inner.add_array("c", cshape, dace.float64)

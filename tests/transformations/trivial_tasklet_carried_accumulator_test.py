@@ -20,7 +20,7 @@ N = 8
 
 def _carried_accumulator_sdfg():
     """``for i: (w = A[i]); (w (+)= B[i,k] over k); (A[i] = w)`` across states."""
-    sdfg = dace.SDFG('carried')
+    sdfg = dace.SDFG('carried_carried_accumulator_sdfg')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N, N], dace.float64)
     sdfg.add_transient('w', [1], dace.float64)

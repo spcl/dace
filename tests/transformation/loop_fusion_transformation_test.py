@@ -73,13 +73,14 @@ def mk(n=48, names=("a", "b", "c", "d"), seed=0):
 def test_fuse_loops_fuses_two_sequential_recurrences():
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_fuse_loops_fuses_two_sequential_recurrences(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    before, after, applied, exact = run_fused(prog, mk(names=("a", "b", "c")), 48)
+    before, after, applied, exact = run_fused(prog_fuse_loops_fuses_two_sequential_recurrences,
+                                              mk(names=("a", "b", "c")), 48)
     assert before == 2 and after == 1 and applied == 1
     assert exact
 
@@ -87,13 +88,13 @@ def test_fuse_loops_fuses_two_sequential_recurrences():
 def test_can_be_applied_to_identifies_the_fusable_pair():
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_can_be_applied_to_identifies_the_fusable_pair(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_can_be_applied_to_identifies_the_fusable_pair.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
     assert len(pairs) == 1
     first, second = pairs[0]
@@ -103,19 +104,19 @@ def test_can_be_applied_to_identifies_the_fusable_pair():
 def test_apply_to_a_named_pair_fuses_it():
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_apply_to_a_named_pair_fuses_it(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_apply_to_a_named_pair_fuses_it.to_sdfg(simplify=True)
     first, second = adjacent_loop_pairs(sd)[0]
     LoopFusion.apply_to(sd, first=first, second=second, verify=True, save=False, annotate=False)
     assert nloops(sd) == 1
     bufs = mk(names=("a", "b", "c"))
     ref = {k: v.copy() for k, v in bufs.items()}
-    prog.to_sdfg(simplify=True)(**ref, N=48)
+    prog_apply_to_a_named_pair_fuses_it.to_sdfg(simplify=True)(**ref, N=48)
     got = {k: v.copy() for k, v in bufs.items()}
     sd(**got, N=48)
     assert all(np.allclose(got[k], ref[k]) for k in bufs)
@@ -127,13 +128,13 @@ def test_apply_to_a_named_pair_fuses_it():
 def test_refuses_mismatched_iteration_range():
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_refuses_mismatched_iteration_range(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(2, N):
             c[i] = c[i - 1] + b[i]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_refuses_mismatched_iteration_range.to_sdfg(simplify=True)
     for first, second in adjacent_loop_pairs(sd):
         assert not LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
@@ -141,13 +142,13 @@ def test_refuses_mismatched_iteration_range():
 def test_refuses_doall_parallel_loops():
     # two independent element-wise loops are DOALL -- LoopFusion must not serialize them (LoopToMap's job).
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_refuses_doall_parallel_loops(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] * 2.0
         for i in range(N):
             c[i] = a[i] + 1.0
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_refuses_doall_parallel_loops.to_sdfg(simplify=True)
     for first, second in adjacent_loop_pairs(sd):
         assert not LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
@@ -482,13 +483,14 @@ def test_scalar_recurrence_fuses_at_a_small_trip_count():
     # N is a symbol in the SDFG, so the fusion decision cannot depend on its value -- but the fused loop
     # must still be right at a trip count of 3 (the file otherwise runs everything at 48).
     @dace.program
-    def prog(a: f64[N], b: f64[N], c: f64[N]):
+    def prog_scalar_recurrence_fuses_at_a_small_trip_count(a: f64[N], b: f64[N], c: f64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    before, after, applied, exact = run_fused(prog, mk(n=4, names=("a", "b", "c")), 4)
+    before, after, applied, exact = run_fused(prog_scalar_recurrence_fuses_at_a_small_trip_count,
+                                              mk(n=4, names=("a", "b", "c")), 4)
     assert exact
     assert applied == 1 and after == before - 1
 
@@ -765,7 +767,7 @@ def test_two_d_intermediate_not_contracted_v1():
     # a 2-D intermediate is written under a map scope (many cells per outer iteration) -- v1 refuses to
     # contract it; fusion (and value) are unaffected.
     @dace.program
-    def prog(a: f64[N, N], acc: f64[N, N], out: f64[N, N]):
+    def prog_two_d_intermediate_not_contracted_v1(a: f64[N, N], acc: f64[N, N], out: f64[N, N]):
         tmp = np.empty_like(a)
         for i in range(1, N):
             for j in dace.map[0:N]:
@@ -775,7 +777,8 @@ def test_two_d_intermediate_not_contracted_v1():
             for j in dace.map[0:N]:
                 out[i, j] = out[i - 1, j] + tmp[i, j]
 
-    applied, exact, big_before, big_after = fuse_and_measure(prog, mk2d(names=("a", "acc", "out")), 24)
+    applied, exact, big_before, big_after = fuse_and_measure(prog_two_d_intermediate_not_contracted_v1,
+                                                             mk2d(names=("a", "acc", "out")), 24)
     assert exact
     assert big_before == big_after  # 2-D intermediate left at full size in v1
 
@@ -810,13 +813,14 @@ def test_intermediate_flow_read_ahead_refuses_fusion():
 def test_contraction_never_crashes_without_an_intermediate():
     # a single loop, or a pair sharing no transient, must not trip the contraction pass.
     @dace.program
-    def prog(a: f64[N], b: f64[N], c: f64[N]):
+    def prog_contraction_never_crashes_without_an_intermediate(a: f64[N], b: f64[N], c: f64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]  # b is a program ARG, not a transient -> never contracted
 
-    applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=("a", "b", "c")), 48)
+    applied, exact, big_before, big_after = fuse_and_measure(prog_contraction_never_crashes_without_an_intermediate,
+                                                             mk(names=("a", "b", "c")), 48)
     assert applied == 1 and exact
     assert big_before == big_after == []  # nothing transient to contract
 
@@ -836,7 +840,8 @@ def test_fuse_survives_first_id_shift_after_second_removed():
     from dace.transformation.passes.loop_fission import LoopFission
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def prog_fuse_survives_first_id_shift_after_second_removed(a: dace.float64[N], b: dace.float64[N],
+                                                               c: dace.float64[N], d: dace.float64[N]):
         for i in range(1, N - 1):
             d[i] = d[i - 1] + a[i]  # recurrence on d, independent of c -> fissionable
             c[i] = c[i - 1] + a[i]  # recurrence on c, independent of d
@@ -845,12 +850,12 @@ def test_fuse_survives_first_id_shift_after_second_removed():
 
     n = 24
     inputs = mk(n)
-    ref = prog.to_sdfg(simplify=True)
+    ref = prog_fuse_survives_first_id_shift_after_second_removed.to_sdfg(simplify=True)
     ref.name = "id_shift_ref"
     ref_bufs = {k: v.copy() for k, v in inputs.items()}
     ref(**ref_bufs, N=n)
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_fuse_survives_first_id_shift_after_second_removed.to_sdfg(simplify=True)
     SplitStatements().apply_pass(sd, {})
     LoopFission().apply_pass(sd, {})
 
@@ -883,13 +888,13 @@ def test_unknown_sign_symbolic_read_ahead_is_not_fused():
     K, M = dace.symbol("K"), dace.symbol("M")
 
     @dace.program
-    def prog(a: dace.float64[N + 2], b: dace.float64[N]):
+    def prog_unknown_sign_symbolic_read_ahead_is_not_fused(a: dace.float64[N + 2], b: dace.float64[N]):
         for i in range(1, N):
             a[i] = a[i - 1] * 0.5 + b[i]
         for i in range(1, N):
             b[i] = b[i - 1] * 0.5 + a[i + K - M]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_unknown_sign_symbolic_read_ahead_is_not_fused.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
     assert pairs, "expected the two sequential loops as an adjacency"
     assert not any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
@@ -904,13 +909,13 @@ def test_provable_read_behind_symbolic_still_fuses():
     K = dace.symbol("K")
 
     @dace.program
-    def prog(a: dace.float64[N + 2], b: dace.float64[N]):
+    def prog_provable_read_behind_symbolic_still_fuses(a: dace.float64[N + 2], b: dace.float64[N]):
         for i in range(1, N):
             a[i] = a[i - 1] * 0.5 + b[i]
         for i in range(1, N):
             b[i] = b[i - 1] * 0.5 + a[i - K]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_provable_read_behind_symbolic_still_fuses.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
     assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
         "provable read-behind a[i-K] must remain fusable"
@@ -920,13 +925,13 @@ def test_fusion_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """Splicing the second loop's body into the first moves blocks between regions in place."""
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_fusion_keeps_the_cfg_list_of_a_fresh_reset(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    sd = prog.to_sdfg(simplify=True)
+    sd = prog_fusion_keeps_the_cfg_list_of_a_fresh_reset.to_sdfg(simplify=True)
     resets = spy_on_resets(monkeypatch)
     assert sd.apply_transformations_repeated(LoopFusion) == 1
     monkeypatch.undo()

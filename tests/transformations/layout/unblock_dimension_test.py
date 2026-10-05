@@ -92,7 +92,7 @@ def test_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression():
     unblock = UnblockDimensions(unblock_map={})
     masks, factors = [True, False], [4, 1]
 
-    sdfg = dace.SDFG("probe")
+    sdfg = dace.SDFG('probe_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression')
     st0 = sdfg.add_state("s0")
     st1 = sdfg.add_state("s1")
     edge = dace.InterstateEdge(assignments={"v": "(A[i, j, t] * B[i, j])"})

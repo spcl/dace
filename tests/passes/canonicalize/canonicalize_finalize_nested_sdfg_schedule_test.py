@@ -38,7 +38,7 @@ def _build_nested_reduce_in_parallel_map():
     sdfg.add_array('B', [4096], dace.float64)
     state = sdfg.add_state()
 
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_build_nested_reduce_in_parallel_map')
     inner.add_array('row', [8], dace.float64)
     inner.add_array('acc', [1], dace.float64)
     istate = inner.add_state()

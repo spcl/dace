@@ -82,10 +82,10 @@ def test_roll_lowers_to_a_cshift_in_the_numpy_direction():
     rotates the other way and still type-checks, which is why the direction is asserted here."""
 
     @dace.program
-    def prog(a: dace.float64[8], out: dace.float64[8]):
+    def prog_roll_lowers_to_a_cshift_in_the_numpy_direction(a: dace.float64[8], out: dace.float64[8]):
         out[:] = np.roll(a, 3)
 
-    nodes = cshift_nodes(prog)
+    nodes = cshift_nodes(prog_roll_lowers_to_a_cshift_in_the_numpy_direction)
     assert len(nodes) == 1
     assert nodes[0].dim == 1  # CShift's dim is FORTRAN 1-based; axis 0 is dim 1
     assert nodes[0].shift == 3
@@ -96,10 +96,10 @@ def test_roll_over_two_axes_chains_two_nodes():
     """One node per (shift, axis) pair, in numpy's order -- not one node that tries to do both."""
 
     @dace.program
-    def prog(a: dace.float64[4, 6], out: dace.float64[4, 6]):
+    def prog_roll_over_two_axes_chains_two_nodes(a: dace.float64[4, 6], out: dace.float64[4, 6]):
         out[:] = np.roll(a, (1, -2), axis=(0, 1))
 
-    nodes = cshift_nodes(prog)
+    nodes = cshift_nodes(prog_roll_over_two_axes_chains_two_nodes)
     assert len(nodes) == 2
     assert sorted((n.dim, n.shift) for n in nodes) == [(1, 1), (2, -2)]
     assert all(n.direction is ShiftDirection.NUMPY for n in nodes)
@@ -109,21 +109,21 @@ def test_an_axis_less_roll_over_a_matrix_is_refused():
     """numpy FLATTENS here, which is a reshape only when the operand is contiguous."""
 
     @dace.program
-    def prog(a: dace.float64[4, 6], out: dace.float64[4, 6]):
+    def prog_an_axis_less_roll_over_a_matrix_is_refused(a: dace.float64[4, 6], out: dace.float64[4, 6]):
         out[:] = np.roll(a, 2)
 
     with pytest.raises(Exception, match="flattens"):
-        prog.to_sdfg()
+        prog_an_axis_less_roll_over_a_matrix_is_refused.to_sdfg()
 
 
 def test_mismatched_shift_and_axis_counts_are_refused():
 
     @dace.program
-    def prog(a: dace.float64[4, 6], out: dace.float64[4, 6]):
+    def prog_mismatched_shift_and_axis_counts_are_refused(a: dace.float64[4, 6], out: dace.float64[4, 6]):
         out[:] = np.roll(a, (1, 2, 3), axis=(0, 1))
 
     with pytest.raises(Exception, match="must agree"):
-        prog.to_sdfg()
+        prog_mismatched_shift_and_axis_counts_are_refused.to_sdfg()
 
 
 def test_roll_of_a_strided_view_keeps_the_view_strides():
@@ -137,10 +137,10 @@ def test_roll_of_a_strided_view_keeps_the_view_strides():
     n = 8
 
     @dace.program
-    def prog(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
+    def prog_roll_of_a_strided_view_keeps_the_view_strides(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
         out[:] = np.roll(a[:, 0:n:2], -1, axis=1)
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_roll_of_a_strided_view_keeps_the_view_strides.to_sdfg(simplify=False)
     assert any(isinstance(v, CShift) for v, _ in sdfg.all_nodes_recursive()), "roll must lower to CShift"
     sdfg.expand_library_nodes()
     inner = next(v.sdfg for v, _ in sdfg.all_nodes_recursive()
@@ -154,12 +154,12 @@ def test_roll_of_a_strided_view_computes_the_right_values():
     n = 8
 
     @dace.program
-    def prog(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
+    def prog_roll_of_a_strided_view_computes_the_right_values(a: dace.float64[n, n], out: dace.float64[n, n // 2]):
         out[:] = np.roll(a[:, 0:n:2], -1, axis=1)
 
     a = np.arange(n * n, dtype=np.float64).reshape(n, n)
     out = np.zeros((n, n // 2))
-    prog(a=a.copy(), out=out)
+    prog_roll_of_a_strided_view_computes_the_right_values(a=a.copy(), out=out)
     assert np.allclose(out, np.roll(a[:, 0:n:2], -1, axis=1)), f"{out[0]} != {np.roll(a[:, 0:n:2], -1, axis=1)[0]}"
 
 

@@ -64,7 +64,7 @@ def test_new_symbol_names_matches_new_symbols(program):
 
 def test_new_symbol_names_dynamic_map_range():
     """A dynamic scope input is a defined symbol, so it must be named too."""
-    sdfg = dace.SDFG('dynrange')
+    sdfg = dace.SDFG('dynrange_new_symbol_names_dynamic_map_range')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
     sdfg.add_scalar('lim', dace.int32, transient=False)

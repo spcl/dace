@@ -78,10 +78,11 @@ def test_matmul_rendering_names_the_library_node():
     """The gemm the rendering came from is named in the rendering."""
 
     @dace.program
-    def matmul(a: dace.float64[M, N], b: dace.float64[N, M], c: dace.float64[M, M]):
+    def matmul_matmul_rendering_names_the_library_node(a: dace.float64[M, N], b: dace.float64[N, M],
+                                                       c: dace.float64[M, M]):
         c[:] = a @ b
 
-    sdfg = matmul.to_sdfg(simplify=True)
+    sdfg = matmul_matmul_rendering_names_the_library_node.to_sdfg(simplify=True)
     sdfg.name = 'cpf_comment_matmul'
     code = render(sdfg).code
     assert '// BLAS gemm' in code, ('the matmul rendered without naming the library node it came from:\n' +
@@ -126,10 +127,11 @@ def test_ordinary_codegen_carries_no_mpr_comments():
     """The provenance map is scoped to a rendering; ordinary code generation must not see it."""
 
     @dace.program
-    def matmul(a: dace.float64[M, N], b: dace.float64[N, M], c: dace.float64[M, M]):
+    def matmul_ordinary_codegen_carries_no_mpr_comments(a: dace.float64[M, N], b: dace.float64[N, M],
+                                                        c: dace.float64[M, M]):
         c[:] = a @ b
 
-    sdfg = matmul.to_sdfg(simplify=True)
+    sdfg = matmul_ordinary_codegen_carries_no_mpr_comments.to_sdfg(simplify=True)
     sdfg.name = 'cpf_comment_leak'
     render(sdfg)  # populate and then discard a provenance scope
     with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):

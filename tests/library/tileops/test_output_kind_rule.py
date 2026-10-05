@@ -19,7 +19,7 @@ from dace.memlet import Memlet
 
 
 def _wire_binop(kind_a, kind_b, out_shape, src_dtype=dace.float64):
-    sdfg = dace.SDFG("binop_fixture")
+    sdfg = dace.SDFG("binop_fixture_wire_binop")
     sdfg.add_array("A", (8, ), src_dtype, transient=True)
     sdfg.add_array("B", (8, ), src_dtype, transient=True)
     if out_shape == "scalar":

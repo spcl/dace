@@ -60,7 +60,7 @@ def test_infer_block_size_non_3d_user_size_matching_no_conflict():
 def test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols():
     """A thread-block map in a nested SDFG sized by the nested ``M`` (bound to 32 by the node) gives a
     block of 32: the launch is sized on the host, where ``M`` does not exist."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols')
     inner.add_symbol('M', dace.int64)
     inner.add_array('a', [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
     inner_state = inner.add_state('s', is_start_block=True)

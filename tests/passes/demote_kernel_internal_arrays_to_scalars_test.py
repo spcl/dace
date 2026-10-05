@@ -118,7 +118,7 @@ def test_kernel_output_written_across_gpu_exit_not_demoted():
 
 def test_non_gpu_len1_array_untouched():
     """Outside any GPU kernel, length-1 arrays are left alone (this is a GPU-codegen pass)."""
-    sdfg = dace.SDFG('host')
+    sdfg = dace.SDFG('host_non_gpu_len1_array_untouched')
     sdfg.add_array('a', (1, ), dace.float64, transient=True)
     sdfg.add_array('b', (1, ), dace.float64)
     st = sdfg.add_state('s')
@@ -219,7 +219,7 @@ def test_nested_sdfg_neighbor_does_not_crash():
     one raised ``AttributeError`` -- the cause of the bulk CI failures. A nested SDFG is a sequential
     device function, so the buffer feeding it stays demotable here.
     """
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_nested_sdfg_neighbor_does_not_crash')
     inner.add_array('a', (1, ), dace.float64)
     inner.add_array('b', (1, ), dace.float64)
     s = inner.add_state('s')
@@ -227,7 +227,7 @@ def test_nested_sdfg_neighbor_does_not_crash():
     s.add_edge(s.add_access('a'), None, t, 'x', dace.Memlet('a[0]'))
     s.add_edge(t, 'y', s.add_access('b'), None, dace.Memlet('b[0]'))
 
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_nested_sdfg_neighbor_does_not_crash')
     sdfg.add_array('A', (16, ), dace.float64, storage=GPU_GLOBAL)
     sdfg.add_array('B', (16, ), dace.float64, storage=GPU_GLOBAL)
     sdfg.add_transient('buf', (1, ), dace.float64, storage=REGISTER)

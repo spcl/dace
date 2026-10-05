@@ -35,12 +35,12 @@ def test_the_contiguous_parameter_ends_up_innermost():
     """``aa[i, j]`` is row-major, so ``j`` (stride 1) belongs inside ``i`` (stride N)."""
 
     @dace.program
-    def trapez(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    def trapez_the_contiguous_parameter_ends_up_innermost(aa: dace.float64[N, N], bb: dace.float64[N, N]):
         for j in range(N):
             for i in range(j * V, N):
                 aa[i, j] = bb[i, j] + 1.0
 
-    sdfg = trapez.to_sdfg(simplify=False)
+    sdfg = trapez_the_contiguous_parameter_ends_up_innermost.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     outer, inner = nest(sdfg)
     assert outer is not None, 'the nest did not survive canonicalization'
@@ -60,7 +60,7 @@ def test_the_iteration_set_is_preserved(n, v):
     """The bound rewrite is a re-derivation, not an approximation: same elements, same values."""
 
     @dace.program
-    def trapez(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    def trapez_the_iteration_set_is_preserved(aa: dace.float64[N, N], bb: dace.float64[N, N]):
         for j in range(N):
             for i in range(j * V, N):
                 aa[i, j] = bb[i, j] + 1.0
@@ -72,7 +72,7 @@ def test_the_iteration_set_is_preserved(n, v):
         for i in range(j * v, n):
             want[i, j] = bb[i, j] + 1.0
     got = np.zeros((n, n))
-    sdfg = trapez.to_sdfg(simplify=False)
+    sdfg = trapez_the_iteration_set_is_preserved.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     sdfg(aa=got, bb=bb, N=n, V=v)
     assert np.allclose(got, want)
@@ -82,12 +82,12 @@ def test_a_plain_swap_still_refuses_a_trapezoid():
     """``transform_bounds`` is opt-in: the default contract is unchanged."""
 
     @dace.program
-    def trapez(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    def trapez_a_plain_swap_still_refuses_a_trapezoid(aa: dace.float64[N, N], bb: dace.float64[N, N]):
         for j in dace.map[0:N]:
             for i in dace.map[V * j:N]:
                 aa[i, j] = bb[i, j] + 1.0
 
-    sdfg = trapez.to_sdfg(simplify=True)
+    sdfg = trapez_a_plain_swap_still_refuses_a_trapezoid.to_sdfg(simplify=True)
     outer, inner = nest(sdfg)
     assert not MapInterchange.can_be_applied_to(sdfg, outer_map_entry=outer, inner_map_entry=inner)
     assert MapInterchange.can_be_applied_to(sdfg,

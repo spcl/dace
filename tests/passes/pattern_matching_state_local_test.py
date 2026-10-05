@@ -116,4 +116,5 @@ def test_state_local_refuses_an_interstate_transformation():
     """The resumed walk only holds for a transformation decided by its own state."""
     from dace.transformation.interstate import ConditionFusion
     with pytest.raises(ValueError, match='single-state'):
-        PatternApplyOnceEverywhere([ConditionFusion()], state_local=True).apply_pass(dace.SDFG('x'), {})
+        PatternApplyOnceEverywhere([ConditionFusion()], state_local=True).apply_pass(
+            dace.SDFG('x_state_local_refuses_an_interstate_transformation'), {})

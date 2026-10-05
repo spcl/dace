@@ -31,11 +31,11 @@ def test_modular_wrap_parallelizes_at_either_symbol_width(dtype):
     K = 1
 
     @dace.program
-    def modular_wrap(a: dace.float64[N], b: dace.float64[N]):
+    def modular_wrap_modular_wrap_parallelizes_at_either_symbol_width(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N):
             a[(i + K) % N] = b[i]
 
-    sdfg = modular_wrap.to_sdfg(simplify=False)
+    sdfg = modular_wrap_modular_wrap_parallelizes_at_either_symbol_width.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     maps, loops = structure(sdfg)
     assert maps >= 1, f'the wrap never became a Map at {dtype} (maps={maps}, loops={loops})'
@@ -49,11 +49,11 @@ def test_the_two_widths_agree():
         N = dace.symbol('N', dtype=dtype)
 
         @dace.program
-        def modular_wrap(a: dace.float64[N], b: dace.float64[N]):
+        def modular_wrap_the_two_widths_agree(a: dace.float64[N], b: dace.float64[N]):
             for i in range(N):
                 a[(i + 1) % N] = b[i]
 
-        sdfg = modular_wrap.to_sdfg(simplify=False)
+        sdfg = modular_wrap_the_two_widths_agree.to_sdfg(simplify=False)
         canon.canonicalize(sdfg)
         shapes.append(structure(sdfg))
     assert shapes[0] == shapes[1], f'int32 gave {shapes[0]}, int64 gave {shapes[1]}'

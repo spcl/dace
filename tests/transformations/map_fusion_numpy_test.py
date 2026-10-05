@@ -57,12 +57,16 @@ def test_vertical_two_elementwise_chain():
     """tmp = a+1 ; out = tmp*2 -> the two maps fuse to one."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_two_elementwise_chain(a: dace.float64[N], out: dace.float64[N]):
         tmp = a + 1.0
         out[:] = tmp * 2.0
 
     a = np.random.default_rng(0).random(64)
-    before, after = _check(k, {"a": a, "out": np.zeros(64)}, {"out": (a + 1.0) * 2.0}, syms={"N": 64})
+    before, after = _check(k_vertical_two_elementwise_chain, {
+        "a": a,
+        "out": np.zeros(64)
+    }, {"out": (a + 1.0) * 2.0},
+                           syms={"N": 64})
     assert before == 2 and after == 1
 
 
@@ -70,13 +74,17 @@ def test_vertical_three_elementwise_chain():
     """A chain of three elementwise maps collapses to one."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_three_elementwise_chain(a: dace.float64[N], out: dace.float64[N]):
         t1 = a + 1.0
         t2 = t1 * 3.0
         out[:] = t2 - 2.0
 
     a = np.random.default_rng(1).random(64)
-    before, after = _check(k, {"a": a, "out": np.zeros(64)}, {"out": (a + 1.0) * 3.0 - 2.0}, syms={"N": 64})
+    before, after = _check(k_vertical_three_elementwise_chain, {
+        "a": a,
+        "out": np.zeros(64)
+    }, {"out": (a + 1.0) * 3.0 - 2.0},
+                           syms={"N": 64})
     assert before == 3 and after == 1
 
 
@@ -84,12 +92,19 @@ def test_vertical_2d_elementwise_chain():
     """2-D elementwise producer->consumer fuses (collapsed maps)."""
 
     @dace.program
-    def k(a: dace.float64[N, M], out: dace.float64[N, M]):
+    def k_vertical_2d_elementwise_chain(a: dace.float64[N, M], out: dace.float64[N, M]):
         tmp = a * a
         out[:] = tmp + 1.0
 
     a = np.random.default_rng(2).random((12, 20))
-    before, after = _check(k, {"a": a, "out": np.zeros((12, 20))}, {"out": a * a + 1.0}, syms={"N": 12, "M": 20})
+    before, after = _check(k_vertical_2d_elementwise_chain, {
+        "a": a,
+        "out": np.zeros((12, 20))
+    }, {"out": a * a + 1.0},
+                           syms={
+                               "N": 12,
+                               "M": 20
+                           })
     assert before >= 2 and after < before
 
 
@@ -97,13 +112,18 @@ def test_vertical_binary_then_unary():
     """out = (a + b) computed then squared -> fuse producer into consumer."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_binary_then_unary(a: dace.float64[N], b: dace.float64[N], out: dace.float64[N]):
         s = a + b
         out[:] = s * s
 
     rng = np.random.default_rng(3)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k, {"a": a, "b": b, "out": np.zeros(64)}, {"out": (a + b)**2}, syms={"N": 64})
+    before, after = _check(k_vertical_binary_then_unary, {
+        "a": a,
+        "b": b,
+        "out": np.zeros(64)
+    }, {"out": (a + b)**2},
+                           syms={"N": 64})
     assert before == 2 and after == 1
 
 
@@ -111,13 +131,19 @@ def test_vertical_fma_chain():
     """out = a*b + c as two maps (mul then add) -> fuse."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_fma_chain(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], out: dace.float64[N]):
         p = a * b
         out[:] = p + c
 
     rng = np.random.default_rng(4)
     a, b, c = rng.random(64), rng.random(64), rng.random(64)
-    before, after = _check(k, {"a": a, "b": b, "c": c, "out": np.zeros(64)}, {"out": a * b + c}, syms={"N": 64})
+    before, after = _check(k_vertical_fma_chain, {
+        "a": a,
+        "b": b,
+        "c": c,
+        "out": np.zeros(64)
+    }, {"out": a * b + c},
+                           syms={"N": 64})
     assert before == 2 and after == 1
 
 
@@ -125,7 +151,7 @@ def test_vertical_long_chain_five():
     """Five chained elementwise maps fuse down to one."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_long_chain_five(a: dace.float64[N], out: dace.float64[N]):
         t1 = a + 1.0
         t2 = t1 * 2.0
         t3 = t2 - 3.0
@@ -134,7 +160,7 @@ def test_vertical_long_chain_five():
 
     a = np.random.default_rng(5).random(64)
     exp = ((a + 1.0) * 2.0 - 3.0) * 0.5 + 10.0
-    before, after = _check(k, {"a": a, "out": np.zeros(64)}, {"out": exp}, syms={"N": 64})
+    before, after = _check(k_vertical_long_chain_five, {"a": a, "out": np.zeros(64)}, {"out": exp}, syms={"N": 64})
     assert before == 5 and after == 1
 
 
@@ -145,13 +171,13 @@ def test_horizontal_shared_inputs():
     """c = a+b ; d = a*b -- same range, shared inputs -> horizontal fuse."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_horizontal_shared_inputs(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
         c[:] = a + b
         d[:] = a * b
 
     rng = np.random.default_rng(6)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k, {
+    before, after = _check(k_horizontal_shared_inputs, {
         "a": a,
         "b": b,
         "c": np.zeros(64),
@@ -168,13 +194,13 @@ def test_horizontal_three_way():
     """Three independent maps over the same array fuse together."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_horizontal_three_way(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
         b[:] = a + 1.0
         c[:] = a * 2.0
         d[:] = a - 3.0
 
     a = np.random.default_rng(7).random(64)
-    before, after = _check(k, {
+    before, after = _check(k_horizontal_three_way, {
         "a": a,
         "b": np.zeros(64),
         "c": np.zeros(64),
@@ -195,12 +221,16 @@ def test_elementwise_then_reduction_value_preserving():
     """out = sum((a+1)*(a+1)) -- elementwise producer feeds a reduction."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[1]):
+    def k_elementwise_then_reduction_value_preserving(a: dace.float64[N], out: dace.float64[1]):
         t = (a + 1.0) * (a + 1.0)
         out[0] = np.sum(t)
 
     a = np.random.default_rng(8).random(64)
-    before, after = _check(k, {"a": a, "out": np.zeros(1)}, {"out": np.array([np.sum((a + 1.0)**2)])}, syms={"N": 64})
+    before, after = _check(k_elementwise_then_reduction_value_preserving, {
+        "a": a,
+        "out": np.zeros(1)
+    }, {"out": np.array([np.sum((a + 1.0)**2)])},
+                           syms={"N": 64})
     assert after <= before
 
 
@@ -208,13 +238,18 @@ def test_dot_product_chain_value_preserving():
     """out = sum(a*b) -- mul map feeds the reduction; value-preserving."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+    def k_dot_product_chain_value_preserving(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
         p = a * b
         out[0] = np.sum(p)
 
     rng = np.random.default_rng(9)
     a, b = rng.random(128), rng.random(128)
-    before, after = _check(k, {"a": a, "b": b, "out": np.zeros(1)}, {"out": np.array([np.sum(a * b)])}, syms={"N": 128})
+    before, after = _check(k_dot_product_chain_value_preserving, {
+        "a": a,
+        "b": b,
+        "out": np.zeros(1)
+    }, {"out": np.array([np.sum(a * b)])},
+                           syms={"N": 128})
     assert after <= before
 
 
@@ -222,14 +257,14 @@ def test_mixed_vertical_and_horizontal():
     """A vertical chain and a horizontal sibling in one kernel."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    def k_mixed_vertical_and_horizontal(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
         t = a + b  # producer
         c[:] = t * 2.0  # vertical consumer of t
         d[:] = a - b  # horizontal sibling (same range, shares a,b)
 
     rng = np.random.default_rng(10)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k, {
+    before, after = _check(k_mixed_vertical_and_horizontal, {
         "a": a,
         "b": b,
         "c": np.zeros(64),
@@ -249,11 +284,11 @@ def test_single_map_no_fuse():
     """One elementwise map -> nothing to fuse (no-op), value-preserving."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[N]):
+    def k_single_map_no_fuse(a: dace.float64[N], out: dace.float64[N]):
         out[:] = a + 1.0
 
     a = np.random.default_rng(11).random(64)
-    before, after = _check(k, {"a": a, "out": np.zeros(64)}, {"out": a + 1.0}, syms={"N": 64})
+    before, after = _check(k_single_map_no_fuse, {"a": a, "out": np.zeros(64)}, {"out": a + 1.0}, syms={"N": 64})
     assert before == 1 and after == 1
 
 
@@ -262,13 +297,14 @@ def test_incompatible_shapes_not_vertically_fused():
     matmul-free 1-D outer + inner elementwise still computes correctly."""
 
     @dace.program
-    def k(a: dace.float64[N], b: dace.float64[M], oa: dace.float64[N], ob: dace.float64[M]):
+    def k_incompatible_shapes_not_vertically_fused(a: dace.float64[N], b: dace.float64[M], oa: dace.float64[N],
+                                                   ob: dace.float64[M]):
         oa[:] = a + 1.0
         ob[:] = b * 2.0
 
     rng = np.random.default_rng(12)
     a, b = rng.random(32), rng.random(48)
-    before, after = _check(k, {
+    before, after = _check(k_incompatible_shapes_not_vertically_fused, {
         "a": a,
         "b": b,
         "oa": np.zeros(32),
@@ -289,12 +325,16 @@ def test_vertical_chain_value_preserving_across_sizes(n):
     """Vertical fusion stays value-preserving across a spread of sizes."""
 
     @dace.program
-    def k(a: dace.float64[N], out: dace.float64[N]):
+    def k_vertical_chain_value_preserving_across_sizes(a: dace.float64[N], out: dace.float64[N]):
         t = a * a
         out[:] = t + a
 
     a = np.random.default_rng(n).random(n)
-    _check(k, {"a": a, "out": np.zeros(n)}, {"out": a * a + a}, syms={"N": n})
+    _check(k_vertical_chain_value_preserving_across_sizes, {
+        "a": a,
+        "out": np.zeros(n)
+    }, {"out": a * a + a},
+           syms={"N": n})
 
 
 if __name__ == "__main__":

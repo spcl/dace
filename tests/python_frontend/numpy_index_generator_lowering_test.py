@@ -47,112 +47,114 @@ def assert_same(result: np.ndarray, reference: np.ndarray, exact: bool = True) -
 def test_logspace() -> None:
 
     @dace.program
-    def prog():
+    def prog_logspace():
         return np.logspace(0.0, 3.0, 7)
 
-    assert_native(prog)
-    assert_same(prog(), np.logspace(0.0, 3.0, 7), exact=False)
+    assert_native(prog_logspace)
+    assert_same(prog_logspace(), np.logspace(0.0, 3.0, 7), exact=False)
 
 
 def test_logspace_base_and_axis() -> None:
 
     @dace.program
-    def prog():
+    def prog_logspace_base_and_axis():
         return np.logspace(1.0, 5.0, 5, base=2.0)
 
-    assert_native(prog)
-    assert_same(prog(), np.logspace(1.0, 5.0, 5, base=2.0))
+    assert_native(prog_logspace_base_and_axis)
+    assert_same(prog_logspace_base_and_axis(), np.logspace(1.0, 5.0, 5, base=2.0))
 
 
 def test_geomspace() -> None:
 
     @dace.program
-    def prog():
+    def prog_geomspace():
         return np.geomspace(1.0, 1000.0, 5)
 
-    assert_native(prog)
-    assert_same(prog(), np.geomspace(1.0, 1000.0, 5), exact=False)
+    assert_native(prog_geomspace)
+    assert_same(prog_geomspace(), np.geomspace(1.0, 1000.0, 5), exact=False)
 
 
 def test_geomspace_negative_endpoints() -> None:
 
     @dace.program
-    def prog():
+    def prog_geomspace_negative_endpoints():
         return np.geomspace(-1.0, -8.0, 4)
 
-    assert_native(prog)
-    assert_same(prog(), np.geomspace(-1.0, -8.0, 4))
+    assert_native(prog_geomspace_negative_endpoints)
+    assert_same(prog_geomspace_negative_endpoints(), np.geomspace(-1.0, -8.0, 4))
 
 
 def test_geomspace_refuses_data_endpoint() -> None:
 
     @dace.program
-    def prog(a: dace.float64[1]):
+    def prog_geomspace_refuses_data_endpoint(a: dace.float64[1]):
         return np.geomspace(a[0], 1000.0, 5)
 
     with pytest.raises(ValueError, match='compile-time constant'):
-        prog.to_sdfg(simplify=False)
+        prog_geomspace_refuses_data_endpoint.to_sdfg(simplify=False)
 
 
 def test_fromfunction() -> None:
 
     @dace.program
-    def prog():
+    def prog_fromfunction():
         return np.fromfunction(lambda i, j: i * 10 + j, (4, 5), dtype=np.float64)
 
-    assert_native(prog)
-    assert_same(prog(), np.fromfunction(lambda i, j: i * 10 + j, (4, 5), dtype=np.float64))
+    assert_native(prog_fromfunction)
+    assert_same(prog_fromfunction(), np.fromfunction(lambda i, j: i * 10 + j, (4, 5), dtype=np.float64))
 
 
 def test_fromfunction_integer_indices() -> None:
 
     @dace.program
-    def prog():
+    def prog_fromfunction_integer_indices():
         return np.fromfunction(lambda i: i * i, (5, ), dtype=np.int64)
 
-    assert_native(prog)
-    assert_same(prog(), np.fromfunction(lambda i: i * i, (5, ), dtype=np.int64))
+    assert_native(prog_fromfunction_integer_indices)
+    assert_same(prog_fromfunction_integer_indices(), np.fromfunction(lambda i: i * i, (5, ), dtype=np.int64))
 
 
 def test_fromfunction_symbolic_shape() -> None:
     N = dace.symbol('N')
 
     @dace.program
-    def prog():
+    def prog_fromfunction_symbolic_shape():
         return np.fromfunction(lambda i, j: i * (j + 2) / N, (N, N), dtype=np.float64)
 
-    assert_native(prog)
-    assert_same(prog(N=7), np.fromfunction(lambda i, j: i * (j + 2) / 7, (7, 7), dtype=np.float64), exact=False)
+    assert_native(prog_fromfunction_symbolic_shape)
+    assert_same(prog_fromfunction_symbolic_shape(N=7),
+                np.fromfunction(lambda i, j: i * (j + 2) / 7, (7, 7), dtype=np.float64),
+                exact=False)
 
 
 def test_fromfunction_refuses_named_callable() -> None:
 
     @dace.program
-    def prog():
+    def prog_fromfunction_refuses_named_callable():
         return np.fromfunction(np.sqrt, (4, ), dtype=np.float64)
 
     with pytest.raises(ValueError, match='cannot be inlined'):
-        prog.to_sdfg(simplify=False)
+        prog_fromfunction_refuses_named_callable.to_sdfg(simplify=False)
 
 
 def test_fromfunction_refuses_array_read() -> None:
 
     @dace.program
-    def prog(a: dace.float64[4]):
+    def prog_fromfunction_refuses_array_read(a: dace.float64[4]):
         return np.fromfunction(lambda i: a[0] + i, (4, ), dtype=np.float64)
 
     with pytest.raises(ValueError, match='arithmetic lambda'):
-        prog.to_sdfg(simplify=False)
+        prog_fromfunction_refuses_array_read.to_sdfg(simplify=False)
 
 
 def test_indices() -> None:
 
     @dace.program
-    def prog():
+    def prog_indices():
         return np.indices((3, 4))
 
-    assert_native(prog)
-    result = prog()
+    assert_native(prog_indices)
+    result = prog_indices()
     assert result.dtype == np.int64
     assert_same(result, np.indices((3, 4)))
 
@@ -160,12 +162,12 @@ def test_indices() -> None:
 def test_indices_sparse_keeps_every_axis() -> None:
 
     @dace.program
-    def prog():
+    def prog_indices_sparse_keeps_every_axis():
         rows, cols = np.indices((3, 4), sparse=True)
         return rows, cols
 
-    assert_native(prog)
-    rows, cols = prog()
+    assert_native(prog_indices_sparse_keeps_every_axis)
+    rows, cols = prog_indices_sparse_keeps_every_axis()
     ref_rows, ref_cols = np.indices((3, 4), sparse=True)
     assert_same(rows, ref_rows)
     assert_same(cols, ref_cols)
@@ -174,15 +176,15 @@ def test_indices_sparse_keeps_every_axis() -> None:
 def test_ix_open_mesh_shapes() -> None:
 
     @dace.program
-    def prog(a: dace.int64[3], b: dace.int64[2]):
+    def prog_ix_open_mesh_shapes(a: dace.int64[3], b: dace.int64[2]):
         rows, cols = np.ix_(a, b)
         return rows, cols
 
     a = np.array([1, 5, 7], np.int64)
     b = np.array([2, 4], np.int64)
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_ix_open_mesh_shapes.to_sdfg(simplify=False)
     assert callback_free(sdfg)
-    rows, cols = prog(a=a, b=b)
+    rows, cols = prog_ix_open_mesh_shapes(a=a, b=b)
     ref_rows, ref_cols = np.ix_(a, b)
     assert_same(rows, ref_rows)
     assert_same(cols, ref_cols)
@@ -193,24 +195,24 @@ def test_ix_open_mesh_shapes() -> None:
 def test_ix_refuses_boolean_mask() -> None:
 
     @dace.program
-    def prog(a: dace.bool[3]):
+    def prog_ix_refuses_boolean_mask(a: dace.bool[3]):
         rows, = np.ix_(a)
         return rows
 
     with pytest.raises(ValueError, match='data-dependent'):
-        prog.to_sdfg(simplify=False)
+        prog_ix_refuses_boolean_mask.to_sdfg(simplify=False)
 
 
 def test_ravel_multi_index() -> None:
 
     @dace.program
-    def prog(rows: dace.int64[4], cols: dace.int64[4]):
+    def prog_ravel_multi_index(rows: dace.int64[4], cols: dace.int64[4]):
         return np.ravel_multi_index((rows, cols), (3, 5))
 
-    assert_native(prog)
+    assert_native(prog_ravel_multi_index)
     rows = np.array([0, 1, 2, 1], np.int64)
     cols = np.array([4, 0, 3, 1], np.int64)
-    assert_same(prog(rows=rows, cols=cols), np.ravel_multi_index((rows, cols), (3, 5)))
+    assert_same(prog_ravel_multi_index(rows=rows, cols=cols), np.ravel_multi_index((rows, cols), (3, 5)))
 
 
 def test_ravel_multi_index_modes_and_order() -> None:
@@ -242,35 +244,36 @@ def test_ravel_multi_index_modes_and_order() -> None:
 def test_ravel_multi_index_broadcasts_operands() -> None:
 
     @dace.program
-    def prog(rows: dace.int64[2, 3], cols: dace.int64[2, 3]):
+    def prog_ravel_multi_index_broadcasts_operands(rows: dace.int64[2, 3], cols: dace.int64[2, 3]):
         return np.ravel_multi_index((rows, cols), (4, 5))
 
-    assert_native(prog)
+    assert_native(prog_ravel_multi_index_broadcasts_operands)
     rows = np.array([[0, 1, 2], [3, 0, 1]], np.int64)
     cols = np.array([[1, 2, 3], [4, 0, 1]], np.int64)
-    assert_same(prog(rows=rows, cols=cols), np.ravel_multi_index((rows, cols), (4, 5)))
+    assert_same(prog_ravel_multi_index_broadcasts_operands(rows=rows, cols=cols),
+                np.ravel_multi_index((rows, cols), (4, 5)))
 
 
 def test_ravel_multi_index_refuses_dimension_mismatch() -> None:
 
     @dace.program
-    def prog(rows: dace.int64[4], cols: dace.int64[4]):
+    def prog_ravel_multi_index_refuses_dimension_mismatch(rows: dace.int64[4], cols: dace.int64[4]):
         return np.ravel_multi_index((rows, cols), (3, 5, 7))
 
     with pytest.raises(ValueError, match='2 indices given for 3 dimensions'):
-        prog.to_sdfg(simplify=False)
+        prog_ravel_multi_index_refuses_dimension_mismatch.to_sdfg(simplify=False)
 
 
 @pytest.mark.parametrize('n, k, m', [(4, 1, None), (3, -1, None), (4, -1, 3), (5, 0, None), (4, 0, 6)])
 def test_triu_indices(n: int, k: int, m: int | None) -> None:
 
     @dace.program
-    def prog():
+    def prog_triu_indices():
         rows, cols = np.triu_indices(n, k, m)
         return rows, cols
 
-    assert_native(prog)
-    rows, cols = prog()
+    assert_native(prog_triu_indices)
+    rows, cols = prog_triu_indices()
     ref_rows, ref_cols = np.triu_indices(n, k, m)
     assert_same(rows, ref_rows)
     assert_same(cols, ref_cols)
@@ -280,12 +283,12 @@ def test_triu_indices_refuses_symbolic_extent() -> None:
     N = dace.symbol('N')
 
     @dace.program
-    def prog():
+    def prog_triu_indices_refuses_symbolic_extent():
         rows, cols = np.triu_indices(N)
         return rows, cols
 
     with pytest.raises(ValueError, match='static extent'):
-        prog.to_sdfg(simplify=False)
+        prog_triu_indices_refuses_symbolic_extent.to_sdfg(simplify=False)
 
 
 if __name__ == '__main__':

@@ -60,7 +60,7 @@ def test_loop_region_iterator_is_visible():
 
 def test_dynamic_map_range_connector():
     """A dynamic map range binds its connector as a symbol -- MapEntry.new_symbols must be folded in."""
-    sdfg = dace.SDFG('dynrange')
+    sdfg = dace.SDFG('dynrange_dynamic_map_range_connector')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('lim', [1], dace.int32)
     state = sdfg.add_state('s', is_start_block=True)

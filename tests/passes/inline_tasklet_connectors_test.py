@@ -15,10 +15,10 @@ def _tasklets(sdfg):
 def test_elementwise_inlined_and_valid():
 
     @dace.program
-    def ew(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
+    def ew_elementwise_inlined_and_valid(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
         C[:] = A + B
 
-    sdfg = ew.to_sdfg(simplify=True)
+    sdfg = ew_elementwise_inlined_and_valid.to_sdfg(simplify=True)
     changed = InlineTaskletConnectors().apply_pass(sdfg, {})
     assert changed  # at least one tasklet rewritten
     tk = _tasklets(sdfg)[0]
@@ -49,10 +49,10 @@ def test_stencil_offsets():
 def test_idempotent():
 
     @dace.program
-    def ew(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+    def ew_idempotent(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
         C[:] = A + B
 
-    sdfg = ew.to_sdfg(simplify=True)
+    sdfg = ew_idempotent.to_sdfg(simplify=True)
     first = InlineTaskletConnectors().apply_pass(sdfg, {})
     assert first
     second = InlineTaskletConnectors().apply_pass(sdfg, {})

@@ -67,7 +67,7 @@ def test_helper_preserves_source_dtype():
 
 def test_pass_returns_none_on_empty_sdfg():
     """Empty SDFG -> no tile-tagged maps -> no stages -> ``None``."""
-    sdfg = dace.SDFG("empty")
+    sdfg = dace.SDFG('empty_pass_returns_none_on_empty_sdfg')
     sdfg.add_state("s")
     assert InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {}) is None
 
@@ -180,7 +180,7 @@ def test_gather_helper_emits_tile_gather_with_gather_dims_and_wires_idx_connecto
 def test_gather_helper_supports_multiple_gather_dims_with_distinct_shapes():
     """ICON pattern -- two gather dims with shape (W_i,) each."""
     widths = (4, 8, 16)  # K=3
-    sdfg = dace.SDFG("icon_pattern")
+    sdfg = dace.SDFG('icon_pattern_gather_helper_supports_multiple_gather_dims_with_distinct_shapes')
     sdfg.add_array("A", (32, 32, 64), dace.float64, transient=False)
     _add_idx(sdfg, "Idx0", (4, ))
     _add_idx(sdfg, "Idx2", (4, ))
@@ -234,7 +234,7 @@ def _build_const_only_tile_fixture():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_const_only_tile_fixture')
     inner.add_array("B", (16, ), dace.float64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
     instate = inner.add_state("body")
@@ -285,7 +285,7 @@ def _build_linear_tile_fixture():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_linear_tile_fixture')
     inner.add_array("B", (32, ), dace.float64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
     instate = inner.add_state("body")
@@ -324,13 +324,13 @@ def _build_gather_tile_fixture():
     from dace.subsets import Range
     from dace.symbolic import pystr_to_symbolic
 
-    sdfg = dace.SDFG("walker_gather_fixture")
+    sdfg = dace.SDFG('walker_gather_fixture_build_gather_tile_fixture')
     sdfg.add_array("A", (32, ), dace.float64, transient=False)
     sdfg.add_array("idx", (32, ), dace.int64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_gather_tile_fixture')
     inner.add_array("A", (32, ), dace.float64, transient=False)
     inner.add_array("idx", (32, ), dace.int64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
@@ -397,7 +397,7 @@ def _build_k2_gather_tile_fixture():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8", "jj": "0:16"})
 
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_k2_gather_tile_fixture')
     inner.add_array("A", (64, ), dace.float64, transient=False)
     inner.add_array("idx", (8, 16), dace.int64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
@@ -495,7 +495,7 @@ def _build_linear_write_fixture():
     sdfg.add_array("B", (32, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_linear_write_fixture')
     inner.add_array("B", (32, ), dace.float64, transient=False)
     inner.add_array("src_t", (1, ), dace.float64, transient=True)
     instate = inner.add_state("body")
@@ -555,7 +555,7 @@ def _build_constant_write_fixture():
     sdfg.add_array("B", (32, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body_nsdfg")
+    inner = dace.SDFG('body_nsdfg_build_constant_write_fixture')
     inner.add_array("B", (32, ), dace.float64, transient=False)
     inner.add_array("src_t", (1, ), dace.float64, transient=True)
     instate = inner.add_state("body")

@@ -49,12 +49,12 @@ def test_nested_maps():
     def build():
 
         @dace.program
-        def prog(A: dace.float64[N, M]):
+        def prog_build(A: dace.float64[N, M]):
             for i in dace.map[0:N]:
                 for j in dace.map[0:M]:
                     A[i, j] = A[i, j] * 2.0
 
-        return prog.to_sdfg(simplify=False)
+        return prog_build.to_sdfg(simplify=False)
 
     assert len(assert_codegen_unchanged(build)) > 0
 
@@ -87,12 +87,12 @@ def test_scope_lifetime_inside_map():
     def build():
 
         @dace.program
-        def prog(A: dace.float64[N], B: dace.float64[N]):
+        def prog_build_k(A: dace.float64[N], B: dace.float64[N]):
             for i in dace.map[0:N]:
                 tmp = A[i] * 2.0
                 B[i] = tmp + 1.0
 
-        return prog.to_sdfg(simplify=False)
+        return prog_build_k.to_sdfg(simplify=False)
 
     assert_codegen_unchanged(build)
 

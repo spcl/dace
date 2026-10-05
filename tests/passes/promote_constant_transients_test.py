@@ -300,7 +300,7 @@ def test_same_state_unordered_write_is_promoted():
 
 def test_nested_sdfg_no_crash_and_marks():
     """A transient inside a NestedSDFG is handled per-SDFG without cfg_id indexing hazards (no KeyError)."""
-    nsdfg = dace.SDFG('inner')
+    nsdfg = dace.SDFG('inner_nested_sdfg_no_crash_and_marks')
     nsdfg.add_array('a_in', [10], dace.float64)
     nsdfg.add_array('a_out', [10], dace.float64)
     nsdfg.add_array('t', [10], dace.float64, transient=True)
@@ -316,7 +316,7 @@ def test_nested_sdfg_no_crash_and_marks():
                            external_edges=True)
     nsdfg.add_edge(ns1, ns2, dace.InterstateEdge())
 
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_nested_sdfg_no_crash_and_marks')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('B', [10], dace.float64)
     state = sdfg.add_state('main')
@@ -516,7 +516,7 @@ def test_multiwrite_overlapping_not_marked():
 
 def test_idempotency():
     """Running the pass twice leaves the SDFG in a stable state."""
-    sdfg = dace.SDFG('idempotent')
+    sdfg = dace.SDFG('idempotent_idempotency')
     sdfg.add_array('A', [10], dace.float64, transient=True)
     sdfg.add_array('B', [10], dace.float64)
 

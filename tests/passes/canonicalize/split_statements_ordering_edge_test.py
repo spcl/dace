@@ -15,7 +15,7 @@ from dace.transformation.passes.canonicalize.split_statements import SplitStatem
 
 
 def _two_output_body() -> dace.SDFG:
-    inner = dace.SDFG("body")
+    inner = dace.SDFG("body_two_output_body")
     for nm in ("a", "b", "c"):
         inner.add_array(nm, [1], dace.float64)
     ist = inner.add_state("ist")

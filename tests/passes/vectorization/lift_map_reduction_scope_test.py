@@ -25,12 +25,12 @@ M = 32
 def _nested_reduction(inner_lower: str):
     """``for i: <nsdfg>{ for k in [<inner_lower>, M): acc += A[k] }`` -- the reduction map is
     top-level inside the body nest, and the enclosing ``i`` map is one boundary out."""
-    sdfg = dace.SDFG('outer')
+    sdfg = dace.SDFG('outer_nested_reduction')
     sdfg.add_array('A', [M], dace.float64)
     sdfg.add_array('out', [M], dace.float64)
     st = sdfg.add_state('main', is_start_block=True)
 
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_nested_reduction')
     inner.add_symbol('i', dace.int64)
     inner.add_array('A', [M], dace.float64)
     inner.add_array('acc', [1], dace.float64)

@@ -21,12 +21,12 @@ from dace.libraries.fft.nodes import FFT, IFFT
 def test_pure_fftn(shape):
 
     @dace.program
-    def tester(x: dace.complex128[tuple(shape)]):
+    def tester_pure_fftn(x: dace.complex128[tuple(shape)]):
         return np.fft.fftn(x)
 
     rng = np.random.default_rng(0)
     x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_fftn(x.copy())
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
@@ -35,12 +35,12 @@ def test_pure_ifftn_2d(norm):
     shape = (8, 12)
 
     @dace.program
-    def tester(x: dace.complex128[8, 12]):
+    def tester_pure_ifftn_2d(x: dace.complex128[8, 12]):
         return np.fft.ifftn(x, norm=norm)
 
     rng = np.random.default_rng(1)
     x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_ifftn_2d(x.copy())
     np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
@@ -54,12 +54,12 @@ def test_pure_ifftn_2d(norm):
 def test_pure_fft_axis(shape, axis):
 
     @dace.program
-    def tester(x: dace.complex128[tuple(shape)]):
+    def tester_pure_fft_axis(x: dace.complex128[tuple(shape)]):
         return np.fft.fft(x, axis=axis)
 
     rng = np.random.default_rng(2)
     x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_fft_axis(x.copy())
     np.testing.assert_allclose(y, np.fft.fft(x, axis=axis), rtol=1e-10, atol=1e-10)
 
 
@@ -67,12 +67,12 @@ def test_pure_ifft_axis_inverse():
     shape, axis = (4, 6, 5), 0
 
     @dace.program
-    def tester(x: dace.complex128[4, 6, 5]):
+    def tester_pure_ifft_axis_inverse(x: dace.complex128[4, 6, 5]):
         return np.fft.ifft(x, axis=axis)
 
     rng = np.random.default_rng(3)
     x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_ifft_axis_inverse(x.copy())
     np.testing.assert_allclose(y, np.fft.ifft(x, axis=axis), rtol=1e-10, atol=1e-10)
 
 
@@ -105,12 +105,12 @@ def test_pure_fftn_symbolic():
     M, N = dace.symbol('M'), dace.symbol('N')
 
     @dace.program
-    def tester(x: dace.complex128[M, N]):
+    def tester_pure_fftn_symbolic(x: dace.complex128[M, N]):
         return np.fft.fftn(x)
 
     rng = np.random.default_rng(5)
     x = (rng.standard_normal((7, 9)) + 1j * rng.standard_normal((7, 9))).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_fftn_symbolic(x.copy())
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
@@ -121,12 +121,12 @@ def test_pure_ifftn_symbolic(norm):
     M, N = dace.symbol('M'), dace.symbol('N')
 
     @dace.program
-    def tester(x: dace.complex128[M, N]):
+    def tester_pure_ifftn_symbolic(x: dace.complex128[M, N]):
         return np.fft.ifftn(x, norm=norm)
 
     rng = np.random.default_rng(7)
     x = (rng.standard_normal((7, 9)) + 1j * rng.standard_normal((7, 9))).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_ifftn_symbolic(x.copy())
     np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
@@ -136,10 +136,10 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     M, N = dace.symbol('M'), dace.symbol('N')
 
     @dace.program
-    def tester(x: dace.complex128[M, N]):
+    def tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(x: dace.complex128[M, N]):
         return np.fft.ifftn(x, norm=norm)
 
-    sdfg = tester.to_sdfg(simplify=False)
+    sdfg = tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point.to_sdfg(simplify=False)
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     scaled = [code for code in codes if 'exponent' in code and 'M' in code and 'N' in code]
@@ -152,12 +152,12 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
 def test_pure_rank1_unchanged():
 
     @dace.program
-    def tester(x: dace.complex128[21]):
+    def tester_pure_rank1_unchanged(x: dace.complex128[21]):
         return np.fft.fft(x)
 
     rng = np.random.default_rng(6)
     x = (rng.standard_normal(21) + 1j * rng.standard_normal(21)).astype(np.complex128)
-    y = tester(x.copy())
+    y = tester_pure_rank1_unchanged(x.copy())
     np.testing.assert_allclose(y, np.fft.fft(x), rtol=1e-10, atol=1e-10)
 
 
@@ -192,11 +192,11 @@ def test_fftn_over_a_subset_of_axes_batches_the_other_axes(shape, axes, dtype, d
     """cegterg transforms the three grid axes of a (n1, n2, n3, nvec) block, one 3-D FFT per band."""
 
     @dace.program
-    def tester(x: dace_type[tuple(shape)]):
+    def tester_fftn_over_a_subset_of_axes_batches_the_other_axes(x: dace_type[tuple(shape)]):
         return np.fft.fftn(x, axes=axes)
 
     x = random_array(shape, dtype, 8)
-    got = tester(x.copy())
+    got = tester_fftn_over_a_subset_of_axes_batches_the_other_axes(x.copy())
     want = np.fft.fftn(x, axes=axes)
     assert got.dtype == want.dtype, got.dtype
     np.testing.assert_allclose(got, want, rtol=tolerance(dtype), atol=tolerance(dtype))
@@ -206,22 +206,25 @@ def test_fftn_over_a_subset_of_axes_batches_the_other_axes(shape, axes, dtype, d
 def test_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(shape, axes):
 
     @dace.program
-    def tester(x: dace.complex128[tuple(shape)]):
+    def tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x: dace.complex128[tuple(shape)]):
         return np.fft.ifftn(x, axes=axes)
 
     x = random_array(shape, np.complex128, 9)
-    np.testing.assert_allclose(tester(x.copy()), np.fft.ifftn(x, axes=axes), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x.copy()),
+                               np.fft.ifftn(x, axes=axes),
+                               rtol=1e-10,
+                               atol=1e-10)
 
 
 def test_literal_negative_axes_with_ortho_norm_match_numpy():
     """A literal ``axes=(-1, -3)`` reaches the replacement through the AST, not as a closure constant."""
 
     @dace.program
-    def tester(x: dace.complex128[4, 5, 6]):
+    def tester_literal_negative_axes_with_ortho_norm_match_numpy(x: dace.complex128[4, 5, 6]):
         return np.fft.fftn(x, axes=(-1, -3), norm='ortho'), np.fft.ifftn(x, axes=(-1, -3), norm='ortho')
 
     x = random_array((4, 5, 6), np.complex128, 10)
-    forward, inverse = tester(x.copy())
+    forward, inverse = tester_literal_negative_axes_with_ortho_norm_match_numpy(x.copy())
     np.testing.assert_allclose(forward, np.fft.fftn(x, axes=(-1, -3), norm='ortho'), rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=(-1, -3), norm='ortho'), rtol=1e-10, atol=1e-10)
 
@@ -229,25 +232,28 @@ def test_literal_negative_axes_with_ortho_norm_match_numpy():
 def test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input():
 
     @dace.program
-    def tester(x: dace.complex128[3, 4, 5, 2]):
+    def tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x: dace.complex128[3, 4, 5, 2]):
         return np.fft.ifftn(np.fft.fftn(x, axes=(1, 2, 3)), axes=(1, 2, 3))
 
     x = random_array((3, 4, 5, 2), np.complex128, 11)
-    np.testing.assert_allclose(tester(x.copy()), x, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x.copy()),
+                               x,
+                               rtol=1e-10,
+                               atol=1e-10)
 
 
 def test_fft2_and_ifft2_transform_the_last_two_axes_by_default():
     """Without a replacement the frontend falls back to a Python callback, which also matches numpy."""
 
     @dace.program
-    def tester(x: dace.complex128[4, 5, 6]):
+    def tester_fft2_and_ifft2_transform_the_last_two_axes_by_default(x: dace.complex128[4, 5, 6]):
         return np.fft.fft2(x), np.fft.ifft2(x, axes=(0, 2))
 
-    sdfg = tester.to_sdfg(simplify=False)
+    sdfg = tester_fft2_and_ifft2_transform_the_last_two_axes_by_default.to_sdfg(simplify=False)
     got = sorted((type(n).__name__, n.axes) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (FFT, IFFT)))
     assert got == [('FFT', [1, 2]), ('IFFT', [0, 2])], got
     x = random_array((4, 5, 6), np.complex128, 12)
-    forward, inverse = tester(x.copy())
+    forward, inverse = tester_fft2_and_ifft2_transform_the_last_two_axes_by_default(x.copy())
     np.testing.assert_allclose(forward, np.fft.fft2(x), rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(inverse, np.fft.ifft2(x, axes=(0, 2)), rtol=1e-10, atol=1e-10)
 
@@ -263,10 +269,10 @@ def test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(a
     """A full-array transform must keep the whole-array lowering (``plan_dft_{rank}d``, the rank-generic DFT)."""
 
     @dace.program
-    def tester(x: dace.complex128[4, 5]):
+    def tester_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(x: dace.complex128[4, 5]):
         return np.fft.fftn(x, axes=axes)
 
-    sdfg = tester.to_sdfg(simplify=False)
+    sdfg = tester_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes.to_sdfg(simplify=False)
     got = [n.axes for n, _ in sdfg.all_nodes_recursive() if isinstance(n, FFT)]
     assert got == [want], got
 
@@ -275,11 +281,11 @@ def test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(a
 def test_empty_or_out_of_range_axes_are_refused(axes):
 
     @dace.program
-    def tester(x: dace.complex128[4, 5]):
+    def tester_empty_or_out_of_range_axes_are_refused(x: dace.complex128[4, 5]):
         return np.fft.fftn(x, axes=axes)
 
     with pytest.raises((ValueError, NotImplementedError)):
-        tester.to_sdfg(simplify=False)
+        tester_empty_or_out_of_range_axes_are_refused.to_sdfg(simplify=False)
 
 
 def test_cegterg_grid_fft_of_a_column_major_band_block_matches_numpy():

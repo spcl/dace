@@ -18,7 +18,7 @@ N = dace.symbol('N')
 
 def outlined_body() -> dace.SDFG:
     """The body LoopToMap outlines: ``acc += x`` as a WCR write into the connector array."""
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_outlined_body')
     body.add_scalar('x', dace.float64)
     body.add_scalar('acc', dace.float64)
     state = body.add_state('accumulate')

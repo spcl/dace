@@ -58,20 +58,20 @@ def test_pipeline_accepts_user_defined_strategy():
 def test_abstract_assign_streams_raises():
     """A strategy must override ``assign_streams`` (base class enforces it)."""
     with pytest.raises(NotImplementedError, match="assign_streams"):
-        GPUStreamSchedulingStrategy().assign_streams(dace.SDFG('abc'))
+        GPUStreamSchedulingStrategy().assign_streams(dace.SDFG('abc_abstract_assign_streams_raises'))
 
 
 def test_abstract_apply_pass_also_raises():
     """``apply_pass`` routes through ``assign_streams``, so the contract holds
     via the pass machinery too."""
     with pytest.raises(NotImplementedError):
-        GPUStreamSchedulingStrategy().apply_pass(dace.SDFG('abc'), {})
+        GPUStreamSchedulingStrategy().apply_pass(dace.SDFG('abc_abstract_apply_pass_also_raises'), {})
 
 
 def test_apply_pass_rejects_non_root_sdfg():
     """Stream scheduling must run on the root SDFG only."""
-    outer = dace.SDFG('outer')
-    inner = dace.SDFG('inner')
+    outer = dace.SDFG('outer_apply_pass_rejects_non_root_sdfg')
+    inner = dace.SDFG('inner_apply_pass_rejects_non_root_sdfg')
     inner._parent_sdfg = outer
     with pytest.raises(ValueError, match="root SDFG"):
         PerComponentGPUStreamScheduler().apply_pass(inner, {})
@@ -79,7 +79,7 @@ def test_apply_pass_rejects_non_root_sdfg():
 
 def test_per_component_assign_streams_callable_directly():
     """The per-component scheduler must keep working when invoked directly."""
-    sdfg = dace.SDFG('empty')
+    sdfg = dace.SDFG('empty_per_component_assign_streams_callable_directly')
     sdfg.add_state('s')
     assignments = PerComponentGPUStreamScheduler().assign_streams(sdfg)
     assert isinstance(assignments, dict)

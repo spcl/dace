@@ -44,7 +44,7 @@ def _signature(sdfg):
 
 def _access_to_access():
     """expr 0: ``AccessNode -> Tasklet -> AccessNode``, a plain elementwise copy."""
-    sdfg = dace.SDFG('expr0')
+    sdfg = dace.SDFG('expr0_access_to_access')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state()
@@ -57,7 +57,7 @@ def _access_to_access():
 
 def _mapentry_to_access():
     """expr 1: ``MapEntry -> Tasklet -> AccessNode``, the copy staged inside a map."""
-    sdfg = dace.SDFG('expr1')
+    sdfg = dace.SDFG('expr1_mapentry_to_access')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     sdfg.add_scalar('tmp', dace.float64, transient=True)
@@ -79,7 +79,7 @@ def _access_to_mapexit():
     read access node: splicing then yields an invalid ``<scalar> -> MapExit`` edge. This is the
     shape ``InsertAssignTaskletsAtMapBoundary`` re-creates, so the refusal is the normal outcome.
     """
-    sdfg = dace.SDFG('expr2')
+    sdfg = dace.SDFG('expr2_access_to_mapexit')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     sdfg.add_scalar('tmp', dace.float64, transient=True)
@@ -139,7 +139,7 @@ def test_a_copy_at_a_map_exit_boundary_is_kept():
 def test_a_tasklet_that_casts_is_kept():
     """A copy between differently typed endpoints performs an implicit cast a memlet does not, so
     it is not trivial. Enumerated as a candidate, refused by the transformation."""
-    sdfg = dace.SDFG('cast')
+    sdfg = dace.SDFG('cast_a_tasklet_that_casts_is_kept')
     sdfg.add_array('a', [N], dace.float32)
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state()
@@ -189,12 +189,13 @@ def test_the_pass_and_the_wrapper_produce_the_same_graph():
     memlets and tasklet bodies -- on a program carrying several shapes at once."""
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    def prog_the_pass_and_the_wrapper_produce_the_same_graph(a: dace.float64[N], b: dace.float64[N],
+                                                             c: dace.float64[N]):
         for i in dace.map[0:N]:
             a[i] = b[i]
         c[:] = a[:] + b[:]
 
-    base = prog.to_sdfg(simplify=False)
+    base = prog_the_pass_and_the_wrapper_produce_the_same_graph.to_sdfg(simplify=False)
     by_pass, by_wrapper = copy.deepcopy(base), copy.deepcopy(base)
 
     n_pass = EliminateTrivialTasklets().apply_pass(by_pass, {}) or 0
@@ -211,7 +212,7 @@ def test_the_pass_and_the_wrapper_produce_the_same_graph():
 
 def test_nested_sdfg_states_are_visited():
     """``all_sdfgs_recursive`` is the traversal, not the top-level state list."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_nested_sdfg_states_are_visited')
     inner.add_array('a', [N], dace.float64)
     inner.add_array('b', [N], dace.float64)
     istate = inner.add_state()
@@ -219,7 +220,7 @@ def test_nested_sdfg_states_are_visited():
     istate.add_edge(istate.add_read('b'), None, t, 'inp', dace.Memlet('b[0]'))
     istate.add_edge(t, 'out', istate.add_write('a'), None, dace.Memlet('a[1]'))
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_nested_sdfg_states_are_visited')
     outer.add_array('a', [N], dace.float64)
     outer.add_array('b', [N], dace.float64)
     ostate = outer.add_state()
@@ -236,11 +237,11 @@ def test_the_elimination_preserves_the_computed_values():
     """Value equivalence, not just shape: the spliced memlet must still move the same data."""
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N]):
+    def prog_the_elimination_preserves_the_computed_values(a: dace.float64[N], b: dace.float64[N]):
         for i in dace.map[0:N]:
             a[i] = b[i]
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_the_elimination_preserves_the_computed_values.to_sdfg(simplify=False)
     EliminateTrivialTasklets().apply_pass(sdfg, {})
     sdfg.validate()
 

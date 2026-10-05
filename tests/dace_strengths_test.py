@@ -242,7 +242,7 @@ def test_nested_sdfg_composition_with_symbol_mapping():
     # outer<->inner boundary explicitly; passes can opt into either side
     # (inline, propagate-through, leave alone). LLVM IR is flat: a function
     # boundary either inlines or stays opaque.
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_nested_sdfg_composition_with_symbol_mapping')
     inner.add_array('o', [1], dace.float64)
     inner.add_symbol('inner_n', dace.int32)
     istate = inner.add_state('s')
@@ -250,7 +250,7 @@ def test_nested_sdfg_composition_with_symbol_mapping():
     iw = istate.add_write('o')
     istate.add_edge(t, '_o', iw, None, dace.Memlet(data='o', subset='0'))
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_nested_sdfg_composition_with_symbol_mapping')
     outer.add_array('o', [1], dace.float64)
     outer.add_symbol('outer_n', dace.int32)
     state = outer.add_state('s', is_start_block=True)

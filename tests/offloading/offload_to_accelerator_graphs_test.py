@@ -258,11 +258,11 @@ def edge_assignment_sdfg():
 def tasklet_map_wrapper_sdfg():
 
     @dace.program
-    def tasklet_map_wrapper_program(A: dace.float64[4, 4], out: dace.float64[4, 4]):
+    def tasklet_map_wrapper_program_tasklet_map_wrapper_sdfg(A: dace.float64[4, 4], out: dace.float64[4, 4]):
         out = A @ A
         out[0, 0] += 1
 
-    sdfg = tasklet_map_wrapper_program.to_sdfg()
+    sdfg = tasklet_map_wrapper_program_tasklet_map_wrapper_sdfg.to_sdfg()
     sdfg.validate()
     return sdfg
 
@@ -270,7 +270,8 @@ def tasklet_map_wrapper_sdfg():
 def tasklet_map_wrapper_larger_sdfg():
 
     @dace.program
-    def tasklet_map_wrapper_program(A: dace.float64[4, 4], B: dace.float64[4, 4], out: dace.float64[4, 4]):
+    def tasklet_map_wrapper_program_tasklet_map_wrapper_larger_sdfg(A: dace.float64[4, 4], B: dace.float64[4, 4],
+                                                                    out: dace.float64[4, 4]):
         B = A @ A  # parallel
 
         B[0, 0] += A[0, 0]  # sequential region
@@ -282,7 +283,7 @@ def tasklet_map_wrapper_larger_sdfg():
         B[0, 3] += s
         out[1, 1] += s
 
-    sdfg = tasklet_map_wrapper_program.to_sdfg()
+    sdfg = tasklet_map_wrapper_program_tasklet_map_wrapper_larger_sdfg.to_sdfg()
     sdfg.validate()
     return sdfg
 
@@ -317,7 +318,7 @@ def len1_array_init_sdfg():
 
 
 def reduce_to_scalar_sdfg(n: int = 16):
-    sdfg = dace.SDFG("reduction_library_node")
+    sdfg = dace.SDFG("reduction_library_node_reduce_to_scalar_sdfg")
     state = sdfg.add_state("state", is_start_block=True)
 
     sdfg.add_array("inp", [n], dace.float64)
@@ -340,7 +341,7 @@ def reduce_to_scalar_sdfg(n: int = 16):
 
 
 def reduce_to_array_sdfg(n: int = 16):
-    sdfg = dace.SDFG("reduction_library_node")
+    sdfg = dace.SDFG("reduction_library_node_reduce_to_array_sdfg")
     state = sdfg.add_state("state", is_start_block=True)
 
     sdfg.add_array("inp", [n], dace.float64)
@@ -1118,7 +1119,7 @@ def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) ->
 
 def branch_into_a_sibling_arm_sdfg() -> dace.SDFG:
     """A three-way branch on ``n`` whose first arm can jump into the third arm, which no ConditionalBlock expresses."""
-    sdfg = dace.SDFG("branch_into_a_sibling_arm")
+    sdfg = dace.SDFG("accelerator_graphs_branch_into_a_sibling_arm")
     sdfg.add_symbol("n", dace.int64)
     start = sdfg.add_state("start", is_start_block=True)
     first, second, third, end = (sdfg.add_state(label) for label in ("first", "second", "third", "end"))

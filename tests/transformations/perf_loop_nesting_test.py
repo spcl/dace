@@ -53,7 +53,8 @@ def test_three_parallel_inner_maps_fission_into_three_parents():
     """
 
     @dace.program
-    def kernel(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[N, M]):
+    def kernel_three_parallel_inner_maps_fission_into_three_parents(x: dace.float64[N, M], y: dace.float64[N, M],
+                                                                    z: dace.float64[N, M]):
         for j in dace.map[0:M]:
             for i in range(N):
                 x[i, j] = 1.0
@@ -62,7 +63,7 @@ def test_three_parallel_inner_maps_fission_into_three_parents():
             for i in range(N):
                 z[i, j] = 3.0
 
-    sdfg: dace.SDFG = kernel.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = kernel_three_parallel_inner_maps_fission_into_three_parents.to_sdfg(simplify=False)
     _prepare_nested_single_state(sdfg)
 
     state = _outer_state(sdfg)
@@ -95,7 +96,8 @@ def test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map():
     """
 
     @dace.program
-    def kernel(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[M]):
+    def kernel_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map(x: dace.float64[N, M], y: dace.float64[N, M],
+                                                                    z: dace.float64[M]):
         for j in dace.map[0:M]:
             for i in range(N):
                 x[i, j] = 1.0
@@ -103,7 +105,7 @@ def test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map():
             for i in range(N):
                 y[i, j] = 2.0
 
-    sdfg: dace.SDFG = kernel.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = kernel_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map.to_sdfg(simplify=False)
     _prepare_nested_single_state(sdfg)
 
     state = _outer_state(sdfg)

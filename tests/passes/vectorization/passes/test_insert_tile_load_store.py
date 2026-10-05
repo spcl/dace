@@ -141,7 +141,7 @@ def test_stage_writes_skips_ordering_edge_as_representative():
     skip staging entirely -- the real `A[i:i+4]` write is silently left as a bare
     Tasklet -> AccessNode edge instead of being routed through a masked store.
     """
-    inner_sdfg = dace.SDFG("body")
+    inner_sdfg = dace.SDFG('body_stage_writes_skips_ordering_edge_as_representative')
     inner_sdfg.add_array("A", [16], dace.float64)
     state = inner_sdfg.add_state("s")
 
@@ -170,7 +170,7 @@ def test_assert_post_stage_invariants_allows_ordering_edge_between_globals():
     trip the design 3.8.3 (2) "AN -> AN survivor" check. Only a REAL AN->AN data copy
     that is neither a Scalar bridge nor a transient->output writeback is a violation.
     """
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_assert_post_stage_invariants_allows_ordering_edge_between_globals')
     sdfg.add_array("A", [16], dace.float64)
     state = sdfg.add_state("s")
 
@@ -188,7 +188,7 @@ def test_resize_scalar_chain_preserves_ordering_edge():
     first-state write ordered before a second-state write -- must be left alone, not
     turned into a malformed memlet (subset set, data still None).
     """
-    inner_sdfg = dace.SDFG("body")
+    inner_sdfg = dace.SDFG('body_resize_scalar_chain_preserves_ordering_edge')
     inner_sdfg.add_array("tile_src", [4], dace.float64, transient=True)
     inner_sdfg.add_scalar("s1", dace.float64, transient=True)
     inner_sdfg.add_scalar("sink", dace.float64, transient=True)

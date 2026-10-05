@@ -27,7 +27,7 @@ except Exception:  # already registered by another test module
 
 def _readwrite_nested(shape=(N, ), name="X"):
     """An SDFG whose array flows into a NestedSDFG as BOTH input and output (one inner name)."""
-    inner = dace.SDFG("inner_rw")
+    inner = dace.SDFG('inner_rw_readwrite_nested')
     inner.add_array(name, list(shape), dace.float64)
     ist = inner.add_state("i", is_start_block=True)
     params = {f"i{d}": f"0:{s}" for d, s in enumerate(shape)}

@@ -143,7 +143,7 @@ def _build_slice_wcr_scatter() -> dace.SDFG:
     sdfg.add_array('dest', [N, N], dace.float64)
     state = sdfg.add_state('outer', is_start_block=True)
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_slice_wcr_scatter')
     body.add_array('row', [N], dace.float64)
     body.add_array('c_out', [N], dace.float64)  # WRITE-ONLY output connector
     noop = body.add_state('noop', is_start_block=True)
@@ -252,7 +252,7 @@ def _build_masked_reduction(op_wcr: str, seed_outer: bool) -> dace.SDFG:
     else:
         state = sdfg.add_state('map', is_start_block=True)
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_masked_reduction')
     body.add_array('d', [1], dace.float64)
     body.add_array('m', [1], dace.int64)
     body.add_scalar('acc_out', dace.float64)  # WRITE-ONLY output connector
@@ -339,7 +339,7 @@ def _build_two_independent_reductions() -> dace.SDFG:
         seed.add_edge(tz, '__out', seed.add_write(acc), None, dace.Memlet(acc + '[0]'))
     state = sdfg.add_state_after(seed, 'map')
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_two_independent_reductions')
     body.add_array('d1', [1], dace.float64)
     body.add_array('d2', [1], dace.float64)
     body.add_scalar('acc1_out', dace.float64)  # WRITE-ONLY output connectors
@@ -420,7 +420,7 @@ def _build_readwrite_redundant_interior_wcr() -> dace.SDFG:
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state('map', is_start_block=True)
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_readwrite_redundant_interior_wcr')
     body.add_array('d', [1], dace.float64)
     body.add_array('b_io', [1], dace.float64)  # read-write connector (in AND out)
     cstate = body.add_state('c', is_start_block=True)

@@ -252,7 +252,7 @@ def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(monkeypatch):
     sdfg = dace.SDFG('nested_in_map')
     sdfg.add_array('a', [N], dace.float64)
     body = loop_region(sdfg, 'outer', 'N').add_state('body', is_start_block=True)
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_nested_sdfg_inside_the_map_keeps_its_parent_pointers')
     inner.add_array('o', [1], dace.float64)
     inner_state = inner.add_state('set', is_start_block=True)
     tasklet = inner_state.add_tasklet('set', {}, {'out'}, 'out = 1.0')

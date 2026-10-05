@@ -30,14 +30,14 @@ def test_nested_inner_maps_are_refused():
     """
 
     @dace.program
-    def kern(b: dace.float64[N, N], flag: dace.int64):
+    def kern_nested_inner_maps_are_refused(b: dace.float64[N, N], flag: dace.int64):
         for t in dace.map[0:1]:
             if flag > 0:
                 for j in dace.map[0:N]:
                     for k in dace.map[0:N]:
                         b[j, k] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_nested_inner_maps_are_refused.to_sdfg(simplify=True)
     before = sdfg.to_json()
     _apply(sdfg)  # must not raise
     sdfg.validate()
@@ -50,13 +50,14 @@ def test_data_dependent_guard_does_not_produce_an_invalid_sdfg():
     not exist inside the inner body."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N, N], thr: dace.float64):
+    def kern_data_dependent_guard_does_not_produce_an_invalid_sdfg(a: dace.float64[N], b: dace.float64[N, N],
+                                                                   thr: dace.float64):
         for i in dace.map[0:N]:
             if a[i] > thr:
                 for j in dace.map[0:N]:
                     b[i, j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_data_dependent_guard_does_not_produce_an_invalid_sdfg.to_sdfg(simplify=True)
     _apply(sdfg)  # must not raise
     sdfg.validate()
 
@@ -73,7 +74,7 @@ def _two_predecessor_guard():
     sdfg.add_symbol('sel', dace.int64)
     sdfg.add_array('b', [N], dace.float64)
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_two_predecessor_guard')
     outer.add_symbol('k', dace.int64)
     outer.add_array('bo', [N], dace.float64)
     outer.add_symbol('sel', dace.int64)
@@ -125,13 +126,13 @@ def test_guard_symbol_used_by_a_map_range_is_not_deleted():
     n2 = dace.symbol('n2')
 
     @dace.program
-    def kern(b: dace.float64[N]):
+    def kern_guard_symbol_used_by_a_map_range_is_not_deleted(b: dace.float64[N]):
         for i in dace.map[0:1]:
             if n2 > 0:
                 for j in dace.map[0:n2]:
                     b[j] = 1.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_guard_symbol_used_by_a_map_range_is_not_deleted.to_sdfg(simplify=True)
     _apply(sdfg)
     sdfg.validate()  # would fail if n2 were removed while the range uses it
 

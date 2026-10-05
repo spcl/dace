@@ -31,42 +31,42 @@ II, JJ, KK = 8, 5, 6
 def build_r2d1d(dtype):
 
     @dace.program
-    def prog(A: dtype[I, J], out: dtype[I]):
+    def prog_build_r2d1d(A: dtype[I, J], out: dtype[I]):
         for i, j in dace.map[0:I, 0:J]:
             out[i] += A[i, j]
 
-    return prog
+    return prog_build_r2d1d
 
 
 def build_r3d2d(dtype):
 
     @dace.program
-    def prog(A: dtype[I, J, K], out: dtype[I, K]):
+    def prog_build_r3d2d(A: dtype[I, J, K], out: dtype[I, K]):
         for i, j, k in dace.map[0:I, 0:J, 0:K]:
             out[i, k] += A[i, j, k]
 
-    return prog
+    return prog_build_r3d2d
 
 
 def build_nested(dtype):
 
     @dace.program
-    def prog(A: dtype[I, J, K], out: dtype[I, K]):
+    def prog_build_nested(A: dtype[I, J, K], out: dtype[I, K]):
         for i, k in dace.map[0:I, 0:K]:
             for j in dace.map[0:J]:
                 out[i, k] += A[i, j, k]
 
-    return prog
+    return prog_build_nested
 
 
 def build_scalar(dtype):
 
     @dace.program
-    def prog(A: dtype[I, J], out: dtype[1]):
+    def prog_build_scalar(A: dtype[I, J], out: dtype[1]):
         for i, j in dace.map[0:I, 0:J]:
             out[0] += A[i, j]
 
-    return prog
+    return prog_build_scalar
 
 
 # fixed logical inputs + numpy oracles

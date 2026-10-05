@@ -106,11 +106,11 @@ def test_break_anti_dependence_symbolic_positive_offset():
     inc = dace.symbol('inc')
 
     @dace.program
-    def s175_like(a: dace.float64[N], b: dace.float64[N]):
+    def s175_like_break_anti_dependence_symbolic_positive_offset(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - inc):
             a[i] = a[i + inc] + b[i]
 
-    sdfg = s175_like.to_sdfg(simplify=True)
+    sdfg = s175_like_break_anti_dependence_symbolic_positive_offset.to_sdfg(simplify=True)
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     _l2m(sdfg)
@@ -152,11 +152,12 @@ def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
     inc = dace.symbol('inc')
 
     @dace.program
-    def s175_like(a: dace.float64[N], b: dace.float64[N]):
+    def s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize(a: dace.float64[N],
+                                                                                  b: dace.float64[N]):
         for i in range(N - inc):
             a[i] = a[i + inc] + b[i]
 
-    sdfg = s175_like.to_sdfg(simplify=True)
+    sdfg = s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
 
     guards = [
@@ -262,12 +263,14 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     idx_dtype = dace.int32
 
     @dace.program
-    def indirect(a: dace.float64[N_INT64], b: dace.float64[N_INT64], idx: idx_dtype[N_INT64]):
+    def indirect_break_anti_dependence_data_indirected_offset_via_runtime_check(a: dace.float64[N_INT64],
+                                                                                b: dace.float64[N_INT64],
+                                                                                idx: idx_dtype[N_INT64]):
         # Bound at N-1 so a[i + idx[i]] with idx[i] == 1 stays in range.
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
 
-    sdfg = indirect.to_sdfg(simplify=True)
+    sdfg = indirect_break_anti_dependence_data_indirected_offset_via_runtime_check.to_sdfg(simplify=True)
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     _l2m(sdfg)
@@ -492,11 +495,13 @@ def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
     """
 
     @dace.program
-    def indirect(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+    def indirect_break_anti_dependence_pure_positive_subs_doesnt_break_indirected(a: dace.float64[N],
+                                                                                  b: dace.float64[N],
+                                                                                  idx: dace.int32[N]):
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
 
-    sdfg = indirect.to_sdfg(simplify=True)
+    sdfg = indirect_break_anti_dependence_pure_positive_subs_doesnt_break_indirected.to_sdfg(simplify=True)
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
     _l2m(sdfg)
     sdfg.validate()

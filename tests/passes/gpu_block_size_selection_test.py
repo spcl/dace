@@ -115,7 +115,7 @@ def test_pick_block_size_3d_leaves_default():
 
 def build_2d_map_sdfg(schedule):
     """Minimal SDFG: one 64x64 map writing a 2-D array on the given schedule."""
-    sdfg = dace.SDFG('single_map')
+    sdfg = dace.SDFG('single_map_build_2d_map_sdfg')
     sdfg.add_array('A', [64, 64], dace.float64)
     state = sdfg.add_state()
     _, me, _ = state.add_mapped_tasklet('kernel', {

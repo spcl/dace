@@ -26,7 +26,7 @@ def _build_body_with_assign(symbol_name: str, rhs: str, arrays=()) -> dace.SDFG:
     ``symbol_name`` (so ``_is_tile_dependent`` has something to walk).
     ``arrays`` names any data arrays the RHS reads (e.g. a data-dependent
     ``syma <- arr[i]``)."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_build_body_with_assign')
     sdfg.add_symbol(symbol_name, dace.int64)
     for a in arrays:
         sdfg.add_array(a, [16], dace.int64)
@@ -43,7 +43,7 @@ def test_direct_iter_var_is_tile_dependent():
 
 def test_outer_scope_symbol_is_not_tile_dependent():
     """A symbol with no interstate definition is outer-scope; not tile-dep."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_outer_scope_symbol_is_not_tile_dependent')
     sdfg.add_state("s")
     assert _is_tile_dependent("N", {"i"}, inner_sdfg=sdfg) is False
 
@@ -56,7 +56,7 @@ def test_one_hop_transitive_is_tile_dependent():
 
 def test_two_hop_transitive_is_tile_dependent():
     """``sym2 <- syma + 1`` and ``sym <- j`` makes both transitive tile-deps."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_two_hop_transitive_is_tile_dependent')
     for s in ("syma", "sym2"):
         sdfg.add_symbol(s, dace.int64)
     s0 = sdfg.add_state("entry", is_start_block=True)
@@ -109,7 +109,7 @@ def test_classifier_data_dependent_symbol_forces_gather():
 def test_classifier_transitive_data_dependent_symbol_forces_gather():
     """``syma <- sc`` and ``sc <- arr[i]`` -> ``syma`` is *transitively* data-dependent
     (the array read reaches it through a scalar hop) -> GATHER."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_classifier_transitive_data_dependent_symbol_forces_gather')
     sdfg.add_symbol("syma", dace.int64)
     sdfg.add_scalar("sc", dace.int64, transient=True)
     sdfg.add_array("arr", [16], dace.int64)
@@ -125,7 +125,7 @@ def test_classifier_transitive_data_dependent_symbol_forces_gather():
 
 def test_classifier_outer_scope_symbol_does_not_force_gather():
     """``a[2*N + 1]`` with ``N`` outer stays CONSTANT (no tile-dep promotion)."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_classifier_outer_scope_symbol_does_not_force_gather')
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_state("s")
     subset = Range([(dace.symbolic.pystr_to_symbolic("2*N + 1"), dace.symbolic.pystr_to_symbolic("2*N + 1"), 1)])
@@ -135,7 +135,7 @@ def test_classifier_outer_scope_symbol_does_not_force_gather():
 
 def test_tasklet_computed_index_from_gathered_value_is_a_gather() -> None:
     """``k = idx[i] * 2; a[k]``: the index differs per lane, so the read is not CONSTANT."""
-    sdfg = dace.SDFG("body")
+    sdfg = dace.SDFG('body_tasklet_computed_index_from_gathered_value_is_a_gather')
     sdfg.add_array("idx", [16], dace.int64)
     sdfg.add_scalar("k", dace.int64, transient=True)
     compute, use = sdfg.add_state("compute", is_start_block=True), sdfg.add_state("use")

@@ -181,7 +181,7 @@ def build_nested_kernel():
     """A hand-built kernel whose map body is a NestedSDFG taking a SPANNING row of X (the
     frontend/prepare pipeline currently cannot produce this shape end to end, so the refusal is
     exercised structurally)."""
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_build_nested_kernel')
     inner.add_array("xrow", [N], dace.float64)
     inner.add_array("yrow", [N], dace.float64)
     istate = inner.add_state("body", is_start_block=True)
@@ -190,7 +190,7 @@ def build_nested_kernel():
     istate.add_memlet_path(istate.add_access("xrow"), ime, tasklet, dst_conn="a", memlet=dace.Memlet("xrow[j]"))
     istate.add_memlet_path(tasklet, imx, istate.add_access("yrow"), src_conn="b", memlet=dace.Memlet("yrow[j]"))
 
-    outer = dace.SDFG("outer")
+    outer = dace.SDFG('outer_build_nested_kernel')
     outer.add_array("X", [N, N], dace.float64)
     outer.add_array("Y", [N, N], dace.float64)
     state = outer.add_state("k", is_start_block=True)

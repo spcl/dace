@@ -8,7 +8,7 @@ from dace.transformation.passes.vectorization.utils.reductions import recognize_
 
 def rmw_map(seed: str, slot: str, accs: tuple[str, ...] = ('x', )) -> dace.SDFG:
     """``acc[seed] = 0; for k in map[0:16]: acc[slot] = acc[slot] + a[k]`` per acc, body in a nested SDFG."""
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_rmw_map')
     bs = body.add_state()
     sdfg = dace.SDFG(f'rmw_{seed}_{slot}_{"_".join(accs)}')
     sdfg.add_array('a', [16], dace.float64)

@@ -11,14 +11,14 @@ from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops impor
 def _build_inner_body_with_binop(op="+"):
     """Build an SDFG with one tile-tagged Map containing a body NSDFG whose state
     has a single binary tasklet ``_o = _a <op> _b``."""
-    sdfg = dace.SDFG("binop_fixture")
+    sdfg = dace.SDFG('binop_fixture_build_inner_body_with_binop')
     sdfg.add_array("A", (8, ), dace.float64, transient=False)
     sdfg.add_array("B", (8, ), dace.float64, transient=False)
     sdfg.add_array("C", (8, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_binop')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("B", (8, ), dace.float64, transient=False)
     inner.add_array("C", (8, ), dace.float64, transient=False)
@@ -88,7 +88,7 @@ def test_converter_skips_non_recognised_tasklet():
 
 def test_converter_empty_sdfg_returns_none():
     """SDFG with no tile-tagged map yields zero conversions -> ``None``."""
-    sdfg = dace.SDFG("empty")
+    sdfg = dace.SDFG('empty_converter_empty_sdfg_returns_none')
     sdfg.add_state("s")
     assert ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {}) is None
 
@@ -113,7 +113,7 @@ def _build_inner_body_with_unop(op="abs"):
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_unop')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("C", (8, ), dace.float64, transient=False)
     instate = inner.add_state("body")
@@ -174,7 +174,7 @@ def _build_inner_body_with_ite():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_ite')
     inner.add_array("Cond", (8, ), dace.bool_, transient=False)
     inner.add_array("T", (8, ), dace.float64, transient=False)
     inner.add_array("E", (8, ), dace.float64, transient=False)
@@ -237,7 +237,7 @@ def _build_inner_body_with_tile_plus_scalar(op="+"):
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_tile_plus_scalar')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("C", (8, ), dace.float64, transient=False)
     inner.add_array("A_tile", (8, ), dace.float64, transient=True)
@@ -287,7 +287,7 @@ def test_converter_unop_with_scalar_source_sets_scalar_kind():
     sdfg.add_array("C", (8, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_converter_unop_with_scalar_source_sets_scalar_kind')
     inner.add_array("C", (8, ), dace.float64, transient=False)
     inner.add_scalar("S_bridge", dace.float64, transient=True)
     instate = inner.add_state("body")
@@ -319,7 +319,7 @@ def _build_inner_body_with_reduction(op="+"):
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_reduction')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("Acc", (1, ), dace.float64, transient=False)
     instate = inner.add_state("body")
@@ -398,7 +398,7 @@ def test_widening_done_by_widen_accesses_pre_pass():
     sdfg2.add_array("B", (8, ), dace.float64, transient=False)
     state = sdfg2.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_widening_done_by_widen_accesses_pre_pass')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("B", (8, ), dace.float64, transient=False)
     inner.add_array("mid_t", (1, ), dace.float64, transient=True)
@@ -433,7 +433,7 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
     sdfg.add_array("C", (8, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_converter_leaves_length1_output_unchanged_for_all_scalar_binop')
     inner.add_array("C", (8, ), dace.float64, transient=False)
     # Two Scalar bridges + one length-1 intermediate transient.
     inner.add_scalar("S_a", dace.float64, transient=True)
@@ -467,7 +467,7 @@ def _build_inner_body_with_symbol_binop(body_str):
     sdfg.add_array("C", (8, ), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_inner_body_with_symbol_binop')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("C", (8, ), dace.float64, transient=False)
     instate = inner.add_state("body")
@@ -536,7 +536,7 @@ def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_body_with_mask')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     if has_b_arr:
         inner.add_array("B", (8, ), dace.float64, transient=False)
@@ -632,7 +632,7 @@ def _build_body_with_zero_in_conn(body_str, add_symbol_N=True):
         sdfg.add_symbol("N", dace.int64)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_body_with_zero_in_conn')
     inner.add_array("C", (8, ), dace.float64, transient=False)
     if add_symbol_N:
         inner.add_symbol("N", dace.int64)

@@ -751,7 +751,7 @@ def test_pass_is_a_no_op_when_it_refuses():
 
 def stride_loop_sdfg(stride: str) -> tuple[dace.SDFG, LoopRegion]:
     """A loop between two int32 bounds whose update step is ``stride``."""
-    sdfg = dace.SDFG('stride_loop')
+    sdfg = dace.SDFG('stride_loop_stride_loop_sdfg')
     for name in ('M32', 'N32', 'S32'):
         sdfg.add_symbol(name, dace.int32)
     sdfg.add_array('A', (64, ), dace.float64)

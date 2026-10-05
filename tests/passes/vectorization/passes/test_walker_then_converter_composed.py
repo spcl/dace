@@ -33,7 +33,7 @@ def _build_binop_kernel():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_binop_kernel')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("B", (8, ), dace.float64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
@@ -62,7 +62,7 @@ def _build_unop_kernel():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_unop_kernel')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("out_t", (1, ), dace.float64, transient=True)
     instate = inner.add_state("body")
@@ -87,7 +87,7 @@ def _build_reduction_kernel():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_reduction_kernel')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("Acc", (1, ), dace.float64, transient=False)
     instate = inner.add_state("body")
@@ -183,7 +183,7 @@ def _build_full_io_binop_kernel():
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG("body")
+    inner = dace.SDFG('body_build_full_io_binop_kernel')
     inner.add_array("A", (8, ), dace.float64, transient=False)
     inner.add_array("B", (8, ), dace.float64, transient=False)
     instate = inner.add_state("body")

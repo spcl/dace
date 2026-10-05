@@ -112,7 +112,7 @@ def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_chan
 
 
 def test_chained_derived_ivs():
-    sdfg = dace.SDFG('chain')
+    sdfg = dace.SDFG('chain_chained_derived_ivs')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
     loop = LoopRegion('L',
@@ -440,7 +440,7 @@ def test_llvm_nested_loop_outer_iv_as_invariant_inside_inner():
     """LLVM different-loops-recs.ll analog: outer IV appears in inner loop's
     derived-IV expression as a loop-invariant symbol. Folding happens inside
     inner loop; outer `i` must not be substituted by inner's pass invocation."""
-    sdfg = dace.SDFG('nested')
+    sdfg = dace.SDFG('nested_llvm_nested_loop_outer_iv_as_invariant_inside_inner')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_symbol('M', dace.int64)
     sdfg.add_array('A', [4000], dace.float64)
@@ -517,7 +517,7 @@ def test_llvm_rejects_loop_carried_mid_body_assignment():
     assignment `im1 = i` sits on a mid-body edge, and `im1` is read upstream
     in the loop's start block (one-iteration-behind rolling window). The
     dominance guard must reject folding."""
-    sdfg = dace.SDFG('carried')
+    sdfg = dace.SDFG('carried_llvm_rejects_loop_carried_mid_body_assignment')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [400], dace.float64)
     sdfg.add_array('B', [400], dace.float64)

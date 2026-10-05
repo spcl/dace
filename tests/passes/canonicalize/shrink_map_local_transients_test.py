@@ -126,7 +126,7 @@ def scratch_inside_a_nested_body(reassign: bool = False) -> dace.SDFG:
     :param reassign: Add a second state after an interstate edge that assigns ``k``, so the
         accesses name more than one element across the nest.
     """
-    body = dace.SDFG('nested_body')
+    body = dace.SDFG('nested_body_scratch_inside_a_nested_body')
     body.add_array('A', [N], dace.float64)
     body.add_array('B', [N], dace.float64)
     body.add_transient('scratch', [N], dace.float64)

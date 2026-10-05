@@ -37,10 +37,10 @@ def _build_outer_with_body_nsdfg():
     so the rewrite target lives inside a NestedSDFG node, not in the top
     state. Returns ``(outer_sdfg, body_sdfg, body_state)``.
     """
-    outer = dace.SDFG("outer")
+    outer = dace.SDFG('outer_build_outer_with_body_nsdfg')
     outer.add_array("X", (1, ), dace.float64, transient=False)
     outer_state = outer.add_state("o")
-    body = dace.SDFG("body")
+    body = dace.SDFG('body_build_outer_with_body_nsdfg')
     body_state = body.add_state("b")
     nsdfg = outer_state.add_nested_sdfg(body, set(), set(), {})
     return outer, body, body_state, nsdfg

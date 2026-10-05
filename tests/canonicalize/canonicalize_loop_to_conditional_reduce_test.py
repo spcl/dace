@@ -86,14 +86,14 @@ def test_no_positives_returns_zero():
     at its pre-loop initial value."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_no_positives_returns_zero(a: dace.float64[N], b: dace.float64[1]):
         sum_val = 0.0
         for i in range(N):
             if a[i] > 0.0:
                 sum_val = sum_val + a[i]
         b[0] = sum_val
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_no_positives_returns_zero.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
     assert not any(
         isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
@@ -111,14 +111,14 @@ def test_all_positives_acts_like_unconditional_sum():
     ``np.sum(a)``."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_all_positives_acts_like_unconditional_sum(a: dace.float64[N], b: dace.float64[1]):
         sum_val = 0.0
         for i in range(N):
             if a[i] > 0.0:
                 sum_val = sum_val + a[i]
         b[0] = sum_val
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_all_positives_acts_like_unconditional_sum.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
     assert not any(
         isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
@@ -139,13 +139,13 @@ def test_refuses_unconditional_accumulator():
     handles. Refuse."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_refuses_unconditional_accumulator(a: dace.float64[N], b: dace.float64[1]):
         sum_val = 0.0
         for i in range(N):
             sum_val = sum_val + a[i]
         b[0] = sum_val
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_unconditional_accumulator.to_sdfg(simplify=True)
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res is None, "unconditional accumulator must be left for LoopToReduce"
 
@@ -157,7 +157,7 @@ def test_refuses_true_branch_writes_extra_array():
     so refuse."""
 
     @dace.program
-    def kernel(a: dace.float64[N], out: dace.float64[N], b: dace.float64[1]):
+    def kernel_refuses_true_branch_writes_extra_array(a: dace.float64[N], out: dace.float64[N], b: dace.float64[1]):
         sum_val = 0.0
         for i in range(N):
             if a[i] > 0.0:
@@ -165,7 +165,7 @@ def test_refuses_true_branch_writes_extra_array():
                 out[i] = sum_val
         b[0] = sum_val
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_true_branch_writes_extra_array.to_sdfg(simplify=True)
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res is None
 
@@ -173,7 +173,8 @@ def test_refuses_true_branch_writes_extra_array():
 def test_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_value():
 
     @dace.program
-    def kernel(a: dace.float64[N], c: dace.float64[1], b: dace.float64[1]):
+    def kernel_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_value(
+            a: dace.float64[N], c: dace.float64[1], b: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if a[i] > 0.0:
@@ -181,7 +182,7 @@ def test_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_val
                 s = s + c[0]
         b[0] = s
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_value.to_sdfg(simplify=True)
     a, b, c = np.array([2.0, 1.0, -1.0]), np.zeros(1), np.zeros(1)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
     sdfg(a=a, b=b, c=c, N=3)
@@ -193,7 +194,7 @@ def test_refuses_else_branch_with_content():
     isn't handled by the inline-ternary mask. Refuse."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[N]):
+    def kernel_refuses_else_branch_with_content(a: dace.float64[N], b: dace.float64[N]):
         sum_val = 0.0
         for i in range(N):
             if a[i] > 0.0:
@@ -203,7 +204,7 @@ def test_refuses_else_branch_with_content():
         # Final consumer of sum_val so it isn't optimised away.
         b[0] = sum_val + b[0]
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_else_branch_with_content.to_sdfg(simplify=True)
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res is None
 

@@ -70,7 +70,7 @@ def test_parallelizes_with_the_ordering_edge_inside_a_nested_body():
     walk does -- reading it as a write refused this fully parallel loop."""
     from dace.sdfg.state import LoopRegion
 
-    inner = dace.SDFG('body')
+    inner = dace.SDFG('body_parallelizes_with_the_ordering_edge_inside_a_nested_body')
     inner.add_symbol('i', dace.int64)
     inner.add_symbol('N', dace.int64)
     inner.add_array('a', [N], dace.float64)

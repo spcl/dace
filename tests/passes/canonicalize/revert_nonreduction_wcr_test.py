@@ -43,7 +43,7 @@ def _signature(sdfg):
 
 def _tasklet_to_access():
     """expr 0: ``Tasklet -[wcr]-> AccessNode``, an in-place fold with no enclosing map."""
-    sdfg = dace.SDFG('expr0')
+    sdfg = dace.SDFG('expr0_tasklet_to_access')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state()
@@ -56,7 +56,7 @@ def _tasklet_to_access():
 
 def _tasklet_through_exit():
     """expr 1: ``Tasklet -[wcr]-> MapExit -> AccessNode``, injective over the map param."""
-    sdfg = dace.SDFG('expr1')
+    sdfg = dace.SDFG('expr1_tasklet_through_exit')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state()
@@ -74,7 +74,7 @@ def _tasklet_through_exit():
 
 def _access_to_access():
     """expr 2: ``AccessNode -[wcr]-> AccessNode``, the WCR copy canon leaves for ``a[:] += b[:]``."""
-    sdfg = dace.SDFG('expr2')
+    sdfg = dace.SDFG('expr2_access_to_access')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     state = sdfg.add_state()
@@ -225,13 +225,14 @@ def test_the_pass_and_the_wrapper_produce_the_same_graph():
     down to memlets and tasklet bodies -- on a program carrying several shapes at once."""
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], acc: dace.float64[1]):
+    def prog_the_pass_and_the_wrapper_produce_the_same_graph(a: dace.float64[N], b: dace.float64[N],
+                                                             acc: dace.float64[1]):
         for i in dace.map[0:N]:
             a[i] += b[i]
         for i in dace.map[0:N]:
             acc[0] += b[i]
 
-    base = prog.to_sdfg(simplify=False)
+    base = prog_the_pass_and_the_wrapper_produce_the_same_graph.to_sdfg(simplify=False)
     by_pass, by_wrapper = copy.deepcopy(base), copy.deepcopy(base)
 
     n_pass = RevertNonReductionWCR().apply_pass(by_pass, {}) or 0
@@ -250,7 +251,7 @@ def test_the_pass_and_the_wrapper_produce_the_same_graph():
 def test_nested_sdfg_states_are_visited():
     """``all_sdfgs_recursive`` is the traversal, not the top-level state list: a WCR inside a body
     NestedSDFG is as revertible as one at the top, and the matcher this replaced recursed."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_nested_sdfg_states_are_visited')
     inner.add_array('a', [N], dace.float64)
     inner.add_array('b', [N], dace.float64)
     istate = inner.add_state()
@@ -258,7 +259,7 @@ def test_nested_sdfg_states_are_visited():
     istate.add_edge(istate.add_read('b'), None, t, 'inp', dace.Memlet('b[0]'))
     istate.add_edge(t, 'out', istate.add_write('a'), None, dace.Memlet(data='a', subset='1', wcr='lambda x, y: x + y'))
 
-    outer = dace.SDFG('outer')
+    outer = dace.SDFG('outer_nested_sdfg_states_are_visited')
     outer.add_array('a', [N], dace.float64)
     outer.add_array('b', [N], dace.float64)
     ostate = outer.add_state()
@@ -275,11 +276,11 @@ def test_the_revert_preserves_the_computed_values():
     """Value equivalence, not just shape: the reverted graph must still accumulate."""
 
     @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N]):
+    def prog_the_revert_preserves_the_computed_values(a: dace.float64[N], b: dace.float64[N]):
         for i in dace.map[0:N]:
             a[i] += b[i]
 
-    sdfg = prog.to_sdfg(simplify=False)
+    sdfg = prog_the_revert_preserves_the_computed_values.to_sdfg(simplify=False)
     assert RevertNonReductionWCR().apply_pass(sdfg, {}), 'the injective accumulate must revert'
     sdfg.validate()
 

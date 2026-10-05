@@ -138,12 +138,12 @@ def test_wavefront_skew_accepts_symbolic_offsets():
     sym2 = dace.symbol('sym2', positive=True)
 
     @dace.program
-    def prog(aa: dace.float64[N, N]):
+    def prog_wavefront_skew_accepts_symbolic_offsets(aa: dace.float64[N, N]):
         for i in range(sym2, N):
             for j in range(sym1, N):
                 aa[i, j] = (aa[i, j - sym1] + aa[i - sym2, j]) / 1.9
 
-    sdfg = prog.to_sdfg(simplify=True)
+    sdfg = prog_wavefront_skew_accepts_symbolic_offsets.to_sdfg(simplify=True)
     res = WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -159,12 +159,12 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
     sym = dace.symbol('sym_unannot')  # no ``positive=True``
 
     @dace.program
-    def prog(aa: dace.float64[N, N]):
+    def prog_wavefront_skew_emits_runtime_guard_for_unannotated_symbol(aa: dace.float64[N, N]):
         for i in range(sym, N):
             for j in range(sym, N):
                 aa[i, j] = (aa[i, j - sym] + aa[i - sym, j]) / 1.9
 
-    sdfg = prog.to_sdfg(simplify=True)
+    sdfg = prog_wavefront_skew_emits_runtime_guard_for_unannotated_symbol.to_sdfg(simplify=True)
     res = WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -781,13 +781,13 @@ def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
     reference bit-for-bit."""
 
     @dace.program
-    def prog(aa: dace.int64[N, N], bb: dace.int64[N, N, 1]):
+    def prog_wavefront_skew_non_2d_carried_dependence_value_preserving(aa: dace.int64[N, N], bb: dace.int64[N, N, 1]):
         for i in range(1, N - 1):
             for j in range(1, N - 1):
                 aa[i, j] = aa[i, j - 1] + aa[i - 1, j]
                 bb[i, j, 0] = bb[i - 1, j + 1, 0] + aa[i, j]
 
-    sdfg = prog.to_sdfg(simplify=True)
+    sdfg = prog_wavefront_skew_non_2d_carried_dependence_value_preserving.to_sdfg(simplify=True)
     WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
 

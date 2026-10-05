@@ -10,7 +10,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (S
 
 def _kernel_in_a_host_map_scope() -> dace.SDFG:
     """``map i (host) { nested SDFG { map j (GPU_Device) } }``."""
-    inner = dace.SDFG('inner_kernel')
+    inner = dace.SDFG('inner_kernel_kernel_in_a_host_map_scope')
     inner.add_array('a_in', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner.add_array('b_out', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner_state = inner.add_state('inner_state', is_start_block=True)

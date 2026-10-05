@@ -368,7 +368,7 @@ def test_widened_shape_introduces_symbol_already_in_inner_table():
     # for it. The inner SDFG accepts a connector "A_conn" whose shape is (N, N) -- which
     # will trip the "Missing symbols on nested SDFG" check unless symbol_mapping
     # auto-propagates N.
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_widened_shape_introduces_symbol_already_in_inner_table')
     inner.add_symbol("N", dace.int64)
     inner.add_array("A_conn", (N_sym, N_sym), dace.float64)
     inner.add_state("body")
@@ -409,7 +409,7 @@ def test_conditional_block_else_branch_not_dereferenced():
     state = sdfg.add_state("s")
     a_an = state.add_access("A")
 
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_conditional_block_else_branch_not_dereferenced')
     inner.add_array("A_conn", (1, ), dace.float64)  # narrowed -> pass must widen to trigger apply()
 
     cb = ConditionalBlock("cb", sdfg=inner, parent=inner)
@@ -456,7 +456,7 @@ def test_scalar_source_not_subscripted_in_interstate_assignment():
 
     # Inner NSDFG: has its own c1, c2 connectors and an interstate edge that
     # references c1, c2 by bare name (the @dace.program shape).
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_scalar_source_not_subscripted_in_interstate_assignment')
     inner.add_array("A_conn", (1, ), dace.float64)  # length-1 connector for outer A
     inner.add_scalar("c1", dace.float64)
     inner.add_scalar("c2", dace.float64)
@@ -494,7 +494,7 @@ def test_constant_write_at_window_start_is_offset_like_any_relative_index():
     sdfg.add_array("A", (5, 5, 3), dace.float64)
     state = sdfg.add_state("s")
 
-    inner = dace.SDFG("inner")
+    inner = dace.SDFG('inner_constant_write_at_window_start_is_offset_like_any_relative_index')
     inner.add_array("A_conn", (1, 2, 1), dace.float64)
     body = inner.add_state("body")
     for value, index in ((1.0, "0, 0, 0"), (2.0, "0, 1, 0")):

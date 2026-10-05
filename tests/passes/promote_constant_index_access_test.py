@@ -40,12 +40,12 @@ def test_unconditional_constant_index_promoted():
     constant index every iteration. The pass promotes; LoopToMap then accepts."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_unconditional_constant_index_promoted(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_unconditional_constant_index_promoted.to_sdfg(simplify=True)
     loops_before = _num_loops(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None
@@ -80,13 +80,14 @@ def test_refuses_conditional_write_with_unconditional_read():
     The un-promoted SDFG must still compute the right answer, both guard values."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int64[1]):
+    def kern_refuses_conditional_write_with_unconditional_read(arr: dace.float64[5], out: dace.float64[N],
+                                                               scale: dace.float64[N], flag: dace.int64[1]):
         for jl in range(N):
             if flag[0] != 0:
                 arr[2] = 0.5 * scale[jl]
             out[jl] = arr[2] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_conditional_write_with_unconditional_read.to_sdfg(simplify=True)
     before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, 'the conditional-write slot has an upward-exposed read and must be refused'
@@ -118,13 +119,14 @@ def test_refuses_when_same_slot_is_live_out():
     externally; the scalar-form promotion would silently drop them, so the pass refuses."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]):
+    def kern_refuses_when_same_slot_is_live_out(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1],
+                                                scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
         post[0] = arr[1]  # live-out read at the *same* slot ``arr[1]``
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_when_same_slot_is_live_out.to_sdfg(simplify=True)
     loops_before = _num_loops(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None
@@ -137,13 +139,14 @@ def test_promotes_when_only_other_slots_are_live_out():
     externally even though ``arr`` (at other slots) is live."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]):
+    def kern_promotes_when_only_other_slots_are_live_out(arr: dace.float64[5], out: dace.float64[N],
+                                                         post: dace.float64[1], scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
         post[0] = arr[2]  # different slot -- arr[1] is dead post-loop
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_when_only_other_slots_are_live_out.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, 'Slot-precise live-out check should let promotion fire when arr[1] is dead.'
     sdfg.validate()
@@ -154,12 +157,13 @@ def test_refuses_when_array_indexed_by_loop_var_elsewhere():
     constant-index pattern -- the pass must refuse."""
 
     @dace.program
-    def kern(arr: dace.float64[N], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_refuses_when_array_indexed_by_loop_var_elsewhere(arr: dace.float64[N], out: dace.float64[N],
+                                                              scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * arr[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_when_array_indexed_by_loop_var_elsewhere.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None
 
@@ -198,12 +202,12 @@ def test_idempotent():
     structural candidate is gone), so the pass returns ``None``."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_idempotent(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
         for jl in range(N):
             arr[3] = 0.002 * scale[jl]
             out[jl] = arr[3] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_idempotent.to_sdfg(simplify=True)
     first = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert first is not None
     second = PromoteConstantIndexAccess().apply_pass(sdfg, {})
@@ -215,12 +219,13 @@ def test_numeric_correctness_then_loop_to_map_maps():
     numpy reference at full IEEE precision."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_numeric_correctness_then_loop_to_map_maps(arr: dace.float64[5], out: dace.float64[N],
+                                                       scale: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl] + 1.5
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_numeric_correctness_then_loop_to_map_maps.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None
     maps_added = _apply_loop_to_map(sdfg)
@@ -244,13 +249,14 @@ def test_promotes_and_lifts_when_other_slot_lives_out():
     numeric result matches the un-promoted Python reference."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]):
+    def kern_promotes_and_lifts_when_other_slot_lives_out(arr: dace.float64[5], out: dace.float64[N],
+                                                          scale: dace.float64[N], sink: dace.float64[1]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl] + 1.5
         sink[0] = arr[2]  # different slot -- arr[1] is dead
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_and_lifts_when_other_slot_lives_out.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, 'Slot-precise live-out check should let promotion fire.'
     n_maps = _apply_loop_to_map(sdfg)
@@ -294,13 +300,14 @@ def test_promotes_multiple_distinct_constant_slots_of_same_array():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_promotes_multiple_distinct_constant_slots_of_same_array(arr: dace.float64[5], out: dace.float64[N],
+                                                                     scale: dace.float64[N]):
         for jl in range(N):
             arr[0] = 0.002 * scale[jl]
             arr[1] = 0.003 * scale[jl]
             out[jl] = arr[0] * arr[1] + 1.5
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_multiple_distinct_constant_slots_of_same_array.to_sdfg(simplify=True)
     # Sanity: pre-fix, LoopToMap refuses this loop (the bug). The exact same refusal
     # shape blocks cloudsc for_767 species loops on zvqx[0]/zvqx[1].
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
@@ -344,7 +351,8 @@ def test_promotes_cloudsc_for767_species_pattern():
     same PCIA refusal; this test is the minimal faithful reproducer."""
 
     @dace.program
-    def kern(zvqx: dace.float64[5], pre_ice: dace.float64[N], zdtgdp: dace.float64[N], out: dace.float64[N]):
+    def kern_promotes_cloudsc_for767_species_pattern(zvqx: dace.float64[5], pre_ice: dace.float64[N],
+                                                     zdtgdp: dace.float64[N], out: dace.float64[N]):
         for jl in range(N):
             zvqx[0] = 0.001 * pre_ice[jl] + zdtgdp[jl]
             zvqx[1] = 0.002 * pre_ice[jl] + zdtgdp[jl]
@@ -353,7 +361,7 @@ def test_promotes_cloudsc_for767_species_pattern():
             zvqx[4] = 0.005 * pre_ice[jl] + zdtgdp[jl]
             out[jl] = zvqx[0] + zvqx[1] + zvqx[2] + zvqx[3] + zvqx[4]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_cloudsc_for767_species_pattern.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, ('Cloudsc-shape 5-slot promotion should fire (one transient '
                              'scalar per species slot); without this, for_767 stays '
@@ -392,14 +400,15 @@ def test_multi_slot_refuses_if_symbolic_access_to_same_array():
     (not per-slot) and refuses promotion."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_multi_slot_refuses_if_symbolic_access_to_same_array(arr: dace.float64[5], out: dace.float64[N],
+                                                                 scale: dace.float64[N]):
         for jl in range(N):
             arr[0] = 0.002 * scale[jl]
             arr[1] = 0.003 * scale[jl]
             # Symbolic-index read of arr: could alias the constant slots above.
             out[jl] = arr[jl % 5] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_multi_slot_refuses_if_symbolic_access_to_same_array.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, ('Mixed constant/symbolic access on the same array must refuse '
                          'promotion -- the multi-slot relaxation only applies when '
@@ -414,8 +423,8 @@ def test_refuses_conditional_block_in_body():
     are independent premises and the pass needs both."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int32,
-             sink: dace.float64[1]):
+    def kern_refuses_conditional_block_in_body(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
+                                               flag: dace.int32, sink: dace.float64[1]):
         for jl in range(N):
             if flag > 0:
                 arr[3] = 0.002 * scale[jl]
@@ -423,7 +432,7 @@ def test_refuses_conditional_block_in_body():
         # arr[3] is dead post-loop; reads only target a different slot.
         sink[0] = arr[2]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_conditional_block_in_body.to_sdfg(simplify=True)
     before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, 'the conditionally-written arr[3] is read upward-exposed and must be refused'
@@ -443,7 +452,8 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_promotes_outer_loop_with_multiple_inner_constant_indexed_writes(arr: dace.float64[5], out: dace.float64[N],
+                                                                             scale: dace.float64[N]):
         for jl in range(N):
             arr[0] = scale[jl] * 0.1
             arr[1] = scale[jl] * 0.2
@@ -451,7 +461,7 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
             arr[3] = scale[jl] * 0.4
             out[jl] = arr[0] + arr[1] + arr[2] + arr[3]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_outer_loop_with_multiple_inner_constant_indexed_writes.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, ('PCIA must promote four independent slots arr[0..3]; the multi-slot '
                              'relaxation handles each as a separate per-iteration scalar.')
@@ -486,12 +496,12 @@ def test_promotes_multi_dim_constant_slot():
     """
 
     @dace.program
-    def kern(arr: dace.float64[6, 8], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_promotes_multi_dim_constant_slot(arr: dace.float64[6, 8], out: dace.float64[N], scale: dace.float64[N]):
         for jl in range(N):
             arr[3, 5] = 0.001 * scale[jl]
             out[jl] = arr[3, 5] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_multi_dim_constant_slot.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, 'PCIA should promote the 2-D constant slot arr[3, 5].'
     maps_added = _apply_loop_to_map(sdfg)
@@ -520,8 +530,8 @@ def test_refuses_double_nested_conditionals():
     must-def."""
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag_a: dace.int32, flag_b: dace.int32,
-             sink: dace.float64[1]):
+    def kern_refuses_double_nested_conditionals(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N],
+                                                flag_a: dace.int32, flag_b: dace.int32, sink: dace.float64[1]):
         for jl in range(N):
             if flag_a > 0:
                 if flag_b > 0:
@@ -529,7 +539,7 @@ def test_refuses_double_nested_conditionals():
             out[jl] = arr[2] * scale[jl]
         sink[0] = arr[3]  # different slot post-loop
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_double_nested_conditionals.to_sdfg(simplify=True)
     before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, 'doubly-guarded write with an unconditional read must be refused'
@@ -542,12 +552,12 @@ def test_refuses_partial_multi_dim_slot():
     isn't a single privatisable point, it's a 1-D sweep at axis 0."""
 
     @dace.program
-    def kern(arr: dace.float64[16, 8], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_refuses_partial_multi_dim_slot(arr: dace.float64[16, 8], out: dace.float64[N], scale: dace.float64[N]):
         for jl in range(N):
             arr[jl, 5] = 0.002 * scale[jl]
             out[jl] = arr[jl, 5] * scale[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_partial_multi_dim_slot.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, ('PCIA must refuse a slot whose subset has a loop-variable index on any axis -- '
                          "promoting ``arr[jl, 5]`` to a scalar would erase the per-iteration distinction.")
@@ -762,7 +772,8 @@ def test_refuses_upward_exposed_read_before_inner_writing_loop():
     """
 
     @dace.program
-    def kern(A: dace.float64[_UE_N], hist: dace.float64[_UE_T], out: dace.float64[_UE_T, _UE_N]):
+    def kern_refuses_upward_exposed_read_before_inner_writing_loop(A: dace.float64[_UE_N], hist: dace.float64[_UE_T],
+                                                                   out: dace.float64[_UE_T, _UE_N]):
         arr = np.zeros((4, ), dtype=np.float64)
         arr[1] = 5.0
         for t in range(_UE_T):
@@ -771,7 +782,7 @@ def test_refuses_upward_exposed_read_before_inner_writing_loop():
                 arr[1] = A[i] + t
                 out[t, i] = arr[1] * 3.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_upward_exposed_read_before_inner_writing_loop.to_sdfg(simplify=True)
     before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is None, f'the upward-exposed read of arr[1] must block promotion; got {res}'
@@ -808,14 +819,16 @@ def test_refuses_when_enclosing_loop_back_edge_reaches_the_read():
     """
 
     @dace.program
-    def kern(A: dace.float64[_UE_N], arr: dace.float64[4], hist: dace.float64[_UE_T], out: dace.float64[_UE_T, _UE_N]):
+    def kern_refuses_when_enclosing_loop_back_edge_reaches_the_read(A: dace.float64[_UE_N], arr: dace.float64[4],
+                                                                    hist: dace.float64[_UE_T],
+                                                                    out: dace.float64[_UE_T, _UE_N]):
         for t in range(_UE_T):
             hist[t] = arr[1] * 2.0
             for i in range(_UE_N):
                 arr[1] = A[i] + t
                 out[t, i] = arr[1] * 3.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_when_enclosing_loop_back_edge_reaches_the_read.to_sdfg(simplify=True)
     inner = [
         r for r in sdfg.all_control_flow_regions()
         if isinstance(r, LoopRegion) and not any(isinstance(b, LoopRegion) for b in r.nodes())
@@ -863,13 +876,14 @@ def test_refuses_loop_varying_guard_and_stays_correct():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_refuses_loop_varying_guard_and_stays_correct(arr: dace.float64[5], out: dace.float64[N],
+                                                          scale: dace.float64[N]):
         for jl in range(N):
             if jl % 2 == 0:
                 arr[2] = scale[jl]
             out[jl] = arr[2] * 3.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_refuses_loop_varying_guard_and_stays_correct.to_sdfg(simplify=True)
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
     assert len(loops) == 1
     pcia = PromoteConstantIndexAccess()
@@ -907,13 +921,14 @@ def test_promotes_when_write_dominates_read_across_states():
     """
 
     @dace.program
-    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], tmp: dace.float64[N]):
+    def kern_promotes_when_write_dominates_read_across_states(arr: dace.float64[5], out: dace.float64[N],
+                                                              scale: dace.float64[N], tmp: dace.float64[N]):
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             tmp[jl] = scale[jl] + 1.0
             out[jl] = arr[1] * tmp[jl]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_promotes_when_write_dominates_read_across_states.to_sdfg(simplify=True)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
     assert res is not None, 'a write that dominates the read inside the body must still promote'
     sdfg.validate()

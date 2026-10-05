@@ -137,7 +137,7 @@ def ordering_edge_after_a_kernel() -> dace.SDFG:
 
     CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
     """
-    sdfg = dace.SDFG('ordering_edge_after_a_kernel')
+    sdfg = dace.SDFG('device_table_init_ordering_edge_after_a_kernel')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
     sdfg.add_scalar('s', dace.float64)

@@ -52,14 +52,14 @@ def test_guarded_sum_of_squares_lifts_and_is_bit_exact():
     """
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_guarded_sum_of_squares_lifts_and_is_bit_exact(a: dace.float64[N], b: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if a[i] > 0.0:
                 s = s + a[i] * a[i]
         b[0] = s
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_guarded_sum_of_squares_lifts_and_is_bit_exact.to_sdfg(simplify=True)
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res == 1, "computed-addend guarded reduction must LIFT, not refuse"
     sdfg.validate()
@@ -88,14 +88,14 @@ def test_guarded_sum_of_squares_bit_exact_against_sequential_reference():
     tolerance."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_guarded_sum_of_squares_bit_exact_against_sequential_reference(a: dace.float64[N], b: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if a[i] > 0.0:
                 s = s + a[i] * a[i]
         b[0] = s
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_guarded_sum_of_squares_bit_exact_against_sequential_reference.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 
@@ -118,14 +118,14 @@ def test_guarded_product_of_computed_addend_lifts():
     masked-out iteration leaves the product unchanged. Bit-exact vs sequential."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[1]):
+    def kernel_guarded_product_of_computed_addend_lifts(a: dace.float64[N], b: dace.float64[1]):
         p = 1.0
         for i in range(N):
             if a[i] > 0.0:
                 p = p * (a[i] + a[i])
         b[0] = p
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_guarded_product_of_computed_addend_lifts.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert not _has_conditional_block(sdfg)
@@ -147,14 +147,15 @@ def test_guard_reads_a_different_element_than_the_addend_lifts():
     input."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+    def kernel_guard_reads_a_different_element_than_the_addend_lifts(a: dace.float64[N], b: dace.float64[N],
+                                                                     out: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if b[i] > 0.0:
                 s = s + a[i] * a[i]
         out[0] = s
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_guard_reads_a_different_element_than_the_addend_lifts.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert not _has_conditional_block(sdfg)
@@ -317,14 +318,14 @@ def test_refuses_indirect_guard_read():
     """
 
     @dace.program
-    def kernel(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[1]):
+    def kernel_refuses_indirect_guard_read(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if a[idx[i]] > 0.0:
                 s = s + a[i] * a[i]
         b[0] = s
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_indirect_guard_read.to_sdfg(simplify=True)
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res is None, "indirect guard read is not expressible as a memlet subset -- must refuse"
     sdfg.validate()

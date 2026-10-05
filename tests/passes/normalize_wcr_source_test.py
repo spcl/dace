@@ -37,7 +37,7 @@ def _build_nsdfg_wcr_sum(n: int) -> dace.SDFG:
     src_read = state.add_read('src')
     acc_write = state.add_write('acc')
 
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_build_nsdfg_wcr_sum')
     body.add_array('_in', [1], dace.float64)
     body.add_array('_out', [1], dace.float64)
     bstate = body.add_state('b')
@@ -220,7 +220,7 @@ def _build_nsdfg_inout_wcr_sdfg() -> dace.SDFG:
     sdfg.add_array('out', [4], dace.float64)
     sdfg.add_array('src', [4], dace.float64)
 
-    inner = dace.SDFG('loop_body')
+    inner = dace.SDFG('loop_body_build_nsdfg_inout_wcr_sdfg')
     inner.add_array('out', [1], dace.float64)
     inner.add_array('src', [1], dace.float64)
     istate = inner.add_state('s', is_start_block=True)
@@ -426,7 +426,7 @@ def test_seed_spares_nested_out_only_aliasing_live_array():
     sdfg.add_array('A', [n], dace.float64)
     sdfg.add_array('val', [n], dace.float64)
     st = sdfg.add_state('s')
-    body = dace.SDFG('body')
+    body = dace.SDFG('body_seed_spares_nested_out_only_aliasing_live_array')
     body.add_array('out', [n], dace.float64)
     body.add_array('bval', [n], dace.float64)
     bst = body.add_state('b')

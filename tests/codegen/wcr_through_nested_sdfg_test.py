@@ -50,7 +50,7 @@ def _build_wcr_nsdfg_sdfg(n: int) -> dace.SDFG:
     # The body NestedSDFG: read ``_in`` (a scalar slice of ``src``) and produce ``_out``
     # (a scalar). The body's only computation is ``_out = _in``; the actual reduction
     # semantics live on the WCR edge from this NSDFG's output to the outer ``acc``.
-    nsdfg = dace.SDFG('body')
+    nsdfg = dace.SDFG('body_build_wcr_nsdfg_sdfg')
     nsdfg.add_array('_in', [1], dace.float64)
     nsdfg.add_array('_out', [1], dace.float64)
     nstate = nsdfg.add_state('s0')
@@ -136,7 +136,7 @@ def _build_wcr_via_private_scalar_sdfg(n: int) -> dace.SDFG:
     acc_write = state.add_write('acc')
     priv_write = state.add_access('_priv')
 
-    nsdfg = dace.SDFG('body')
+    nsdfg = dace.SDFG('body_build_wcr_via_private_scalar_sdfg')
     nsdfg.add_array('_in', [1], dace.float64)
     nsdfg.add_array('_out', [1], dace.float64)
     nstate = nsdfg.add_state('s0')
@@ -340,7 +340,7 @@ def _build_row_reduction_through_window(n: int, m: int, also_accumulate_row_zero
     sdfg.add_array('out', [n], dace.float64)
     state = sdfg.add_state('rows')
 
-    body = dace.SDFG('row_body')
+    body = dace.SDFG('row_body_build_row_reduction_through_window')
     body.add_symbol('i', dace.int64)
     body.add_array('src', [n, m], dace.float64)
     body.add_array('out', [n], dace.float64)

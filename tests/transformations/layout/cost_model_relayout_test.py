@@ -35,7 +35,7 @@ GPU = LogGP(L=500e-9,
 
 
 def _arr(n=1024):
-    sdfg = dace.SDFG("t")
+    sdfg = dace.SDFG('t_arr')
     sdfg.add_array("A", [n], dace.float64)
     return sdfg.arrays["A"]
 

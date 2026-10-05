@@ -19,7 +19,7 @@ N = 8
 
 def build_conditional_with_nested_sdfg() -> dace.SDFG:
     """A ConditionalBlock at top level, with a nested SDFG that writes an array inside it."""
-    inner = dace.SDFG('inner')
+    inner = dace.SDFG('inner_build_conditional_with_nested_sdfg')
     inner.add_array('ia', [N], dace.float64)
     istate = inner.add_state('iwrite', is_start_block=True)
     itask = istate.add_tasklet('set', {}, {'o'}, 'o = 1.0')

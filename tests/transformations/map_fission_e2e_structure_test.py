@@ -103,7 +103,7 @@ def test_nested_sdfg_multistate_fission():
     The NestedSDFG has two states chained by a transient: ``t = 2 * a`` then
     ``b = 3 * t``.  MapFission must split the outer map around the NestedSDFG.
     """
-    nsdfg = dace.SDFG('nested')
+    nsdfg = dace.SDFG('nested_nested_sdfg_multistate_fission')
     nsdfg.add_array('a', [1], dace.float64)
     nsdfg.add_array('b', [1], dace.float64)
     nsdfg.add_transient('t', [1], dace.float64)

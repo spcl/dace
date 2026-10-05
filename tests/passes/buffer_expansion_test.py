@@ -114,11 +114,11 @@ def test_loop_index_reports_one_slot_per_iteration(lo, hi, count):
     axis by one and the final iteration writes/reads out of bounds."""
 
     @dace.program
-    def kern(a: dace.float64[64], b: dace.float64[64]):
+    def kern_loop_index_reports_one_slot_per_iteration(a: dace.float64[64], b: dace.float64[64]):
         for i in range(lo, hi):
             b[i] = a[i] * 2.0
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_loop_index_reports_one_slot_per_iteration.to_sdfg(simplify=True)
     loop = _single_loop(sdfg)
     index, size = BufferExpansion._loop_index(loop)
     assert size == count, f'size {size} != iteration count {count} for range({lo},{hi})'
@@ -130,11 +130,11 @@ def test_loop_index_symbolic_bound_full_count():
     """``for i in range(N)`` needs ``N`` slots (indices 0..N-1), not ``N-1``."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N]):
+    def kern_loop_index_symbolic_bound_full_count(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N):
             b[i] = a[i] * 2.0
 
-    loop = _single_loop(kern.to_sdfg(simplify=True))
+    loop = _single_loop(kern_loop_index_symbolic_bound_full_count.to_sdfg(simplify=True))
     _, size = BufferExpansion._loop_index(loop)
     assert (size - N).simplify() == 0, f'symbolic size {size} should equal N'
 
@@ -143,11 +143,11 @@ def test_loop_index_refuses_non_unit_step():
     """Only unit-step loops qualify (the private dimension is indexed by ``i - start``)."""
 
     @dace.program
-    def kern(a: dace.float64[64], b: dace.float64[64]):
+    def kern_loop_index_refuses_non_unit_step(a: dace.float64[64], b: dace.float64[64]):
         for i in range(0, 64, 2):
             b[i] = a[i] * 2.0
 
-    loop = _single_loop(kern.to_sdfg(simplify=True))
+    loop = _single_loop(kern_loop_index_refuses_non_unit_step.to_sdfg(simplify=True))
     assert BufferExpansion._loop_index(loop) is None
 
 
@@ -314,7 +314,7 @@ def test_guard_refuses_gap_tiling():
 def _rmw_accumulator_sdfg():
     """A read-before-write scalar accumulator: ``for i: t = s; s = t + a[i]`` -- ``s`` carries its
     value across iterations through transient ``t`` (two body states)."""
-    sdfg = dace.SDFG('rmw')
+    sdfg = dace.SDFG('rmw_rmw_accumulator_sdfg')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_transient('s', [1], dace.float64)
     sdfg.add_transient('t', [1], dace.float64)
@@ -383,7 +383,7 @@ def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
     ``a``. The pass must not expand it, and the loop must stay sequential + value-preserving."""
 
     @dace.program
-    def kern(a: dace.float64[N], b: dace.float64[N]):
+    def kern_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved(a: dace.float64[N], b: dace.float64[N]):
         for i in range(1, N):
             a[i] = a[i - 1] + b[i]
 
@@ -395,7 +395,7 @@ def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
     for i in range(1, n):
         ref[i] = ref[i - 1] + b[i]
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved.to_sdfg(simplify=True)
     loops_before = _num_loops(sdfg)
     assert BufferExpansion().apply_pass(sdfg, {}) is None, 'a recurrence must not be expanded'
     assert _num_loops(sdfg) == loops_before
@@ -420,7 +420,7 @@ def test_pass_is_value_preserving_end_to_end():
     ``LoopToMap`` compiles to a map whose result matches the sequential baseline."""
 
     @dace.program
-    def kern(a: dace.float64[N, M], out: dace.float64[N]):
+    def kern_pass_is_value_preserving_end_to_end(a: dace.float64[N, M], out: dace.float64[N]):
         for i in range(N):
             buf = np.empty(M, dace.float64)
             for j in range(M):
@@ -435,7 +435,7 @@ def test_pass_is_value_preserving_end_to_end():
     a = rng.random((n, m))
     expected = (2.0 * a).sum(axis=1)
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_pass_is_value_preserving_end_to_end.to_sdfg(simplify=True)
     BufferExpansion().apply_pass(sdfg, {})
     sdfg.validate()
     _apply_loop_to_map(sdfg)
@@ -450,12 +450,12 @@ def test_view_operand_is_not_expanded():
     dimension it presents to its consumer corrupts the aliased shape."""
 
     @dace.program
-    def kern(a: dace.float64[N, M], out: dace.float64[N]):
+    def kern_view_operand_is_not_expanded(a: dace.float64[N, M], out: dace.float64[N]):
         for i in range(N):
             row = a[i]  # a view onto a[i, :]
             out[i] = np.sum(row * 2.0)
 
-    sdfg = kern.to_sdfg(simplify=True)
+    sdfg = kern_view_operand_is_not_expanded.to_sdfg(simplify=True)
     views = [name for name, d in sdfg.arrays.items() if isinstance(d, dace.data.View)]
     result = BufferExpansion().apply_pass(sdfg, {})
     # No view may appear in any expansion result.

@@ -79,13 +79,13 @@ def test_extended():
     stream in-connectors; memcpy tasklets are stream-wired too."""
 
     @dace.program
-    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
+    def independent_copies_extended(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
         for i in dace.map[0:128:1]:
             B[i] = A[i]
         for i in dace.map[0:128:1]:
             D[i] = C[i]
 
-    sdfg = independent_copies.to_sdfg()
+    sdfg = independent_copies_extended.to_sdfg()
     sdfg.apply_gpu_transformations()
     # Two components get two streams only when concurrency is unbounded; the scheduler reads the limit when built.
     with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
@@ -126,13 +126,14 @@ def test_stream_count_read_at_apply():
     """A strategy built before ``set_temporary`` still honors the stream count active at apply time."""
 
     @dace.program
-    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
+    def independent_copies_stream_count_read_at_apply(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128],
+                                                      D: dace.uint32[128]):
         for i in dace.map[0:128:1]:
             B[i] = A[i]
         for i in dace.map[0:128:1]:
             D[i] = C[i]
 
-    sdfg = independent_copies.to_sdfg()
+    sdfg = independent_copies_stream_count_read_at_apply.to_sdfg()
     sdfg.apply_gpu_transformations()
     with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=1):
         gpu_stream_pipeline.apply_pass(sdfg, {})
@@ -312,7 +313,7 @@ def test_three_kernels_dependent_and_independent():
 
 def test_empty_state():
     """An SDFG with a single empty state must pass through the pipeline without crashing."""
-    sdfg = dace.SDFG("empty_sdfg")
+    sdfg = dace.SDFG("empty_sdfg_empty_state")
     sdfg.add_state("empty_state")
 
     gpu_stream_pipeline.apply_pass(sdfg, {})

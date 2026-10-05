@@ -52,14 +52,14 @@ def test_tsvc_s314_max_value_only():
     """
 
     @dace.program
-    def s314(a: dace.float64[N], result: dace.float64[1]):
+    def s314_tsvc_s314_max_value_only(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > x:
                 x = a[i]
         result[0] = x
 
-    sdfg = s314.to_sdfg(simplify=True)
+    sdfg = s314_tsvc_s314_max_value_only.to_sdfg(simplify=True)
     assert _num_loops(sdfg) == 1
     res = ArgMaxLift().apply_pass(sdfg, {})
     sdfg.validate()
@@ -105,14 +105,14 @@ def test_max_corner_first_element_is_max():
     it up even though the input slice ``a[1:N]`` excludes index 0."""
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_max_corner_first_element_is_max(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > x:
                 x = a[i]
         result[0] = x
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_max_corner_first_element_is_max.to_sdfg(simplify=True)
     ArgMaxLift().apply_pass(sdfg, {})
     sdfg.validate()
     a = np.array([100.0, 1.0, 2.0, 3.0, 4.0, 5.0])
@@ -181,14 +181,14 @@ def test_refuses_non_comparison_condition():
     boolean operators are out of scope."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.int64[N], result: dace.float64[1]):
+    def kernel_refuses_non_comparison_condition(a: dace.float64[N], b: dace.int64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if b[i] != 0 and a[i] > x:
                 x = a[i]
         result[0] = x
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_non_comparison_condition.to_sdfg(simplify=True)
     res = ArgMaxLift().apply_pass(sdfg, {})
     # The compound condition is wrapped in a chain of iedges that the matcher
     # can't trace back to a single ``Compare`` AST node. Refuse.
@@ -199,14 +199,14 @@ def test_refuses_subtraction_op():
     """``Sub`` is not in :data:`CMP_AST_TO_RTYPE`; only ``>``, ``<``, ``>=``, ``<=``."""
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_refuses_subtraction_op(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] != x:  # ``!=`` not in the set
                 x = a[i]
         result[0] = x
 
-    sdfg = kernel.to_sdfg(simplify=True)
+    sdfg = kernel_refuses_subtraction_op.to_sdfg(simplify=True)
     res = ArgMaxLift().apply_pass(sdfg, {})
     assert res is None
 
@@ -221,14 +221,14 @@ def test_lookalike_refuses_non_unit_stride():
     gather-then-reduce variant lands."""
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_lookalike_refuses_non_unit_stride(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(0, N, 2):
             if a[i] > x:
                 x = a[i]
         result[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_non_unit_stride.to_sdfg(simplify=True), {})
     assert res is None, "stride>1 must be refused"
 
 
@@ -239,14 +239,14 @@ def test_lookalike_refuses_symbolic_stride():
     K = dace.symbol('K_arg_stride')
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_lookalike_refuses_symbolic_stride(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(0, N, K):
             if a[i] > x:
                 x = a[i]
         result[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_symbolic_stride.to_sdfg(simplify=True), {})
     assert res is None, "symbolic stride must be refused"
 
 
@@ -257,14 +257,14 @@ def test_lookalike_refuses_carrier_written_to_constant():
     on the source side."""
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_lookalike_refuses_carrier_written_to_constant(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > x:
                 x = 0.0
         result[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_carrier_written_to_constant.to_sdfg(simplify=True), {})
     assert res is None, "constant write under cond is not argmax"
 
 
@@ -275,14 +275,15 @@ def test_lookalike_refuses_cond_doesnt_reference_carrier():
     refuses (``b_index`` is not in ``sdfg.arrays`` as a scalar carrier)."""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[N], result: dace.float64[1]):
+    def kernel_lookalike_refuses_cond_doesnt_reference_carrier(a: dace.float64[N], b: dace.float64[N],
+                                                               result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > b[i]:
                 x = a[i]
         result[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_cond_doesnt_reference_carrier.to_sdfg(simplify=True), {})
     assert res is None, "cond reading a different array is not argmax"
 
 
@@ -293,7 +294,8 @@ def test_lookalike_refuses_body_after_conditional():
     blocks than just the ConditionalBlock + empty wrappers.)"""
 
     @dace.program
-    def kernel(a: dace.float64[N], b: dace.float64[N], result: dace.float64[1]):
+    def kernel_lookalike_refuses_body_after_conditional(a: dace.float64[N], b: dace.float64[N],
+                                                        result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > x:
@@ -301,7 +303,7 @@ def test_lookalike_refuses_body_after_conditional():
             b[i] = x  # extra unconditional body work
         result[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_body_after_conditional.to_sdfg(simplify=True), {})
     assert res is None, "unconditional body work alongside the cond is not pure argmax"
 
 
@@ -354,13 +356,13 @@ def test_argmax_doesnt_lift_a_plain_reduction_loop():
     body has no ConditionalBlock, so ArgMaxLift must refuse."""
 
     @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
+    def kernel_argmax_doesnt_lift_a_plain_reduction_loop(a: dace.float64[N], result: dace.float64[1]):
         s = 0.0
         for i in range(N):
             s = s + a[i]
         result[0] = s
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_argmax_doesnt_lift_a_plain_reduction_loop.to_sdfg(simplify=True), {})
     assert res is None, "plain reduction is not argmax"
 
 
@@ -369,11 +371,11 @@ def test_argmax_doesnt_lift_a_scan_loop():
     indexed by loop var. No ConditionalBlock; ArgMaxLift must refuse."""
 
     @dace.program
-    def kernel(a: dace.float64[N], out: dace.float64[N + 1]):
+    def kernel_argmax_doesnt_lift_a_scan_loop(a: dace.float64[N], out: dace.float64[N + 1]):
         for i in range(N):
             out[i + 1] = out[i] + a[i]
 
-    res = ArgMaxLift().apply_pass(kernel.to_sdfg(simplify=True), {})
+    res = ArgMaxLift().apply_pass(kernel_argmax_doesnt_lift_a_scan_loop.to_sdfg(simplify=True), {})
     assert res is None, "scan recurrence is not argmax"
 
 
@@ -422,14 +424,14 @@ def test_loop_to_scan_doesnt_lift_an_argmax_loop():
     from dace.transformation.passes.loop_to_scan import LoopToScan
 
     @dace.program
-    def s314(a: dace.float64[N], result: dace.float64[1]):
+    def s314_loop_to_scan_doesnt_lift_an_argmax_loop(a: dace.float64[N], result: dace.float64[1]):
         x = a[0]
         for i in range(1, N):
             if a[i] > x:
                 x = a[i]
         result[0] = x
 
-    sdfg = s314.to_sdfg(simplify=True)
+    sdfg = s314_loop_to_scan_doesnt_lift_an_argmax_loop.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     assert LoopToScan().apply_pass(sdfg, {}) is None
     assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift conditional argmax loops"
@@ -1339,14 +1341,14 @@ def test_predicate_index_refuses_seed_above_the_loop_start():
     ``2``). The pass must refuse, and the untouched loop must still be correct."""
 
     @dace.program
-    def high_seed(a: dace.float64[N], b: dace.float64[2]):
+    def high_seed_predicate_index_refuses_seed_above_the_loop_start(a: dace.float64[N], b: dace.float64[2]):
         j = 5
         for i in range(N):
             if a[i] < 0.0:
                 j = i
         b[0] = j
 
-    sdfg = high_seed.to_sdfg(simplify=True)
+    sdfg = high_seed_predicate_index_refuses_seed_above_the_loop_start.to_sdfg(simplify=True)
     assert ArgMaxLift().apply_pass(sdfg, {}) is None
     assert _num_loops(sdfg) == 1
 
@@ -1462,14 +1464,14 @@ def test_predicate_index_does_not_mutate_on_refusal():
     it touches anything."""
 
     @dace.program
-    def high_seed(a: dace.float64[N], b: dace.float64[2]):
+    def high_seed_predicate_index_does_not_mutate_on_refusal(a: dace.float64[N], b: dace.float64[2]):
         j = 5
         for i in range(N):
             if a[i] < 0.0:
                 j = i
         b[0] = j
 
-    sdfg = high_seed.to_sdfg(simplify=True)
+    sdfg = high_seed_predicate_index_does_not_mutate_on_refusal.to_sdfg(simplify=True)
     before = sdfg.to_json()
     assert ArgMaxLift().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before
@@ -1504,7 +1506,9 @@ def test_tsvc_s318_closed_form_gather_lifts_with_value_and_index():
     match the value."""
 
     @dace.program
-    def s318_closed(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+    def s318_closed_tsvc_s318_closed_form_gather_lifts_with_value_and_index(a: dace.float64[NA],
+                                                                            result: dace.float64[1],
+                                                                            idx_result: dace.int64[1]):
         index = 0
         maxv = abs(a[0])
         for i in range(1, NI):
@@ -1515,7 +1519,7 @@ def test_tsvc_s318_closed_form_gather_lifts_with_value_and_index():
         result[0] = maxv
         idx_result[0] = index
 
-    sdfg = s318_closed.to_sdfg(simplify=True)
+    sdfg = s318_closed_tsvc_s318_closed_form_gather_lifts_with_value_and_index.to_sdfg(simplify=True)
     assert _num_loops(sdfg) == 1
     assert ArgMaxLift().apply_pass(sdfg, {}) == 1, 'closed-form strided abs-argmax with index must lift'
     sdfg.validate()
@@ -1583,7 +1587,8 @@ def test_argmax_no_match_keeps_the_seed_value_and_index():
     of the predicate-index empty-set case."""
 
     @dace.program
-    def s318_closed(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+    def s318_closed_argmax_no_match_keeps_the_seed_value_and_index(a: dace.float64[NA], result: dace.float64[1],
+                                                                   idx_result: dace.int64[1]):
         index = 0
         maxv = abs(a[0])
         for i in range(1, NI):
@@ -1594,7 +1599,7 @@ def test_argmax_no_match_keeps_the_seed_value_and_index():
         result[0] = maxv
         idx_result[0] = index
 
-    sdfg = s318_closed.to_sdfg(simplify=True)
+    sdfg = s318_closed_argmax_no_match_keeps_the_seed_value_and_index.to_sdfg(simplify=True)
     assert ArgMaxLift().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 

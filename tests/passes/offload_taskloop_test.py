@@ -216,7 +216,7 @@ def rows_over_a_reducing_body(side_tasklet: bool) -> dace.SDFG:
     ``zero`` sits beside it. With ``side_tasklet`` the body also holds ``side``, scaling ``T[i, 0]``
     into ``U``, which a ``copy`` kernel reads: host work beside the nested SDFG.
     """
-    inner = dace.SDFG('row_body')
+    inner = dace.SDFG('row_body_rows_over_a_reducing_body')
     inner.add_array('a', [16], dace.float64)
     inner.add_array('res', [1], dace.float64)
     compute = inner.add_state('compute')
@@ -297,7 +297,7 @@ def rows_over_a_scalar_body_with_inner_reduces() -> dace.SDFG:
     reduce_state.add_edge(reduce_state.add_read('a'), None, reduce_node, '_in', dace.Memlet('a[0:4]'))
     reduce_state.add_edge(reduce_node, '_out', reduce_state.add_write('r'), None, dace.Memlet('r[0]'))
 
-    body = dace.SDFG('scalar_body')
+    body = dace.SDFG('scalar_body_rows_over_a_scalar_body_with_inner_reduces')
     body.add_array('blk', [4, 4], dace.float64)
     body.add_array('res', [4], dace.float64)
     body.add_array('flags', [3], dace.float64)
@@ -734,7 +734,7 @@ def rows_over_a_libnode_body() -> tuple:
     device-wide call is issued by host code), so the body is host code -- and its edge assignment
     ``stop = bounds[1]`` is host code reading an array the outer level put on the device.
     """
-    inner = dace.SDFG('row_body')
+    inner = dace.SDFG('row_body_rows_over_a_libnode_body')
     inner.add_array('a', [16], dace.float64)
     inner.add_array('res', [1], dace.float64)
     inner.add_array('bounds', [2], dace.int64)
@@ -807,7 +807,7 @@ def unmapped_body_over_a_kernel() -> tuple:
 
 def body_taking_one_element_by_scalar() -> tuple:
     """The npbench azimint_hist shape: a body whose SCALAR input is one element of a device array."""
-    inner = dace.SDFG('scalar_body')
+    inner = dace.SDFG('scalar_body_body_taking_one_element_by_scalar')
     inner.add_scalar('lim', dace.float64)
     inner.add_array('a', [16], dace.float64)
     inner.add_array('res', [16], dace.float64)

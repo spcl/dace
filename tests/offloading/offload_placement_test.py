@@ -24,7 +24,7 @@ def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
     for the second state -- and an edge node carries the same block object as the state node that
     follows it.
     """
-    sdfg = dace.SDFG('host_tasklet_behind_an_interstate_read')
+    sdfg = dace.SDFG('placement_host_tasklet_behind_an_interstate_read')
     sdfg.add_array('A', [256], dace.float64)
     sdfg.add_array('C', [256], dace.int64)
     first = sdfg.add_state('device_work')
@@ -58,7 +58,7 @@ def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
 
 def two_host_tasklets_beside_a_kernel_then_an_interstate_read() -> dace.SDFG:
     """Two unconnected host tasklets get two size-1 wrappers that fuse; the next edge reads ``B[0]``."""
-    sdfg = dace.SDFG('two_host_tasklets_beside_a_kernel_then_an_interstate_read')
+    sdfg = dace.SDFG('placement_two_host_tasklets_beside_a_kernel_then_an_interstate_read')
     for name, size in (('A', 16), ('B', 16), ('C', 1), ('D', 1), ('E', 16)):
         sdfg.add_array(name, [size], dace.float64)
     mixed = sdfg.add_state('mixed', is_start_block=True)
@@ -124,7 +124,7 @@ def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
 
     Nothing before the edge touches ``A``, so only propagation carries its location to the edge.
     """
-    sdfg = dace.SDFG('fallback_arm_first_then_an_interstate_read')
+    sdfg = dace.SDFG('placement_fallback_arm_first_then_an_interstate_read')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('A', [4], dace.int64, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_array('B', [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
@@ -200,7 +200,7 @@ def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
     them one region rather than two -- and what makes leaving one behind an invalid path rather
     than a missed wrap (tsvc s252's shape).
     """
-    sdfg = dace.SDFG('free_computation_with_a_reading_and_a_sourceless_tasklet')
+    sdfg = dace.SDFG('placement_free_computation_with_a_reading_and_a_sourceless_tasklet')
     sdfg.add_array('A', [256], dace.float64)
     sdfg.add_array('B', [256], dace.float64)
     sdfg.add_scalar('half', dace.float64, transient=True)
@@ -284,7 +284,7 @@ def test_a_copy_before_a_host_recurrence_computes_what_numpy_computes():
 
 def kernel_then_host_staging_copy() -> dace.SDFG:
     """A kernel writes ``A``; host code then copies ``A[0]`` into the host Scalar ``s``."""
-    sdfg = dace.SDFG('kernel_then_host_staging_copy')
+    sdfg = dace.SDFG('placement_kernel_then_host_staging_copy')
     sdfg.add_array('A', [8], dace.float64, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_scalar('s', dace.float64, transient=True)
     state = sdfg.add_state('main', is_start_block=True)
@@ -304,7 +304,7 @@ def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
     writes comes with it. Nothing then crosses the ``MapExit``, which is the only boundary the
     placement analysis looked at.
     """
-    sdfg = dace.SDFG('kernel_writing_a_scalar_a_later_state_reads')
+    sdfg = dace.SDFG('placement_kernel_writing_a_scalar_a_later_state_reads')
     sdfg.add_array('A', [256], dace.float64)
     sdfg.add_array('B', [256], dace.float64)
     sdfg.add_scalar('acc', dace.float64, transient=True)
@@ -375,7 +375,7 @@ def indirect_read_only_sdfg() -> dace.SDFG:
     PREVIOUS step's value, so it cannot be a map and it is host code. Nothing writes ``idx``, so the
     two sides can never disagree about it -- which is the whole reason one copy is enough.
     """
-    sdfg = dace.SDFG('indirect_read_only')
+    sdfg = dace.SDFG('placement_indirect_read_only')
     sdfg.add_array('idx', [16], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('data', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('out', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
@@ -449,7 +449,7 @@ def cpu_heap_sdfg() -> dace.SDFG:
     That is the storage ``auto_optimize(DeviceType.CPU)`` leaves behind, and the shape the rename
     below was blind to.
     """
-    sdfg = dace.SDFG('cpu_heap_offload')
+    sdfg = dace.SDFG('placement_cpu_heap_offload')
     for name in ('A', 'B'):
         sdfg.add_array(name, [32], dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state('compute')
@@ -506,7 +506,7 @@ def ir_chain(length: int):
 
     The shape the IR pass builds for straight-line code: ``open -> s0 -> ... -> sN-1 -> close``.
     """
-    sdfg = dace.SDFG('ir_chain')
+    sdfg = dace.SDFG('placement_ir_chain')
     region = sdfg.add_state('section')
     open_node = OffloadingIRNode.new_open_node(region)
     states = [
@@ -548,7 +548,7 @@ def test_a_tail_contributes_none_of_its_remaining_siblings():
     which is what makes a branching section report one tail per arm rather than per edge. The
     iterative walk has to keep that, so a node with a close child and a further child contributes
     itself and nothing below that child."""
-    sdfg = dace.SDFG('ir_branch')
+    sdfg = dace.SDFG('placement_ir_branch')
     open_node = OffloadingIRNode.new_open_node(sdfg.add_state('section'))
     head = OffloadingIRNode.new_state_node(sdfg.add_state('head'), OrderedSet(), OrderedSet())
     skipped = OffloadingIRNode.new_state_node(sdfg.add_state('skipped'), OrderedSet(), OrderedSet())
@@ -577,7 +577,7 @@ def ordering_edge_after_a_kernel() -> dace.SDFG:
 
     CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
     """
-    sdfg = dace.SDFG('ordering_edge_after_a_kernel')
+    sdfg = dace.SDFG('placement_ordering_edge_after_a_kernel')
     sdfg.add_array('A', [LENGTH], dace.float64)
     sdfg.add_array('B', [LENGTH], dace.float64)
     sdfg.add_scalar('s', dace.float64)
@@ -611,7 +611,7 @@ def test_the_pass_reports_what_it_placed_on_the_device():
 
 
 def test_a_graph_with_nothing_to_offload_reports_no_change():
-    sdfg = dace.SDFG('host_only')
+    sdfg = dace.SDFG('host_only_a_graph_with_nothing_to_offload_reports_no_change')
     sdfg.add_scalar('s', dace.float64)
     state = sdfg.add_state('host')
     one = state.add_tasklet('one', {}, {'o'}, 'o = 1.0')
@@ -738,7 +738,7 @@ def offloaded_program(program: dace.frontend.python.parser.DaceProgram, pin: boo
 
 def kernel_with_a_one_iteration_inner_map() -> dace.SDFG:
     """A map whose body is a single-iteration map writing and reading the length-1 local ``acc``."""
-    sdfg = dace.SDFG('kernel_with_a_one_iteration_inner_map')
+    sdfg = dace.SDFG('placement_kernel_with_a_one_iteration_inner_map')
     sdfg.add_array('A', [256], dace.float64)
     sdfg.add_array('B', [256], dace.float64)
     sdfg.add_array('acc', [1], dace.float64, transient=True)
