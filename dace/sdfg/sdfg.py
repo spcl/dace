@@ -13,10 +13,11 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
 import sympy
+from ordered_set import OrderedSet
 
 import dace
 from dace.sdfg.graph import generate_element_id, SubgraphView
@@ -154,7 +155,7 @@ def predicates_from_json(obj: Optional[Dict[str, List[str]]], context=None) -> D
     return {name: frozenset(symbolic.Predicate[predicate] for predicate in names) for name, names in obj.items()}
 
 
-def relations_to_json(relations: List[symbolic.Relation]) -> List[Dict[str, str]]:
+def relations_to_json(relations: OrderedSet[symbolic.Relation]) -> List[Dict[str, str]]:
     return [{
         'kind': relation.kind.name,
         'lhs': symbolic.serialize_symbolic(relation.lhs),
@@ -162,39 +163,32 @@ def relations_to_json(relations: List[symbolic.Relation]) -> List[Dict[str, str]
     } for relation in relations]
 
 
-def relations_from_json(obj: Optional[List[Dict[str, str]]], context=None) -> List[symbolic.Relation]:
+def relations_from_json(obj: Optional[List[Dict[str, str]]], context=None) -> OrderedSet[symbolic.Relation]:
     if obj is None:
-        return []
-    return [
+        return OrderedSet()
+    return OrderedSet(
         symbolic.Relation(symbolic.RelationKind[relation['kind']], symbolic.deserialize_symbolic(relation['lhs']),
-                          symbolic.deserialize_symbolic(relation['rhs'])) for relation in obj
-    ]
+                          symbolic.deserialize_symbolic(relation['rhs'])) for relation in obj)
 
 
 def relation_names(relation: symbolic.Relation) -> Set[str]:
     return {str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols}
 
 
-def predicate_as_relation(predicate: symbolic.Predicate, expr: sympy.Expr) -> symbolic.Relation:
-    """ The relation saying ``expr`` satisfies ``predicate`` (used when a symbol is replaced by an expression). """
-    zero = sympy.Integer(0)
-    if predicate is symbolic.Predicate.POSITIVE:
-        return symbolic.Relation(symbolic.RelationKind.LT, zero, expr)
-    if predicate is symbolic.Predicate.NONNEGATIVE:
-        return symbolic.Relation(symbolic.RelationKind.LE, zero, expr)
-    if predicate is symbolic.Predicate.NEGATIVE:
-        return symbolic.Relation(symbolic.RelationKind.LT, expr, zero)
-    if predicate is symbolic.Predicate.NONPOSITIVE:
-        return symbolic.Relation(symbolic.RelationKind.LE, expr, zero)
-    return symbolic.Relation(symbolic.RelationKind.NE, expr, zero)
-
-
 def symbol_facts(symbols: Dict[str, dtypes.typeclass], predicates: Dict[str, FrozenSet[symbolic.Predicate]],
-                 relations: List[symbolic.Relation]) -> symbolic.Facts:
+                 relations: Iterable[symbolic.Relation]) -> symbolic.Facts:
     """ Builds the facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict. """
     integers = frozenset(name for name, stype in symbols.items()
                          if stype in dtypes.INTEGER_TYPES and stype != dtypes.bool_)
-    return symbolic.Facts(dict(predicates), tuple(relations), integers)
+    every = [
+        symbolic.predicate_relation(predicate, symbolic.symbol(name)) for name, named in predicates.items()
+        for predicate in named
+    ]
+    # A canonical order, so that what is proven does not depend on the order the facts were added in
+    ordered = tuple(
+        sorted([*every, *relations],
+               key=lambda relation: (relation.kind.name, symbolic.symstr(relation.lhs), symbolic.symstr(relation.rhs))))
+    return symbolic.Facts(ordered, integers)
 
 
 def _replace_dict_keys(d, old, new):
@@ -654,8 +648,8 @@ class SDFG(ControlFlowRegion):
                                  to_json=predicates_to_json,
                                  from_json=predicates_from_json,
                                  serialize_if=lambda sdfg: bool(sdfg.symbol_predicates))
-    symbol_relations = Property(dtype=list,
-                                default=[],
+    symbol_relations = Property(dtype=OrderedSet,
+                                default=OrderedSet(),
                                 desc='Relations assumed between the symbols',
                                 to_json=relations_to_json,
                                 from_json=relations_from_json,
@@ -731,7 +725,7 @@ class SDFG(ControlFlowRegion):
         self._parent = parent
         self.symbols = {}
         self.symbol_predicates = {}
-        self.symbol_relations = []
+        self.symbol_relations = OrderedSet()
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -1070,11 +1064,10 @@ class SDFG(ControlFlowRegion):
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
             replacements = {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered}
-            self.symbol_relations = [
+            self.symbol_relations = OrderedSet(
                 symbolic.Relation(relation.kind, symbolic.replace_symbols(relation.lhs, replacements),
                                   symbolic.replace_symbols(relation.rhs, replacements))
-                for relation in self.symbol_relations
-            ]
+                for relation in self.symbol_relations)
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
@@ -1091,7 +1084,7 @@ class SDFG(ControlFlowRegion):
                         new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
                         self.symbols.update({str(s): old_sym for s in new_syms})
                     for predicate in sorted(self.symbol_predicates.pop(name, frozenset()), key=lambda p: p.name):
-                        self.symbol_relations.append(predicate_as_relation(predicate, replacements[name]))
+                        self.symbol_relations.add(symbolic.predicate_relation(predicate, replacements[name]))
 
                     _remove_dict_keys(self.constants_prop, name)
                     _remove_dict_keys(self.callback_mapping, name)
@@ -1104,12 +1097,12 @@ class SDFG(ControlFlowRegion):
 
     def add_symbol(self,
                    name,
-                   stype,
+                   stype=None,
                    find_new_name: bool = False,
                    predicates: FrozenSet[symbolic.Predicate] = frozenset()):
         """ Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
-            :param name: Symbol name.
+            :param name: Symbol name, or a symbol, whose dtype and declared assumptions are taken.
             :param stype: Symbol type.
             :param find_new_name: Find a new name.
             :param predicates: Sign predicates assumed for the symbol.
@@ -1117,6 +1110,12 @@ class SDFG(ControlFlowRegion):
             :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
                                                  predicates contradict the SDFG's facts.
         """
+        if isinstance(name, symbolic.symbol):
+            # The assumptions given at declaration, not the ones SymPy derives from them
+            declared = name._assumptions_orig
+            predicates = frozenset(predicate for predicate in symbolic.Predicate
+                                   if declared.get(predicate.name.lower()))
+            name, stype = name.name, name.dtype
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         if find_new_name:
@@ -1168,7 +1167,7 @@ class SDFG(ControlFlowRegion):
         if relation in self.symbol_relations:
             return
         symbol_facts(self.symbols, self.symbol_predicates, [*self.symbol_relations, relation])
-        self.symbol_relations.append(relation)
+        self.symbol_relations.add(relation)
 
     def facts(self) -> symbolic.Facts:
         """ The facts assumed about this SDFG's symbols, for explicit use in proofs. """

@@ -331,8 +331,8 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
         Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
         Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
-        sdfg.add_symbol('Px', dace.int32)
-        sdfg.add_symbol('Py', dace.int32)
+        sdfg.add_symbol(Px)
+        sdfg.add_symbol(Py)
 
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):

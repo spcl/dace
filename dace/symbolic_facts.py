@@ -1,21 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Facts about symbols (sign predicates and relations) and the prover that answers questions under them. """
-import enum
 import dataclasses
+import enum
+from collections.abc import Iterable
 from typing import NamedTuple, cast
-from collections.abc import Callable, Mapping
 
 import sympy
-import sympy.core.facts
 
 
 class Predicate(enum.Enum):
-    """ A sign fact about one symbol; the value is the SymPy assumption it sets. """
-    POSITIVE = 'positive'
-    NONNEGATIVE = 'nonnegative'
-    NEGATIVE = 'negative'
-    NONPOSITIVE = 'nonpositive'
-    NONZERO = 'nonzero'
+    """ A sign fact about one symbol. """
+    POSITIVE = enum.auto()
+    NONNEGATIVE = enum.auto()
+    NEGATIVE = enum.auto()
+    NONPOSITIVE = enum.auto()
+    NONZERO = enum.auto()
 
 
 class RelationKind(enum.Enum):
@@ -45,171 +44,121 @@ class InconsistentAssumptionsError(ValueError):
         super().__init__(f'Inconsistent facts about {subject}: {", ".join(facts)}')
 
 
-PREDICATE_TESTS: dict[Predicate, Callable[[sympy.Expr], bool | None]] = {
-    Predicate.POSITIVE: lambda expr: expr.is_positive,
-    Predicate.NONNEGATIVE: lambda expr: expr.is_nonnegative,
-    Predicate.NEGATIVE: lambda expr: expr.is_negative,
-    Predicate.NONPOSITIVE: lambda expr: expr.is_nonpositive,
-    Predicate.NONZERO: lambda expr: expr.is_nonzero,
-}
-
-
-def truth_of(answer: bool | None) -> Truth:
-    if answer is None:
-        return Truth.UNKNOWN
-    return Truth.TRUE if answer else Truth.FALSE
-
-
-class Elimination(NamedTuple):
-    """ The symbols facts are proven against, and the substitution that folds every relation into a slack. """
-    twins: dict[str, sympy.Symbol]
-    substitution: dict[sympy.Symbol, sympy.Expr]
+def predicate_relation(predicate: Predicate, expr: sympy.Expr) -> Relation:
+    """ The relation saying ``expr`` satisfies ``predicate``. """
+    zero = sympy.Integer(0)
+    if predicate is Predicate.POSITIVE:
+        return Relation(RelationKind.LT, zero, expr)
+    if predicate is Predicate.NONNEGATIVE:
+        return Relation(RelationKind.LE, zero, expr)
+    if predicate is Predicate.NEGATIVE:
+        return Relation(RelationKind.LT, expr, zero)
+    if predicate is Predicate.NONPOSITIVE:
+        return Relation(RelationKind.LE, expr, zero)
+    return Relation(RelationKind.NE, expr, zero)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Facts:
     """
-    What may be assumed about symbols, by name: sign predicates, relations, and which names are integers (from their
-    dtypes). Passed explicitly to every proof; ``Facts.none()`` assumes nothing.
+    Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every
+    proof; ``Facts.none()`` assumes nothing. The relations are solved once, on construction, into ``substitution``,
+    which rewrites a symbol as an expression of nonnegative slack variables; ``nonzero`` keeps the ``!=`` facts.
     """
-    predicates: Mapping[str, frozenset[Predicate]]
     relations: tuple[Relation, ...]
     integers: frozenset[str]
-    elimination: Elimination = dataclasses.field(init=False, compare=False, repr=False)
+    substitution: dict[sympy.Symbol, sympy.Expr] = dataclasses.field(init=False, compare=False, repr=False)
+    nonzero: tuple[sympy.Expr, ...] = dataclasses.field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, 'elimination', eliminate(self))
+        substitution = eliminate(self.relations, self.integers)
+        object.__setattr__(self, 'substitution', substitution)
+        object.__setattr__(
+            self, 'nonzero',
+            tuple(
+                reduced(relation, self.integers, substitution) for relation in self.relations
+                if relation.kind is RelationKind.NE))
 
     @staticmethod
     def none() -> 'Facts':
-        return Facts({}, (), frozenset())
+        return Facts((), frozenset())
 
     def merged(self, other: 'Facts') -> 'Facts':
-        names = dict.fromkeys([*self.predicates, *other.predicates])
-        predicates = {
-            name: self.predicates.get(name, frozenset()) | other.predicates.get(name, frozenset())
-            for name in names
-        }
-        return Facts(predicates, tuple(dict.fromkeys(self.relations + other.relations)), self.integers | other.integers)
+        return Facts(tuple(dict.fromkeys(self.relations + other.relations)), self.integers | other.integers)
 
 
-def twin_of(name: str, facts: Facts) -> sympy.Symbol:
-    flags = {predicate.value: True for predicate in facts.predicates.get(name, frozenset())}
-    if name in facts.integers:
-        flags['integer'] = True
-    try:
-        return sympy.Symbol(name, **flags)
-    except sympy.core.facts.InconsistentAssumptions as error:
-        raise InconsistentAssumptionsError(name, sorted(flags)) from error
+def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:
+    """ ``expr`` over plain SymPy symbols, flagged integer where the dtype says so. """
+    return cast(
+        sympy.Expr,
+        expr.xreplace({
+            free: sympy.Symbol(free.name, integer=free.name in integers or None)
+            for free in expr.free_symbols if isinstance(free, sympy.Symbol)
+        }))
 
 
-def as_twins(expr: sympy.Expr, twins: dict[str, sympy.Symbol], facts: Facts) -> sympy.Expr:
-    replacements: dict[sympy.Basic, sympy.Basic] = {}
-    for free in expr.free_symbols:
-        if not isinstance(free, sympy.Symbol):
-            continue
-        if free.name not in twins:
-            twins[free.name] = twin_of(free.name, facts)
-        replacements[free] = twins[free.name]
-    return cast(sympy.Expr, expr.xreplace(replacements))
-
-
-class Form(NamedTuple):
-    """ ``expr >= 0``, or ``expr == 0`` when ``equality``. """
-    expr: sympy.Expr
-    equality: bool
-
-
-def relation_forms(difference: sympy.Expr, kind: RelationKind) -> tuple[Form, ...]:
-    if kind is RelationKind.LT:
-        return (Form(difference - 1, False), ) if difference.is_integer else (Form(difference, False), )
-    if kind is RelationKind.LE:
-        return (Form(difference, False), )
-    if kind is RelationKind.EQ:
-        return (Form(difference, True), )
-    return ()
-
-
-def predicate_forms(twin: sympy.Symbol) -> tuple[Form, ...]:
-    if twin.is_positive and twin.is_integer:
-        return (Form(twin - 1, False), )
-    if twin.is_nonnegative:
-        return (Form(twin, False), )
-    if twin.is_negative and twin.is_integer:
-        return (Form(-twin - 1, False), )
-    if twin.is_nonpositive:
-        return (Form(-twin, False), )
-    return ()
-
-
-def linear_in(form: sympy.Expr, twin: sympy.Symbol) -> bool:
-    coefficient = form.coeff(twin)
-    return coefficient is not None and bool(coefficient.is_number) and sympy.Poly(form, twin).degree() == 1
-
-
-def elimination_target(form: sympy.Expr, twins: dict[str, sympy.Symbol]) -> sympy.Symbol | None:
-    """ The symbol to solve ``form`` for: linear, a twin, preferring one without sign predicates. """
-    linear = [twin for twin in twins.values() if twin in form.free_symbols and linear_in(form, twin)]
-    unflagged = [twin for twin in linear if not predicate_forms(twin)]
-    candidates = sorted(unflagged or linear, key=lambda twin: twin.name)
-    return candidates[-1] if candidates else None
-
-
-def contradicts(form: Form) -> bool:
-    if form.equality:
-        return bool(form.expr.is_nonzero)
-    return bool(form.expr.is_negative)
-
-
-def eliminate(facts: Facts) -> Elimination:
-    twins = {name: twin_of(name, facts) for name in facts.predicates}
-    substitution: dict[sympy.Symbol, sympy.Expr] = {}
-    pending = [
-        form for relation in facts.relations
-        for form in relation_forms(sympy.expand(as_twins(sympy.sympify(relation.rhs -
-                                                                       relation.lhs), twins, facts)), relation.kind)
+def linear_symbols(difference: sympy.Expr) -> list[sympy.Symbol]:
+    """ The non-slack symbols ``difference`` is linear in, with a numeric coefficient, by name. """
+    symbols = [
+        free for free in difference.free_symbols
+        if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
     ]
-    while pending:
-        form = pending.pop(0)
-        form = Form(sympy.expand(form.expr.xreplace(substitution)), form.equality)
-        if contradicts(form):
-            raise InconsistentAssumptionsError('relations', [f'{form.expr} {"==" if form.equality else ">="} 0'])
-        target = elimination_target(form.expr, twins)
-        if target is None:
+    return sorted(
+        (free for free in symbols
+         if cast(sympy.Expr, difference.coeff(free)).is_number and sympy.Poly(difference, free).degree() == 1),
+        key=lambda free: free.name)
+
+
+def eliminate(relations: Iterable[Relation], integers: frozenset[str]) -> dict[sympy.Symbol, sympy.Expr]:
+    """
+    Solves each relation, rewritten as ``e >= 0`` (or ``e == 0``), for one of its symbols as ``e = slack`` with a
+    nonnegative slack (zero for an equality), and substitutes the result into the rest.
+    """
+    substitution: dict[sympy.Symbol, sympy.Expr] = {}
+    for relation in relations:
+        if relation.kind is RelationKind.NE:
             continue
-        coefficient = form.expr.coeff(target)
-        rest = form.expr - coefficient * target
-        slack = sympy.Integer(0) if form.equality else sympy.Dummy(
-            'slack', integer=form.expr.is_integer, nonnegative=True)
-        solved = sympy.expand((slack - rest) / coefficient)
+        difference = reduced(relation, integers, substitution)
+        if relation.kind is RelationKind.LT and difference.is_integer:
+            difference -= 1
+        if difference.is_negative or (relation.kind is RelationKind.EQ and difference.is_nonzero):
+            raise InconsistentAssumptionsError('relations', [f'{relation.lhs} {relation.kind.name} {relation.rhs}'])
+        linear = linear_symbols(difference)
+        if not linear:
+            continue
+        target = linear[-1]
+        coefficient = cast(sympy.Expr, difference.coeff(target))  # numeric, checked by linear_symbols
+        slack = sympy.Integer(0) if relation.kind is RelationKind.EQ else sympy.Dummy(
+            'slack', integer=difference.is_integer, nonnegative=True)
+        solved = sympy.expand((slack - (difference - coefficient * target)) / coefficient)
         substitution = {name: sympy.expand(value.xreplace({target: solved})) for name, value in substitution.items()}
         substitution[target] = solved
-        pending.extend(predicate_forms(target))
-    return Elimination(twins, substitution)
+    return substitution
 
 
-def reduced(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
-    twins = dict(facts.elimination.twins)
-    return sympy.expand(as_twins(sympy.sympify(expr), twins, facts).xreplace(facts.elimination.substitution))
-
-
-def ask_predicate(predicate: Predicate, expr: sympy.Expr, facts: Facts) -> Truth:
-    return truth_of(PREDICATE_TESTS[predicate](reduced(expr, facts)))
+def reduced(relation: Relation, integers: frozenset[str], substitution: dict[sympy.Symbol, sympy.Expr]) -> sympy.Expr:
+    """ ``rhs - lhs`` of the relation, rewritten through the substitution. """
+    difference = with_integers(sympy.sympify(relation.rhs - relation.lhs), integers)
+    return sympy.expand(difference.xreplace(substitution))
 
 
 def ask(query: Relation, facts: Facts) -> Truth:
-    difference = sympy.sympify(query.rhs) - sympy.sympify(query.lhs)
-    if query.kind is RelationKind.LT:
-        return ask_predicate(Predicate.POSITIVE, difference, facts)
-    if query.kind is RelationKind.LE:
-        return ask_predicate(Predicate.NONNEGATIVE, difference, facts)
+    difference = reduced(query, facts.integers, facts.substitution)
     if query.kind is RelationKind.EQ:
-        return truth_of(reduced(difference, facts).is_zero)
-    return ask_predicate(Predicate.NONZERO, difference, facts)
+        answer = difference.is_zero
+    elif query.kind is RelationKind.LE:
+        answer = difference.is_nonnegative
+    elif query.kind is RelationKind.LT:
+        answer = difference.is_positive
+    else:
+        answer = difference.is_nonzero or (difference in facts.nonzero or -difference in facts.nonzero or None)
+    if answer is None:
+        return Truth.UNKNOWN
+    return Truth.TRUE if answer else Truth.FALSE
 
 
 def provably_nonnegative(expr: sympy.Expr, facts: Facts) -> bool:
-    return ask_predicate(Predicate.NONNEGATIVE, expr, facts) is Truth.TRUE
+    return ask(Relation(RelationKind.LE, sympy.Integer(0), expr), facts) is Truth.TRUE
 
 
 def provably_le(lhs: sympy.Expr, rhs: sympy.Expr, facts: Facts) -> bool:

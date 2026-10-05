@@ -43,6 +43,16 @@ def test_readd_with_other_type_raises():
         sdfg.add_symbol('K', dace.int32)
 
 
+def test_add_symbol_takes_dtype_and_declared_assumptions_of_a_symbol():
+    by_symbol = dace.SDFG('add_by_symbol')
+    by_symbol.add_symbol(dace.symbol('Px', dtype=dace.int32, positive=True))
+    by_name = dace.SDFG('add_by_name')
+    by_name.add_symbol('Px', dace.int32, predicates=POSITIVE)
+    assert by_symbol.symbols == by_name.symbols == {'Px': dace.int32}
+    assert by_symbol.symbol_predicates == by_name.symbol_predicates == {'Px': POSITIVE}
+    assert by_name.add_symbol(dace.symbol('Px', dtype=dace.int32, positive=True)) == 'Px'
+
+
 def test_symbol_and_descriptor_names_collide():
     sdfg = symbols_sdfg('name_collision')
     sdfg.add_array('A', [10], dace.float64)
@@ -150,6 +160,7 @@ if __name__ == '__main__':
     test_identical_readd_is_a_no_op()
     test_readd_with_other_predicates_raises()
     test_readd_with_other_type_raises()
+    test_add_symbol_takes_dtype_and_declared_assumptions_of_a_symbol()
     test_symbol_and_descriptor_names_collide()
     test_contradicting_add_leaves_sdfg_unchanged()
     test_set_symbol_assumptions()
