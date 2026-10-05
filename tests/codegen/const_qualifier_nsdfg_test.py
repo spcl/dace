@@ -20,7 +20,10 @@ def _device_function_code(inner: dace.SDFG, in_conns, out_conns, wirings, impl='
     declared = {}
     for _conn, oname, oshape, _sub, _isin in wirings:
         if oname not in declared:
-            sdfg.add_array(oname, oshape, dace.float64, storage=GPU_GLOBAL)
+            if oshape is None:
+                sdfg.add_scalar(oname, dace.float64, storage=GPU_GLOBAL)
+            else:
+                sdfg.add_array(oname, oshape, dace.float64, storage=GPU_GLOBAL)
             declared[oname] = oshape
     state = sdfg.add_state('main')
     entry, exit_ = state.add_map('kmap', dict(i='0:16'), schedule=GPU_DEVICE)
@@ -53,14 +56,15 @@ def _param(signature: str, connector: str) -> str:
 
 
 def _inner_copy(name: str, in_name: str, out_name: str) -> dace.SDFG:
-    """Inner SDFG: elementwise ``out[j] = in[j]`` over an 8-vector (in read-only, out written)."""
+    """Inner SDFG: elementwise ``out[i, j] = in[i, j]`` over row ``i`` of a 16x8 array (in read-only, out written)."""
     g = dace.SDFG(name)
-    g.add_array(in_name, (8, ), dace.float64)
-    g.add_array(out_name, (8, ), dace.float64)
+    g.add_symbol('i', dace.int64)
+    g.add_array(in_name, (16, 8), dace.float64)
+    g.add_array(out_name, (16, 8), dace.float64)
     s = g.add_state('s')
     s.add_mapped_tasklet('cp',
-                         dict(j='0:8'), {'x': dace.Memlet(f'{in_name}[j]')},
-                         'y = x', {'y': dace.Memlet(f'{out_name}[j]')},
+                         dict(j='0:8'), {'x': dace.Memlet(f'{in_name}[i, j]')},
+                         'y = x', {'y': dace.Memlet(f'{out_name}[i, j]')},
                          external_edges=True)
     return g
 
@@ -89,19 +93,20 @@ def test_written_array_output_is_not_const(impl):
 def test_readonly_scalar_input_is_const(impl):
     """A read-only scalar input is ``const`` (scalar reference or by-value)."""
     g = dace.SDFG('roscalar')
-    g.add_array('a', (8, ), dace.float64)
-    g.add_array('b', (8, ), dace.float64)
+    g.add_symbol('i', dace.int64)
+    g.add_array('a', (16, 8), dace.float64)
+    g.add_array('b', (16, 8), dace.float64)
     g.add_scalar('c', dace.float64)
     s = g.add_state('s')
     s.add_mapped_tasklet('cp',
                          dict(j='0:8'), {
-                             'x': dace.Memlet('a[j]'),
+                             'x': dace.Memlet('a[i, j]'),
                              'sc': dace.Memlet('c[0]')
                          },
-                         'y = x + sc', {'y': dace.Memlet('b[j]')},
+                         'y = x + sc', {'y': dace.Memlet('b[i, j]')},
                          external_edges=True)
     sig = _device_function_signature(g, {'a', 'c'}, {'b'}, [('a', 'A', (16, 8), 'i,0:8', True),
-                                                            ('c', 'C', (16, ), 'i', True),
+                                                            ('c', 'C', None, '0', True),
                                                             ('b', 'B', (16, 8), 'i,0:8', False)])
     assert 'const' in _param(sig, 'c'), _param(sig, 'c')
 
@@ -110,11 +115,12 @@ def test_readonly_scalar_input_is_const(impl):
 def test_inout_array_is_not_const(impl):
     """An in/out (read-modify-write) array connector must NOT be const."""
     g = dace.SDFG('inout')
-    g.add_array('d', (8, ), dace.float64)
+    g.add_symbol('i', dace.int64)
+    g.add_array('d', (16, 8), dace.float64)
     s = g.add_state('s')
     s.add_mapped_tasklet('inc',
-                         dict(j='0:8'), {'v': dace.Memlet('d[j]')},
-                         'w = v + 1.0', {'w': dace.Memlet('d[j]')},
+                         dict(j='0:8'), {'v': dace.Memlet('d[i, j]')},
+                         'w = v + 1.0', {'w': dace.Memlet('d[i, j]')},
                          external_edges=True)
     sig = _device_function_signature(g, {'d'}, {'d'}, [('d', 'D', (16, 8), 'i,0:8', True),
                                                        ('d', 'D', (16, 8), 'i,0:8', False)],
@@ -141,20 +147,21 @@ def _inner_with_view(name: str, write_through_view: bool) -> dace.SDFG:
     * ``write_through_view=True``: ``a`` is written *through* ``av`` (write-direction view).
     """
     g = dace.SDFG(name)
-    g.add_array('a', (8, ), dace.float64)
-    g.add_array('b', (8, ), dace.float64)
+    g.add_symbol('i', dace.int64)
+    g.add_array('a', (16, 8), dace.float64)
+    g.add_array('b', (16, 8), dace.float64)
     g.add_view('av', (8, ), dace.float64)
     s = g.add_state('s')
     a, b, av = s.add_access('a'), s.add_access('b'), s.add_access('av')
     t = s.add_tasklet('cp', {'x': None}, {'y': None}, 'y = x')
     if not write_through_view:
-        s.add_edge(a, None, av, None, dace.Memlet('a[0:8]'))  # read view: a -> av
+        s.add_edge(a, None, av, None, dace.Memlet('a[i, 0:8]'))  # read view: a -> av
         s.add_edge(av, None, t, 'x', dace.Memlet('av[0]'))
-        s.add_edge(t, 'y', b, None, dace.Memlet('b[0]'))
+        s.add_edge(t, 'y', b, None, dace.Memlet('b[i, 0]'))
     else:
-        s.add_edge(b, None, t, 'x', dace.Memlet('b[0]'))
+        s.add_edge(b, None, t, 'x', dace.Memlet('b[i, 0]'))
         s.add_edge(t, 'y', av, None, dace.Memlet('av[0]'))  # write view: av -> a
-        s.add_edge(av, None, a, None, dace.Memlet('a[0:8]'))
+        s.add_edge(av, None, a, None, dace.Memlet('a[i, 0:8]'))
     return g
 
 
