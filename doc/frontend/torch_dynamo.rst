@@ -96,8 +96,9 @@ How programs are lowered
   ``dace.frontend.ml.torch.dynamo.cfg.ControlFlowBackend`` instead captures data-dependent ``if``/``while`` and
   ``for`` loops over symbolic ranges or tensors (with ``break``, ``continue``, ``else`` clauses, and early returns) as a
   control-flow graph of traced blocks and compiles it into the SDFG. When gradients are required, such graphs are
-  differentiated by DaCe's automatic differentiation (a forward SDFG, and a backward SDFG that recomputes it), which
-  reverses branches and counting loops; loops that exit depending on tensor values cannot be differentiated yet.
+  differentiated by DaCe's automatic differentiation into one SDFG with a forward and a backward phase (the forward
+  phase records the branches taken and the values the backward phase needs, which PyTorch keeps between the calls).
+  It reverses branches and counting loops; loops that exit depending on tensor values cannot be differentiated yet.
 * **Outputs.** Output tensors are allocated by torch with the strides torch expects, and the SDFG writes into them
   directly; inputs are passed by pointer without copies.
 * **Training.** When gradients are required, AOTAutograd traces a joint forward and backward graph. By default the

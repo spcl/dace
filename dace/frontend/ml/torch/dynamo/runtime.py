@@ -8,7 +8,7 @@ import torch
 from dace import symbolic
 from dace.codegen.compiled_sdfg import CompiledSDFG
 
-from .training import SDFGPairFunction
+from .training import CompiledTwoPhase, TwoPhaseFunction
 
 
 def _evaluate(expr, symvals: Dict[str, int]) -> int:
@@ -107,12 +107,12 @@ class CompiledGraph:
 class DifferentiableGraph:
     """
     Callable returned to Dynamo for a training graph differentiated by DaCe (see
-    :meth:`~.backend.DaceBackend._compile_with_dace_autodiff`): it runs the forward SDFG as a PyTorch autograd function
-    whose backward runs the backward SDFG.
+    :meth:`~.backend.DaceBackend._compile_with_dace_autodiff`): it runs the forward phase of the SDFG as a PyTorch
+    autograd function whose backward runs the backward phase.
     """
 
-    def __init__(self, pair, inputs: List[Any], outputs: List[Any]):
-        self.pair = pair
+    def __init__(self, compiled: CompiledTwoPhase, inputs: List[Any], outputs: List[Any]):
+        self.compiled = compiled
         self.inputs = inputs
         self.outputs = outputs
 
@@ -129,6 +129,6 @@ class DifferentiableGraph:
                 tensors[spec.name] = tensor
                 tensor = tensor.detach()
                 call[spec.name] = tensor.reshape(1) if tensor.dim() == 0 else tensor
-        results = SDFGPairFunction.apply(self.pair, call, *[tensors[name] for name in self.pair.differentiated])
+        results = TwoPhaseFunction.apply(self.compiled, call, *[tensors[name] for name in self.compiled.differentiated])
         # Rank-0 tensors are shape-(1,) containers in the SDFG
         return [r.reshape(()) if len(spec.tshape) == 0 else r for r, spec in zip(results, self.outputs)]

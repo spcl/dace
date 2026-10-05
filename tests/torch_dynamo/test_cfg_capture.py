@@ -472,8 +472,9 @@ class _Branching(nn.Module):
 @pytest.mark.torch
 def test_training_through_captured_branch():
     """
-    AOTAutograd cannot differentiate captured control flow; DaCe's autodiff does (a forward SDFG, and a backward SDFG
-    that recomputes it). Parameters of the branch not taken get zero gradients.
+    AOTAutograd cannot differentiate captured control flow; DaCe's autodiff does, in one SDFG with a forward and a
+    backward phase (the forward phase records the branch taken). Parameters of the branch not taken get zero
+    gradients.
     """
     torch.manual_seed(0)
     model, reference = _Branching(), _Branching()
@@ -493,7 +494,28 @@ def test_training_through_captured_branch():
             torch.testing.assert_close(p.grad, expected, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert 'cfg' in backend.kinds() and backend.compile_count == 2
+    assert 'cfg' in backend.kinds() and backend.compile_count == 1
+
+
+@pytest.mark.torch
+def test_training_interleaved_calls_keep_their_branches():
+    """Each forward call records its own tape: two calls that take different branches, backpropagated in reverse."""
+    torch.manual_seed(0)
+    model, reference = _Branching(), _Branching()
+    reference.load_state_dict(model.state_dict())
+    compiled = torch.compile(model, backend=ControlFlowBackend(), dynamic=True)
+    first, second = torch.randn(3, 4), -torch.rand(5, 4) * 3
+    inputs = [t.clone().requires_grad_(True) for t in (first, second)]
+    inputs_ref = [t.clone().requires_grad_(True) for t in (first, second)]
+    outputs = [compiled(x) for x in inputs]
+    outputs_ref = [reference(x) for x in inputs_ref]
+    for out, ref in zip(reversed(outputs), reversed(outputs_ref)):
+        out.square().sum().backward()
+        ref.square().sum().backward()
+    for x, x_ref in zip(inputs, inputs_ref):
+        torch.testing.assert_close(x.grad, x_ref.grad, rtol=1e-4, atol=1e-5)
+    for (name, p), p_ref in zip(model.named_parameters(), reference.parameters()):
+        torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
 
 
 class _Recurrent(nn.Module):
@@ -529,7 +551,7 @@ def test_training_through_captured_loop():
             torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert 'cfg' in backend.kinds() and backend.compile_count == 2
+    assert 'cfg' in backend.kinds() and backend.compile_count == 1
 
 
 if __name__ == '__main__':
@@ -558,5 +580,6 @@ if __name__ == '__main__':
     test_counting_down()
     test_branch_on_item()
     test_training_through_captured_branch()
+    test_training_interleaved_calls_keep_their_branches()
     test_match_on_bool_of_tensor_falls_back()
     test_training_through_captured_loop()

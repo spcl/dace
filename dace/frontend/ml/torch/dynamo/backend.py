@@ -17,7 +17,7 @@ from torch._functorch.partitioners import default_partition
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from dace import data, dtypes
-from dace.autodiff import make_backward_pass
+from dace.autodiff import make_two_phase_backward_pass
 from dace.config import Config
 
 from .decompositions import build_decomposition_table
@@ -25,7 +25,7 @@ from . import joint as jt
 from .context import UnsupportedOpError
 from .importer import GraphImporter, PhaseInterface
 from .runtime import CompiledGraph, DifferentiableGraph
-from .training import compile_pair
+from .training import CompiledTwoPhase
 from .sources import GraphDescription, describe_graph
 
 #: Dynamo settings for tracing programs that DaCe compiles: ``.item()`` stays in the graph as a data-dependent symbol
@@ -222,13 +222,14 @@ class DaceBackend:
             spec.name for spec in result.inputs if spec.kind == 'tensor'
             and isinstance(example_inputs[spec.position], torch.Tensor) and example_inputs[spec.position].requires_grad
         ]
-        self.last_sdfg = result.sdfg
-        # The backward SDFG recomputes the forward pass: the data the captured control flow decides on (e.g., branch
-        # predicates) need not be forwarded between the two SDFGs
-        backward_pass = make_backward_pass(result.sdfg, outputs=outputs, inputs=differentiated, recompute_forward=True)
-        pair = compile_pair(backward_pass, outputs, differentiated)
-        self.compile_count += 2
-        return DifferentiableGraph(pair, result.inputs, result.outputs)
+        # One SDFG with a forward and a backward phase; the forward phase records what the backward phase reads,
+        # including the decisions of the captured control flow, on a tape
+        two_phase = make_two_phase_backward_pass(result.sdfg,
+                                                 outputs=outputs,
+                                                 inputs=differentiated,
+                                                 phase=jt.PHASE_SYMBOL)
+        compiled = CompiledTwoPhase(self._compile_sdfg(two_phase.sdfg), two_phase, outputs, differentiated)
+        return DifferentiableGraph(compiled, result.inputs, result.outputs)
 
     def _compile_sdfg(self, sdfg) -> Any:
         self.last_sdfg = sdfg

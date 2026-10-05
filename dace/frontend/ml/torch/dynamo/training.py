@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Set, Tuple
 import torch
 
 from dace import data, symbolic
-from dace.autodiff import BackwardPass, add_backward_pass, make_backward_pass
+from dace.autodiff import (BACKWARD_PHASE, FORWARD_PHASE, BackwardPass, TwoPhaseBackwardPass, add_backward_pass,
+                           make_backward_pass)
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.data import create_datadescriptor
 from dace.frontend.python.parser import DaceProgram, infer_symbols_from_datadescriptor
@@ -274,6 +275,77 @@ class SDFGPairFunction(torch.autograd.Function):
                 arguments[name] = _allocate(sdfg.arrays[name], symbols)
         pair.backward(**arguments)
         return (None, None, *[gradients.get(name) for name in pair.differentiated])
+
+
+@dataclasses.dataclass
+class CompiledTwoPhase:
+    """A compiled SDFG with a forward and a backward phase (see :func:`dace.autodiff.make_two_phase_backward_pass`)."""
+    csdfg: CompiledSDFG
+    two_phase: TwoPhaseBackwardPass
+    outputs: List[str]  #: Return containers
+    differentiated: List[str]  #: Containers whose gradients the backward phase computes
+
+
+class TwoPhaseFunction(torch.autograd.Function):
+    """
+    Runs the forward phase of a two-phase SDFG, and its backward phase in ``backward``. The forward phase writes the
+    tape, which is saved for the backward phase. ``apply(compiled, call, *differentiated)`` takes the SDFG arguments
+    by name (tensors detached, and symbols) and the tensors to differentiate, in the order of
+    ``compiled.differentiated``; it returns the outputs in the order of ``compiled.outputs``.
+    """
+
+    @staticmethod
+    def forward(ctx, compiled: CompiledTwoPhase, call: Dict[str, Any], *differentiated: torch.Tensor):
+        two_phase, sdfg = compiled.two_phase, compiled.csdfg.sdfg
+        symbols = {name: value for name, value in call.items() if name in sdfg.symbols}
+        tape = {name: _allocate(sdfg.arrays[name], symbols) for name in two_phase.tape}
+        outputs = {name: _allocate(sdfg.arrays[name], symbols) for name in compiled.outputs}
+        _call_phase(compiled, FORWARD_PHASE, two_phase.forward_arguments, {**call, **tape, **outputs})
+        # Tensors the backward phase reads are saved, so that PyTorch detects their modification in place
+        saved = {**{name: value for name, value in call.items() if isinstance(value, torch.Tensor)}, **tape, **outputs}
+        saved = {name: value for name, value in saved.items() if name in two_phase.backward_arguments}
+        ctx.save_for_backward(*saved.values())
+        ctx.compiled, ctx.saved_names = compiled, list(saved)
+        ctx.symbols = symbols
+        ctx.shapes = [(t.shape, t.dtype) for t in differentiated]
+        return tuple(outputs[name] for name in compiled.outputs)
+
+    @staticmethod
+    def backward(ctx, *output_gradients: torch.Tensor):
+        compiled = ctx.compiled
+        two_phase, sdfg = compiled.two_phase, compiled.csdfg.sdfg
+        given = dict(zip(ctx.saved_names, ctx.saved_tensors))
+        given.update(ctx.symbols)
+        for name, gradient in zip(compiled.outputs, output_gradients):
+            cotangent = two_phase.output_gradients.get(name)
+            if cotangent is not None:
+                desc = sdfg.arrays[cotangent]
+                given[cotangent] = (gradient.contiguous() if gradient is not None else torch.zeros(
+                    _shape(desc, ctx.symbols), dtype=to_torch_dtype(desc.dtype)))
+        gradients = {}
+        for name, (shape, dtype) in zip(compiled.differentiated, ctx.shapes):
+            gradient = two_phase.input_gradients.get(name)
+            if gradient is not None:
+                gradients[name] = given[gradient] = torch.zeros(shape, dtype=dtype)
+        _call_phase(compiled, BACKWARD_PHASE, two_phase.backward_arguments, given)
+        return (None, None, *[gradients.get(name) for name in compiled.differentiated])
+
+
+def _call_phase(compiled: CompiledTwoPhase, phase: int, used: Set[str], given: Dict[str, Any]):
+    """Calls one phase of a two-phase SDFG: arrays of the other phase are None, its symbols are placeholders."""
+    arguments = {compiled.two_phase.phase: phase}
+    for name, desc in compiled.csdfg.sdfg.arglist().items():
+        if name in arguments:
+            continue
+        if name in used:
+            arguments[name] = given[name]
+        elif isinstance(desc, data.Array):
+            arguments[name] = None
+        else:
+            arguments[name] = given.get(name, 0)
+    with warnings.catch_warnings():  # Return arrays are passed as arguments, so that torch allocates them
+        warnings.filterwarnings('ignore', message='Return value .* is passed as a regular argument')
+        compiled.csdfg(**arguments)
 
 
 def differentiable(program: DaceProgram) -> DifferentiableProgram:
