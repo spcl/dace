@@ -285,23 +285,24 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         elif '__return' in sdfg._arrays:
             tuple_return_args = {'__return'}
         elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
-            raise InvalidSDFGError('Tuple return values are not consecutively named')
+            raise InvalidSDFGError('Tuple return values are not consecutively named', sdfg, None)
         for ret_name_to_check in tuple_return_args:
             ret_desc = sdfg._arrays[ret_name_to_check]
             if ret_desc.transient:
-                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.')
+                raise InvalidSDFGError(f'The return value `{ret_name_to_check}` can not be a transient.', sdfg, None)
             if sdfg.parent is None:
                 # These are some top level specific test
                 if isinstance(ret_desc, dt.Scalar):
                     # This is an implementation level constraint and is thus a separate error.
                     #  In certain cases the frontend will promote it to a length 1 array.
-                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.')
+                    raise InvalidSDFGError(f'{ret_name_to_check} is a scalar and scalars can not be returned.', sdfg,
+                                           None)
                 if not isinstance(ret_desc, dt.Array):
                     # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
                     #  the return value and for that NumPy/CuPy is used.
                     raise InvalidSDFGError(
-                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(desc).__name__}`'
-                    )
+                        f'Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a '
+                        f'`{type(ret_desc).__name__}`', sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
@@ -484,23 +485,23 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if id(state) in references:
         raise InvalidSDFGError(
             f'Duplicate SDFG state detected: "{state.label}". Please copy objects '
-            'rather than using multiple references to the same one', sdfg, state_id)
+            'rather than using multiple references to the same one', state.parent_graph, state_id)
     references.add(id(state))
 
     if not dtypes.validate_name(state._label):
-        raise InvalidSDFGError("Invalid state name", sdfg, state_id)
+        raise InvalidSDFGError("Invalid state name", state.parent_graph, state_id)
 
     if state.sdfg != sdfg:
         raise InvalidSDFGError("State does not point to the correct "
-                               "parent", sdfg, state_id)
+                               "parent", state.parent_graph, state_id)
 
     # Unreachable
     ########################################
     if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0):
-        raise InvalidSDFGError("Unreachable state", sdfg, state_id)
+        raise InvalidSDFGError("Unreachable state", state.parent_graph, state_id)
 
     if state.has_cycles():
-        raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
+        raise InvalidSDFGError('State should be acyclic but contains cycles', state.parent_graph, state_id)
 
     scope = state.scope_dict()
 
@@ -509,7 +510,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if id(node) in references:
             raise InvalidSDFGNodeError(
                 f'Duplicate node detected: "{node}". Please copy objects '
-                'rather than using multiple references to the same one', sdfg, state_id, nid)
+                'rather than using multiple references to the same one', state.parent_graph, state_id, nid)
         references.add(id(node))
 
         # Node validation
@@ -521,7 +522,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            raise InvalidSDFGNodeError(f"Node validation failed: {ex}", sdfg, state_id, nid) from ex
+            raise InvalidSDFGNodeError(f"Node validation failed: {ex}", state.parent_graph, state_id, nid) from ex
 
         # Isolated nodes
         ########################################
@@ -530,7 +531,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if isinstance(node, nd.CodeNode):
                 pass
             else:
-                raise InvalidSDFGNodeError("Isolated node", sdfg, state_id, nid)
+                raise InvalidSDFGNodeError("Isolated node", state.parent_graph, state_id, nid)
 
         # Scope tests
         ########################################
@@ -541,7 +542,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching "
                     "exit node",
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -552,7 +553,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     raise InvalidSDFGNodeError(
                         "No match for input connector %s in output "
                         "connectors" % iconn,
-                        sdfg,
+                        state.parent_graph,
                         state_id,
                         nid,
                     )
@@ -561,7 +562,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     raise InvalidSDFGNodeError(
                         "No match for output connector %s in input "
                         "connectors" % oconn,
-                        sdfg,
+                        state.parent_graph,
                         state_id,
                         nid,
                     )
@@ -572,7 +573,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if node.data not in sdfg.arrays:
                 raise InvalidSDFGNodeError(
                     "Access node must point to a valid array name in the SDFG",
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -581,8 +582,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # Verify View references
             if isinstance(arr, dt.View):
                 if sdutil.get_view_edge(state, node) is None:
-                    raise InvalidSDFGNodeError("Ambiguous or invalid edge to/from a View access node", sdfg, state_id,
-                                               nid)
+                    raise InvalidSDFGNodeError("Ambiguous or invalid edge to/from a View access node",
+                                               state.parent_graph, state_id, nid)
 
             # Find uninitialized transients
             if node.data not in initialized_transients:
@@ -592,7 +593,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     else:
                         raise InvalidSDFGNodeError(
                             'Reference data descriptor was used before it was set. Set '
-                            'it with an incoming memlet to the "set" connector', sdfg, state_id, nid)
+                            'it with an incoming memlet to the "set" connector', state.parent_graph, state_id, nid)
                 elif (arr.transient and state.in_degree(node) == 0 and state.out_degree(node) > 0
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
@@ -612,7 +613,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         and node_data not in nsdfg_node.out_connectors):
                     raise InvalidSDFGNodeError(
                         f'Data descriptor "{node_data}" is not transient and used in a nested SDFG, '
-                        'but does not have a matching connector on the outer SDFG node.', sdfg, state_id, nid)
+                        'but does not have a matching connector on the outer SDFG node.', state.parent_graph, state_id,
+                        nid)
 
                 # Find writes to input-only arrays
                 only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
@@ -621,14 +623,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
                             'written to, but only given to nested SDFG as an '
-                            'input connector' % node.data, sdfg, state_id, nid)
+                            'input connector' % node.data, state.parent_graph, state_id, nid)
 
         if (isinstance(node, nd.ConsumeEntry) and "IN_stream" not in node.in_connectors):
-            raise InvalidSDFGNodeError("Consume entry node must have an input stream", sdfg, state_id, nid)
+            raise InvalidSDFGNodeError("Consume entry node must have an input stream", state.parent_graph, state_id,
+                                       nid)
         if (isinstance(node, nd.ConsumeEntry) and "OUT_stream" not in node.out_connectors):
             raise InvalidSDFGNodeError(
                 "Consume entry node must have an internal stream",
-                sdfg,
+                state.parent_graph,
                 state_id,
                 nid,
             )
@@ -640,7 +643,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # Check for duplicate connector names (unless it's a nested SDFG)
             if len(node.in_connectors.keys() & node.out_connectors.keys()) > 0:
                 dups = node.in_connectors.keys() & node.out_connectors.keys()
-                raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
+                raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), state.parent_graph, state_id, nid)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
                 # Only names with a dot can refer to nested data (``arrays.keys()`` enumerates all of it)
@@ -648,8 +651,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         or (conn in sdfg.arrays.keys() if '.' in conn else conn in sdfg.arrays)):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
-                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,
-                            state_id, nid)
+                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn,
+                            state.parent_graph, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -660,7 +663,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     incoming_edges += 1
 
             if incoming_edges == 0:
-                raise InvalidSDFGNodeError("Dangling in-connector %s" % conn, sdfg, state_id, nid)
+                raise InvalidSDFGNodeError("Dangling in-connector %s" % conn, state.parent_graph, state_id, nid)
             # Connectors may have only one incoming edge
             # Due to input connectors of scope exit, this is only correct
             # in some cases:
@@ -668,7 +671,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError(
                     "Connector '%s' cannot have more "
                     "than one incoming edge, found %d" % (conn, incoming_edges),
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -682,7 +685,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     outgoing_edges += 1
 
             if outgoing_edges == 0:
-                raise InvalidSDFGNodeError("Dangling out-connector %s" % conn, sdfg, state_id, nid)
+                raise InvalidSDFGNodeError("Dangling out-connector %s" % conn, state.parent_graph, state_id, nid)
 
             # In case of scope exit or code node, only one outgoing edge per
             # connector is allowed.
@@ -690,7 +693,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError(
                     "Connector '%s' cannot have more "
                     "than one outgoing edge, found %d" % (conn, outgoing_edges),
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -700,7 +703,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if e.dst_conn is not None and e.dst_conn not in node.in_connectors:
                 raise InvalidSDFGNodeError(
                     ("Memlet %s leading to " + "nonexistent connector %s") % (str(e.data), e.dst_conn),
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -708,7 +711,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if e.src_conn is not None and e.src_conn not in node.out_connectors:
                 raise InvalidSDFGNodeError(
                     ("Memlet %s coming from " + "nonexistent connector %s") % (str(e.data), e.src_conn),
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     nid,
                 )
@@ -719,14 +722,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if id(e) in references:
             raise InvalidSDFGEdgeError(
                 f'Duplicate memlet detected: "{e}". Please copy objects '
-                'rather than using multiple references to the same one', sdfg, state_id, eid)
+                'rather than using multiple references to the same one', state.parent_graph, state_id, eid)
         references.add(id(e))
         if e.data.is_empty():
             pass
         elif id(e.data) in references:
             raise InvalidSDFGEdgeError(
                 f'Duplicate memlet detected: "{e.data}". Please copy objects '
-                'rather than using multiple references to the same one', sdfg, state_id, eid)
+                'rather than using multiple references to the same one', state.parent_graph, state_id, eid)
         references.add(id(e.data))
 
         for subset in (e.data.subset, e.data.other_subset):
@@ -735,7 +738,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if id(subset) in references:
                 raise InvalidSDFGEdgeError(
                     f'Duplicate subset detected in memlet "{e.data}". Please copy objects '
-                    'rather than using multiple references to the same one', sdfg, state_id, eid)
+                    'rather than using multiple references to the same one', state.parent_graph, state_id, eid)
             references.add(id(subset))
 
         # Edge validation
@@ -744,7 +747,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), sdfg, state_id, eid)
+            raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), state.parent_graph, state_id, eid)
 
         # If the edge is a connection between two AccessNodes check if the subset has negative size.
         # NOTE: We _should_ do this check in `Memlet.validate()` however, this is not possible,
@@ -760,12 +763,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if any((ss < 0) == True for ss in e_memlet.subset.size()):
                     raise InvalidSDFGEdgeError(
                         f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.subset.size()}',
-                        sdfg, state_id, eid)
+                        state.parent_graph, state_id, eid)
             if e_memlet.other_subset is not None:
                 if any((ss < 0) == True for ss in e_memlet.other_subset.size()):
                     raise InvalidSDFGEdgeError(
                         f'`other_subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.other_subset.size()}',
-                        sdfg, state_id, eid)
+                        state.parent_graph, state_id, eid)
 
         # For every memlet, obtain its full path in the DFG
         path = state.memlet_path(e)
@@ -775,9 +778,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # NestedSDFGs must connect to AccessNodes
         if not e.data.is_empty():
             if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError("Nested SDFG source nodes must be AccessNodes", sdfg, state_id, eid)
+                raise InvalidSDFGEdgeError("Nested SDFG source nodes must be AccessNodes", state.parent_graph, state_id,
+                                           eid)
             if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError("Nested SDFG destination nodes must be AccessNodes", sdfg, state_id, eid)
+                raise InvalidSDFGEdgeError("Nested SDFG destination nodes must be AccessNodes", state.parent_graph,
+                                           state_id, eid)
 
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)
@@ -805,7 +810,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes",
-                sdfg,
+                state.parent_graph,
                 state_id,
                 eid,
             )
@@ -819,7 +824,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if not _accessible(sdfg, e.data.data, memlet_context):
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
-                        'but accessed on host', sdfg, state_id, eid)
+                        'but accessed on host', state.parent_graph, state_id, eid)
 
         # Ensure empty memlets are properly connected to tasklets:
         # Empty memlets may only connect two adjacent tasklets
@@ -829,11 +834,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             elif isinstance(dst_node, nd.Tasklet) and path[-1].dst_conn:
                 raise InvalidSDFGEdgeError(
                     f'Empty memlet connected to tasklet input connector "{path[-1].dst_conn}". This '
-                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
+                    'is only allowed when connecting two adjacent tasklets.', state.parent_graph, state_id, eid)
             elif isinstance(src_node, nd.Tasklet) and path[0].src_conn:
                 raise InvalidSDFGEdgeError(
                     f'Empty memlet connected to tasklet output connector "{path[0].src_conn}". This '
-                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
+                    'is only allowed when connecting two adjacent tasklets.', state.parent_graph, state_id, eid)
 
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
@@ -848,7 +853,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), sdfg, state_id, eid)
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), state.parent_graph, state_id,
+                        eid)
 
                 # Bounds
                 if any(_is_negative_index(minel, off) for minel, off in zip(e.data.subset.min_element(), arr.offset)):
@@ -856,14 +862,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
                     else:
-                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
+                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", state.parent_graph, state_id,
+                                                   eid)
                 if any(
                         _is_out_of_bounds_index(maxel, off, s)
                         for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
                     else:
-                        raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
+                        raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", state.parent_graph, state_id, eid)
 
             # Test other_subset as well
             if e.data.other_subset is not None and isinstance(other_subset_node, nd.AccessNode):
@@ -872,7 +879,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.other_subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()), sdfg, state_id, eid)
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()), state.parent_graph,
+                        state_id, eid)
 
                 # Bounds
                 if any(
@@ -881,14 +889,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
                     else:
-                        raise InvalidSDFGEdgeError("Memlet other_subset negative out-of-bounds", sdfg, state_id, eid)
+                        raise InvalidSDFGEdgeError("Memlet other_subset negative out-of-bounds", state.parent_graph,
+                                                   state_id, eid)
                 if any(
                         _is_out_of_bounds_index(maxel, off, s)
                         for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')
                     else:
-                        raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
+                        raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", state.parent_graph, state_id,
+                                                   eid)
 
             # Test subset and other_subset for undefined symbols
             if validate_undefs:
@@ -896,13 +906,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols - set(defined_symbols.keys()))
                 if len(undefs) > 0:
-                    raise InvalidSDFGEdgeError('Undefined symbols %s found in memlet subset' % undefs, sdfg, state_id,
-                                               eid)
+                    raise InvalidSDFGEdgeError('Undefined symbols %s found in memlet subset' % undefs,
+                                               state.parent_graph, state_id, eid)
                 if e.data.other_subset is not None:
                     undefs = (e.data.other_subset.free_symbols - set(defined_symbols.keys()))
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError('Undefined symbols %s found in memlet '
-                                                   'other_subset' % undefs, sdfg, state_id, eid)
+                                                   'other_subset' % undefs, state.parent_graph, state_id, eid)
         #######################################
 
         # Memlet path scope lifetime checks
@@ -930,10 +940,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 else:
                     raise InvalidSDFGEdgeError(
                         f"Memlet creates an invalid path (sink node {dst_node}"
-                        " should be a data node)", sdfg, state_id, eid)
+                        " should be a data node)", state.parent_graph, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
-            raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
+            raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", state.parent_graph, state_id, eid)
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, sbs.Range):
@@ -941,7 +951,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"
                     " (%dD for a %dD data node)" % (e.data.subset.dims(), len(sdfg.arrays[e.data.data].shape)),
-                    sdfg,
+                    state.parent_graph,
                     state_id,
                     eid,
                 )
@@ -951,16 +961,34 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
-            dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
+            if isinstance(src_node, nd.AccessNode):
+                src_expr = e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen
+            elif isinstance(src_node, nd.CodeNode) and e.src.out_connectors[e.src_conn] is not None:
+                # Get data from connector
+                src_expr = e.data.src_subset.num_elements() * e.src.out_connectors[e.src_conn].veclen
+            else:
+                src_expr = e.data.src_subset.num_elements()
+
+            if isinstance(dst_node, nd.AccessNode):
+                dst_expr = e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen
+            elif isinstance(dst_node, nd.CodeNode) and e.dst.in_connectors[e.dst_conn] is not None:
+                # Get data from connector
+                dst_expr = e.data.dst_subset.num_elements() * e.dst.in_connectors[e.dst_conn].veclen
+            else:
+                dst_expr = e.data.dst_subset.num_elements()
+
             if symbolic.inequal_symbols(src_expr, dst_expr):
-                error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
+                error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', state.parent_graph,
+                                             state_id, eid)
                 # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
+                # A path may also start or end at a code node, which has no container to view
+                if (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.View)
+                        and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.View)
+                        and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 if e.dst_conn == 'set':
@@ -1047,9 +1075,11 @@ class InvalidSDFGError(Exception):
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.node(self.state_id)
-            locinfo = self._getlineinfo(state)
-            suffix = f' (at state {state.label})'
+            # The id may name a control flow block that is not a state, such as a conditional
+            # block, in which case only its label is available.
+            block = self.sdfg.node(self.state_id)
+            locinfo = self._getlineinfo(block)
+            suffix = f' (at state {block.label})'
         else:
             suffix = ''
             if self.sdfg.number_of_nodes() >= 1:

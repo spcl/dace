@@ -254,6 +254,13 @@ def scope_misses(state: SDFGState,
             for e in state.out_edges(node):
                 if isinstance(e.dst, nd.AccessNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
                     scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+            # Copies between the scope boundary and a local buffer have no tasklet, but still touch the outer container
+            for e in state.in_edges(node):
+                if isinstance(e.src, nd.EntryNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+            for e in state.out_edges(node):
+                if isinstance(e.dst, nd.ExitNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
             # Account each tasklet memory access.
