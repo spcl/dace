@@ -223,14 +223,12 @@ class ExpandGemmPure(ExpandTransformation):
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
         shape_c = (M, N)
 
-        storage = outer_array_a.storage
-
         window_a, strides_a, index_a = _operand_window(edge_a, outer_array_a, shape_a, strides_a)
         window_b, strides_b, index_b = _operand_window(edge_b, outer_array_b, shape_b, strides_b)
         window_c, strides_c, index_c = _operand_window(edge_c, outer_array_c, shape_c, strides_c)
-        _, array_a = sdfg.add_array("_a", window_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
-        _, array_b = sdfg.add_array("_b", window_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", window_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
+        sdfg.add_array("_a", window_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        sdfg.add_array("_b", window_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        sdfg.add_array("_c", window_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         # Runtime coefficients: a wired ``_alpha`` / ``_beta`` scalar connector is added as a [1]
         # input array and folded multiplicatively into the scaling tasklets (mirroring Symm). This
@@ -258,7 +256,7 @@ class ExpandGemmPure(ExpandTransformation):
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        mul_out, mul_out_array = "_c", array_c
+        mul_out = "_c"
         output_nodes = None
 
         # Initialization / beta map

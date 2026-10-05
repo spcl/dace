@@ -308,7 +308,7 @@ def test_scalars():
 
     s1 = sdfg.add_state(is_start_block=True)
     s2 = sdfg.add_state()
-    edge1 = sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"num": "B"}))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"num": "B"}))
 
     task1 = s2.add_tasklet("init", {}, {"out"}, "out = -1")
     access1 = s2.add_access("B")
@@ -616,23 +616,6 @@ def test_resolve_renders_operator_functions():
     assert {str(s) for s in dace.symbolic.pystr_to_symbolic(out).free_symbols} == {'b'}
 
 
-if __name__ == "__main__":
-    test_resolve_renders_operator_functions()
-    test_loop_carried_symbol()
-    test_nested_loop_carried_symbol()
-    test_loop_condition_symbol_reassigned_in_body_not_folded()
-    test_nested_symbol()
-    test_multiple_sources()
-    test_multiple_edge_assignments()
-    test_deeply_nested_sdfg()
-    test_scalars()
-    test_cloudsc_kidia_kfdia_promote_then_propagate()
-    test_carried_index_symbol_not_propagated_stale()
-    test_dead_iedge_assignment_eliminated_after_substitution()
-    test_dead_iedge_chain_unravels_to_fixed_point()
-    test_dead_iedge_preserved_when_lhs_still_used()
-
-
 def test_a_loop_varying_binding_does_not_reach_descriptor_shapes():
     """``replace_dict`` rewrites descriptor shapes too, and those live at SDFG scope: propagating
     ``K = i + 1`` would size a transient by the loop variable and allocate it outside the loop."""
@@ -892,3 +875,31 @@ def test_nested_sdfg_mapping_keeps_matching_the_connected_shape():
 
     assert [str(c.symbol_mapping['m']) for c in calls] == ['m', 'm']
     sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_loop_carried_symbol()
+    test_nested_loop_carried_symbol()
+    test_loop_condition_symbol_reassigned_in_body_not_folded()
+    test_nested_symbol()
+    test_multiple_sources()
+    test_multiple_edge_assignments()
+    test_deeply_nested_sdfg()
+    test_scalars()
+    test_read_only_scalar_safe_to_propagate()
+    test_a_container_value_does_not_reach_a_state()
+    test_cloudsc_kidia_kfdia_promote_then_propagate()
+    test_carried_index_symbol_not_propagated_stale()
+    test_dead_iedge_assignment_eliminated_after_substitution()
+    test_dead_iedge_chain_unravels_to_fixed_point()
+    test_dead_iedge_with_array_shape_substituted_into_descriptor()
+    test_resolve_renders_operator_functions()
+    test_a_loop_varying_binding_does_not_reach_descriptor_shapes()
+    test_loop_variable_is_never_substituted_into_its_own_meta_code()
+    test_propagated_value_keeps_its_python_call_spelling()
+    test_resolve_bindings_recovers_a_loop_variable_relation_without_touching_the_sdfg()
+    test_resolve_bindings_leaves_a_data_dependent_index_opaque()
+    test_resolve_bindings_expands_data_reads_only_when_asked()
+    test_an_assignment_read_only_through_an_attribute_inside_a_loop_is_kept()
+    test_propagation_keeps_a_uint32_symbol_at_one_dtype_in_every_memlet()
+    test_nested_sdfg_mapping_keeps_matching_the_connected_shape()
