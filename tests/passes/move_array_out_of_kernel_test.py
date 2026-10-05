@@ -81,9 +81,10 @@ def kernel_with_internal_transient() -> dace.SDFG:
 
 
 def transient_body() -> dace.SDFG:
-    """Nested body writing ``a_out[0]`` through its own ``buf[1024]`` transient."""
+    """Nested body writing ``a_out[i]`` of a 128-element array through its own ``buf[1024]`` transient."""
     inner = dace.SDFG('inner')
-    inner.add_array('a_out', [1], dace.float64, storage=GLOBAL)
+    inner.add_symbol('i', dace.int64)
+    inner.add_array('a_out', [128], dace.float64, storage=GLOBAL)
     inner.add_transient('buf', [1024], dace.float64, storage=GLOBAL)
     inner_state = inner.add_state('i', is_start_block=True)
     buf = inner_state.add_access('buf')
@@ -91,7 +92,7 @@ def transient_body() -> dace.SDFG:
     inner_state.add_edge(produce, 'o', buf, None, dace.Memlet('buf[0]'))
     consume = inner_state.add_tasklet('consume', {'b': None}, {'o': None}, 'o = b')
     inner_state.add_edge(buf, None, consume, 'b', dace.Memlet('buf[0]'))
-    inner_state.add_edge(consume, 'o', inner_state.add_write('a_out'), None, dace.Memlet('a_out[0]'))
+    inner_state.add_edge(consume, 'o', inner_state.add_write('a_out'), None, dace.Memlet('a_out[i]'))
     return inner
 
 
@@ -448,8 +449,9 @@ def kernel_with_scratch_below_a_nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank():
-    """Only the definition and its ancestors are reshaped; a nest below keeps its rank and its memlets."""
+def test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor():
+    """A nest below the definition takes the lifted descriptor and its memlets the slice index: a nested SDFG's data
+    has the shape of the data connected to it (No-View nested SDFGs)."""
     sdfg = kernel_with_scratch_below_a_nested_sdfg()
     lift(sdfg)
 
@@ -462,7 +464,7 @@ def test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank():
             for edge in state.edges():
                 if edge.data.data == 'tmp':
                     assert edge.data.subset.dims() == rank, (nested.name, str(edge.data))
-    assert ranks == {'scratch_below_a_nested_sdfg': 2, 'body': 2, 'producer': 1, 'consumer': 1}, ranks
+    assert ranks == {'scratch_below_a_nested_sdfg': 2, 'body': 2, 'producer': 2, 'consumer': 2}, ranks
     sdfg.validate()
 
 
@@ -693,8 +695,8 @@ def test_two_nests_defining_the_same_name_are_each_lifted_once():
     sdfg.validate()
 
 
-def test_a_renamed_lift_leaves_a_descendant_its_own_descriptor():
-    """The owner is renamed around an outer ``tmp``; the nests below keep their own rank-1 ``tmp``."""
+def test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor():
+    """The owner is renamed around an outer ``tmp``; the nests below take the lifted rank-2 descriptor."""
     sdfg = kernel_with_scratch_below_a_nested_sdfg()
     sdfg.add_array('tmp', [4], dace.float64, storage=GLOBAL)
     lift(sdfg)
@@ -702,7 +704,8 @@ def test_a_renamed_lift_leaves_a_descendant_its_own_descriptor():
     assert tuple(sdfg.arrays['tmp'].shape) == (4, ), 'the colliding outer descriptor was overwritten'
     for nested in sdfg.all_sdfgs_recursive():
         if nested.name in ('producer', 'consumer'):
-            assert tuple(nested.arrays['tmp'].shape) == (NZ, ), (nested.name, nested.arrays['tmp'].shape)
+            assert tuple(map(str,
+                             nested.arrays['tmp'].shape)) == ('NX', 'NZ'), (nested.name, nested.arrays['tmp'].shape)
     sdfg.validate()
 
 
@@ -968,13 +971,13 @@ if __name__ == '__main__':
     test_lifted_indices_follow_the_order_of_the_lifted_dimensions()
     test_the_lift_moves_one_slice_per_iteration_out_of_the_kernel()
     test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping()
-    test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank()
+    test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor()
     test_a_lift_binds_the_kernel_parameter_it_indexes_by()
     test_lift_does_not_bind_a_name_the_nest_assigns_itself()
     test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index()
     test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index()
     test_two_nests_defining_the_same_name_are_each_lifted_once()
-    test_a_renamed_lift_leaves_a_descendant_its_own_descriptor()
+    test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor()
     test_a_transient_inside_a_loop_of_the_nested_body_is_lifted()
     test_a_nest_giving_the_kernel_parameter_its_own_meaning_keeps_its_transient()
     test_a_transient_shared_by_two_kernels_is_refused()
