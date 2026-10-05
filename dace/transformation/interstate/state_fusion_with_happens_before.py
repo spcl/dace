@@ -282,8 +282,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         return not StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state,
                                                          nodes_second, second_read)
 
-    @staticmethod
-    def state_has_side_effect_node(state: SDFGState, sdfg) -> bool:
+    @classmethod
+    def state_has_side_effect_node(cls, state: SDFGState, sdfg) -> bool:
         """Whether ``state`` carries a node whose execution has side effects (a Tasklet with
         ``side_effects`` / a callback call, a side-effecting library node, or a nested SDFG that
         contains one). Such a node relies on the ORDER the interstate edge imposes between the two
@@ -297,7 +297,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 return True
             if isinstance(node, nodes.NestedSDFG):
                 for nested_state in node.sdfg.states():
-                    if StateFusionExtended.state_has_side_effect_node(nested_state, node.sdfg):
+                    if cls.state_has_side_effect_node(nested_state, node.sdfg):
                         return True
         return False
 
@@ -326,8 +326,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # order, so a side effect (I/O, a trap guard, a stateful library / MPI call) whose order
         # is guaranteed by the interstate edge -- not by a data dependence -- would be reordered
         # or run concurrently once the two states become one.
-        if (StateFusionExtended.state_has_side_effect_node(first_state, sdfg)
-                or StateFusionExtended.state_has_side_effect_node(second_state, sdfg)):
+        if (self.state_has_side_effect_node(first_state, sdfg) or self.state_has_side_effect_node(second_state, sdfg)):
             return False
 
         out_edges = graph.out_edges(first_state)

@@ -46,6 +46,6 @@ class FFTW3:
                 paths.append(path)
         return paths
 
-    @staticmethod
-    def is_installed():
-        return len(FFTW3.cmake_libraries()) > 0
+    @classmethod
+    def is_installed(cls):
+        return len(cls.cmake_libraries()) > 0

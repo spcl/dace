@@ -314,16 +314,16 @@ class ExpandReduceAuto(pm.ExpandTransformation):
     """
     environments = []
 
-    @staticmethod
-    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
-        ExpandReduceAuto.environments = []
+    @classmethod
+    def expansion(cls, node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        cls.environments = []
         if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
             return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
         if node.schedule in dtypes.GPU_SCHEDULES:
             stage_gpu_reduction_output(node, state, sdfg)
             expanded = ExpandReduceGPUAuto.expansion(node, state, sdfg)
             # The GPU expansion picks its own environments when it delegates to CUB
-            ExpandReduceAuto.environments = list(ExpandReduceGPUAuto.environments)
+            cls.environments = list(ExpandReduceGPUAuto.environments)
             return expanded
         return ExpandReduceOpenMP.expansion(node, state, sdfg)
 

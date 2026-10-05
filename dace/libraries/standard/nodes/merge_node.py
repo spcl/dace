@@ -18,7 +18,6 @@ class ExpandPure(ExpandTransformation):
         from dace.frontend.python.replacements.utils import cast_str  # Avoid import loop
 
         t, f, mask, out = node.validate(parent_sdfg, parent_state)
-        cls = MergeLibraryNode
         result_type = parent_sdfg.arrays[out.data.data].dtype
 
         def source(connector: str, edge) -> str:
@@ -27,13 +26,13 @@ class ExpandPure(ExpandTransformation):
                 return value
             return f'{cast_str(result_type)}({value})'
 
-        inputs = {cls.TRUE_CONNECTOR_NAME: t, cls.FALSE_CONNECTOR_NAME: f, cls.MASK_CONNECTOR_NAME: mask}
-        code = (f'{cls.OUTPUT_CONNECTOR_NAME}_v = {source(cls.TRUE_CONNECTOR_NAME, t)} '
-                f'if {cls.MASK_CONNECTOR_NAME}_v else {source(cls.FALSE_CONNECTOR_NAME, f)}')
+        inputs = {node.TRUE_CONNECTOR_NAME: t, node.FALSE_CONNECTOR_NAME: f, node.MASK_CONNECTOR_NAME: mask}
+        code = (f'{node.OUTPUT_CONNECTOR_NAME}_v = {source(node.TRUE_CONNECTOR_NAME, t)} '
+                f'if {node.MASK_CONNECTOR_NAME}_v else {source(node.FALSE_CONNECTOR_NAME, f)}')
         return broadcast_map_expansion(node.label, parent_sdfg, {
             c: (e.data, None)
             for c, e in inputs.items()
-        }, (cls.OUTPUT_CONNECTOR_NAME, out.data), code)
+        }, (node.OUTPUT_CONNECTOR_NAME, out.data), code)
 
 
 @library.node
