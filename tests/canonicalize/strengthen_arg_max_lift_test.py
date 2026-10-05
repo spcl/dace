@@ -267,6 +267,7 @@ def test_2d_index_tie_breaking_matches_sequential(op, strict):
             out[2] = float(yindex)
 
     sdfg = argmax2d.to_sdfg(simplify=True)
+    sdfg.name = f'argmax2d_{"strict" if strict else "non_strict"}'
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     assert sum(1 for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 1, '2-D nest must lift'
     assert _num_loops(sdfg) == 0
@@ -410,6 +411,7 @@ def test_break_loop_is_not_lifted_to_a_whole_range_reduce():
     the loop reaches this pass sequential and stays sequential.
     """
     sdfg = _break_argmax_value_only.to_sdfg(simplify=True)
+    sdfg.name = 'break_argmax_value_only_refused'
     assert any(isinstance(nd, BreakBlock) for nd, _ in sdfg.all_nodes_recursive()), 'the break must survive to the pass'
     assert _num_loops(sdfg) == 1
 
@@ -433,6 +435,7 @@ def test_break_loop_is_refused_under_every_tie_break(knob):
     tie-rule resolution, so ``tie_break='last'`` can never force a last-wins scan
     onto a search that is first-wins by definition."""
     sdfg = _break_argmax_value_only.to_sdfg(simplify=True)
+    sdfg.name = f'break_argmax_value_only_refused_{knob}'
     assert ArgMaxLift(tie_break=knob).apply_pass(sdfg, {}) is None
     assert _num_loops(sdfg) == 1
     out = np.zeros(1)

@@ -138,6 +138,7 @@ def test_refuses_non_unit_offset_modified_residue_class_scan(stride):
             out[i + stride] = out[i] + delta[i]
 
     sdfg = stride_scan.to_sdfg(simplify=True)
+    sdfg.name = f'stride_scan_{stride}'
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
@@ -1843,6 +1844,7 @@ def test_symbolic_stride_scan_value_exact(k):
     degenerate ``K = 0`` that must take the sequential else-branch (a residue-class
     scan with stride 0 is undefined; the fallback computes ``a[i] += x[i]``)."""
     sdfg = _symbolic_stride_scan.to_sdfg(simplify=True)
+    sdfg.name = f'symbolic_stride_scan_k{k}'
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
@@ -1909,6 +1911,7 @@ def test_forward_shift_half_scan_value_exact(n):
     cases that make the closure sound, and the ones that ABORT if the bare form is lowered
     to an unconditional residue-class Scan instead of a Map."""
     sdfg = _forward_shift_half_scan.to_sdfg(simplify=True)
+    sdfg.name = f'forward_shift_half_scan_n{n}'
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
