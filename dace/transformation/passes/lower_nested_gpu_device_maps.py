@@ -60,8 +60,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     Bounds must be evaluable where the kernel is launched.
     """
 
-    CATEGORY: str = 'Simplification'
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges
 
