@@ -105,7 +105,7 @@ def _innermost_write(sdfg: SDFG):
             depth, cur = depth + 1, cur.parent_sdfg
         if depth > deepest_depth:
             deepest, deepest_depth = nsdfg, depth
-    for state in deepest.all_states():
+    for state in deepest.states():
         for edge in state.edges():
             if isinstance(edge.src, nodes.Tasklet) and edge.data.data is not None:
                 return edge.data

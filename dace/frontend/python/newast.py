@@ -1193,7 +1193,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return new_nodes
 
         # Map view access nodes to their respective data
-        for state in self.sdfg.all_states():
+        for state in self.sdfg.states():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:
@@ -1497,7 +1497,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 root = name.split('.')[0]
                 return root if root in cached_defined else None
 
-            for s in nested_sdfg.all_states():
+            for s in nested_sdfg.states():
                 for n in s.data_nodes():
                     root = _container_root(n.data)
                     if root is None:

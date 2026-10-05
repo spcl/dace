@@ -59,7 +59,7 @@ def _nested_writes_iter_indexed(nsdfg_node: nodes.NestedSDFG, conn: str, itersym
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
     found = False
-    for state in nsdfg_node.sdfg.all_states():
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
                 continue
@@ -85,7 +85,7 @@ def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym:
                                b: IndexExpr, step: IndexExpr) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    for state in nsdfg_node.sdfg.all_states():
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
                 continue
@@ -189,7 +189,7 @@ def loop_varying_symbols(loop: LoopRegion) -> OrderedSet[str]:
     for cfr in loop.all_control_flow_regions(recursive=True):
         if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
             varying.add(cfr.loop_variable)
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
                 varying.update(node.map.params)
@@ -360,7 +360,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return False
 
-        loop_states = set(self.loop.all_states())
+        loop_states = set(self.loop.states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
         # Cannot have StructView in loop body
@@ -683,10 +683,10 @@ class LoopToMap(xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        states = set(self.loop.all_states())
+        states = set(self.loop.states())
         # Find read/write sets
         read_set, write_set = set(), set()
-        for state in self.loop.all_states():
+        for state in self.loop.states():
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset

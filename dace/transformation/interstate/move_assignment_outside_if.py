@@ -43,7 +43,7 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         self.write_only_values = set()
         # Dictionary which stores additional information for the variables which are written only
         self.assign_context = {}
-        for state in self.conditional.all_states():
+        for state in self.conditional.states():
             for node in state.nodes():
                 if isinstance(node, nd.Tasklet):
                     # If node is a tasklet, check if assigns a constant value

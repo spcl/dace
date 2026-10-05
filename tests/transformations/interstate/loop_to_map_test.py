@@ -1036,7 +1036,7 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     # The aggregated MapExit memlet is dynamic (conditional write), with
     # dst_subset ``[0:NPROMA, level]``.
     found_dyn = False
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if isinstance(n, nodes.MapExit):
                 for e in state.out_edges(n):

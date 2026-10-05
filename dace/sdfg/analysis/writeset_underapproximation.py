@@ -719,10 +719,10 @@ class UnderapproximateWrites(ppl.Pass):
                 start = loop_analysis.get_init_assignment(region)
                 stop = loop_analysis.get_loop_end(region)
                 stride = loop_analysis.get_loop_stride(region)
-                for state in region.all_states():
+                for state in region.states():
                     self.ranges_per_state[state][region.loop_variable] = subsets.Range([(start, stop, stride)])
 
-            for state in region.all_states():
+            for state in region.states():
                 self._underapproximate_writes_state(sdfg, state)
 
         self._underapproximate_writes_loops(loops, sdfg)

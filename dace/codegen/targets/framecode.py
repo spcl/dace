@@ -1158,7 +1158,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: Set[SDFGS
     def accesses(block: ControlFlowBlock) -> bool:
         if isinstance(block, SDFGState):
             return block in access_states
-        return any(inner in access_states for inner in block.all_states())
+        return any(inner in access_states for inner in block.states())
 
     def assigns_inside(block: ControlFlowBlock) -> bool:
         return (isinstance(block, AbstractControlFlowRegion)

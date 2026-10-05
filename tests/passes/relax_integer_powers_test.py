@@ -25,7 +25,7 @@ def ipow_count(sdfg: dace.SDFG) -> int:
         for desc in sd.arrays.values():
             if isinstance(desc, data.Array):
                 total += sum(atoms(e) for e in (*desc.shape, *desc.strides, desc.total_size))
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry):
                     total += sum(atoms(x) for rng in node.map.range.ranges for x in rng)

@@ -6,7 +6,7 @@ from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import S
 
 
 def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.sdfg.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 next_map = None
@@ -181,8 +181,8 @@ def _generate_and_transform_sdfg():
     transformed_sdfg.validate()
 
     # Test cases
-    original_state = next(iter(original_sdfg.all_states()))
-    transformed_state = next(iter(transformed_sdfg.all_states()))
+    original_state = next(iter(original_sdfg.states()))
+    transformed_state = next(iter(transformed_sdfg.states()))
     assert original_state is not None
     assert transformed_state is not None
 

@@ -81,7 +81,7 @@ def test_specialize_with_dynamic_input():
     sdfg.validate()
     sdfg.compile()
     map_entries = set()
-    for s in sdfg.all_states():
+    for s in sdfg.states():
         for n in s.nodes():
             if isinstance(n, dace.nodes.MapEntry):
                 map_entries.add(n)

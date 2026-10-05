@@ -396,7 +396,7 @@ def test_reverse_copy_nested_symbolic():
         inner(p)
 
     # ``R - 1`` and ``R - 2`` are disjoint regardless of how each side's ``R`` is typed: no intermediate copy needed
-    assert not any(s.label.startswith('copy_from_view') for s in inner.to_sdfg(simplify=False).all_states())
+    assert not any(s.label.startswith('copy_from_view') for s in inner.to_sdfg(simplify=False).states())
 
     p = np.random.rand(4, 4)
     pp = np.copy(p)

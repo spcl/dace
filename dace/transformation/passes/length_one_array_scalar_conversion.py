@@ -220,7 +220,7 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
 
 def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
                 return True
@@ -229,7 +229,7 @@ def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
                 return True
@@ -456,7 +456,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
         # length-1 subset to the scalar element.
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
@@ -490,7 +490,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 sdfg.symbols.pop(nm, None)
 
         if self.recursive:
-            for state in sdfg.all_states():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         # Nested-SDFG recursion is transient-only (a non-transient inner arg belongs to
@@ -594,7 +594,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 rename[name] = arr_name
                 staged.append((name, arr_name, is_read, is_written))
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
@@ -618,7 +618,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                     copyout.add_nedge(a, s, Memlet(data=arr_name, subset='0'))
 
         if self.recursive:
-            for state in sdfg.all_states():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
