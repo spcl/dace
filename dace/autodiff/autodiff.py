@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dataclasses
-from typing import Dict, List, Union, Optional
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
-from dace import Memlet, data as dt
+from dace import InterstateEdge, Memlet, data as dt, dtypes, properties
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.autodiff.base_abc import AutoDiffException
 from dace.libraries.standard import Reduce
@@ -11,7 +11,7 @@ from dace.libraries.standard import Reduce
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.utils import inline_control_flow_regions
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion
 from dace.transformation.passes.while_to_for_loop import WhileToForLoop
 
 
@@ -147,8 +147,8 @@ def make_backward_pass(sdfg: SDFG,
         joint.name = sdfg.name + "_backward"
         # In-place differentiation needs one scalar output: differentiate the vector-Jacobian product
         # ``sum_i sum(output_i * cotangent_i)``, whose gradients are the cotangents propagated to the inputs
-        product, cotangents = _add_vector_jacobian_product(joint,
-                                                           [o if isinstance(o, str) else o.data for o in outputs])
+        _, product, cotangents = _add_vector_jacobian_product(joint,
+                                                              [o if isinstance(o, str) else o.data for o in outputs])
         result, _, _ = BackwardPassGenerator(sdfg=joint,
                                              given_gradients=[product],
                                              required_gradients=inputs,
@@ -193,6 +193,220 @@ def make_backward_pass(sdfg: SDFG,
     })
 
 
+#: Values of the phase symbol of a :class:`TwoPhaseBackwardPass`
+FORWARD_PHASE, BACKWARD_PHASE = 0, 1
+
+
+@dataclasses.dataclass
+class TwoPhaseBackwardPass:
+    """
+    One SDFG that runs either the forward pass or the backward pass, depending on a phase symbol. The forward phase
+    records what the backward phase reads (the tape) in arrays that the caller provides to both calls.
+    """
+    sdfg: SDFG
+    #: The symbol that selects the phase: ``FORWARD_PHASE`` or ``BACKWARD_PHASE``
+    phase: str
+    #: Arrays that the forward phase writes and the backward phase reads (intermediate values, control-flow decisions,
+    #: and symbols); arguments of both calls
+    tape: List[str]
+    #: The gradient arrays (arguments of the backward phase) of the differentiated inputs, by input
+    input_gradients: Dict[str, str]
+    #: The gradient arrays (arguments of the backward phase) the caller provides, by forward output
+    output_gradients: Dict[str, str]
+    #: Arguments (containers and symbols) that each phase uses; the others may be given as None (arrays) or any value
+    forward_arguments: Set[str]
+    backward_arguments: Set[str]
+
+
+def make_two_phase_backward_pass(sdfg: SDFG,
+                                 outputs: List[Union[nodes.AccessNode, str]],
+                                 inputs: List[Union[nodes.AccessNode, str]],
+                                 phase: str = 'autodiff_phase',
+                                 simplify: bool = True,
+                                 simplified: bool = False) -> TwoPhaseBackwardPass:
+    """ Experimental: Differentiates ``sdfg`` in place with reverse-mode automatic differentiation into one SDFG with
+        a forward phase and a backward phase, selected by the symbol ``phase``. The forward phase runs ``sdfg``; the
+        backward phase propagates the gradients of the outputs (vector-Jacobian product) to the inputs. Data and
+        symbols of the forward phase that the backward phase reads become tape arrays.
+
+        :param sdfg: the forward SDFG, which is modified in place.
+        :param outputs: the forward pass outputs of the function to differentiate.
+        :param inputs: the inputs w.r.t. which the gradient will be returned.
+        :param phase: the name of the phase symbol.
+        :param simplify: whether to apply the simplify pass.
+        :param simplified: whether ``sdfg`` was already validated, simplified, and had its conditional blocks inlined.
+        :return: the SDFG and how to call its phases.
+    """
+    if not simplified:
+        sdfg.validate()
+        if simplify:
+            sdfg.simplify()
+        _prepare_control_flow(sdfg)
+    output_names = [o if isinstance(o, str) else o.data for o in outputs]
+
+    vjp_state, product, cotangents = _add_vector_jacobian_product(sdfg, output_names)
+    result, _, _ = BackwardPassGenerator(sdfg=sdfg,
+                                         given_gradients=[product],
+                                         required_gradients=inputs,
+                                         backward_sdfg=sdfg).backward()
+    # The backward phase starts with the vector-Jacobian product, whose own gradient is the constant 1; the product
+    # itself is not needed
+    seed = result.given_grad_names[product]
+    sdfg.arrays[seed].transient = True
+    for node in list(vjp_state.nodes()):
+        vjp_state.remove_node(node)
+    backward_start = sdfg.add_state_before(vjp_state, label='vjp_seed')
+    backward_start.add_mapped_tasklet('vjp_seed', {'__i': '0:1'}, {},
+                                      '__out = 1', {'__out': Memlet(f'{seed}[__i]')},
+                                      external_edges=True)
+
+    # Cut the SDFG between the phases
+    for edge in sdfg.in_edges(backward_start):
+        if edge.data.assignments or not edge.data.is_unconditional():
+            raise AutoDiffException('Unexpected edge between the forward and the backward pass')
+        sdfg.remove_edge(edge)
+    forward_start = sdfg.start_block
+    forward_blocks = _reachable(sdfg, forward_start)
+    backward_blocks = _reachable(sdfg, backward_start)
+    if forward_blocks & backward_blocks or len(forward_blocks) + len(backward_blocks) != sdfg.number_of_nodes():
+        raise AutoDiffException('The forward and backward passes are not separable')
+
+    # Tape: forward data that the backward phase reads, and symbols that the forward phase assigns and the backward
+    # phase reads
+    forward_accessed, forward_written = _accessed_data(sdfg, forward_blocks)
+    backward_accessed, _ = _accessed_data(sdfg, backward_blocks)
+    tape = []
+    saved_scalars = []
+    for name in sorted(forward_written & backward_accessed):
+        desc = sdfg.arrays[name]
+        if not desc.transient or isinstance(desc, dt.View):
+            continue
+        if isinstance(desc, dt.Scalar):  # Scalars are passed by value: they are copied to and from tape arrays
+            saved_scalars.append(name)
+        else:
+            desc.transient = False
+            tape.append(name)
+    saved_symbols = sorted(_assigned_symbols(sdfg, forward_blocks) & _used_symbols(sdfg, backward_blocks))
+    restore = {}
+    symbol_tape = set()
+    if saved_symbols or saved_scalars:
+        save_state = sdfg.add_state('save_tape')
+        for block in [b for b in forward_blocks if sdfg.out_degree(b) == 0]:
+            sdfg.add_edge(block, save_state, InterstateEdge())
+        forward_blocks.add(save_state)
+        for symbol in saved_symbols:
+            stype = sdfg.symbols.get(symbol, dtypes.int64)
+            array, _ = sdfg.add_array(f'tape_{symbol}', [1], stype, find_new_name=True)
+            tasklet = save_state.add_tasklet(f'save_{symbol}', {}, {'__out'}, f'__out = {symbol}')
+            save_state.add_edge(tasklet, '__out', save_state.add_write(array), None, Memlet(f'{array}[0]'))
+            restore[symbol] = f'{array}[0]'
+            symbol_tape.add(array)
+            tape.append(array)
+        for name in saved_scalars:
+            array, _ = sdfg.add_array(f'tape_{name}', [1], sdfg.arrays[name].dtype, find_new_name=True)
+            save_state.add_nedge(save_state.add_read(name), save_state.add_write(array), Memlet(f'{array}[0]'))
+            backward_start.add_nedge(backward_start.add_read(array), backward_start.add_write(name),
+                                     Memlet(f'{array}[0]'))
+            symbol_tape.add(array)
+            tape.append(array)
+
+    # Dispatch on the phase
+    if phase not in sdfg.symbols:
+        sdfg.add_symbol(phase, dtypes.int32)
+    dispatch = sdfg.add_state_before(forward_start, label='phase_dispatch', is_start_block=True)
+    sdfg.edges_between(dispatch, forward_start)[0].data.condition = properties.CodeBlock(f'{phase} == {FORWARD_PHASE}')
+    sdfg.add_edge(dispatch, backward_start, InterstateEdge(condition=f'{phase} == {BACKWARD_PHASE}',
+                                                           assignments=restore))
+    backward_accessed |= symbol_tape
+
+    # Arguments that a phase does not use may be omitted
+    arguments = sdfg.arglist()
+    forward_accessed |= symbol_tape
+    forward_arguments = {name for name in arguments if name in forward_accessed} | _used_symbols(sdfg, forward_blocks)
+    backward_arguments = ({name
+                           for name in arguments if name in backward_accessed} | _used_symbols(sdfg, backward_blocks))
+    for name, desc in arguments.items():
+        if isinstance(desc, dt.Array) and (name not in forward_arguments or name not in backward_arguments):
+            desc.optional = True
+    forward_arguments = (forward_arguments & set(arguments)) | {phase}
+    backward_arguments = (backward_arguments & set(arguments)) | {phase}
+
+    sdfg.validate()
+    if simplify:
+        sdfg.simplify()
+        sdfg.validate()
+    return TwoPhaseBackwardPass(sdfg, phase, tape, {
+        k: v
+        for k, v in result.required_grad_names.items() if v is not None
+    }, cotangents, forward_arguments, backward_arguments)
+
+
+def _reachable(sdfg: SDFG, start: ControlFlowBlock) -> Set[ControlFlowBlock]:
+    result = set()
+    stack = [start]
+    while stack:
+        block = stack.pop()
+        if block not in result:
+            result.add(block)
+            stack.extend(edge.dst for edge in sdfg.out_edges(block))
+    return result
+
+
+def _states(blocks: Iterable[ControlFlowBlock]) -> Iterable[SDFGState]:
+    for block in blocks:
+        if isinstance(block, SDFGState):
+            yield block
+        else:
+            yield from block.all_states()
+
+
+def _interstate_edges(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Iterable[InterstateEdge]:
+    for edge in sdfg.edges():
+        if edge.src in blocks:
+            yield edge.data
+    for block in blocks:
+        if not isinstance(block, SDFGState):
+            for edge in block.all_interstate_edges():
+                yield edge.data
+
+
+def _accessed_data(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Tuple[Set[str], Set[str]]:
+    """The data that ``blocks`` access (including in conditions and assignments), and the data they write."""
+    accessed, written = set(), set()
+    for state in _states(blocks):
+        for node in state.data_nodes():
+            accessed.add(node.data)
+            if state.in_degree(node) > 0:
+                written.add(node.data)
+    for edge in _interstate_edges(sdfg, blocks):
+        accessed |= edge.free_symbols & sdfg.arrays.keys()
+    for block in blocks:
+        if not isinstance(block, SDFGState):
+            accessed |= block.used_symbols(all_symbols=True) & sdfg.arrays.keys()
+    return accessed, written
+
+
+def _assigned_symbols(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Set[str]:
+    assigned = set()
+    for edge in _interstate_edges(sdfg, blocks):
+        assigned |= edge.assignments.keys()
+    for block in blocks:
+        if not isinstance(block, SDFGState):
+            for region in block.all_control_flow_regions():
+                if isinstance(region, LoopRegion) and region.loop_variable:
+                    assigned.add(region.loop_variable)
+    return assigned
+
+
+def _used_symbols(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Set[str]:
+    used = set()
+    for block in blocks:
+        used |= block.used_symbols(all_symbols=True)
+    for edge in _interstate_edges(sdfg, blocks):
+        used |= edge.free_symbols
+    return used - sdfg.arrays.keys()
+
+
 def _prepare_control_flow(sdfg: SDFG):
     """
     Inlines conditional blocks but keeps loops, and turns while loops that count into for loops (the backward pass
@@ -209,7 +423,8 @@ def _prepare_control_flow(sdfg: SDFG):
 def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     """ Adds ``sum_i sum(output_i * cotangent_i)`` at the end of ``sdfg``, with a new input array per cotangent.
 
-        :return: the name of the (transient, shape ``(1,)``) product, and the cotangent array of every output.
+        :return: the state that computes the product, the name of the (transient, shape ``(1,)``) product, and the
+                 cotangent array of every output.
     """
     sinks = sdfg.sink_nodes()
     if len(sinks) != 1:
@@ -248,7 +463,7 @@ def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     for (connector, memlet), node in zip(inputs.items(), partials):
         state.add_edge(node, None, total, connector, memlet)
     state.add_edge(total, '__out', state.add_write(product), None, Memlet(f'{product}[0]'))
-    return product, cotangents
+    return state, product, cotangents
 
 
 def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.Data]) -> Dict[str, str]:
