@@ -28,6 +28,17 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         cond_edge = self.loop_condition_edge()
         if not cond_edge or cond_edge.data.condition is None:
             return False
+
+        # The lifted loop only keeps the edges between its blocks, entered through the initialization edge and left
+        # through the exit edge. Other edges into or out of the loop (e.g., a ``break`` from the body, or a goto into
+        # it) would be dropped, so such loops are not lifted.
+        blocks = set(self.loop_body()) | set(self.loop_meta_states())
+        exit_edge, init_edge = self.loop_exit_edge(), self.loop_init_edge()
+        for block in blocks:
+            if any(e.dst not in blocks and e is not exit_edge for e in graph.out_edges(block)):
+                return False
+            if any(e.src not in blocks and e is not init_edge for e in graph.in_edges(block)):
+                return False
         return True
 
     def _get_to_execute_before(self) -> Optional[ControlFlowBlock]:
