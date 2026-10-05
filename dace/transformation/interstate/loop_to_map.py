@@ -85,7 +85,7 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     :returns: True iff every inner write to ``conn`` is iter-indexed.
     """
     found = False
-    for state in nsdfg_node.sdfg.all_states():
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
                 continue
@@ -112,19 +112,11 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
-def _nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
-    """Whether every read of ``conn``'s array INSIDE ``nsdfg_node`` matches the SAME ``a*i+b``
-    pattern as the writes, or is loop-invariant.
-
-    Companion of :func:`_nested_writes_iter_indexed`, which only proves write UNIQUENESS. A
-    loop-carried READ at a DIFFERENT iter-indexed position (``a[i] = ... + a[i+1] * ...``) still
-    races: iteration ``i`` reads ``a[i+1]`` while ``i+1`` writes it. Conservative: each inner read
-    must match ``a*i+b`` OR be loop-invariant (no outer ``itersym``). Nested NestedSDFGs recurse.
-
-    :returns: True if no carried-read pattern found; False if any inner read hits the carrier
-              array outside the write's affine form.
-    """
-    for state in nsdfg_node.sdfg.all_states():
+def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
+                               b: IndexExpr, step: IndexExpr) -> bool:
+    """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
+    loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
                 continue
@@ -634,7 +626,7 @@ def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
     for cfr in loop.all_control_flow_regions(recursive=True):
         if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
             varying.add(cfr.loop_variable)
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
                 varying.update(node.map.params)
@@ -1266,8 +1258,8 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
-        # Block order, not address order: companion passes act on the FIRST refusal reason.
-        loop_states = OrderedSet(self.loop.all_states())
+        loop_states = set(self.loop.states())
+        all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
         # Cannot have StructView in loop body. ``any``, not a list build, and skipped entirely when
         # the SDFG holds no StructureView descriptor at all -- then no loop state can hold one.
@@ -1792,10 +1784,10 @@ class LoopToMap(xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        states = OrderedSet(self.loop.all_states())
+        states = set(self.loop.states())
         # Find read/write sets
         read_set, write_set = set(), set()
-        for state in self.loop.all_states():
+        for state in self.loop.states():
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset

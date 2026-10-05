@@ -27,7 +27,7 @@ def test_frontend_memlets_do_not_share_subset_objects():
     sdfg = two_sibling_slice_reads.to_sdfg(simplify=False)
     seen = {}
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for e in state.edges():
                 if e.data is None:
                     continue

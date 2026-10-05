@@ -70,7 +70,7 @@ def _windowed_sdfg(symbolic_outer: bool = False) -> dace.SDFG:
 def _all_memlets(sdfg: dace.SDFG):
     """The memlets of the whole tree, as strings, to tell whether a conversion changed anything."""
     return sorted(
-        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.all_states() for e in state.edges())
+        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for e in state.edges())
 
 
 def _run_and_check(sdfg: dace.SDFG, **symbols):
@@ -106,9 +106,9 @@ def test_inline_windowed_connector():
     edges = {e.dst_conn: e.data for e in state.in_edges(child)}
     assert edges['a'].data == 'A'
     assert str(edges['a'].subset) == 'i + 3, j + 2'
-    inner_reads = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'a']
+    inner_reads = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == 'a']
     assert inner_reads and all(str(m.subset) == 'i + 3, j + 2' for m in inner_reads)
-    inner_writes = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'b']
+    inner_writes = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == 'b']
     assert inner_writes and all(str(m.subset) == 'i + 1, j + 4' for m in inner_writes)
     condition = next(e.data.condition.as_string for e in child.sdfg.edges() if not e.data.is_unconditional())
     assert condition.replace(' ', '').replace('(', '').replace(')', '') == 'a[i+3,j+2]>0'
@@ -194,7 +194,7 @@ def test_convert_noop_on_conforming():
         double_window(A, B)
 
     sdfg = conforming.to_sdfg(simplify=False)
-    assert any(isinstance(n, nodes.NestedSDFG) for s in sdfg.all_states() for n in s.nodes())
+    assert any(isinstance(n, nodes.NestedSDFG) for s in sdfg.states() for n in s.nodes())
     before = _all_memlets(sdfg)
     assert dealias.convert_legacy_nested_sdfgs(sdfg) == []
     assert _all_memlets(sdfg) == before

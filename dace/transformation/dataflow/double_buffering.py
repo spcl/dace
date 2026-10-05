@@ -202,7 +202,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
         # A connector selecting one element of the buffered transient becomes a view of it
-        for state in nsdfg_node.sdfg.all_states():
+        for state in nsdfg_node.sdfg.states():
             for node in state.nodes():
                 if (isinstance(node, nodes.NestedSDFG)
                         and any(edge.data.data in transients_to_modify for edge in state.all_edges(node))):

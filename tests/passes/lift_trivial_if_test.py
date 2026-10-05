@@ -428,7 +428,7 @@ def test_trivial_if_with_nested_sdfg_reparents_correctly():
     sdfg.validate()
 
     assert _num_conditionals(sdfg) == 0
-    found = [n for s in sdfg.all_states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    found = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(found) == 1
     assert found[0].sdfg.parent_sdfg is sdfg
     assert found[0].sdfg.parent is not None

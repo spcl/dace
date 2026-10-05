@@ -34,7 +34,7 @@ DYNAMIC_SHARED_MEMORY_BUFFER = '__dace_dynsmem'
 
 def _nested_sdfg_nodes(sdfg: SDFG) -> List[nodes.NestedSDFG]:
     """Returns the nested SDFG nodes directly in ``sdfg``, in a deterministic order."""
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
 
 
 def is_shared_container(desc: dt.Data) -> bool:
@@ -164,7 +164,7 @@ class LowerDynamicMapState(ppl.Pass):
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 result.append((sdfg, state, node))
             elif isinstance(node, nodes.NestedSDFG):
-                for nstate in node.sdfg.all_states():
+                for nstate in node.sdfg.states():
                     result.extend(LowerDynamicMapState._dynamic_maps(node.sdfg, nstate, nstate))
         return result
 

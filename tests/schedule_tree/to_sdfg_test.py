@@ -209,7 +209,7 @@ def test_save_overwrite_restore_values(simplify: bool) -> None:
     sdfg.name = f'save_overwrite_restore_{int(simplify)}'
 
     # The overwrite and the restore must not write the same element in the same state
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         labels = {n.label for n in state.nodes() if isinstance(n, nodes.Tasklet)}
         assert not {'overwrite', 'restore'} <= labels
 

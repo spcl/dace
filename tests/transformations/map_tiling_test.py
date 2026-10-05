@@ -16,9 +16,9 @@ def test_map_tiling_with_strides():
 
     sdfg = vector_copy_strides.to_sdfg()
     sdfg.simplify()
-    assert len(list(sdfg.all_states())) == 1
+    assert len(sdfg.states()) == 1
 
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     state_nodes = state.nodes()
     map_entries: List[dace.nodes.MapEntry] = [n for n in state_nodes if isinstance(n, dace.nodes.MapEntry)]
     assert len(map_entries) == 1

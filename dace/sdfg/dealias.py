@@ -33,7 +33,7 @@ def names_in_subtree(sdfg: SDFG) -> Set[str]:
         names |= set(nsdfg.arrays.keys())
         names |= set(nsdfg.symbols.keys())
         names |= set(nsdfg.constants_prop.keys())
-        for state in nsdfg.all_states():
+        for state in nsdfg.states():
             for node in state.nodes():
                 names.update(map(str, node.new_symbols(nsdfg, state, {}).keys()))
         for edge in nsdfg.all_interstate_edges():
@@ -215,7 +215,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                 child_arr = copy.deepcopy(parent_arr)
                 child_arr.transient = False
                 sdfg.arrays[name] = child_arr
-            for state in sdfg.all_states():
+            for state in sdfg.states():
                 for e in state.edges():
                     if e.data.is_empty():
                         continue
@@ -423,7 +423,7 @@ def _rebase_views(sdfg: SDFG, name: str, old_desc: data.Data,
     :note: This function operates in-place.
     """
     followed: List[Tuple[str, data.Data, data.Data]] = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             desc = sdfg.arrays[node.data]
             if not isinstance(desc, data.View):
@@ -465,7 +465,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
     for view_name, old_view, new_view in _rebase_views(sdfg, name, old_desc, new_desc):
         rebase_descendants(sdfg, view_name, old_view, new_view)
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG):
                 continue
@@ -575,7 +575,7 @@ def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: S
     :param passed_symbols: The free symbols of the window and of the descriptor adopted.
     :return: True if the whole subtree can follow the widening.
     """
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
                 continue
@@ -636,7 +636,7 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
             for stmt in code.code:
                 replacer.visit(stmt)
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             memlet = edge.data
             if memlet.data == name:
@@ -651,7 +651,7 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
 
     sdfg.arrays[name] = new_desc
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
                 continue
@@ -882,7 +882,7 @@ def reduce_connector(nsdfg: SDFG,
 
     # Views of the connector walk its memory: remember the ones that follow its layout
     views = []
-    for state in nsdfg.all_states():
+    for state in nsdfg.states():
         for node in state.data_nodes():
             desc = nsdfg.arrays[node.data]
             if not isinstance(desc, data.View):
@@ -1123,7 +1123,7 @@ def integrate_nested_sdfgs_within(sdfg: SDFG, symbols: Optional[SymbolResolver] 
     """
     if symbols is None:
         symbols = SymbolResolver()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
                 integrate_nested_sdfg(node.sdfg, symbols)
@@ -1339,7 +1339,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
         sdfg.arrays[inner_name] = view_desc
 
     # For each state, add access nodes and connections
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         # Find relevant access nodes
         for view_node in state.data_nodes():
             if view_node.data not in to_add_and_view:
@@ -1456,7 +1456,7 @@ def convert_legacy_nested_sdfgs(sdfg: SDFG,
     if symbols is None:
         symbols = SymbolResolver()
     converted: List[Tuple[nd.NestedSDFG, str]] = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
                 continue
@@ -1523,7 +1523,7 @@ def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Dat
 
     # Views that only existed for the sake of a meta access are now unused
     for name in rewritten:
-        if any(node.data == name for state in sdfg.all_states() for node in state.data_nodes()):
+        if any(node.data == name for state in sdfg.states() for node in state.data_nodes()):
             continue
         try:
             sdfg.remove_data(name, validate=True)
@@ -1564,7 +1564,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
 
     # Names that are (re)defined inside the SDFG always clash with introduced symbols
     defined_symbols: Set[str] = set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             defined_symbols.update(map(str, node.new_symbols(sdfg, state, {}).keys()))
     for edge in sdfg.all_interstate_edges():

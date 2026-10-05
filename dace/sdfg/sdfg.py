@@ -1604,9 +1604,10 @@ class SDFG(ControlFlowRegion):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def states(self):
-        """ Returns the states in this SDFG, recursing into state scope blocks. """
-        return list(self.all_states())
+    def remove_node(self, node: SDFGState):
+        if node is self._cached_start_block:
+            self._cached_start_block = None
+        return super().remove_node(node)
 
     def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
