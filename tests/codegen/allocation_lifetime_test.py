@@ -367,20 +367,20 @@ def test_nested_persistent():
 def test_persistent_scalar():
 
     @dace.program
-    def perscal(a: dace.float64[20]):
+    def persistent_scalar(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = a[1] + 1
         return tmp
 
     a = np.random.rand(20)
-    b = perscal(a)
+    b = persistent_scalar(a)
     assert np.allclose(b, a[1] + 1)
 
 
 def test_persistent_scalar_in_map():
 
     @dace.program
-    def perscal(a: dace.float64[20, 20]):
+    def persistent_scalar_in_map(a: dace.float64[20, 20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -392,7 +392,7 @@ def test_persistent_scalar_in_map():
                 aa = 5
 
     a = np.random.rand(20, 20)
-    perscal(a)
+    persistent_scalar_in_map(a)
     assert np.allclose(a[1, 2], 5)
 
 
@@ -817,6 +817,8 @@ def test_deferred_scalar_still_applies():
         assert 'double zqe = ' in code
         assert 'double zqe;' not in code
         run_deferred_scalar_case(sdfg)
+
+
 def test_a_view_does_not_reallocate_the_array_it_views():
     """Viewing a transient in a LATER state must not allocate it a second time.
 
@@ -888,3 +890,4 @@ if __name__ == '__main__':
     test_deferred_scalar_nested_sdfg_same_scope()
     test_deferred_scalar_cpp_tasklet_same_scope()
     test_deferred_scalar_still_applies()
+    test_a_view_does_not_reallocate_the_array_it_views()
