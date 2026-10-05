@@ -53,7 +53,7 @@ def test_refine_interstate():
         else:
             B[i, j] = A[i, j]
 
-    sdfg = dace.SDFG('refine_dataflow')
+    sdfg = dace.SDFG('refine_interstate')
     sdfg.add_array('A', [5, 5], dace.int32)
     sdfg.add_array('B', [5, 5], dace.int32)
     sdfg.add_array('select', [5, 5], dace.bool)
@@ -261,7 +261,40 @@ def test_rna_read_and_write_sets_different_storage():
     assert np.allclose(res, ref), f"Expected '{ref}' but got '{res}'."
 
 
+def test_refine_a_copy_into_a_transient():
+    """The nested SDFG copies ``inp[2 * i]`` into a one-element transient. The copy's other side (``tmp[0]``) is not
+    the access into ``inp``: the refined outer memlet must be ``A[2 * i]``, not ``A[0]``."""
+    inner = dace.SDFG('copy_one_element')
+    inner.add_array('inp', [20], dace.float64)
+    inner.add_array('out', [1], dace.float64)
+    inner.add_array('tmp', [1], dace.float64, transient=True)
+    inner.add_symbol('i', dace.int64)
+    istate = inner.add_state()
+    tmp = istate.add_access('tmp')
+    istate.add_edge(istate.add_read('inp'), None, tmp, None, dace.Memlet(data='inp', subset='2 * i', other_subset='0'))
+    istate.add_edge(tmp, None, istate.add_write('out'), None, dace.Memlet('tmp[0]'))
+
+    sdfg = dace.SDFG('refine_copy_into_transient')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:10'))
+    nsdfg = state.add_nested_sdfg(inner, {'inp'}, {'out'}, {'i': 'i'})
+    state.add_memlet_path(state.add_read('A'), me, nsdfg, dst_conn='inp', memlet=dace.Memlet('A[0:20]'))
+    state.add_memlet_path(nsdfg, mx, state.add_write('B'), src_conn='out', memlet=dace.Memlet('B[i]'))
+
+    assert sdfg.apply_transformations_repeated(RefineNestedAccess) == 1
+    i = dace.symbol('i')
+    assert state.in_edges(nsdfg)[0].data.subset == dace.subsets.Range([(2 * i, 2 * i, 1)])
+
+    A = np.arange(20, dtype=np.float64)
+    B = np.zeros(10)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A[::2]), B
+
+
 if __name__ == '__main__':
+    test_refine_a_copy_into_a_transient()
     test_refine_dataflow()
     test_refine_interstate()
     test_free_symbols_only_by_indices()
