@@ -428,6 +428,99 @@ def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
     assert np.allclose(out, [2.0, 3.0, 4.0, 2.0]), out
 
 
+def test_two_arrays_from_one_size_share_their_extent():
+    """Arrays sized by one unchanged scalar share its symbol, so an elementwise operation between them is not refused
+    as a broadcast of two different extents."""
+
+    @dace.program
+    def counts(p: dace.float64[N]):
+        a_grid = np.zeros(9, dtype=np.int64)
+        b_grid = np.zeros(16, dtype=np.int64)
+        n = a_grid.size * b_grid.size
+        count_a = np.ones(n, dtype=np.int64)
+        count_b = np.ones(n, dtype=np.int64)
+        count_c = p.size - count_a - count_b
+        p[0] = count_c[0]
+
+    p = np.zeros(5)
+    counts(p)
+    assert p[0] == 3
+
+
+def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
+    """A loop that never writes the size keeps its symbol: the loop-body array and the outer one combine."""
+
+    @dace.program
+    def loop_body_array(nib: dace.int64[1], out: dace.float64[N, 2]):
+        my_n = int(nib[0])
+        acc = np.zeros((N, 2, my_n), dtype=np.float64)
+        for ip in range(2):
+            tg = np.ones((N, my_n), dtype=np.float64)
+            acc[:, ip, :] = tg
+        out[:] = np.sum(acc, axis=2)
+
+    out = np.zeros((5, 2))
+    loop_body_array(np.array([3], dtype=np.int64), out)
+    assert np.allclose(out, 3.0), out
+
+
+def test_a_slice_bounded_by_a_size_shares_its_extent():
+    """``psi[:, :my_n]`` reads the same symbol ``np.zeros((N, my_n))`` was sized by, so the copy's extents match."""
+
+    @dace.program
+    def slice_by_size(nib: dace.int64[1], psi: dace.float64[N, N], out: dace.float64[N]):
+        my_n = int(nib[0])
+        tg = np.zeros((N, my_n), dtype=np.float64)
+        tg[:, :] = psi[:, :my_n]
+        out[:] = np.sum(tg, axis=1)
+
+    psi = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros(5)
+    slice_by_size(np.array([3], dtype=np.int64), psi, out)
+    assert np.allclose(out, psi[:, :3].sum(axis=1)), out
+
+
+def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
+    """The size grows at the end of each iteration, after a shape in the body used it; the version read before the
+    loop must not stand in for it (cegterg's ``nbase_iter`` in HPCAgent-Bench)."""
+
+    @dace.program
+    def size_grows_in_a_loop(out: dace.float64[4]):
+        n = 2
+        first = np.ones(n)
+        out[3] = np.sum(first)
+        for k in range(3):
+            buf = np.ones(n)
+            out[k] = np.sum(buf[:n])
+            n = n + 1
+
+    out = np.zeros(4)
+    size_grows_in_a_loop(out)
+    assert np.allclose(out, [2.0, 3.0, 4.0, 2.0]), out
+
+
+def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
+    """``pol[:nlp, 0]`` promotes ``nlp`` first; the later ``np.ones(nlp)`` reads the same symbol, so the two
+    broadcast together (cp2k_grid_integrate in HPCAgent-Bench)."""
+
+    @dace.program
+    def slice_then_shape(lmax: dace.int32[N], pol: dace.float64[5, 5], out: dace.float64[N, 5]):
+        for t in range(N):
+            nlp = int(lmax[t]) + 1
+            p = pol[:nlp, 0]
+            weight = np.ones(nlp)
+            out[t, :nlp] = weight * p
+
+    lmax = np.array([1, 3, 4], dtype=np.int32)
+    pol = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros((3, 5))
+    slice_then_shape(lmax, pol, out)
+    expected = np.zeros((3, 5))
+    for t, n in enumerate(lmax + 1):
+        expected[t, :n] = pol[:n, 0]
+    assert np.allclose(out, expected), out
+
+
 if __name__ == '__main__':
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
