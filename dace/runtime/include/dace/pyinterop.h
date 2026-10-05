@@ -41,29 +41,49 @@ private:
 
 typedef void *pyobject;
 
+// Floating-point in the Min/Max sense: the built-in types and dace::float16.
+template <typename T>
+struct dace_minmax_is_float
+    : std::integral_constant<bool, std::is_floating_point<T>::value || std::is_same<T, dace::float16>::value> {};
+
 // True when every argument type is floating-point or all are integral. Min/Max reject the
 // mixed case below, since the integer argument would truncate the floating-point result.
 template <typename... Ts>
 struct dace_minmax_same_kind : std::true_type {};
 template <typename T0, typename T1, typename... Ts>
 struct dace_minmax_same_kind<T0, T1, Ts...>
-    : std::integral_constant<bool, (std::is_floating_point<T0>::value == std::is_floating_point<T1>::value) &&
+    : std::integral_constant<bool, (dace_minmax_is_float<T0>::value == dace_minmax_is_float<T1>::value) &&
                                         dace_minmax_same_kind<T1, Ts...>::value> {};
 
 #define DACE_MINMAX_MIXED_MSG                                                                                        \
     "DaCe Min/Max: mixing floating-point and integer arguments is not allowed -- the integer argument truncates "    \
     "the floating-point result. Cast the operands to a common type (e.g. write min(x, 1.0) instead of min(x, 1))."
 
+// True if any argument is a dace::float16: Min/Max then compare in the common type
+// instead of the first argument's type, so Min(h, 1e-20) is not rounded to half.
+template <typename... Ts>
+struct _dace_has_half : std::disjunction<std::is_same<Ts, dace::float16>...> {};
+
 // Sympy functions
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
+static DACE_HDFI auto Min(U val, T... vals) {
     static_assert(dace_minmax_same_kind<U, T...>::value, DACE_MINMAX_MIXED_MSG);
-    return min(val, vals...);
+    if constexpr (_dace_has_half<U, T...>::value) {
+        using R = typename std::common_type<U, T...>::type;
+        return min(R(val), R(vals)...);
+    } else {
+        return U(min(val, vals...));
+    }
 }
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
+static DACE_HDFI auto Max(U val, T... vals) {
     static_assert(dace_minmax_same_kind<U, T...>::value, DACE_MINMAX_MIXED_MSG);
-    return max(val, vals...);
+    if constexpr (_dace_has_half<U, T...>::value) {
+        using R = typename std::common_type<U, T...>::type;
+        return max(R(val), R(vals)...);
+    } else {
+        return U(max(val, vals...));
+    }
 }
 // Deduced, not ``T``: ``abs`` of a complex value is real, so pinning the return to the argument
 // type turns ``Abs(z)`` back into a complex and every comparison on it loses its candidate.
@@ -74,7 +94,9 @@ static DACE_HDFI auto Abs(T val) {
 template <typename T, typename U>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue, const U& iffalse)
 {
-    return condition ? iftrue : iffalse;
+    // Both arms in the result type: ``c ? h : 1.0`` with a half arm is ambiguous otherwise.
+    using R = typename std::common_type<T, U>::type;
+    return condition ? R(iftrue) : R(iffalse);
 }
 
 #endif  // __DACE_INTEROP_H
