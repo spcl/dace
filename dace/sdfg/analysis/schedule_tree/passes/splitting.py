@@ -26,6 +26,20 @@ def _breaks_out_of(scope: tn.ScheduleTreeScope) -> bool:
     return False
 
 
+def _has_direct_callback(scope: tn.ScheduleTreeScope) -> bool:
+    """Whether a direct tasklet child calls a callback symbol."""
+    symbols = scope.get_root().symbols
+    for child in scope.children:
+        if not isinstance(child, tn.TaskletNode) or child.node.code.language != dtypes.Language.Python:
+            continue
+        if any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and isinstance(symbols.get(call.func.id), dtypes.callback) for stmt in child.node.code.code
+                for call in ast.walk(stmt)):
+            return True
+    return False
+
+
 def _guard_atoms_on(scope: tn.ScheduleTreeScope, var: str) -> List[ast.expr]:
     """The distinct atoms that mention ``var`` in the conditions within ``scope`` (outside nested scopes that bind
     ``var`` anew)."""
@@ -88,7 +102,8 @@ def _index_set_cells(space, atoms: List[ast.expr], max_ranges: int, max_enumerat
 def split_iteration_spaces(stree: tn.ScheduleTreeScope,
                            max_ranges: int = 32,
                            max_enumeration: int = 1 << 20,
-                           min_trip_count: int = 1) -> int:
+                           min_trip_count: int = 1,
+                           exclude_callback_loops: bool = True) -> int:
     """
     Split loops and maps at the points where the conditions in their bodies change outcome (index-set splitting),
     and fold those conditions in each part.
@@ -117,6 +132,7 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
     :param max_enumeration: Upper bound on the iterates evaluated for an atom over compile-time constant data.
     :param min_trip_count: Do not split within loops (or split map dimensions) of fewer iterations than this; ``1``
                            splits everything, e.g. ``4`` roughly halves the code of stencils with boundary cases.
+    :param exclude_callback_loops: Do not split loops or maps with a direct callback tasklet child.
     :return: The number of scopes split.
     """
     index = AccessIndex(stree.get_root())
@@ -137,6 +153,8 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
 
     def split(scope: tn.ScheduleTreeScope, facts: RangeFacts) -> Optional[List[tn.ScheduleTreeNode]]:
         """The parts that replace ``scope`` (a loop or map within the facts ``facts``), or ``None`` to keep it."""
+        if exclude_callback_loops and _has_direct_callback(scope):
+            return None
         done = split_on.get(id(scope), (None, set()))[1]
         if done and thin(scope, facts, done):
             return None  # A thin part of a map: its other dimensions are not split
