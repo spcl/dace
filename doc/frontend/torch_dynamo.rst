@@ -98,11 +98,44 @@ How programs are lowered
   into the SDFG.
 * **Outputs.** Output tensors are allocated by torch with the strides torch expects, and the SDFG writes into them
   directly; inputs are passed by pointer without copies.
+* **Training.** When gradients are required, AOTAutograd traces a joint forward and backward graph. By default the
+  backend compiles it into a single SDFG with a forward and a backward phase (selected by the ``aot_phase`` symbol),
+  so that one compiled library serves both calls. The values the forward saves for the backward are chosen by an
+  AOTAutograd partition function (``partitioner=``; by default values are saved rather than recomputed, and
+  ``torch._functorch.partitioners.min_cut_rematerialization_partition`` recomputes cheap operators instead). Saved
+  values are returned to PyTorch between the two calls, so several forward calls may precede their backward calls.
+  ``joint=False`` compiles separate forward and backward SDFGs.
+
+  .. code-block:: python
+
+      model = torch.compile(model, backend='dace', dynamic=True)
+      loss = criterion(model(x), y)
+      loss.backward()   # runs the backward phase of the same SDFG
+
+* **Training inside programs.** A ``@dace.program`` that uses modules and returns a scalar loss can be differentiated
+  with DaCe's automatic differentiation instead (``dace.autodiff``, which also differentiates control flow such as
+  loops in the program). ``dace.ml.training_step(program)`` returns a callable that computes the loss and the
+  gradients of the parameters (and of tensor arguments that require gradients) in one SDFG call and accumulates them
+  into ``.grad``:
+
+  .. code-block:: python
+
+      @dace.program
+      def loss_program(x: dace.float32[N, 8], y: dace.float32[N, 1]):
+          difference = model(x) - y
+          return np.sum(difference * difference)
+
+      step = dace.ml.training_step(loss_program)
+      for x, y in batches:
+          optimizer.zero_grad()
+          loss = step(x, y)
+          optimizer.step()
+
+  See ``samples/ml`` for complete examples of both ways of training.
 
 Limitations
 -----------
 
-* Inference only for now; the backward graph produced by AOTAutograd runs eagerly.
 * Dynamo specializes sizes equal to 0 or 1 and unifies equal sizes on the first call ("duck shaping"); a later call
   with a different pattern recompiles. ``dynamic_shapes`` (above) avoids the duck shaping; sizes 0 and 1 remain
   special.

@@ -15,10 +15,11 @@ except ImportError:
 
 # Import TorchDynamo frontend (registers the 'dace' torch.compile backend)
 try:
-    from dace.frontend.ml.torch.dynamo import compile, DaceBackend, dace_backend
+    from dace.frontend.ml.torch.dynamo import compile, DaceBackend, dace_backend, training_step
 except ImportError:
     compile = None
     DaceBackend = None
     dace_backend = None
+    training_step = None
 
-__all__ = ['DaceModule', 'module', 'ONNXModel', 'compile', 'DaceBackend', 'dace_backend']
+__all__ = ['DaceModule', 'module', 'ONNXModel', 'compile', 'DaceBackend', 'dace_backend', 'training_step']
