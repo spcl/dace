@@ -146,8 +146,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of traversed nodes
         self._generated_nodes = set()
 
-        # Keep track of generated NestedSDG, and the name of the assigned function
-        self._generated_nested_sdfg = dict()
+        # Keep track of generated NestedSDG, and the name of the assigned function, for each translation unit (a
+        # function in a separate unit cannot call the functions generated in other units). None is the frame's unit.
+        self._generated_nested_sdfg: dict[str | None, dict[str, str]] = {None: dict()}
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
@@ -1683,6 +1684,10 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f"{cdtype.ctype} {edge.src_conn};", cfg, state_id, src_node)
 
+    def _nested_functions(self) -> dict[str, str]:
+        """The functions generated for nested SDFGs in the translation unit currently being generated."""
+        return self._generated_nested_sdfg.setdefault(self._frame.current_translation_unit, dict())
+
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
@@ -1880,20 +1885,20 @@ class CPUCodeGen(TargetCodeGenerator):
             if unique_functions_hash:
                 # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
                 # use the saved name to call it, otherwise save the hash and the associated name
-                if hash in self._generated_nested_sdfg:
+                if hash in self._nested_functions():
                     code_already_generated = True
-                    sdfg_label = self._generated_nested_sdfg[hash]
+                    sdfg_label = self._nested_functions()[hash]
                 else:
-                    self._generated_nested_sdfg[hash] = sdfg_label
+                    self._nested_functions()[hash] = sdfg_label
             # Use the SDFG label to check if this has been already code generated.
             # Check the hash of the formerly generated SDFG to check that we are not
             # generating different SDFGs with the same name
-            elif sdfg_label in self._generated_nested_sdfg:
+            elif sdfg_label in self._nested_functions():
                 code_already_generated = True
-                if hash != self._generated_nested_sdfg[sdfg_label]:
+                if hash != self._nested_functions()[sdfg_label]:
                     raise ValueError(f"Different Nested SDFGs have the same unique name: {sdfg_label}")
             else:
-                self._generated_nested_sdfg[sdfg_label] = hash
+                self._nested_functions()[sdfg_label] = hash
 
         #########################################
         # Take care of nested SDFG I/O (arguments)

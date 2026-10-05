@@ -17,6 +17,7 @@ from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
+    CodeGeneratorFunctionRegion,
     ConditionalBlock,
     ContinueBlock,
     ControlFlowBlock,
@@ -259,9 +260,13 @@ def control_flow_region_to_code(
         visited.add(node)
 
         expr += "__state_{}_{}:;\n".format(region.cfg_id, re.sub(r"\s+", "_", node.label))
-        if isinstance(node, AbstractControlFlowRegion):
+        # A function region allocates its data inside the function
+        allocates = isinstance(node, AbstractControlFlowRegion) and not isinstance(node, CodeGeneratorFunctionRegion)
+        if allocates:
             expr += allocation_on_entry(node, codegen)
-        if isinstance(node, SDFGState):
+        if isinstance(node, CodeGeneratorFunctionRegion):
+            expr += codegen.generate_function_region(node, dispatch_state, symbols)
+        elif isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
                 expr += "{\n"
                 expr += dispatch_state(node)
@@ -283,7 +288,7 @@ def control_flow_region_to_code(
             expr += control_flow_region_to_code(node, dispatch_state, codegen, symbols)
         else:
             raise NotImplementedError(f"Control flow block {type(node)} not implemented")
-        if isinstance(node, AbstractControlFlowRegion):
+        if allocates:
             expr += deallocation_on_exit(node, codegen)
 
         out_edges = region.out_edges(node)
