@@ -289,13 +289,12 @@ class ExpandGemmPure(ExpandTransformation):
                                           add_program, {"__y": dace.Memlet.simple("_c", index_c('__i0', '__i1'))},
                                           external_edges=True)
         elif equal_valued(0, node.beta):
-            init_state.add_mapped_tasklet(
-                'gemm_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(shape_c)
-                }, {},
-                'out = 0', {'out': dace.Memlet.simple(mul_out, index_c('_o0', '_o1'))},
-                external_edges=True)
+            init_state.add_mapped_tasklet('gemm_init', {
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(shape_c)
+            }, {},
+                                          'out = 0', {'out': dace.Memlet.simple(mul_out, index_c('_o0', '_o1'))},
+                                          external_edges=True)
         elif equal_valued(1, node.beta):
             # Do nothing for initialization, only update the values
             pass
@@ -338,13 +337,16 @@ class ExpandGemmPure(ExpandTransformation):
                     "__i%d" % i: "0:%s" % s
                     for i, s in enumerate([M, K, N])
                 }, {
-                    "__a": dace.Memlet.simple("_a", index_a("__i1", "__i0") if node.transA else index_a("__i0", "__i1")),
-                    "__b": dace.Memlet.simple("_b", index_b("__i2", "__i1") if node.transB else index_b("__i1", "__i2")),
+                    "__a": dace.Memlet.simple("_a",
+                                              index_a("__i1", "__i0") if node.transA else index_a("__i0", "__i1")),
+                    "__b": dace.Memlet.simple("_b",
+                                              index_b("__i2", "__i1") if node.transB else index_b("__i1", "__i2")),
                     **({
                         "__alpha": dace.Memlet.simple("_alpha", "0")
                     } if rt_alpha else {}),
                 },
-                mul_program, {"__out": dace.Memlet.simple(mul_out, index_c("__i0", "__i2"), wcr_str="lambda x, y: x + y")},
+                mul_program,
+                {"__out": dace.Memlet.simple(mul_out, index_c("__i0", "__i2"), wcr_str="lambda x, y: x + y")},
                 external_edges=True,
                 output_nodes=output_nodes)
             # Peel into i / k / j maps; inner (k, j) become Sequential (the MapExpansion
@@ -352,20 +354,23 @@ class ExpandGemmPure(ExpandTransformation):
             from dace.transformation.dataflow.map_expansion import MapExpansion
             MapExpansion.apply_to(sdfg, verify=False, map_entry=mult_entry)
         else:
-            state.add_mapped_tasklet("gemm", {
-                "__i%d" % i: "0:%s" % s
-                for i, s in enumerate([M, N, K])
-            }, {
-                "__a": dace.Memlet.simple("_a", index_a("__i2", "__i0") if node.transA else index_a("__i0", "__i2")),
-                "__b": dace.Memlet.simple("_b", index_b("__i1", "__i2") if node.transB else index_b("__i2", "__i1")),
-                **({
-                    "__alpha": dace.Memlet.simple("_alpha", "0")
-                } if rt_alpha else {}),
-            },
-                                     mul_program,
-                                     {"__out": dace.Memlet.simple(mul_out, index_c("__i0", "__i1"), wcr_str="lambda x, y: x + y")},
-                                     external_edges=True,
-                                     output_nodes=output_nodes)
+            state.add_mapped_tasklet(
+                "gemm", {
+                    "__i%d" % i: "0:%s" % s
+                    for i, s in enumerate([M, N, K])
+                }, {
+                    "__a": dace.Memlet.simple("_a",
+                                              index_a("__i2", "__i0") if node.transA else index_a("__i0", "__i2")),
+                    "__b": dace.Memlet.simple("_b",
+                                              index_b("__i1", "__i2") if node.transB else index_b("__i2", "__i1")),
+                    **({
+                        "__alpha": dace.Memlet.simple("_alpha", "0")
+                    } if rt_alpha else {}),
+                },
+                mul_program,
+                {"__out": dace.Memlet.simple(mul_out, index_c("__i0", "__i1"), wcr_str="lambda x, y: x + y")},
+                external_edges=True,
+                output_nodes=output_nodes)
 
         return sdfg
 

@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+
 import numpy as np
 
 import dace
@@ -856,4 +858,37 @@ def test_propagation_keeps_a_uint32_symbol_at_one_dtype_in_every_memlet():
                             seen += 1
                             assert sym.dtype == declared[sym.name], (edge.data, sym.name, sym.dtype)
     assert seen, 'no memlet mentions a promoted symbol, so this test asserts nothing'
+
+
+def test_nested_sdfg_mapping_keeps_matching_the_connected_shape():
+    """``m`` takes a different value before each call, so the shape of ``A`` keeps ``m``; each call's
+    symbol mapping must keep it too, or the nested descriptor no longer equals the connected one."""
+    inner = dace.SDFG('inner')
+    inner.add_symbol('m', dace.int64)
+    inner.add_array('a', ['m'], dace.float64)
+    inner.add_array('b', [1], dace.float64)
+    body = inner.add_state()
+    t = body.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    body.add_edge(body.add_read('a'), None, t, 'x', dace.Memlet('a[0]'))
+    body.add_edge(t, 'y', body.add_write('b'), None, dace.Memlet('b[0]'))
+
+    sdfg = dace.SDFG('nested_mapping_keeps_shape')
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_symbol('m', dace.int64)
+    sdfg.add_array('A', ['m'], dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+    prev = sdfg.add_state('init')
+    calls = []
+    for i, size in enumerate(['n', 'n + 1']):
+        state = sdfg.add_state_after(prev, f'call{i}', assignments={'m': size})
+        call = state.add_nested_sdfg(copy.deepcopy(inner), {'a'}, {'b'}, {'m': 'm'})
+        state.add_edge(state.add_read('A'), None, call, 'a', dace.Memlet('A[0:m]'))
+        state.add_edge(call, 'b', state.add_write('B'), None, dace.Memlet('B[0]'))
+        calls.append(call)
+        prev = state
+    sdfg.validate()
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    assert [str(c.symbol_mapping['m']) for c in calls] == ['m', 'm']
     sdfg.validate()
