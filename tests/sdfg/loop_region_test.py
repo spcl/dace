@@ -17,7 +17,6 @@ def _make_regular_for_loop() -> SDFG:
                        update_expr='i = i + 1',
                        inverted=False)
     sdfg.add_node(loop1)
-    sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state1 = loop1.add_state('state1', is_start_block=True)
     acc_a = state1.add_access('A')
@@ -72,7 +71,6 @@ def _make_do_while_loop() -> SDFG:
 def _make_do_for_loop() -> SDFG:
     sdfg = dace.SDFG('do_for')
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1',
@@ -97,7 +95,6 @@ def _make_do_for_loop() -> SDFG:
 def _make_do_for_inverted_cond_loop() -> SDFG:
     sdfg = dace.SDFG('do_for_inverted_cond')
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1',
@@ -123,9 +120,6 @@ def _make_do_for_inverted_cond_loop() -> SDFG:
 def _make_triple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_symbol('j', dace.int32)
-    sdfg.add_symbol('k', dace.int32)
     N = dace.symbol('N')
     M = dace.symbol('M')
     K = dace.symbol('K')

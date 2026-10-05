@@ -13,7 +13,7 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import AbstractSet, Any, AnyStr, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
 from ordered_set import OrderedSet
@@ -145,11 +145,13 @@ class NameCollisionError(NameError):
 
 
 def scope_bound_names(sdfg: 'SDFG') -> Set[str]:
-    """ The names a scope of ``sdfg`` binds (not those of its nested SDFGs): loop variables, map and consume
-    parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG symbol. """
+    """ The names a scope of ``sdfg`` binds (not those of its nested SDFGs): the variables of loops that initialize
+    them, map and consume parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG
+    symbol. A loop without an initializer iterates a variable defined outside it. """
     names = {
         region.loop_variable
-        for region in sdfg.all_control_flow_regions() if isinstance(region, LoopRegion) and region.loop_variable
+        for region in sdfg.all_control_flow_regions()
+        if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
     }
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -2104,7 +2106,8 @@ class SDFG(ControlFlowRegion):
             return True
         if name in self.constants_prop:
             return True
-        return False
+        # Loop variables, map parameters and dynamic connectors bind their names without declaring them
+        return name in scope_bound_names(self)
 
     def is_name_free(self, name: str) -> bool:
         """ Test if `name` is free, i.e. is not used by anything else."""
@@ -2420,7 +2423,11 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    def add_datadesc(self,
+                     name: str,
+                     datadesc: dt.Data,
+                     find_new_name=False,
+                     bound_names: AbstractSet[str] = frozenset()) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
             :param name: Name to use.
@@ -2460,7 +2467,7 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter), which is not an SDFG symbol
-            scoped = scope_bound_names(sdfg)
+            scoped = scope_bound_names(sdfg) | bound_names
             for sym in desc.free_symbols:
                 if (isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
                         and sym.name not in scoped):

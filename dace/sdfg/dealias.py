@@ -7,7 +7,7 @@ from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, scope_bound_names
 from dace.sdfg.state import SymbolResolver
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
@@ -1404,9 +1404,11 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                 edge.src_conn = parent_mapping[edge.src_conn]
 
     # Add remaining symbols to symbol mapping using the symbols defined at the node, which integration did not change
+    shadowed = scope_bound_names(sdfg)
     for sym_name, sym_type in symbol_types.items():
-        # Skip parent symbols that are shadowed by unrelated internal data containers or constants
-        if sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
+        # Skip parent symbols that are shadowed by unrelated internal data containers, constants or the nested SDFG's
+        # own loop and map scopes
+        if sym_name in sdfg.arrays or sym_name in sdfg.constants_prop or sym_name in shadowed:
             continue
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping

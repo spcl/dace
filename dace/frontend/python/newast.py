@@ -1208,12 +1208,14 @@ class ProgramVisitor(ExtNodeVisitor):
             while nodes:
                 nodes = _views_to_data(state, nodes)
 
-        # Try to replace transients with their python-assigned names
+        # Try to replace transients with their python-assigned names, unless a loop or map scope binds the name
+        bound = scope_bound_names(self.sdfg)
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
                 desc = self.sdfg.arrays[arrname]
                 if desc.transient:
-                    if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
+                    if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays
+                            and pyname not in bound):
                         repl_dict = dict()
                         if isinstance(desc, data.Structure):
                             repl_dict = {f"{arrname}.{k}": f"{pyname}.{k}" for k in desc.keys()}
@@ -2426,6 +2428,10 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
+            # A loop over an existing Python variable binds a fresh name: the variable keeps its container and is
+            # written at the start of every iteration, so after the loop it holds the last value, as in Python
+            variable = self.variables.pop(sym_name) if self.variables.get(sym_name) in self.sdfg.arrays else None
+            loop_var = sym_name if variable is None else self.sdfg.find_new_symbol(sym_name)
             integer = True
             nonnegative = None
             positive = None
@@ -2450,7 +2456,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 for k, v in self.defined_dict().items() if isinstance(v, (data.Data, symbolic.symbol))
             }
             data_dtypes.update(self.sdfg.symbols)
-            sym_obj = symbolic.symbol(indices[0],
+            sym_obj = symbolic.symbol(loop_var,
                                       infer_iteration_symbol_type(ranges[0][0],
                                                                   ranges[0][1],
                                                                   ranges[0][2],
@@ -2479,13 +2485,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
-            loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
-            incr = {indices[0]: '%s = %s + %s' % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
+            loop_cond_expr = '%s %s %s' % (loop_var, loop_cond, astutils.unparse(ast_ranges[0][1]))
             loop_region = self._add_loop_region(loop_cond_expr,
                                                 label=f'for_{node.lineno}',
-                                                loop_var=indices[0],
-                                                init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
-                                                update_expr=incr[indices[0]],
+                                                loop_var=loop_var,
+                                                init_expr='%s = %s' % (loop_var, astutils.unparse(ast_ranges[0][0])),
+                                                update_expr='%s = %s + %s' %
+                                                (loop_var, loop_var, astutils.unparse(ast_ranges[0][2])),
                                                 inverted=False)
 
             # Add used symbols as loop inputs
@@ -2505,8 +2511,17 @@ class ProgramVisitor(ExtNodeVisitor):
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
-            self.ended_loops[indices[0]] = (loop_region, start, stop, step)
-            self.iterator_copies.pop(indices[0], None)
+            if variable is None:
+                self.ended_loops[sym_name] = (loop_region, start, stop, step)
+                self.iterator_copies.pop(sym_name, None)
+            else:
+                self.variables[sym_name] = variable
+                write_back = loop_region.add_state(f'{sym_name}_write_back')
+                tasklet = write_back.add_tasklet('write_back', {}, {'out'}, f'out = {loop_var}')
+                write_back.add_edge(tasklet, 'out', write_back.add_write(variable), None,
+                                    Memlet.from_array(variable, self.sdfg.arrays[variable]))
+                loop_region.add_edge(write_back, first_subblock, dace.InterstateEdge())
+                loop_region.start_block = loop_region.node_id(write_back)
             # Handle else clause
             if node.orelse:
                 # Continue visiting body
@@ -2821,7 +2836,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
+                    declare_read_symbol(self.sdfg, str(sym), sym.dtype)
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}
@@ -3052,7 +3067,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), self.globals[str(sym)].dtype)
+                    declare_read_symbol(self.sdfg, str(sym), sym.dtype)
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}

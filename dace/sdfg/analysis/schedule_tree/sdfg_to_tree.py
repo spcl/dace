@@ -5,7 +5,7 @@ import copy
 from typing import Dict, List, Set
 import dace
 from dace import data, symbolic
-from dace.sdfg.sdfg import InterstateEdge, SDFG
+from dace.sdfg.sdfg import InterstateEdge, SDFG, scope_bound_names
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
                              UnstructuredControlFlow)
 from dace.sdfg import dealias, utils as sdutil, graph as gr, nodes as nd
@@ -674,10 +674,11 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     stree.constants = sdfg.constants_prop
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
-    # the nested SDFGs' descriptor repositories
+    # the nested SDFGs' descriptor repositories. A name a loop or map scope binds is defined by that scope.
+    bound = set().union(*(scope_bound_names(nsdfg) for nsdfg in sdfg.all_sdfgs_recursive()))
     for nsdfg in sdfg.all_sdfgs_recursive():
         transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
-        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols and k not in bound}
         constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
         stree.containers.update(transients)
         stree.symbols.update(symbols)

@@ -334,7 +334,6 @@ def test_read_only_scalar_safe_to_propagate():
     ``test_a_container_value_does_not_reach_a_state`` for the one place the value may not go."""
     sdfg = dace.SDFG('readonly_scalar_test')
     sdfg.add_symbol('aliased', dace.int32)
-    sdfg.add_symbol('i', dace.int32)
     sdfg.add_scalar('param', dace.int32)
     sdfg.add_array('out', [8], dace.int32)
 
@@ -655,7 +654,6 @@ def test_loop_variable_is_never_substituted_into_its_own_meta_code():
     value carried in for the iteration variable spells the update ``(- 1) = ((- 1) + 1)``."""
     sdfg = dace.SDFG('symprop_loop_variable')
     sdfg.add_array('a', (8, ), dace.float64)
-    sdfg.add_symbol('i', dace.int64)
 
     entry = sdfg.add_state('entry', is_start_block=True)
     loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)

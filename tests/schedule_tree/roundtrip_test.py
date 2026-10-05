@@ -256,7 +256,8 @@ def _inverted_loop_sdfg(name: str, loop: LoopRegion) -> dace.SDFG:
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
+    if not loop.loop_variable:
+        sdfg.add_symbol('i', dace.int64)
     init = sdfg.add_state('init', is_start_block=True)
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={} if loop.loop_variable else {'i': '0'}))

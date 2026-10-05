@@ -8,7 +8,7 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-from typing import List, Optional
+from typing import List, Optional, Set
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -40,6 +40,8 @@ class AST_translator:
         self.globalsdfg = None
         self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = ast_utils.NameMap()
+        # The names a loop of the program iterates over; a loop binds its iterator, so it is never declared
+        self.loop_iterators: Set[str] = set()
         self.contexts = {}
         self.views = 0
         self.libstates = []
@@ -285,6 +287,8 @@ class AST_translator:
                     iter_name = decl_node.lval.name
                 elif self.name_mapping[sdfg].get(decl_node.lval.name) is not None:
                     iter_name = self.name_mapping[sdfg][decl_node.lval.name]
+                elif decl_node.lval.name in self.loop_iterators:
+                    iter_name = decl_node.lval.name
                 else:
                     raise ValueError("Unknown variable " + decl_node.lval.name)
                 entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(decl_node.rval)
@@ -318,6 +322,8 @@ class AST_translator:
                     iter_name = decl_node.lval.name
                 elif self.name_mapping[sdfg].get(decl_node.lval.name) is not None:
                     iter_name = self.name_mapping[sdfg][decl_node.lval.name]
+                elif decl_node.lval.name in self.loop_iterators:
+                    iter_name = decl_node.lval.name
                 else:
                     raise ValueError("Unknown variable " + decl_node.lval.name)
                 entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(decl_node.rval)
@@ -358,7 +364,8 @@ class AST_translator:
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:
-            sdfg.add_symbol(node.name, datatype)
+            if node.name not in self.loop_iterators:
+                sdfg.add_symbol(node.name, datatype)
             if self.last_sdfg_states.get(cfg) is None:
                 bstate = cfg.add_state("SDFGbegin", is_start_block=True)
                 self.last_sdfg_states[cfg] = bstate
@@ -1099,6 +1106,15 @@ def create_ast_from_string(source_string: str,
     return (program, own_ast)
 
 
+def loop_iterators(program: ast_internal_classes.Program_Node) -> Set[str]:
+    """ The names the loops of ``program`` iterate over. """
+    return {
+        node.init.lval.name
+        for node in ast_transforms.mywalk(program) if isinstance(node, ast_internal_classes.For_Stmt_Node)
+        and isinstance(node.init, ast_internal_classes.BinOp_Node)
+    }
+
+
 def create_sdfg_from_string(source_string: str,
                             sdfg_name: str,
                             normalize_offsets: bool = False,
@@ -1134,6 +1150,7 @@ def create_sdfg_from_string(source_string: str,
     ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
+    ast2sdfg.loop_iterators = loop_iterators(program)
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 
@@ -1181,6 +1198,7 @@ def create_sdfg_from_fortran_file(source_string: str, use_explicit_cf: bool = Fa
     ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
+    ast2sdfg.loop_iterators = loop_iterators(program)
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 

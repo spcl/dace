@@ -10,8 +10,8 @@ import inspect
 import itertools
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
-                    overload)
+from typing import (TYPE_CHECKING, AbstractSet, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set,
+                    Tuple, Union, overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -1856,15 +1856,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return tasklet
 
     def add_nested_sdfg(
-        self,
-        sdfg: Optional['SDFG'],
-        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
-        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
-        symbol_mapping: Dict[str, Any] = None,
-        name=None,
-        location: Optional[Dict[str, symbolic.SymbolicType]] = None,
-        debuginfo: Optional[dtypes.DebugInfo] = None,
-        external_path: Optional[str] = None,
+            self,
+            sdfg: Optional['SDFG'],
+            inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+            outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+            symbol_mapping: Dict[str, Any] = None,
+            name=None,
+            location: Optional[Dict[str, symbolic.SymbolicType]] = None,
+            debuginfo: Optional[dtypes.DebugInfo] = None,
+            external_path: Optional[str] = None,
+            bound_inside: AbstractSet[str] = frozenset(),
     ):
         """
         Adds a nested SDFG to the SDFG state.
@@ -1883,6 +1884,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
+        :param bound_inside: Free symbols of the nested SDFG that the caller binds inside it next (e.g., by moving
+                             a loop in); they are neither mapped nor declared.
         :return: The created NestedSDFG node.
         :raises ValueError: If neither sdfg nor external_path is provided.
         :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
@@ -1927,7 +1930,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Free symbols without an entry are the parent's symbols of the same name
             symbol_mapping = dict(symbol_mapping or {})
-            for fs in sdfg.free_symbols:
+            for fs in sdfg.free_symbols - bound_inside:
                 symbol_mapping.setdefault(fs, fs)
             s.symbol_mapping = symbol_mapping
 

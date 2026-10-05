@@ -10,7 +10,7 @@ from ordered_set import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 import dace.subsets as subsets
-from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
+from typing import AbstractSet, Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.sdfg import nodes, utils
@@ -291,13 +291,16 @@ def nest_sdfg_control_flow(sdfg: SDFG):
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None) -> nodes.NestedSDFG:
+                        name: Optional[str] = None,
+                        bound_inside: AbstractSet[str] = frozenset()) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
 
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
+        :param bound_inside: Symbols the caller binds inside the nested SDFG next; they are neither mapped nor
+                             declared (see ``SDFGState.add_nested_sdfg``).
         :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
@@ -473,7 +476,8 @@ def nest_state_subgraph(sdfg: SDFG,
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg,
                                         set(input_names.values()) | input_arrays,
-                                        set(output_names.values()) | output_arrays.keys())
+                                        set(output_names.values()) | output_arrays.keys(),
+                                        bound_inside=bound_inside)
 
     # Reconnect memlets to nested SDFG
     reconnected_in = set()

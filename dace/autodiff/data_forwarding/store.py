@@ -505,11 +505,10 @@ def _get_assign_tasklet(forward_state: SDFGState,
                 memlet_access_iterators.append(str(element[0]))
             else:
                 # This is a range tuple we need to add an iterator for
-                # Create a random new free symbol
-                free_symbol = forward_state.sdfg.find_new_symbol("si")
-
-                # Add the new symbol here so that find_new_symbol doesn't return it again
-                forward_state.sdfg.add_symbol(free_symbol, dtypes.int64)
+                # A map parameter that neither the SDFG nor an earlier dimension uses
+                free_symbol, index = 'si', 0
+                while free_symbol in param_dict or forward_state.sdfg.is_name_used(free_symbol):
+                    free_symbol, index = f'si_{index}', index + 1
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 

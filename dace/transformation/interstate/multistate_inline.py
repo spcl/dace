@@ -9,6 +9,7 @@ from dace import Memlet, symbolic
 from dace.sdfg import dealias, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.transformation import transformation, helpers
@@ -209,7 +210,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 if b.loop_variable is not None:
                     inner_assignments.add(b.loop_variable)
 
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        # Loop variables bind their names without declaring them as symbols
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
@@ -226,7 +228,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         transients: Dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
-        # exists, find new name)
+        # exists, find new name). Their shapes may name symbols the inlined scopes bind, which are not declared.
+        bound = scope_bound_names(nsdfg)
         for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
@@ -236,7 +239,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{node.data}'
 
-                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True, bound_names=bound)
                         transients[node.data] = name
 
             # All transients of edges between code nodes are also added to parent
@@ -249,7 +252,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                                 new_name = f'{nsdfg.label}_{edge.data.data}'
 
-                            name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                            name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True, bound_names=bound)
                             transients[edge.data.data] = name
 
         # All constants (and associated transients) become constants of the parent
