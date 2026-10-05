@@ -4481,7 +4481,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                         break
                             if not sub:
                                 raise KeyError("Did not find output subscript")
-                            output_slices.add((sub, ast.Name(id=aname)))
+                            output_slices.add((sub, ast.Name(id=aname, ctx=ast.Load())))
                             slice_state.remove_edge(e)
                             slice_state.remove_node(e.src)
                         slice_state.remove_node(n)
@@ -5144,7 +5144,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     node)
                 self._visit_assign(new_node, ast_tuple, None, is_return=True)
             else:
-                ast_name = ast.copy_location(ast.Name(id='__return'), node)
+                ast_name = ast.copy_location(ast.Name(id='__return', ctx=ast.Store()), node)
                 self._visit_assign(new_node, ast_name, None, is_return=True)
 
             if not isinstance(self.cfg_target, SDFG):
@@ -5754,7 +5754,7 @@ class ProgramVisitor(ExtNodeVisitor):
         nslice = self._parse_subscript_slice(node.slice)
 
         # Try to construct memlet from subscript
-        node.value = ast.Name(id=array)
+        node.value = ast.Name(id=array, ctx=ast.Load())
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
 
         if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
@@ -5791,7 +5791,7 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(r, (Number, numpy.bool_)):
                 newnode = ast.Constant(value=r, kind='')
             else:
-                newnode = ast.Name(id=r)
+                newnode = ast.Name(id=r, ctx=ast.Load())
             ast.copy_location(newnode, node)
             out.append(newnode)
         if res_num == 1:
