@@ -211,6 +211,10 @@ class AffineSMemlet(SeparableMemletPattern):
                 # Special case: i:i+stride for a begin:end:stride range
                 if node_rb == result_begin and bre + 1 == node_rs and step == 1:
                     pass
+                # Special case: the same point in every edge, which strides with the map
+                elif (subexprs[0] == subexprs[1] and (step is None or step == 1) and len(set(dim_exprs)) == 1
+                      and multiplier.is_Integer and multiplier > 0):
+                    pass
                 else:
                     # Map ranges where the last index is not known
                     # exactly are not supported by this pattern.
@@ -259,6 +263,10 @@ class AffineSMemlet(SeparableMemletPattern):
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
+
+        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
+        if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
+            return (result_begin, result_end, self.multiplier * node_rs, 1)
 
         # Special case: i:i+stride for a begin:end:stride range. The multiplier must be one:
         # for a single-element access ``(re - rb + 1)`` is 1, so with a unit map stride the length
@@ -1028,7 +1036,96 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
                 continue
 
             edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
-            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+            for edge in edges:
+                border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
+
+
+def _candidates_through_view(state: 'SDFGState', edge, direction: str) -> List[Memlet]:
+    """
+    Resolves a border candidate that reaches its container through a view.
+
+    A ``views`` edge spans the whole window the view covers, so it reports more than the accesses
+    behind it do. Look through the view and express each of them in the container's coordinates.
+
+    :param state: The state the edge belongs to.
+    :param edge: The edge adjacent to the container's access node.
+    :param direction: ``'in'`` for a border input, ``'out'`` for a border output.
+    :return: The memlets to use as border candidates for this edge.
+    """
+    # We import late to avoid cyclic imports here.
+    from dace.sdfg import utils as sdutil  # Avoid import loop: dace.sdfg.utils imports this module
+
+    if direction == 'in':
+        container, view_node, is_binding = edge.src, edge.dst, edge.dst_conn == 'views'
+    else:
+        container, view_node, is_binding = edge.dst, edge.src, edge.src_conn == 'views'
+    if not is_binding or not isinstance(view_node, nodes.AccessNode):
+        return [edge.data]
+    view_desc = view_node.desc(state.sdfg)
+    if not isinstance(view_desc, data.View):
+        return [edge.data]
+
+    container_desc = state.sdfg.arrays[container.data]
+    subset = edge.data.subset if edge.data.data == container.data else edge.data.other_subset
+    if subset is None:
+        subset = subsets.Range.from_array(container_desc)
+    # A view that reshapes or permutes has no dimension mapping to the container
+    mapping = sdutil.map_view_to_array(view_desc, container_desc, subset)
+    if mapping is None:
+        return [edge.data]
+
+    inner_edges = state.out_edges(view_node) if direction == 'in' else state.in_edges(view_node)
+    result: List[Memlet] = []
+    for inner in inner_edges:
+        if inner.data.is_empty() or inner.data.data != view_node.data:
+            return [edge.data]
+        candidate = copy.deepcopy(inner.data)
+        candidate.data = container.data
+        candidate.subset = sdutil.compose_view_subset(mapping[0], subset, inner.data.subset)
+        result.append(candidate)
+    return result or [edge.data]
+
+
+def _collect_region_meta_read_candidates(region, candidates) -> None:
+    """
+    Collect reads performed by a control-flow region itself as border input candidates.
+
+    This includes reads on the region's interstate edges (conditions and assignments) as
+    well as meta-code reads such as loop or branch conditions.
+
+    :param region: The control-flow region whose meta reads should be collected.
+    :param candidates: A candidate memlet mapping, typically created with
+                       ``_make_border_memlets(..., as_lists=True)``, which is updated in place.
+    :note: ``candidates`` mapping is updated in-place.
+    """
+    arrays = region.sdfg.arrays
+    memlets = []
+    for edge in region.edges():
+        memlets.extend(edge.data.get_read_memlets(arrays))
+    memlets.extend(region.get_meta_read_memlets())
+    for memlet in memlets:
+        if memlet.data in candidates['in']:
+            candidates['in'][memlet.data].append(memlet)
+
+
+def _merge_meta_read_candidates(region, border_memlets, arrays) -> None:
+    """
+    Merge a region's own meta reads (interstate edges, conditions) into border input memlets.
+
+    :param region: The control-flow region whose meta reads should be merged.
+    :param border_memlets: The accumulated border memlet mapping to update in place.
+    :param arrays: The array descriptor mapping of the containing SDFG.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
+    candidates = _make_border_memlets(border_memlets, as_lists=True)
+    _collect_region_meta_read_candidates(region, candidates)
+    for connector in border_memlets['in']:
+        propagated = _propagate_border_memlet_candidates(candidates, arrays, 'in', connector)
+        if propagated is None:
+            continue
+        array_name = propagated.data if propagated.data is not None else connector
+        border_memlets['in'][connector] = _merge_border_memlet(border_memlets['in'][connector], propagated,
+                                                               arrays[array_name])
 
 
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
@@ -1261,6 +1358,40 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
                                                                         propagated, arrays[array_name])
 
 
+def _propagate_nsdfg_border_edge(edge: gr.MultiConnectorEdge[Memlet], internal_memlet: Memlet, parent_sdfg: 'SDFG',
+                                 sdfg: 'SDFG', connector: str) -> Memlet:
+    """
+    Converts a propagated 'border' memlet of a nested SDFG into a memlet on the outer edge.
+
+    :param edge: The outer edge of the nested SDFG node to propagate onto.
+    :param internal_memlet: The propagated border memlet, expressed in the inner descriptor.
+    :param parent_sdfg: The SDFG containing the nested SDFG node.
+    :param sdfg: The nested SDFG.
+    :param connector: The connector of the nested SDFG node that ``edge`` is attached to.
+    :return: The memlet to place on ``edge``.
+    """
+    extname = edge.data.data
+    outer_desc = parent_sdfg.arrays[extname]
+    inner_desc = sdfg.arrays[connector]
+    # The connector is written in the nested SDFG's symbols, which the symbol mapping binds to the parent's
+    if not inner_desc.is_equivalent(outer_desc, symbol_mapping=sdfg.parent_nsdfg_node.symbol_mapping):
+        raise ValueError(f'Connector "{connector}" of {sdfg.label} describes {inner_desc}, not the container '
+                         f'"{extname}" it is connected to. Restate the nested SDFG with '
+                         'dace.sdfg.dealias.convert_legacy_nested_sdfgs.')
+
+    result = copy.deepcopy(internal_memlet)
+    result.data = extname
+    # The connector may keep an ``offset`` of its own -- the origin of the index space the memlets inside are written
+    # in, e.g., to keep one-based indices -- so they are restated in the container's
+    if isinstance(inner_desc, data.Array) and isinstance(outer_desc, data.Array) and result.subset is not None:
+        replacements = symbolic.symbol_replacements(sdfg.parent_nsdfg_node.symbol_mapping)
+        inner_offset = [symbolic.replace_symbols(pystr_to_symbolic(off), replacements) for off in inner_desc.offset]
+        shift = [ioff - ooff for ioff, ooff in zip(inner_offset, outer_desc.offset)]
+        if any(off != 0 for off in shift):
+            result.subset.offset(shift, False)
+    return result
+
+
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
                                   parent_state: 'SDFGState',
                                   nsdfg_node: nodes.NestedSDFG,
@@ -1275,7 +1406,6 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
     :note: This operates in-place on the parent SDFG.
     """
     # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
     from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
@@ -1312,73 +1442,52 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
                 # Also make sure that there's no symbol in the border memlet's
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
-                if border_memlet.src_subset is not None:
+                if border_memlet.src_subset is not None or border_memlet.dst_subset is not None:
                     if border_memlet.data is None:
                         border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.src_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
+                    for subset in (border_memlet.src_subset, border_memlet.dst_subset):
+                        if subset is None:
+                            continue
+                        # A copy's two subsets address the two containers it connects, so the one to
+                        # widen to is whichever of them has the subset's rank
+                        fallback_desc = None
+                        for candidate in (border_memlet.data, connector):
+                            desc = sdfg.arrays.get(candidate, None)
+                            if desc is not None and len(desc.shape) == subset.dims():
+                                fallback_desc = desc
                                 break
-                        if fall_back:
-                            border_memlet.src_subset[i] = fallback_subset[i]
-                if border_memlet.dst_subset is not None:
-                    if border_memlet.data is None:
-                        border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.dst_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.dst_subset[i] = fallback_subset[i]
+                        if fallback_desc is None:
+                            continue
+                        fallback_subset = subsets.Range.from_array(fallback_desc)
+                        for i, rng in enumerate(subset):
+                            fall_back = False
+                            for item in rng:
+                                if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                    fall_back = True
+                                    break
+                            if fall_back:
+                                subset[i] = fallback_subset[i]
 
-    # Propagate the inside 'border' memlets outside the SDFG by
-    # offsetting, and unsqueezing if necessary.
+                # A volume counted in a symbol assigned inside the nested SDFG means nothing out here
+                if any(str(s) not in outer_symbols for s in symbolic.symlist(border_memlet.volume)):
+                    border_memlet.volume = (border_memlet.subset.num_elements()
+                                            if border_memlet.subset is not None else 0)
+                    border_memlet.dynamic = True
+
+    # Propagate the inside 'border' memlets outside the SDFG. Connectors are the containers they are
+    # connected to, so only the container name changes.
     for iedge in parent_state.in_edges(nsdfg_node):
         if iedge.dst_conn in border_memlets['in']:
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(iedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in iedge.data.volume.free_symbols):
-                            iedge.data.volume = 0
-                            iedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                iedge.data.volume = 0
-                iedge.data.dynamic = True
+            iedge.data = _propagate_nsdfg_border_edge(iedge, internal_memlet, parent_sdfg, sdfg, iedge.dst_conn)
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(oedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in oedge.data.volume.free_symbols):
-                            oedge.data.volume = 0
-                            oedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                oedge.data.volume = 0
-                oedge.data.dynamic = True
+            oedge.data = _propagate_nsdfg_border_edge(oedge, internal_memlet, parent_sdfg, sdfg, oedge.src_conn)
 
 
 def reset_state_annotations(sdfg: 'SDFG'):
