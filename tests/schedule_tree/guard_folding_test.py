@@ -214,6 +214,26 @@ def test_split_outer_loop_on_guards_in_inner_loop():
         assert np.allclose(b, expected)
 
 
+@pytest.mark.parametrize('callback_is_direct_child', [True, False])
+@pytest.mark.parametrize('exclude_callback_loops', [True, False])
+def test_split_excludes_loops_with_direct_callback_child(callback_is_direct_child, exclude_callback_loops):
+    sdfg = dace.SDFG('split_callback')
+    sdfg.add_symbol('cb', dace.callback(None))
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+
+    callback = tn.TaskletNode(dace.nodes.Tasklet('callback', {}, {}, code='cb()', side_effects=True), {}, {})
+    body = tn.TaskletNode(dace.nodes.Tasklet('body', {}, {}, code='pass'), {}, {})
+    guard_children = [body] if callback_is_direct_child else [callback]
+    guard = tn.IfScope(condition=dace.properties.CodeBlock('i < 3'), children=guard_children)
+    loop_children = [guard, callback] if callback_is_direct_child else [guard]
+    loop = dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    stree.add_child(tn.ForScope(loop=loop, children=loop_children))
+
+    expected_splits = 0 if exclude_callback_loops and callback_is_direct_child else 1
+    assert split_iteration_spaces(stree, exclude_callback_loops=exclude_callback_loops) == expected_splits
+
+
 @pytest.mark.parametrize('min_trip_count', [1, 8])
 def test_split_both_dimensions_of_nested_loops(min_trip_count):
     """Splitting ``j`` yields a boundary row (1 iteration) and the interior (15). The inner loop is split in both
