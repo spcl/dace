@@ -50,7 +50,7 @@ def _tensors(ctx: LoweringContext, values: Sequence, what: str) -> List[TensorVa
     return result
 
 
-def _predicate_expr(pred) -> str:
+def predicate_expr(pred) -> str:
     if isinstance(pred, TensorValue):
         return f'{pred.name}[0] != 0'
     if isinstance(pred, SymValue):
@@ -86,7 +86,7 @@ def lower_cond(ctx: LoweringContext, node, pred, true_graph, false_graph, operan
     with ctx.scope(then_children):
         for out, join in zip(_items(outs), joins):
             _store(ctx, out, join)
-    ctx.emit(tn.IfScope(condition=CodeBlock(_predicate_expr(pred)), children=then_children))
+    ctx.emit(tn.IfScope(condition=CodeBlock(predicate_expr(pred)), children=then_children))
 
     else_children: list = []
     outs = _lower_into(ctx, _graph(false_graph), operands, else_children)
@@ -118,7 +118,7 @@ def lower_while_loop(ctx: LoweringContext, node, cond_graph, body_graph, carried
         if isinstance(pred, TensorValue):
             _store(ctx, pred, flag)
         else:
-            expr = _predicate_expr(pred)
+            expr = predicate_expr(pred)
             ctx.emit_tasklet(f'{node.name}_pred', {}, f'__out = {expr}', {'__out': flag.memlet()})
 
     evaluate_predicate()

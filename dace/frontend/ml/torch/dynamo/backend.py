@@ -70,8 +70,8 @@ class DaceBackend:
         """Dynamo symbol -> DaCe symbol name of the most recent graph."""
         return dict(self.last_description.symbol_names) if self.last_description is not None else {}
 
-    # Dynamo enters this context manager around tracing of frames compiled with this backend. The bytecode-level
-    # control-flow capture (``cfg.goto_capture``) installs its translator patches here.
+    # Dynamo enters this context manager around tracing of frames compiled with this backend. (It is not reachable
+    # through ``torch.compile`` in torch 2.13+, which wraps the backend, so ``cfg.blocks`` patches Dynamo globally.)
     backend_ctx_ctor = contextlib.nullcontext
 
     @property

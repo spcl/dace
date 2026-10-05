@@ -92,7 +92,10 @@ How programs are lowered
 * **Control flow.** The higher-order operators ``torch.cond``, ``torch.while_loop``, ``torch._higher_order_ops.scan``
   and ``map`` are lowered to native DaCe control flow (``ConditionalBlock`` and ``LoopRegion``), including loops with
   symbolic trip counts and nested control flow. Plain Python ``if``/``for``/``while`` on tensor values is handled by
-  Dynamo itself (a graph break, or an error with ``fullgraph=True``); capturing it natively is work in progress.
+  Dynamo itself (a graph break, or an error with ``fullgraph=True``). The experimental backend
+  ``dace.frontend.ml.torch.dynamo.cfg.ControlFlowBackend`` instead captures data-dependent ``if``/``while`` (with
+  ``break``, ``continue``, ``else`` clauses, and early returns) as a control-flow graph of traced blocks and compiles it
+  into the SDFG.
 * **Outputs.** Output tensors are allocated by torch with the strides torch expects, and the SDFG writes into them
   directly; inputs are passed by pointer without copies.
 

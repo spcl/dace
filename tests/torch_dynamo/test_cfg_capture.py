@@ -1,0 +1,244 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Capture of data-dependent Python control flow as a control-flow graph of traced blocks (``dace::cfg``).
+
+The tests are semantic (outputs match eager PyTorch for inputs that take different paths), so they hold for every
+bytecode layout CPython 3.10-3.14 produces for the same Python code.
+"""
+import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
+
+from dace.frontend.ml.torch.dynamo.cfg.blocks import ControlFlowBackend  # noqa: E402
+
+OFFSET = torch.tensor([1.5])
+
+
+def _check(fn, inputs, expect_capture=True, expected_compiles=1):
+    """Compares ``fn`` compiled with control-flow capture against eager PyTorch on every input."""
+    backend = ControlFlowBackend()
+    compiled = torch.compile(fn, backend=backend, dynamic=True)
+    with torch.no_grad():
+        for args in inputs:
+            args = args if isinstance(args, tuple) else (args, )
+            torch.testing.assert_close(compiled(*args), fn(*args), rtol=1e-5, atol=1e-5)
+    if expect_capture:
+        assert 'cfg' in backend.kinds(), backend.events
+        assert backend.compile_count == expected_compiles, backend.events
+    return backend
+
+
+def test_if_else():
+
+    def f(x):
+        if x.sum() > 0:
+            y = x * 2
+        else:
+            y = x - OFFSET
+        return y + 1
+
+    _check(f, [torch.rand(4), -torch.rand(5)])
+
+
+def test_if_without_else_and_elif():
+
+    def f(x):
+        y = x + 1
+        if y.mean() > 1.5:
+            y = y * 3
+        elif y.mean() > 1.2:
+            y = y * 2
+        if y.max() > 4:
+            y = y - 4
+        return y
+
+    _check(f, [torch.full((3, ), 0.9), torch.full((4, ), 0.3), torch.full((2, ), 0.0), torch.rand(5)])
+
+
+def test_while_with_break_and_continue():
+
+    def f(x):
+        y = x
+        while y.sum() < 100:
+            y = y * 2 + 1
+            if y.max() > 60:
+                break
+            if y.min() > 5:
+                continue
+            y = y + 1
+        return y
+
+    _check(f, [torch.rand(4), torch.full((3, ), 20.0), torch.full((2, ), 0.1), torch.full((5, ), 1000.0)])
+
+
+def test_while_else():
+
+    def f(x):
+        y = x
+        while y.sum() < 50:
+            y = y * 2 + 1
+            if y.max() > 30:
+                y = y - 100
+                break
+        else:
+            y = y + 0.5
+        return y
+
+    _check(f, [torch.rand(3), torch.full((2, ), 14.0), torch.full((4, ), 100.0)])
+
+
+def test_nested_loops_and_early_return():
+
+    def f(x):
+        y = x
+        while y.sum() < 200:
+            z = y
+            while z.max() < 10:
+                z = z * 3
+                if z.min() > 8:
+                    return z * -1
+            y = y + z
+        return y
+
+    _check(f, [torch.rand(3) + 0.5, torch.full((2, ), 9.5), torch.full((4, ), 300.0)])
+
+
+def test_sequential_ifs_are_linear():
+    """Every block is traced once: n sequential conditionals need O(n) traces, not 2**n."""
+
+    def f(x):
+        y = x
+        if y[0] > 0:
+            y = y + 1
+        if y[1] > 0:
+            y = y * 2
+        if y[2] > 0:
+            y = y - 3
+        if y[3] > 0:
+            y = y * -1
+        if y[0] > 1:
+            y = y + 5
+        if y[1] > 1:
+            y = y / 2
+        return y
+
+    backend = _check(f, [torch.randn(4) for _ in range(6)])
+    blocks = int(next(detail for kind, _, detail in backend.events if kind == 'cfg').split()[0])
+    assert blocks <= 4 * 6, f'{blocks} blocks for 6 sequential conditionals'
+
+
+class _Gated(nn.Module):
+    """A module whose forward branches on data and loops, using parameters and attributes on every path."""
+
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(4, 4)
+        self.scale = 2  # Float attributes are traced as 0-d tensors read with .item() in blocks (see 2e)
+
+    def forward(self, x):
+        h = self.fc(x)
+        if h.sum() > 0:
+            h = torch.relu(h) * self.scale
+        else:
+            h = self.fc(h)
+        steps = 0
+        while h.abs().sum() < 10:
+            h = h * 2 + self.fc.bias
+            steps = steps  # A Python value live across blocks (unchanged)
+        return h
+
+
+def test_module_forward():
+    torch.manual_seed(0)
+    model = _Gated().eval()
+    _check(model, [torch.randn(3, 4), torch.randn(5, 4), -torch.rand(2, 4) * 3])
+
+
+def test_fallback_keeps_semantics():
+    """A data-dependent branch inside a for loop is not captured yet; Dynamo's graph break keeps the result."""
+
+    def f(x):
+        y = x
+        for _ in range(3):
+            if y.sum() > 0:
+                y = y - 1
+            else:
+                y = y + 2
+        return y
+
+    backend = _check(f, [torch.rand(4), -torch.rand(4)], expect_capture=False)
+    assert 'cfg' not in backend.kinds()
+
+
+def test_python_and_symbolic_locals():
+    """Python ints and SymInts live across blocks are passed along (and specialize the blocks)."""
+
+    def f(x, k):
+        y = x * k
+        n = x.shape[0]
+        if y.sum() > 0:
+            y = y.sin() + n
+        else:
+            y = y.cos() * k
+        return y + 1
+
+    _check(f, [(torch.rand(4, 6) + 0.5, 3), (-(torch.rand(5, 7) + 0.5), 3)])
+
+
+def test_conditional_expression_and_multiple_returns():
+    """A conditional expression leaves the value stack non-empty at its join: Dynamo's graph break handles it."""
+
+    def f(x):
+        y = x * 2
+        z = y.sin() if y.sum() > 0 else y.cos()
+        if z.mean() > 10:
+            return z
+        return z + 1
+
+    _check(f, [torch.rand(4), -torch.rand(5)], expect_capture=False)
+
+
+def test_while_true_break():
+
+    def f(x):
+        acc = x
+        while True:
+            acc = acc * 2
+            if acc.sum() > 100:
+                break
+        return acc + 1
+
+    _check(f, [torch.rand(3), torch.full((2, ), 60.0)])
+
+
+def test_stock_backend_unaffected():
+    """The handlers are only active for ControlFlowBackend: the stock DaceBackend still graph-breaks."""
+    from dace.frontend.ml.torch.dynamo import DaceBackend
+    ControlFlowBackend()  # Installs the handlers
+
+    def f(x):
+        if x.sum() > 0:
+            return x * 2
+        return x - 1
+
+    compiled = torch.compile(f, backend=DaceBackend(), dynamic=True, fullgraph=True)
+    with pytest.raises(Exception, match='Data-dependent branching'):
+        compiled(torch.rand(3, 4))
+
+
+if __name__ == '__main__':
+    test_if_else()
+    test_if_without_else_and_elif()
+    test_while_with_break_and_continue()
+    test_while_else()
+    test_nested_loops_and_early_return()
+    test_sequential_ifs_are_linear()
+    test_module_forward()
+    test_fallback_keeps_semantics()
+    test_python_and_symbolic_locals()
+    test_conditional_expression_and_multiple_returns()
+    test_while_true_break()
+    test_stock_backend_unaffected()

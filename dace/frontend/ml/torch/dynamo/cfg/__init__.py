@@ -1,12 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-EXPERIMENTAL: bytecode-level capture of data-dependent Python control flow for the ``dace`` TorchDynamo backend.
+EXPERIMENTAL: capture of data-dependent Python control flow for the ``dace`` TorchDynamo backend.
 
-This package is a prototype and is not part of the supported frontend API; its entry point,
-:class:`~dace.frontend.ml.torch.dynamo.cfg.goto_capture.CfgDaceBackend`, is a subclass of the production backend
-that installs (process-wide, backend-gated) patches of Dynamo's conditional-jump handlers so that data-dependent
-``if``/``while`` become ``torch.cond``/``torch.while_loop`` instead of graph breaks.
+:class:`~dace.frontend.ml.torch.dynamo.cfg.blocks.ControlFlowBackend` is a ``DaceBackend`` that, at a conditional jump
+on tensor data, captures the rest of the frame as a control-flow graph of traced blocks (instead of graph-breaking) and
+passes it to the DaCe importer through the opaque operator ``dace::cfg``.
 """
-from .goto_capture import CaptureEvent, CaptureState, CfgDaceBackend, ControlFlowCapture
+from .blocks import ControlFlowBackend
 
-__all__ = ['CfgDaceBackend', 'ControlFlowCapture', 'CaptureState', 'CaptureEvent']
+__all__ = ['ControlFlowBackend']
