@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Tuple
 
 import dace
@@ -84,6 +84,22 @@ def test_an_to_an_memlet_with_negative_size():
         sdfg.validate()
 
 
+def test_copy_size_mismatch_at_a_code_node():
+    """
+    A memlet path that starts at a code node has no container to view, which the dimensionality check has to
+    report as a mismatch rather than fail on.
+    """
+    sdfg = dace.SDFG('copy_size_mismatch_at_code_node')
+    sdfg.add_array('A', [5], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('produce', {}, {'out'}, 'out = 1')
+    state.add_edge(tasklet, 'out', state.add_write('A'), None, dace.Memlet(data='A', subset='0:2', other_subset='0:3'))
+
+    with pytest.raises(dace.sdfg.InvalidSDFGEdgeError, match='Dimensionality mismatch'):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_to_an_memlet_with_zero_size()
     test_an_to_an_memlet_with_negative_size()
+    test_copy_size_mismatch_at_a_code_node()

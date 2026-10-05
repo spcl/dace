@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import SubgraphFusion
 import dace.sdfg.utils as utils
@@ -90,6 +90,15 @@ def fix_sdfg(sdfg, graph):
     utils.change_edge_dest(graph, nested_original, nnode)
     utils.change_edge_src(graph, nested_original, nnode)
     graph.remove_node(nested_original)
+
+    # Each connector stands for one row of its container, read and written alike: a connector reached through two
+    # different windows (such as ``C[i, j, 0]`` and ``C[i, j, 1:O]``) has no one container to stand for
+    for edge in itertools.chain(graph.in_edges(nnode), graph.out_edges(nnode)):
+        for e in graph.memlet_tree(edge):
+            e.data.subset = subsets.Range.from_string('i, j, 0:O' if nnode in (e.src, e.dst) else '0:N, 0:M, 0:O')
+
+    nnode.integrate_into_parent()
+
     sdfg.validate()
 
 
