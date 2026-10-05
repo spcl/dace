@@ -194,6 +194,13 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         nstate = nsdfg.add_state()
 
+        # The memlets carry the outer subsets verbatim, so the nested map parameters must not shadow a symbol they
+        # use (an enclosing map's ``_o0``, for one)
+        taken = {str(s) for s in inedge.data.subset.free_symbols | outedge.data.subset.free_symbols}
+        prefix = '_'
+        while any(name.startswith((prefix + 'i', prefix + 'o')) for name in taken):
+            prefix += '_'
+
         # Interleave input and output axes to match input memlet
         def absolute(subset: subsets.Range, dim: int, param: str) -> str:
             begin, _, step = subset[dim]
@@ -204,10 +211,10 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         input_subset = []
         for i in range(len(input_size)):
             if i in axes:
-                input_subset.append(absolute(inedge.data.subset, i, f'_i{ictr}'))
+                input_subset.append(absolute(inedge.data.subset, i, f'{prefix}i{ictr}'))
                 ictr += 1
             elif input_size[i] != 1:
-                input_subset.append(absolute(inedge.data.subset, i, f'_o{octr}'))
+                input_subset.append(absolute(inedge.data.subset, i, f'{prefix}o{octr}'))
                 octr += 1
             else:
                 input_subset.append(symstr(inedge.data.subset[i][0]))
@@ -216,14 +223,14 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         output_ranges = {}
         for i, size in enumerate(outedge.data.subset.size()):
             if size != 1:
-                param = f'_o{len(output_ranges)}'
+                param = f'{prefix}o{len(output_ranges)}'
                 output_subset.append(absolute(outedge.data.subset, i, param))
                 output_ranges[param] = f'0:{symstr(size)}'
             else:
                 output_subset.append(symstr(outedge.data.subset[i][0]))
 
         # A single output element still gets the map that scopes the accumulator reset
-        ome, omx = nstate.add_map('reduce_output', output_ranges or {'_o0': '0:1'})
+        ome, omx = nstate.add_map('reduce_output', output_ranges or {f'{prefix}o0': '0:1'})
         outm = dace.Memlet.simple('_out', ','.join(output_subset))
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
@@ -237,7 +244,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
         ime, imx = nstate.add_map('reduce_values', {
-            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            f'{prefix}i{i}': '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
             for i, axis in enumerate(sorted(axes))
         },
                                   schedule=dtypes.ScheduleType.Sequential)
