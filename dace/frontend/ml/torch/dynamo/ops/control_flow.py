@@ -14,6 +14,7 @@ Subgraph placeholders bind positionally to the HOP operands (verified orders for
 """
 from typing import List, Sequence
 
+import sympy
 import torch
 from torch.fx import GraphModule
 
@@ -54,7 +55,11 @@ def predicate_expr(pred) -> str:
     if isinstance(pred, TensorValue):
         return f'{pred.name}[0] != 0'
     if isinstance(pred, SymValue):
-        return f'({pred.expr}) != 0' if not isinstance(pred.expr, int) else ('1' if pred.expr else '0')
+        if isinstance(pred.expr, int):
+            return '1' if pred.expr else '0'
+        if isinstance(pred.expr, (sympy.StrictLessThan, sympy.LessThan, sympy.StrictGreaterThan, sympy.GreaterThan)):
+            return str(pred.expr)  # A comparison, e.g., of a loop counter (which loop analyses match)
+        return f'({pred.expr}) != 0'
     if isinstance(pred, ConstValue):
         return '1' if pred.value else '0'
     raise UnsupportedOpError('predicate', f'unsupported predicate type {type(pred).__name__}')

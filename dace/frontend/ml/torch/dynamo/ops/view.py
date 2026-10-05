@@ -79,6 +79,29 @@ def lower_reinterpret(ctx: LoweringContext, node, tensor: TensorValue, *args, **
     return alias_view(ctx, node, tensor)
 
 
+@register_lowering(*resolve('aten.squeeze_.default', 'aten.squeeze_.dim', 'aten.squeeze_.dims',
+                            'aten.unsqueeze_.default', 'aten.t_.default', 'aten.transpose_.default'))
+def lower_reinterpret_in_place(ctx: LoweringContext, node, tensor: TensorValue, *args, **kwargs):
+    """
+    In-place metadata changes (``matmul`` squeezes its result in place) are views, if only the result of the operator
+    is used afterwards (as in graphs that ``functionalize`` traces).
+    """
+    base = node.args[0]
+    later = [user for user in base.users if user is not node and _comes_after(user, node)]
+    if later:
+        raise UnsupportedOpError(node.target, f'{base.name} is used after its shape changes in place')
+    return alias_view(ctx, node, tensor)
+
+
+def _comes_after(node: torch.fx.Node, other: torch.fx.Node) -> bool:
+    current = other.next
+    while current.op != 'root':
+        if current is node:
+            return True
+        current = current.next
+    return False
+
+
 @register_lowering(*resolve('aten.as_strided.default', 'aten.as_strided_copy.default'))
 def lower_as_strided(ctx: LoweringContext, node, tensor: TensorValue, size, stride, storage_offset=None):
     """

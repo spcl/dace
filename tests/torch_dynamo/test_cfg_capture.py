@@ -496,6 +496,42 @@ def test_training_through_captured_branch():
     assert 'cfg' in backend.kinds() and backend.compile_count == 2
 
 
+class _Recurrent(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(3, 3)
+
+    def forward(self, x):
+        h = x[0] * 0
+        for i in range(x.shape[0]):
+            h = torch.tanh(self.fc(h)) + x[i]  # ``Linear`` of a vector squeezes its result in place
+        return h
+
+
+@pytest.mark.torch
+def test_training_through_captured_loop():
+    """A loop over a symbolic size is differentiated by DaCe (as a for loop), for every size with one compilation."""
+    torch.manual_seed(0)
+    model, reference = _Recurrent(), _Recurrent()
+    reference.load_state_dict(model.state_dict())
+    backend = ControlFlowBackend()
+    compiled = torch.compile(model, backend=backend, dynamic=True)
+    for x in (torch.randn(4, 3), torch.randn(6, 3)):
+        x_ref = x.clone().requires_grad_(True)
+        x = x.clone().requires_grad_(True)
+        out, ref = compiled(x), reference(x_ref)
+        torch.testing.assert_close(out, ref, rtol=1e-4, atol=1e-5)
+        out.square().sum().backward()
+        ref.square().sum().backward()
+        torch.testing.assert_close(x.grad, x_ref.grad, rtol=1e-4, atol=1e-5)
+        for (name, p), p_ref in zip(model.named_parameters(), reference.parameters()):
+            torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
+        model.zero_grad()
+        reference.zero_grad()
+    assert 'cfg' in backend.kinds() and backend.compile_count == 2
+
+
 if __name__ == '__main__':
     test_if_else()
     test_if_without_else_and_elif()
@@ -523,3 +559,4 @@ if __name__ == '__main__':
     test_branch_on_item()
     test_training_through_captured_branch()
     test_match_on_bool_of_tensor_falls_back()
+    test_training_through_captured_loop()
