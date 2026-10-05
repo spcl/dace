@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import _use_aligned_operator_new
-from dace.sdfg import infer_types
+from dace.sdfg import dealias, infer_types
 import numpy as np
 
 
@@ -596,6 +596,7 @@ def test_code_only_container_read_scope(schedule):
     an_b = state.add_write('B')
     state.add_memlet_path(an_a, me, nsdfg, dst_conn='a_in', memlet=dace.Memlet('A[i]'))
     state.add_memlet_path(nsdfg, mx, an_b, src_conn='b_out', memlet=dace.Memlet('B[i]'))
+    dealias.integrate_nested_sdfg(nest)
 
     a = np.random.rand(16)
     b = np.zeros(16)

@@ -2283,6 +2283,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 offset=offset,
                 squeeze=squeezed_dims or None,
             )
+            if isinstance(reduced_intermediate_desc, data.Scalar):
+                from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots,
+                                                                                           rewrite_refs)
+
+                # `reduce_connector` writes a reduced access as `[0]`, which a scalar cannot take in code
+                rewrite_code_slots(inner_sdfg, lambda code: rewrite_refs(code, {inner_data: inner_data}))
             return
 
         # NOTE: The current implementation of this function assumes that there is no

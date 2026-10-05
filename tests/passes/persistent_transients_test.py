@@ -3,6 +3,7 @@
 import numpy as np
 
 import dace
+from dace.sdfg import dealias
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.persistent_transients import MakeTransientsPersistent
 
@@ -126,6 +127,7 @@ def test_loop_variable_sized_nested_transient_is_not_promoted():
     body = loop.add_state('body', is_start_block=True)
     node = body.add_nested_sdfg(nest, inputs=set(), outputs={'o'}, symbol_mapping={'K': 'i'})
     body.add_edge(node, 'o', body.add_write('out'), None, dace.Memlet('out[i]'))
+    dealias.integrate_nested_sdfg(nest)
     sdfg.validate()
 
     assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None

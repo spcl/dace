@@ -10,7 +10,7 @@ import pytest
 import uuid
 
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
 
 
@@ -3336,9 +3336,10 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     istate = inner_mark.add_state()
     ia = istate.add_access("A")
     iidx = istate.add_access("idx_at")
-    t = istate.add_tasklet("mark", {"_in_idx"}, {"_out"}, "_out = 0")
+    # The data dependent column is chosen inside the tasklet: a container may not appear in a memlet subset.
+    t = istate.add_tasklet("mark", {"_in_idx"}, {"_out"}, "_out[_in_idx - 1] = 0")
     istate.add_edge(iidx, None, t, "_in_idx", dace.Memlet("idx_at[0]"))
-    istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, idx_at - 1]"))
+    istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, 0:5]", dynamic=True))
 
     # The inner search SDFG: reads one row, the connector claims the full array.
     inner_search = dace.SDFG("search_inner")
@@ -3397,6 +3398,8 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     s1.add_edge(mx2, "OUT_1", b1, None, dace.Memlet("B[0:N]"))
 
     sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    dealias.integrate_nested_sdfg(inner_mark)
+    dealias.integrate_nested_sdfg(inner_search)
     sdfg.validate()
     return sdfg
 
