@@ -12,6 +12,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.while_to_for_loop import WhileToForLoop
 
 
 def add_backward_pass(sdfg: SDFG,
@@ -65,8 +66,8 @@ def add_backward_pass(sdfg: SDFG,
     if simplify:
         sdfg.simplify()
 
-    # Inline conditional blocks but keep loops
-    inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
+    # Inline conditional blocks but keep loops, as for loops
+    _prepare_control_flow(sdfg)
 
     if separate_sdfgs:
         return make_backward_pass(sdfg,
@@ -139,7 +140,7 @@ def make_backward_pass(sdfg: SDFG,
         sdfg.validate()
         if simplify:
             sdfg.simplify()
-        inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
+        _prepare_control_flow(sdfg)
 
     if recompute_forward:
         joint = copy.deepcopy(sdfg)
@@ -192,6 +193,19 @@ def make_backward_pass(sdfg: SDFG,
     })
 
 
+def _prepare_control_flow(sdfg: SDFG):
+    """
+    Inlines conditional blocks but keeps loops, and turns while loops that count into for loops (the backward pass
+    reverses for loops).
+    """
+    inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
+    WhileToForLoop().apply_pass(sdfg, {})
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if region.has_cycles():
+            raise AutoDiffException(f'{region.label} contains a loop that is not a loop region (e.g., a loop with a '
+                                    'break, or one that exits depending on data); such loops cannot be differentiated')
+
+
 def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     """ Adds ``sum_i sum(output_i * cotangent_i)`` at the end of ``sdfg``, with a new input array per cotangent.
 
@@ -207,10 +221,10 @@ def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     partials = []
     for output in outputs:
         desc = sdfg.arrays[output]
-        cotangent, _ = sdfg.add_array(f'{output}_cotangent', desc.shape, desc.dtype, find_new_name=True)
+        cotangent, _ = sdfg.add_array(f'cotangent_{output}', desc.shape, desc.dtype, find_new_name=True)
         cotangents[output] = cotangent
-        terms, _ = sdfg.add_array(f'{output}_vjp_terms', desc.shape, desc.dtype, transient=True, find_new_name=True)
-        partial, _ = sdfg.add_array(f'{output}_vjp', [1], dtype, transient=True, find_new_name=True)
+        terms, _ = sdfg.add_array(f'vjp_terms_{output}', desc.shape, desc.dtype, transient=True, find_new_name=True)
+        partial, _ = sdfg.add_array(f'vjp_{output}', [1], dtype, transient=True, find_new_name=True)
         index = ', '.join(f'__i{d}' for d in range(len(desc.shape)))
         terms_node = state.add_access(terms)
         state.add_mapped_tasklet(f'{output}_vjp_terms', {
