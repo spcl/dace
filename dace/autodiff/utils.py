@@ -18,6 +18,7 @@ from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.while_to_for_loop import condition_terms
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
@@ -864,6 +865,33 @@ class SympyCleaner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def loop_bound_condition(loop: LoopRegion) -> str:
+    """
+    The comparison of a loop's condition that bounds its loop variable: the condition itself, or the term that
+    compares the loop variable in a conjunction (``i < end and <condition>``: a loop that may exit before ``end``).
+    """
+    terms = condition_terms(loop.loop_condition.as_string)
+    for term in terms:
+        if loop.loop_variable in {str(s) for s in symbolic.pystr_to_symbolic(term).free_symbols}:
+            return term
+    return loop.loop_condition.as_string
+
+
+def may_exit_early(loop: LoopRegion) -> bool:
+    """Whether a for loop's condition has terms besides the bound of its loop variable (e.g., that read data)."""
+    return len(condition_terms(loop.loop_condition.as_string)) > 1
+
+
+def loop_exit_symbol(loop: LoopRegion) -> Optional[str]:
+    """The symbol that the edges after a loop assign the final value of its loop variable to, if any."""
+    edges = loop.parent_graph.out_edges(loop)
+    for name, value in (edges[0].data.assignments.items() if edges else []):
+        if value.strip() == loop.loop_variable and all(
+                edge.data.assignments.get(name, '').strip() == loop.loop_variable for edge in edges):
+            return name
+    return None
+
+
 def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     """
         Use regular expression matching to extract the start and end of the loop region.
@@ -874,7 +902,7 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     it = loop.loop_variable
 
     # Extract the end of the loop from the conditional statement
-    conditional = loop.loop_condition.as_string
+    conditional = loop_bound_condition(loop)
 
     stride_sign = get_stride_sign(loop)
 

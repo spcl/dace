@@ -15,29 +15,28 @@ from dace.sdfg.state import LoopRegion
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
+    In a condition that is a conjunction (``i < n and <condition>``), the comparison of the iteration variable bounds
+    it: the loop may end earlier.
     """
     if loop.loop_variable is None or loop.loop_variable == '':
         return None
-    end: Optional[symbolic.SymbolicType] = None
     a = sympy.Wild('a')
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    match = condition.match(itersym < a)
-    if match:
-        end = match[a] - 1
-    if end is None:
-        match = condition.match(itersym <= a)
+    for term in (condition.args if isinstance(condition, (sympy.And, symbolic.AND)) else (condition, )):
+        match = term.match(itersym < a)
         if match:
-            end = match[a]
-    if end is None:
-        match = condition.match(itersym > a)
+            return match[a] - 1
+        match = term.match(itersym <= a)
         if match:
-            end = match[a] + 1
-    if end is None:
-        match = condition.match(itersym >= a)
+            return match[a]
+        match = term.match(itersym > a)
         if match:
-            end = match[a]
-    return end
+            return match[a] + 1
+        match = term.match(itersym >= a)
+        if match:
+            return match[a]
+    return None
 
 
 def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

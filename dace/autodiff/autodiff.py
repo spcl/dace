@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from dace import InterstateEdge, Memlet, data as dt, dtypes, properties
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
+from dace.autodiff import utils as ad_utils
 from dace.autodiff.base_abc import AutoDiffException
 from dace.libraries.standard import Reduce
 
@@ -414,6 +415,19 @@ def _prepare_control_flow(sdfg: SDFG):
     """
     inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
     WhileToForLoop().apply_pass(sdfg, {})
+    # A for loop that may exit before its end (e.g., depending on data) is reversed from the final value of its loop
+    # variable, which the edges after it record
+    for loop in list(sdfg.all_control_flow_regions(recursive=True)):
+        if isinstance(loop, LoopRegion) and loop.loop_variable and ad_utils.may_exit_early(loop):
+            if ad_utils.loop_exit_symbol(loop) is not None:
+                continue
+            graph = loop.parent_graph
+            if graph.out_degree(loop) == 0:
+                graph.add_state_after(loop, label=f'{loop.label}_exit')
+            name = loop.sdfg.find_new_symbol(f'{loop.loop_variable}_exit')
+            loop.sdfg.add_symbol(name, loop.sdfg.symbols.get(loop.loop_variable, dtypes.int64))
+            for edge in graph.out_edges(loop):
+                edge.data.assignments[name] = loop.loop_variable
     for region in sdfg.all_control_flow_regions(recursive=True):
         if region.has_cycles():
             raise AutoDiffException(f'{region.label} contains a loop that is not a loop region (e.g., a loop with a '

@@ -8,7 +8,7 @@ import dace
 from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
-from dace import dtypes, data as dt
+from dace import dtypes, data as dt, symbolic
 from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
@@ -26,6 +26,7 @@ except ImportError:
 from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation,
                                     ExpansionTemplate)
 import dace.autodiff.utils as ad_utils
+from dace.transformation.passes.analysis import loop_analysis
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
 
@@ -525,7 +526,7 @@ class BackwardPassGenerator:
             # Prepare the condition for the new state
             loop_it = loop.loop_variable
             reversed_loop = self.reversed_loops_map[loop]
-            start, _ = self._extract_loop_region_info(reversed_loop)
+            start, _ = ad_utils.extract_loop_region_info(reversed_loop)
 
             # We only want the loop state to execute
             # in the first iteration of the reversed loop
@@ -556,6 +557,13 @@ class BackwardPassGenerator:
         This is necessary to make sure the control flow in the backward pass is correctly preserved.
         """
         # We will add an empty state to the backward pass which will have all the assignments
+        if not self.separate_sdfgs:
+            # The backward pass runs after the forward pass in the same SDFG, which assigned the symbols already
+            return
+        for loop in self.sdfg.all_control_flow_regions():
+            if isinstance(loop, LoopRegion) and loop.loop_variable and ad_utils.may_exit_early(loop):
+                raise AutoDiffException(f'Loop {loop.label} may exit early, which a separate backward SDFG cannot '
+                                        'reverse (it does not know the number of iterations)')
 
         new_assignments = {}
         # Get all the interstate edges in the forward sdfg
@@ -582,17 +590,7 @@ class BackwardPassGenerator:
         if new_assignments:
             # Add the new state to the backward pass
             # First we get the start block of the backward pass
-            if self.separate_sdfgs:
-                bwd_start_block = self.backward_sdfg.start_block
-            else:
-                fwd_start_state = self.sdfg.start_block
-                if isinstance(fwd_start_state, LoopRegion):
-                    bwd_start_block = self.reversed_loops_map[fwd_start_state]
-                elif isinstance(fwd_start_state, SDFGState):
-                    bwd_start_block = self.reversed_states_map[fwd_start_state]
-                else:
-                    raise AutoDiffException("Need to add an assignments state but can't find the start block")
-            # TODO would this work on a loop region?
+            bwd_start_block = self.backward_sdfg.start_block
             self.backward_sdfg.add_state_before(state=bwd_start_block,
                                                 label="_bwd_interstate_assignments_state",
                                                 assignments=new_assignments)
@@ -971,6 +969,12 @@ class BackwardPassGenerator:
         it = loop.loop_variable
 
         stride_sign = ad_utils.get_stride_sign(loop)
+
+        # A loop that may exit before its end is reversed from the value of its loop variable at the exit
+        exit_value = ad_utils.loop_exit_symbol(loop)
+        if exit_value is not None:
+            stride = loop_analysis.get_loop_stride(loop)
+            return f"{it} = {exit_value} - ({symbolic.symstr(stride)})"
 
         # Get the loop end
         _, end = ad_utils.extract_loop_region_info(loop)

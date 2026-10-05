@@ -88,6 +88,20 @@ def test_truth_test_of_a_comparison():
     np.testing.assert_array_equal(_run(sdfg, 4), reference)
 
 
+
+def test_conjunction_keeps_the_other_terms():
+    """
+    ``while i < N and B[0] < 3``: a for loop bounded by ``N`` that exits earlier, depending on data (here, after
+    the first iteration sets ``B[0]`` to 3).
+    """
+    sdfg, loop = _while_loop('i < N and B[0] < 3', '0', 'i + 1')
+    reference = _run(copy.deepcopy(sdfg), 5)
+    assert reference[0] == 3 and reference[1] == 0
+    assert WhileToForLoop().apply_pass(sdfg, {}) == 1
+    _assert_for_loop(loop, start=0, end=N - 1, stride=1)
+    assert 'B[0] < 3' in loop.loop_condition.as_string
+    np.testing.assert_array_equal(_run(sdfg, 5), reference)
+
 def test_conditional_step_is_not_converted():
     """A step that some iterations skip is not a for loop."""
     sdfg, loop = _while_loop('i < N', '0', 'i + 1', step_is_last=True)
@@ -124,6 +138,7 @@ if __name__ == '__main__':
     test_step_in_the_middle_of_the_body()
     test_counting_down_with_non_strict_comparison()
     test_truth_test_of_a_comparison()
+    test_conjunction_keeps_the_other_terms()
     test_conditional_step_is_not_converted()
     test_bound_assigned_in_the_loop_is_not_converted()
     test_start_value_on_an_earlier_edge()

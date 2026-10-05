@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Turns while loops that step a counter by a constant into for loops (with an init and an update statement)."""
-from typing import Any, Dict, Optional, Set, Tuple
+import ast
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import sympy
 
@@ -31,6 +32,10 @@ class WhileToForLoop(ppl.Pass):
 
     The value of the counter when the loop is entered must be assigned on a chain of edges that leads to the loop
     (through states with a single predecessor).
+
+    A condition may also be a conjunction of the comparison with other terms (``i < n and <condition>``): the result
+    is a for loop whose iteration count is bounded by the comparison and that may exit earlier, depending on the
+    other terms (e.g., on data).
     """
 
     CATEGORY: str = 'Simplification'
@@ -68,35 +73,24 @@ class WhileToForLoop(ppl.Pass):
 
         # Symbols (and data) whose value may change in the loop
         variant = {symbolic.symbol(name) for name in _assigned_symbols(loop) | set(loop.sdfg.arrays.keys())}
-        comparison = _comparison(loop.loop_condition)
-        if comparison is None:
+        # In a conjunction (``i < n and <condition>``), one comparison bounds the counter; the loop may also exit
+        # depending on the other terms
+        conjuncts = condition_terms(loop.loop_condition.as_string)
+        for index, term in enumerate(conjuncts):
+            comparison = _comparison(term)
+            if comparison is None:
+                continue
+            counter, bound, sign, strict = comparison
+            if bound.free_symbols & variant:
+                continue
+            step = _step(loop, counter, sign, variant)
+            if step is not None:
+                break
+        else:
             return False
-        counter, bound, sign, strict = comparison
-        if bound.free_symbols & variant:
-            return False
-
-        # The counter is stepped on exactly one edge of the loop, which every iteration takes once
-        steps = [edge for edge in loop.all_interstate_edges() if counter in edge.data.assignments]
-        if len(steps) != 1 or steps[0] not in loop.edges():
-            return False
-        if any(
-                isinstance(region, LoopRegion) and region.loop_variable == counter
-                for region in loop.all_control_flow_regions() if region is not loop):
-            return False
-        step_edge = steps[0]
+        step_edge, step, after, start = step
+        others = conjuncts[:index] + conjuncts[index + 1:]
         counter_symbol = symbolic.symbol(counter)
-        step = symbolic.pystr_to_symbolic(step_edge.data.assignments[counter]) - counter_symbol
-        if step.free_symbols & variant:  # Includes the counter
-            return False
-        if (sign > 0 and not step.is_positive) or (sign < 0 and not step.is_negative):
-            return False
-        after = _blocks_after(loop, step_edge)
-        if after is None:
-            return False
-
-        start = _value_on_entry(loop, counter)
-        if start is None:
-            return False
 
         # The blocks after the step read the stepped counter
         stepped = f'({counter} + {symbolic.symstr(step)})'
@@ -114,20 +108,70 @@ class WhileToForLoop(ppl.Pass):
         update = f'{counter} + {symbolic.symstr(step)}' if sign > 0 else f'{counter} - {symbolic.symstr(-step)}'
         loop.loop_variable = counter
         loop.init_statement = CodeBlock(f'{counter} = {symbolic.symstr(start)}')
-        loop.loop_condition = CodeBlock(f'{counter} {operator} {symbolic.symstr(end)}')
+        loop.loop_condition = CodeBlock(' and '.join([f'{counter} {operator} {symbolic.symstr(end)}'] +
+                                                     [f'({term})' for term in others]))
         loop.update_statement = CodeBlock(f'{counter} = {update}')
         return True
 
 
-def _comparison(condition: CodeBlock) -> Optional[Tuple[str, Any, int, bool]]:
+def _step(loop: LoopRegion, counter: str, sign: int, variant: Set[Any]) -> Optional[Tuple[Any, Any, Set, Any]]:
     """
-    Matches a loop condition that compares a symbol with a bound.
+    The step of a counter: the edge of the loop that every iteration takes once and that steps the counter by a
+    loop-invariant constant in the direction that ends the loop.
+
+    :return: The edge, the step, the blocks after the edge in the loop body, and the counter's value when the loop is
+             entered; or None.
+    """
+    steps = [edge for edge in loop.all_interstate_edges() if counter in edge.data.assignments]
+    if len(steps) != 1 or steps[0] not in loop.edges():
+        return None
+    if any(
+            isinstance(region, LoopRegion) and region.loop_variable == counter
+            for region in loop.all_control_flow_regions() if region is not loop):
+        return None
+    step_edge = steps[0]
+    step = symbolic.pystr_to_symbolic(step_edge.data.assignments[counter]) - symbolic.symbol(counter)
+    if step.free_symbols & variant:  # Includes the counter
+        return None
+    if (sign > 0 and not step.is_positive) or (sign < 0 and not step.is_negative):
+        return None
+    after = _blocks_after(loop, step_edge)
+    if after is None:
+        return None
+    start = _value_on_entry(loop, counter)
+    if start is None:
+        return None
+    return step_edge, step, after, start
+
+
+def condition_terms(condition: str) -> List[str]:
+    """The terms of a condition that is a conjunction (``a and b and c``), or the condition itself."""
+    try:
+        tree = ast.parse(condition, mode='eval').body
+    except SyntaxError:
+        return [condition]
+    terms = []
+
+    def flatten(node: ast.expr):
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
+            for value in node.values:
+                flatten(value)
+        else:
+            terms.append(ast.unparse(node))
+
+    flatten(tree)
+    return terms
+
+
+def _comparison(condition: str) -> Optional[Tuple[str, Any, int, bool]]:
+    """
+    Matches a condition that compares a symbol with a bound.
 
     :return: The symbol, the bound, the direction in which the symbol must move to end the loop (``1`` if it is
              compared with ``<`` or ``<=``), and whether the comparison is strict; or None.
     """
     try:
-        expression = symbolic.pystr_to_symbolic(condition.as_string)
+        expression = symbolic.pystr_to_symbolic(condition)
     except (TypeError, SyntaxError, sympy.SympifyError):
         return None
     # Truth tests of a comparison: ``(i < n) != 0`` and ``(i < n) == 1``
