@@ -222,10 +222,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Storage is final, so the stack placement of register arrays can be decided
-    from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
-    ResolveStackAllocation().apply_pass(sdfg, {})
-
     # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
     RelaxIntegerPowers().apply_pass(sdfg, {})

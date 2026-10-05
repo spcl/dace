@@ -40,11 +40,11 @@ class StorageType(ExtensibleAttributeEnum):
         Local data on registers, stack, or equivalent memory.
 
         ``StorageType.Register`` is a template that compares equal to every instance, so it can be used as before;
-        instantiate it to choose where an array is allocated, e.g., ``StorageType.Register(stack=True)``.
+        instantiate it to allow a symbolically-sized array on the stack, e.g., ``StorageType.Register(dynamic=True)``.
         """
-        #: Whether an array is placed on the stack (``True``, a symbolic size becomes a variable-length array), on the
-        #: heap (``False``), or where the code generator decides (``None``): small constant sizes on the stack.
-        stack: Optional[bool] = None
+        #: Whether a symbolically-sized array is a variable-length array on the stack (``True``). ``False`` and
+        #: ``None`` are the same: the array is allocated on the heap. Constant sizes are unaffected.
+        dynamic: Optional[bool] = None
 
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
@@ -84,19 +84,18 @@ def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
     return storage.dynamic
 
 
-def is_stack_register(storage: StorageType) -> Optional[bool]:
+def is_dynamic_register(storage: StorageType) -> Optional[bool]:
     """
-    Returns whether a ``Register`` storage type places its array on the stack.
+    Returns whether a ``Register`` storage type places a symbolically-sized array on the stack.
 
     :param storage: A ``Register`` storage type, either the template or an instance of it.
-    :return: The ``stack`` attribute of the storage type, or None if it is left to the code generator (which is also
-             the case for the bare template).
+    :return: The ``dynamic`` attribute of the storage type, or None for the bare template.
     """
     if storage != StorageType.Register:
         raise ValueError(f'Expected a Register storage type, got {storage}')
     if storage._is_template:
         return None
-    return storage.stack
+    return storage.dynamic
 
 
 class OMPScheduleType(Enum):

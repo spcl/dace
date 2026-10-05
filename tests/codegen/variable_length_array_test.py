@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Stack or heap placement of register arrays, chosen by ``StorageType.Register(stack=...)``. """
+""" Stack or heap placement of register arrays, chosen by ``StorageType.Register(dynamic=...)``. """
 
 import contextlib
 import json
@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.dtypes import AllocationLifetime, StorageType, is_stack_register
-from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
+from dace.codegen.targets.cpu import register_array_on_stack
+from dace.dtypes import AllocationLifetime, StorageType, is_dynamic_register
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -47,17 +47,19 @@ def run_scratch(sdfg: dace.SDFG, size: int, **symbols):
 
 
 AUTO = StorageType.Register
-STACK = StorageType.Register(stack=True)
-HEAP = StorageType.Register(stack=False)
+DYNAMIC = StorageType.Register(dynamic=True)
+STATIC = StorageType.Register(dynamic=False)
 
 PLACEMENT_CASES = [
     (16, AUTO, True),
     (2047, AUTO, True),
     (2048, AUTO, False),
     (N, AUTO, False),
-    (16, HEAP, False),
-    (4096, STACK, True),
-    (N, STACK, True),
+    (16, STATIC, True),
+    (N, STATIC, False),
+    (16, DYNAMIC, True),
+    (4096, DYNAMIC, False),
+    (N, DYNAMIC, True),
 ]
 
 
@@ -79,32 +81,34 @@ def captured_stderr_fd():
             captured[0] = sink.read()
 
 
-@pytest.mark.parametrize('size, placement, resolved', PLACEMENT_CASES)
-def test_auto_placement_resolves_by_size_and_explicit_placement_is_kept(size, placement, resolved):
-    sdfg = register_scratch_sdfg('resolve_placement', size, placement)
-    ResolveStackAllocation().apply_pass(sdfg, {})
-    assert is_stack_register(sdfg.arrays['tmp'].storage) is resolved
+def on_stack(sdfg: dace.SDFG) -> bool:
+    desc = sdfg.arrays['tmp']
+    return register_array_on_stack(sdfg, desc, desc.total_size, desc.lifetime, declared=False)
 
 
-def test_auto_placement_of_a_large_constant_array_respects_max_stack_array_size():
+@pytest.mark.parametrize('size, placement, stack', PLACEMENT_CASES)
+def test_constant_sizes_follow_the_size_limit_and_only_dynamic_puts_a_symbolic_size_on_the_stack(
+        size, placement, stack):
+    assert on_stack(register_scratch_sdfg('placement', size, placement)) is stack
+
+
+def test_a_large_constant_array_respects_max_stack_array_size():
     """A byte limit lowered below 2048 elements must still move the array to the heap."""
-    sdfg = register_scratch_sdfg('resolve_bytes', 1024, AUTO)
+    sdfg = register_scratch_sdfg('placement_bytes', 1024, AUTO)
     with dace.config.set_temporary('compiler', 'max_stack_array_size', value=1024):
-        ResolveStackAllocation().apply_pass(sdfg, {})
-    assert is_stack_register(sdfg.arrays['tmp'].storage) is False
+        assert not on_stack(sdfg)
 
 
-@pytest.mark.parametrize('value, resolved', [(16, True), (4096, False)])
-def test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(value, resolved):
+@pytest.mark.parametrize('value, stack', [(16, True), (4096, False)])
+def test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(value, stack):
     """The constant's dtype differs from the symbol's, as for the Polybench sizes."""
-    sdfg = register_scratch_sdfg(f'resolve_constant_{value}', dace.symbol('NC', dace.int32), AUTO)
+    sdfg = register_scratch_sdfg(f'placement_constant_{value}', dace.symbol('NC', dace.int32), AUTO)
     sdfg.add_constant('NC', np.int64(value))
-    ResolveStackAllocation().apply_pass(sdfg, {})
-    assert is_stack_register(sdfg.arrays['tmp'].storage) is resolved
+    assert on_stack(sdfg) is stack
 
 
 def test_a_symbolic_stack_array_is_a_variable_length_array():
-    sdfg = register_scratch_sdfg('vla_stack', N, STACK)
+    sdfg = register_scratch_sdfg('vla_stack', N, DYNAMIC)
     code = sdfg.generate_code()[0].clean_code
     assert 'double tmp[Max(1, N)];' in code, code
     assert 'tmp = new' not in code, code
@@ -113,7 +117,7 @@ def test_a_symbolic_stack_array_is_a_variable_length_array():
 
 def test_a_zero_extent_stack_array_has_a_positive_bound():
     """A zero-length VLA is undefined behaviour, and Fortran automatic arrays are often empty."""
-    sdfg = register_scratch_sdfg('vla_zero', N, STACK)
+    sdfg = register_scratch_sdfg('vla_zero', N, DYNAMIC)
     args = dace.Config.get('compiler', 'cpu', 'args')
     with dace.config.set_temporary('compiler', 'cpu', 'args', value=f'{args} -fsanitize=vla-bound'), \
             dace.config.set_temporary('compiler', 'cpu', 'libs', value='ubsan'), captured_stderr_fd() as stderr:
@@ -123,7 +127,7 @@ def test_a_zero_extent_stack_array_has_a_positive_bound():
 
 def test_a_zeroed_symbolic_stack_array_is_cleared_by_memset():
     """A VLA cannot take a brace initializer."""
-    sdfg = register_scratch_sdfg('vla_setzero', N, STACK)
+    sdfg = register_scratch_sdfg('vla_setzero', N, DYNAMIC)
     for node in sdfg.start_block.data_nodes():
         if node.data == 'tmp':
             node.setzero = True
@@ -159,7 +163,7 @@ def test_a_large_constant_register_array_moves_to_the_heap():
 def test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap():
     """A VLA dies with its block, while a Global array is declared outside it. Persistent and External
     register arrays are rejected by validation."""
-    sdfg = register_scratch_sdfg('vla_global', N, STACK, AllocationLifetime.Global)
+    sdfg = register_scratch_sdfg('vla_global', N, DYNAMIC, AllocationLifetime.Global)
     with pytest.warns(UserWarning, match='Variable-length array tmp'):
         code = sdfg.generate_code()[0].clean_code
         run_scratch(sdfg, 8, N=8)
@@ -174,7 +178,7 @@ def test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap():
     sdfg.add_symbol('K', dace.int64)
     sdfg.add_array('a', (N, ), dace.float64)
     sdfg.add_array('b', (N, ), dace.float64)
-    sdfg.add_transient('tmp', (K, ), dace.float64, storage=STACK)
+    sdfg.add_transient('tmp', (K, ), dace.float64, storage=DYNAMIC)
     init = sdfg.add_state('init', is_start_block=True)
     first = sdfg.add_state('first')
     second = sdfg.add_state('second')
@@ -194,7 +198,7 @@ def test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap():
     assert 'double tmp[' not in code, code
 
 
-@pytest.mark.parametrize('placement', [STACK, HEAP])
+@pytest.mark.parametrize('placement', [DYNAMIC, STATIC])
 def test_stack_placement_survives_clone_and_serialization(placement):
     sdfg = register_scratch_sdfg('placement_roundtrip', N, placement)
     assert sdfg.arrays['tmp'].clone().storage is placement
@@ -204,8 +208,8 @@ def test_stack_placement_survives_clone_and_serialization(placement):
 
 def test_the_bare_register_template_is_unchanged():
     """The template equals every instance, leaves the placement open and is stored by its name, as before."""
-    assert AUTO == STACK and AUTO == HEAP and STACK != HEAP
-    assert is_stack_register(AUTO) is None
+    assert AUTO == DYNAMIC and AUTO == STATIC and DYNAMIC != STATIC
+    assert is_dynamic_register(AUTO) is None
     sdfg = register_scratch_sdfg('register_template_roundtrip', 16, AUTO)
     stored = json.loads(json.dumps(sdfg.to_json()))
     assert stored['attributes']['_arrays']['tmp']['attributes']['storage'] == 'Register'
@@ -214,10 +218,10 @@ def test_the_bare_register_template_is_unchanged():
 
 if __name__ == '__main__':
     for case in PLACEMENT_CASES:
-        test_auto_placement_resolves_by_size_and_explicit_placement_is_kept(*case)
-    test_auto_placement_of_a_large_constant_array_respects_max_stack_array_size()
-    test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(16, True)
-    test_auto_placement_resolves_a_size_given_by_an_sdfg_constant(4096, False)
+        test_constant_sizes_follow_the_size_limit_and_only_dynamic_puts_a_symbolic_size_on_the_stack(*case)
+    test_a_large_constant_array_respects_max_stack_array_size()
+    test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(16, True)
+    test_a_size_given_by_an_sdfg_constant_follows_the_size_limit(4096, False)
     test_a_symbolic_stack_array_is_a_variable_length_array()
     test_a_zero_extent_stack_array_has_a_positive_bound()
     test_a_zeroed_symbolic_stack_array_is_cleared_by_memset()
@@ -226,6 +230,6 @@ if __name__ == '__main__':
     test_a_large_constant_register_array_moves_to_the_heap()
     test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap()
     test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap()
-    test_stack_placement_survives_clone_and_serialization(STACK)
-    test_stack_placement_survives_clone_and_serialization(HEAP)
+    test_stack_placement_survives_clone_and_serialization(DYNAMIC)
+    test_stack_placement_survives_clone_and_serialization(STATIC)
     test_the_bare_register_template_is_unchanged()

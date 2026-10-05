@@ -19,26 +19,34 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from dace.transformation.passes.resolve_stack_allocation import resolve_stack_allocation
 from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
+#: Constant-sized register arrays below this many elements are placed on the stack.
+STACK_ARRAY_MAX_ELEMENTS = 2048
+
 
 def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
-    """ Whether a register array is declared on the stack rather than allocated on the heap. A symbolic
-        size makes it a variable-length array, which dies with its block, so a lifetime that outlives
-        the block keeps the heap, and so does a split declare/allocate: ``declare_array`` has already
-        emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and deallocation both
-        ask here so they cannot disagree.
+    """ Whether a register array is declared on the stack rather than allocated on the heap. A constant size
+        is on the stack below ``STACK_ARRAY_MAX_ELEMENTS`` elements and ``compiler.max_stack_array_size`` bytes.
+        A symbolic size is a variable-length array only under ``StorageType.Register(dynamic=True)``; it dies
+        with its block, so a lifetime that outlives the block keeps the heap, and so does a split
+        declare/allocate: ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would
+        shadow it. Allocation and deallocation both ask here so they cannot disagree.
     """
-    if nodedesc.storage != dtypes.StorageType.Register or not resolve_stack_allocation(nodedesc, sdfg.constants):
+    if nodedesc.storage != dtypes.StorageType.Register:
         return False
-    if not symbolic.issymbolic(arrsize, sdfg.constants):
-        return True
-    return not declared and lifetime in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State,
-                                         dtypes.AllocationLifetime.SDFG)
+    if symbolic.issymbolic(arrsize, sdfg.constants):
+        return (dtypes.is_dynamic_register(nodedesc.storage) is True and not declared and lifetime
+                in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.SDFG))
+    if isinstance(arrsize, symbolic.sympy.Basic):
+        # By name: the constant's symbol may have another dtype than the one in the shape.
+        arrsize = arrsize.subs({sym: sdfg.constants[sym.name] for sym in arrsize.free_symbols})
+    size = int(arrsize)
+    size_bytes = 0 if isinstance(nodedesc.dtype, dtypes.opaque) else size * nodedesc.dtype.bytes
+    return size < STACK_ARRAY_MAX_ELEMENTS and size_bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
 def _use_aligned_operator_new(desc: data.Data) -> bool:
@@ -533,7 +541,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 else:
                     warnings.warn(f'Register array {name} with {cpp.sym2cpp(arrsize)} elements was allocated on the '
-                                  f'heap instead of the stack (stack={dtypes.is_stack_register(nodedesc.storage)})')
+                                  'heap instead of the stack')
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
