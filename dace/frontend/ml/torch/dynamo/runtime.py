@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Runtime wrapper: calls a compiled SDFG with torch tensors and SymInt arguments supplied by AOTAutograd."""
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import sympy
 import torch
@@ -27,22 +27,33 @@ class CompiledGraph:
     the SDFG as arguments.
     """
 
-    def __init__(self, csdfg: CompiledSDFG, result):
+    def __init__(self,
+                 csdfg: CompiledSDFG,
+                 inputs: List[Any],
+                 outputs: List[Any],
+                 fixed_arguments: Optional[Dict[str, Any]] = None):
+        """
+        :param csdfg: The compiled SDFG.
+        :param inputs: How the placeholders map to containers and symbols (``InputSpec`` list of the importer).
+        :param outputs: How the outputs are produced (``OutputSpec`` list of the importer).
+        :param fixed_arguments: Further SDFG arguments passed on every call, e.g., the phase of a joint SDFG and
+                                the (``None``) arrays of the other phase.
+        """
         # Tells AOTAutograd to pass the inputs as one list. An instance attribute, so that it survives the
         # ``functools.wraps`` wrappers AOTAutograd puts around compiled functions (they copy ``__dict__`` only).
         self._boxed_call = True
         self.csdfg = csdfg
-        self.result = result
-        self.inputs = result.inputs
-        self.outputs = result.outputs
-        self.name = result.sdfg.name
+        self.inputs = inputs
+        self.outputs = outputs
+        self.fixed_arguments = dict(fixed_arguments or {})
+        self.name = csdfg.sdfg.name
 
     def __call__(self, *args) -> List[Any]:
         if len(args) == 1 and isinstance(args[0], list):  # Boxed: graph inputs are tensors and numbers, never lists
             inputs = args[0]
             args = tuple(inputs)
             inputs.clear()
-        kwargs: Dict[str, Any] = {}
+        kwargs: Dict[str, Any] = dict(self.fixed_arguments)
         symvals: Dict[str, int] = {}
         for spec in self.inputs:
             if spec.kind == 'sym':
@@ -78,5 +89,6 @@ class CompiledGraph:
             else:
                 results.append(None)
 
-        self.csdfg(**kwargs, **symvals)
+        kwargs.update(symvals)
+        self.csdfg(**kwargs)
         return results

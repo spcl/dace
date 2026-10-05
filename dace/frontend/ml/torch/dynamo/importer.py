@@ -5,7 +5,7 @@ FX graph walker: lowers an ATen FX graph (as produced by AOTAutograd) into a sch
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import torch
 import torch.fx
@@ -13,9 +13,11 @@ from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx.node import map_arg
 
 from dace import dtypes
+from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
+from . import joint as jt
 from .context import (ConstValue, LoweringContext, SymValue, TensorValue, UnsupportedOpError, Value, dense_strides)
 from .symbols import SymbolTable, SymExpr
 
@@ -48,6 +50,23 @@ class ImportResult:
     stree: tn.ScheduleTreeRoot
     inputs: List[InputSpec]
     outputs: List[OutputSpec]
+    symbols: Dict[str, Any]
+
+
+@dataclasses.dataclass
+class PhaseInterface:
+    """Calling convention of one phase of a joint SDFG (see :mod:`.joint`)."""
+    phase: int
+    inputs: List[InputSpec]
+    outputs: List[OutputSpec]
+
+
+@dataclasses.dataclass
+class JointImportResult:
+    sdfg: SDFG
+    stree: tn.ScheduleTreeRoot
+    forward: PhaseInterface
+    backward: PhaseInterface
     symbols: Dict[str, Any]
 
 
@@ -90,7 +109,7 @@ class GraphImporter:
         if return_arrays:
             outputs = self._return_outputs(ctx, output_values)
         else:
-            outputs = self._finalize_outputs(ctx, output_values, inputs)
+            outputs, _ = self._finalize_outputs(ctx, output_values, inputs)
 
         arg_names = [spec.name for spec in inputs if spec.kind == 'tensor']
         arg_names += [spec.name for spec in outputs if spec.kind == 'tensor']
@@ -105,6 +124,117 @@ class GraphImporter:
         sdfg = stree.as_sdfg(validate=getattr(self.options, 'validate', True),
                              simplify=getattr(self.options, 'simplify', True))
         return ImportResult(sdfg, stree, inputs, outputs, dict(symtab.symbols))
+
+    def import_joint(self,
+                     plan: jt.JointPlan,
+                     name: str,
+                     symbol_names: Optional[Dict[str, str]] = None,
+                     input_names: Optional[Sequence[Optional[str]]] = None) -> JointImportResult:
+        """
+        Lowers a joint forward/backward graph into one SDFG with two phases, selected by the
+        :data:`~.joint.PHASE_SYMBOL` symbol (see :mod:`.joint`). Each joint node is lowered in the phases that compute
+        it. Saved values are containers both phases share: written by the forward phase (and returned to
+        AOTAutograd, which keeps them) and read by the backward phase. Containers that only one phase uses are
+        optional arguments.
+
+        :param plan: The joint graph and its cut.
+        :param name: Name of the SDFG.
+        :param symbol_names: Optional renaming of Dynamo shape symbols to DaCe symbol names.
+        :param input_names: Optional container name per forward placeholder (primal).
+        """
+        from . import ops  # noqa: F401 (registers lowerings)
+
+        nodes = plan.nodes()
+        forward_placeholders = [nodes[n] for n in jt.placeholder_names(plan.forward)]
+        backward_placeholders = [nodes[n] for n in jt.placeholder_names(plan.backward)]
+        symtab = SymbolTable(names=symbol_names)
+        ctx = LoweringContext(name,
+                              symtab,
+                              self.options,
+                              importer=self,
+                              storage=_storage_for([n.meta.get('val') for n in forward_placeholders]))
+        self.gm = plan.joint
+        if input_names is not None and len(input_names) != len(forward_placeholders):
+            input_names = None
+
+        # Forward phase: primals -> forward outputs, saved values
+        forward_inputs: List[InputSpec] = []
+        for position, node in enumerate(forward_placeholders):
+            container = input_names[position] if input_names is not None and input_names[position] else node.name
+            value, spec = self._bind_input(ctx, container, node.meta.get('val'), position)
+            ctx.env[node] = value
+            if spec is not None:
+                forward_inputs.append(spec)
+        primals = dict(ctx.env)
+        forward_children: List[tn.ScheduleTreeNode] = []
+        with ctx.scope(forward_children):
+            self.walk(ctx, plan.joint, plan.forward_nodes())
+            returned = [
+                ctx.env[nodes[v.name]] if isinstance(v, torch.fx.Node) else ConstValue(v)
+                for v in jt.flat_outputs(plan.forward)
+            ]
+            forward_outputs, finals = self._finalize_outputs(ctx, returned, forward_inputs)
+        saved_values = {node.name: value for node, value in primals.items()}
+        saved_values.update({
+            v.name: final
+            for v, final in zip(jt.flat_outputs(plan.forward), finals) if isinstance(v, torch.fx.Node)
+        })
+
+        # Backward phase: saved values, tangents -> gradients. Everything else it needs is recomputed.
+        ctx.env = {}
+        backward_inputs: List[InputSpec] = []
+        for position, node in enumerate(backward_placeholders):
+            if node.name in plan.saved:
+                value, spec = self._bind_saved(saved_values[node.name], position)
+            else:  # Tangent
+                value, spec = self._bind_input(ctx, node.name, node.meta.get('val'), position)
+            ctx.env[node] = value
+            if spec is not None:
+                backward_inputs.append(spec)
+        gradients = jt.flat_outputs(plan.joint)[plan.num_fwd_outputs:]
+        if len(gradients) != len(jt.flat_outputs(plan.backward)):
+            raise UnsupportedOpError('joint', 'the backward graph does not return one value per gradient')
+        backward_children: List[tn.ScheduleTreeNode] = []
+        with ctx.scope(backward_children):
+            self.walk(ctx, plan.joint, plan.backward_nodes())
+            returned = [ctx.env[v] if isinstance(v, torch.fx.Node) else ConstValue(v) for v in gradients]
+            backward_outputs, _ = self._finalize_outputs(ctx, returned, backward_inputs)
+
+        forward_args = _argument_names(forward_inputs, forward_outputs)
+        backward_args = _argument_names(backward_inputs, backward_outputs)
+        for container in set(forward_args) ^ set(backward_args):
+            ctx.containers[container].optional = True
+        arg_names = forward_args + [a for a in backward_args if a not in forward_args]
+        phase = symtab.get(jt.PHASE_SYMBOL)
+        stree = tn.ScheduleTreeRoot(name=name,
+                                    containers=ctx.containers,
+                                    constants=ctx.constants,
+                                    symbols=symtab.symbol_types,
+                                    arg_names=arg_names,
+                                    children=[
+                                        tn.IfScope(condition=CodeBlock(f'{phase} == {jt.FORWARD}'),
+                                                   children=forward_children),
+                                        tn.ElseScope(children=backward_children),
+                                    ])
+        if getattr(self.options, 'verbose', False):
+            print(stree.as_string())
+        sdfg = stree.as_sdfg(validate=getattr(self.options, 'validate', True),
+                             simplify=getattr(self.options, 'simplify', True))
+        return JointImportResult(sdfg, stree, PhaseInterface(jt.FORWARD, forward_inputs, forward_outputs),
+                                 PhaseInterface(jt.BACKWARD, backward_inputs, backward_outputs), dict(symtab.symbols))
+
+    @staticmethod
+    def _bind_saved(value: Value, position: int) -> Tuple[Value, Optional[InputSpec]]:
+        """Binds a value saved by the forward phase as an input of the backward phase."""
+        if isinstance(value, TensorValue):
+            return dataclasses.replace(value, source='input'), InputSpec('tensor', value.name, position)
+        if isinstance(value, SymValue):
+            if not value.expr.is_Symbol:  # An expression over symbols that are saved as well
+                return value, None
+            return value, InputSpec('sym', value.expr.name, position)
+        if isinstance(value, ConstValue):
+            return value, None
+        raise UnsupportedOpError('joint', f'cannot save a value of type {type(value).__name__}')
 
     def lower_subgraph(self, ctx: LoweringContext, sub_gm: torch.fx.GraphModule,
                        bindings: Sequence[Value]) -> List[Value]:
@@ -157,9 +287,19 @@ class GraphImporter:
         raise UnsupportedOpError('placeholder', f'unsupported input type {type(val).__name__} for {name}')
 
     # ------------------------------------------------------------------ walking
-    def walk(self, ctx: LoweringContext, gm: torch.fx.GraphModule) -> List[Value]:
+    def walk(self,
+             ctx: LoweringContext,
+             gm: torch.fx.GraphModule,
+             include: Optional[Set[torch.fx.Node]] = None) -> List[Value]:
+        """
+        Lowers the nodes of ``gm`` in order and returns the values of its outputs.
+
+        :param include: If given, only lowers these nodes (and returns no outputs).
+        """
         outputs: List[Value] = []
         for node in gm.graph.nodes:
+            if include is not None and (node not in include or node.op in ('placeholder', 'output')):
+                continue
             if node.op == 'placeholder':
                 if node not in ctx.env:
                     raise ValueError(f'Unbound placeholder {node.name}')
@@ -224,11 +364,20 @@ class GraphImporter:
         return fn(ctx, node, *args, **kwargs)
 
     # ------------------------------------------------------------------ outputs
-    def _finalize_outputs(self, ctx: LoweringContext, values: List[Value], inputs: List[InputSpec]) -> List[OutputSpec]:
+    def _finalize_outputs(self, ctx: LoweringContext, values: List[Value],
+                          inputs: List[InputSpec]) -> Tuple[List[OutputSpec], List[Value]]:
+        """
+        Makes the outputs SDFG arguments: inputs are returned as-is, views, aliases, and constants are copied into new
+        containers, and other transients become non-transient.
+
+        :return: The output specifications and the value each output is read from after the SDFG returns.
+        """
         specs: List[OutputSpec] = []
+        finals: List[Value] = []
         input_positions = {spec.name: spec.position for spec in inputs if spec.kind == 'tensor'}
         already_returned = set()
         for i, v in enumerate(values):
+            finals.append(v)
             if isinstance(v, TensorValue):
                 if v.source == 'input' and v.name in input_positions:
                     specs.append(OutputSpec('input', position=input_positions[v.name]))
@@ -237,7 +386,7 @@ class GraphImporter:
                     strides = dense_strides(v.tstrides, v.tshape)
                     out = ctx.add_array(f'out_{i}', v.tshape, v.torch_dtype, strides, transient=False, device=v.device)
                     ctx.emit_copy(v, out)
-                    v = out
+                    v = finals[-1] = out
                 else:
                     v.desc.transient = False
                 already_returned.add(v.name)
@@ -250,7 +399,7 @@ class GraphImporter:
                 specs.append(OutputSpec('none'))
             else:
                 raise UnsupportedOpError('output', f'cannot return value of type {type(v).__name__}')
-        return specs
+        return specs, finals
 
     def _return_outputs(self, ctx: LoweringContext, values: List[Value]) -> List[OutputSpec]:
         """Copies every output into a ``__return``/``__return_<i>`` container (see ``return_arrays``)."""
@@ -277,6 +426,11 @@ class GraphImporter:
                 raise UnsupportedOpError('output', f'cannot return a value of type {type(v).__name__} as an array')
             specs.append(OutputSpec('tensor', out.name, out.tshape, out.tstrides, out.torch_dtype, out.device))
         return specs
+
+
+def _argument_names(inputs: List[InputSpec], outputs: List[OutputSpec]) -> List[str]:
+    names = [spec.name for spec in inputs if spec.kind == 'tensor']
+    return names + [spec.name for spec in outputs if spec.kind == 'tensor' and spec.name not in names]
 
 
 def _storage_for(example_inputs: Sequence[Any]) -> dtypes.StorageType:

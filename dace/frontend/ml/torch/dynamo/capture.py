@@ -49,7 +49,8 @@ class CapturedProgram:
         Compiles the graph and returns a function with the signature of the captured callable that returns the flat
         list of graph outputs. No guards are checked: the caller must respect :attr:`guards`.
         """
-        compiled = CompiledGraph(self.import_graph(name).sdfg.compile(), self.import_result)
+        result = self.import_graph(name)
+        compiled = CompiledGraph(result.sdfg.compile(), result.inputs, result.outputs)
 
         def call(*args, **kwargs) -> List[Any]:
             with torch.no_grad():

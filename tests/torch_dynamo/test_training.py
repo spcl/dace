@@ -1,5 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Training through torch.compile: AOTAutograd's forward and backward graphs are both compiled with DaCe."""
+"""
+Training through torch.compile: AOTAutograd's training graphs are compiled with DaCe, either jointly (one SDFG with a
+forward and a backward phase, the default) or as separate forward and backward SDFGs.
+"""
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -10,7 +13,17 @@ import torch.nn as nn  # noqa: E402
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
 
 
-def _check_gradients(backend, make_model, make_input, sizes, expected_compiles=2):
+@pytest.fixture(params=[True, False], ids=['joint', 'separate'])
+def backend(request):
+    return DaceBackend(joint=request.param)
+
+
+def _compiles(backend):
+    """SDFGs compiled for one training graph."""
+    return 1 if backend.options.joint else 2
+
+
+def _check_gradients(backend, make_model, make_input, sizes):
     """Compares outputs and parameter/input gradients with eager PyTorch for several input sizes."""
     torch.manual_seed(0)
     model = make_model()
@@ -29,7 +42,7 @@ def _check_gradients(backend, make_model, make_input, sizes, expected_compiles=2
             torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert backend.compile_count == expected_compiles, f'expected {expected_compiles} compilations'
+    assert backend.compile_count == _compiles(backend), f'expected {_compiles(backend)} compilations'
 
 
 @pytest.mark.torch
@@ -103,11 +116,12 @@ def test_embedding_training(backend):
             torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert backend.compile_count == 2
+    assert backend.compile_count == _compiles(backend)
 
 
 if __name__ == '__main__':
     for test in (test_mlp_training, test_tanh_sigmoid_training, test_layernorm_softmax_training, test_cnn_training,
                  test_transformer_training, test_embedding_training):
-        torch._dynamo.reset()
-        test(DaceBackend())
+        for joint in (True, False):
+            torch._dynamo.reset()
+            test(DaceBackend(joint=joint))

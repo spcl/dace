@@ -31,6 +31,7 @@ def _check(fn, inputs, expect_capture=True, expected_compiles=1):
     return backend
 
 
+@pytest.mark.torch
 def test_if_else():
 
     def f(x):
@@ -43,6 +44,7 @@ def test_if_else():
     _check(f, [torch.rand(4), -torch.rand(5)])
 
 
+@pytest.mark.torch
 def test_if_without_else_and_elif():
 
     def f(x):
@@ -58,6 +60,7 @@ def test_if_without_else_and_elif():
     _check(f, [torch.full((3, ), 0.9), torch.full((4, ), 0.3), torch.full((2, ), 0.0), torch.rand(5)])
 
 
+@pytest.mark.torch
 def test_while_with_break_and_continue():
 
     def f(x):
@@ -74,6 +77,7 @@ def test_while_with_break_and_continue():
     _check(f, [torch.rand(4), torch.full((3, ), 20.0), torch.full((2, ), 0.1), torch.full((5, ), 1000.0)])
 
 
+@pytest.mark.torch
 def test_while_else():
 
     def f(x):
@@ -90,6 +94,7 @@ def test_while_else():
     _check(f, [torch.rand(3), torch.full((2, ), 14.0), torch.full((4, ), 100.0)])
 
 
+@pytest.mark.torch
 def test_nested_loops_and_early_return():
 
     def f(x):
@@ -106,6 +111,7 @@ def test_nested_loops_and_early_return():
     _check(f, [torch.rand(3) + 0.5, torch.full((2, ), 9.5), torch.full((4, ), 300.0)])
 
 
+@pytest.mark.torch
 def test_sequential_ifs_are_linear():
     """Every block is traced once: n sequential conditionals need O(n) traces, not 2**n."""
 
@@ -151,12 +157,14 @@ class _Gated(nn.Module):
         return h
 
 
+@pytest.mark.torch
 def test_module_forward():
     torch.manual_seed(0)
     model = _Gated().eval()
     _check(model, [torch.randn(3, 4), torch.randn(5, 4), -torch.rand(2, 4) * 3])
 
 
+@pytest.mark.torch
 def test_fallback_keeps_semantics():
     """A data-dependent branch inside a for loop is not captured yet; Dynamo's graph break keeps the result."""
 
@@ -173,6 +181,7 @@ def test_fallback_keeps_semantics():
     assert 'cfg' not in backend.kinds()
 
 
+@pytest.mark.torch
 def test_python_and_symbolic_locals():
     """Python ints and SymInts live across blocks are passed along (and specialize the blocks)."""
 
@@ -188,6 +197,7 @@ def test_python_and_symbolic_locals():
     _check(f, [(torch.rand(4, 6) + 0.5, 3), (-(torch.rand(5, 7) + 0.5), 3)])
 
 
+@pytest.mark.torch
 def test_conditional_expression_and_multiple_returns():
     """A conditional expression leaves the value stack non-empty at its join: Dynamo's graph break handles it."""
 
@@ -201,6 +211,7 @@ def test_conditional_expression_and_multiple_returns():
     _check(f, [torch.rand(4), -torch.rand(5)], expect_capture=False)
 
 
+@pytest.mark.torch
 def test_while_true_break():
 
     def f(x):
@@ -214,6 +225,7 @@ def test_while_true_break():
     _check(f, [torch.rand(3), torch.full((2, ), 60.0)])
 
 
+@pytest.mark.torch
 def test_stock_backend_unaffected():
     """The handlers are only active for ControlFlowBackend: the stock DaceBackend still graph-breaks."""
     from dace.frontend.ml.torch.dynamo import DaceBackend
@@ -229,6 +241,7 @@ def test_stock_backend_unaffected():
         compiled(torch.rand(3, 4))
 
 
+@pytest.mark.torch
 def test_match_on_python_value():
     """Patterns on Python values are resolved by Dynamo; the data-dependent branch after the match is captured."""
 
@@ -248,6 +261,7 @@ def test_match_on_python_value():
     _check(f, [(torch.rand(3), 0), (-torch.rand(4), 1), (torch.rand(2), 5)], expected_compiles=3)
 
 
+@pytest.mark.torch
 def test_match_with_tensor_guard():
 
     def f(x):
@@ -262,6 +276,7 @@ def test_match_with_tensor_guard():
     _check(f, [torch.rand(3), -torch.rand(4)])
 
 
+@pytest.mark.torch
 def test_for_else_falls_back():
     """
     Data-dependent control flow inside a for loop is not captured yet (the iterator is on the value stack); with
@@ -283,6 +298,7 @@ def test_for_else_falls_back():
     assert 'cfg' not in backend.kinds()
 
 
+@pytest.mark.torch
 def test_match_on_bool_of_tensor_falls_back():
     """
     ``bool(tensor)`` is a call, not a conditional jump, so Dynamo graph-breaks at it. Capturing it (as the predicate
