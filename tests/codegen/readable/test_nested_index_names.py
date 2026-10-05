@@ -63,7 +63,7 @@ def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A", outer_name="A"
     sdfg.add_array(outer_name, [N, N], dace.float64)
 
     nsdfg = dace.SDFG("inner")
-    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides)
+    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides, transient=True)
     ns = nsdfg.add_state("n")
     an = ns.add_access(inner_name)
     me, mx = ns.add_map("im", dict(i="0:2", j="0:2"))
