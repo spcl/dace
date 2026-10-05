@@ -44,7 +44,7 @@ class StorageType(ExtensibleAttributeEnum):
         """
         #: Whether a symbolically-sized array is a variable-length array on the stack (``True``). ``False`` and
         #: ``None`` are the same: the array is allocated on the heap. Constant sizes are unaffected.
-        dynamic: Optional[bool] = None
+        dynamic: Optional[builtins.bool] = None
 
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
