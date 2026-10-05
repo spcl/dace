@@ -22,13 +22,14 @@ N = dace.symbol("N")
 
 
 def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A"):
-    """Parent A[N,N] element-wise map, plus a no_inline nested SDFG whose connector ``inner_name`` is a
-    view of A with the given (shape, strides). Returns the top SDFG."""
+    """Parent A[N,N] element-wise map, plus a no_inline nested SDFG with its own local ``inner_name`` of the given
+    (shape, strides). No-View nested SDFGs give a connector the parent's descriptor, so the name collision the pass
+    resolves is a nest-local array named like a parent array. Returns the top SDFG."""
     sdfg = dace.SDFG("nested_view")
     sdfg.add_array("A", [N, N], dace.float64)
 
     nsdfg = dace.SDFG("inner")
-    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides)
+    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides, transient=True)
     ns = nsdfg.add_state("n")
     an = ns.add_access(inner_name)
     me, mx = ns.add_map("im", dict(i="0:2", j="0:2"))
@@ -44,12 +45,8 @@ def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A"):
     ptk = st.add_tasklet("pt", {"x"}, {"o"}, "o = x * 2.0")
     st.add_memlet_path(pr, pme, ptk, dst_conn="x", memlet=dace.Memlet("A[i,j]"))
     st.add_memlet_path(ptk, pmx, pw, src_conn="o", memlet=dace.Memlet("A[i,j]"))
-    # nested SDFG bound to a 2x2 sub-block of A
-    ar, aw = st.add_access("A"), st.add_access("A")
-    nn = st.add_nested_sdfg(nsdfg, {inner_name}, {inner_name}, symbol_mapping={"N": N})
+    nn = st.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping={"N": N})
     nn.no_inline = True
-    st.add_edge(ar, None, nn, inner_name, dace.Memlet("A[0:2, 0:2]"))
-    st.add_edge(nn, inner_name, aw, None, dace.Memlet("A[0:2, 0:2]"))
     sdfg.validate()
     return sdfg
 

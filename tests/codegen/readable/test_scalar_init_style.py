@@ -49,10 +49,10 @@ def test_fused_folds_declaration_into_first_write(require_experimental):
     split, fused = readable_code(sdfg, 'split'), readable_code(sdfg, 'fused')
 
     assert 'double t;' in split
-    assert 't = (A[A_idx(i)] * 2.0);' in split
+    assert 't = (A_index * 2.0);' in split
 
     assert 'double t;' not in fused, fused
-    assert 'double t = (A[A_idx(i)] * 2.0);' in fused, fused
+    assert 'double t = (A_index * 2.0);' in fused, fused
     # The later write is NOT re-declared -- exactly one declaration of `t` survives.
     assert fused.count('double t = ') == 1, fused
     assert 't = t_0;' in fused, fused

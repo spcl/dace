@@ -100,21 +100,29 @@ def test_the_reshaped_input_keeps_its_offset_at_the_new_rank():
         assert len(desc.strides) == len(desc.shape), f'strides {desc.strides} do not match shape {desc.shape}'
 
 
-def test_a_reduce_reading_a_view_gets_a_plain_array_inside():
-    """``_in`` is a buffer the nested SDFG reaches through a connector, never an alias.
+def test_a_reduce_reading_a_view_reads_a_view_of_real_data_inside():
+    """No-View nested SDFGs make ``_in`` a view of the connector's full data, never a view of nothing.
 
-    Cloning the caller's descriptor carried its CLASS too, so a reduce reading an ``ArrayView`` gave
-    the nested SDFG an ``_in`` that views nothing -- read by several edges inside, which validation
-    refuses with "Ambiguous or invalid edge to/from a View access node".
+    Cloning the caller's descriptor once carried an ``ArrayView``'s class into the nested SDFG, giving it an
+    ``_in`` that viewed nothing -- read by several edges inside, which validation refuses with "Ambiguous or
+    invalid edge to/from a View access node".
     """
     sdfg = gpu_auto_reduce_from_view_sdfg()
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    inner = [desc for _, name, desc in all_descriptors(sdfg) if name == '_in']
+    inner = [(node.sdfg, state) for state in sdfg.states() for node in state.nodes()
+             if isinstance(node, nodes.NestedSDFG) and '_in' in node.sdfg.arrays]
     assert inner, 'the GPUAuto expansion did not run, so this test is anchored on nothing'
-    for desc in inner:
-        assert not isinstance(desc, data.View), f'_in came out as {type(desc).__name__}, an alias of nothing'
+    for nested, _ in inner:
+        if not isinstance(nested.arrays['_in'], data.View):
+            continue
+        viewed = [
+            e.src.data for st in nested.states() for e in st.edges()
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == '_in' and isinstance(e.src, nodes.AccessNode)
+        ]
+        assert viewed and all(not isinstance(nested.arrays[v], data.View)
+                              for v in viewed), (f'_in views {viewed}, not the data the nested SDFG receives')
 
 
 def test_the_expansion_reads_storage_through_the_view():

@@ -571,8 +571,9 @@ def test_code_only_container_read_scope(schedule):
     state = sdfg.add_state('main')
 
     nest = dace.SDFG('nest')
-    nest.add_scalar('a_in', dace.float64, transient=False)
-    nest.add_scalar('b_out', dace.float64, transient=False)
+    nest.add_symbol('i', dace.int64)
+    nest.add_array('a_in', [16], dace.float64)
+    nest.add_array('b_out', [16], dace.float64)
     nest.add_scalar('zqe', dace.float64, transient=True)
 
     # State A: write zqe through a proper AccessNode.
@@ -580,7 +581,7 @@ def test_code_only_container_read_scope(schedule):
     ra = st_a.add_read('a_in')
     tw = st_a.add_tasklet('writer', {'a'}, {'o'}, 'o = a * 2.0')
     wz = st_a.add_write('zqe')
-    st_a.add_edge(ra, None, tw, 'a', dace.Memlet('a_in[0]'))
+    st_a.add_edge(ra, None, tw, 'a', dace.Memlet('a_in[i]'))
     st_a.add_edge(tw, 'o', wz, None, dace.Memlet('zqe[0]'))
 
     # State B: read zqe ONLY from tasklet code (no AccessNode / memlet).
@@ -588,8 +589,8 @@ def test_code_only_container_read_scope(schedule):
     rb = st_b.add_read('a_in')
     tr = st_b.add_tasklet('reader', {'__in_b'}, {'__out'}, '__out = min(zqe, __in_b)')
     wb = st_b.add_write('b_out')
-    st_b.add_edge(rb, None, tr, '__in_b', dace.Memlet('a_in[0]'))
-    st_b.add_edge(tr, '__out', wb, None, dace.Memlet('b_out[0]'))
+    st_b.add_edge(rb, None, tr, '__in_b', dace.Memlet('a_in[i]'))
+    st_b.add_edge(tr, '__out', wb, None, dace.Memlet('b_out[i]'))
 
     me, mx = state.add_map('m', dict(i='0:16'), schedule=schedule)
     nsdfg = state.add_nested_sdfg(nest, inputs={'a_in'}, outputs={'b_out'})
@@ -726,15 +727,16 @@ def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
     ``symbol_mapping`` -- a use of ``zqe`` with no AccessNode, no memlet and no tasklet code."""
     nest = dace.SDFG('nest')
     nest.add_symbol('k', dace.float64)
-    nest.add_array('cin', [1], dace.float64)
-    nest.add_array('cout', [1], dace.float64)
+    nest.add_symbol('i', dace.int64)
+    nest.add_array('cin', [16], dace.float64)
+    nest.add_array('cout', [16], dace.float64)
     nest_state = nest.add_state('n')
     nr = nest_state.add_read('cin')
     nt = nest_state.add_tasklet('nt', {'x'}, {'y'}, 'y = x + k')
     nw = nest_state.add_write('cout')
-    nest_state.add_edge(nr, None, nt, 'x', dace.Memlet('cin[0]'))
-    nest_state.add_edge(nt, 'y', nw, None, dace.Memlet('cout[0]'))
-    return state.add_nested_sdfg(nest, inputs={'cin'}, outputs={'cout'}, symbol_mapping={'k': 'zqe'})
+    nest_state.add_edge(nr, None, nt, 'x', dace.Memlet('cin[i]'))
+    nest_state.add_edge(nt, 'y', nw, None, dace.Memlet('cout[i]'))
+    return state.add_nested_sdfg(nest, inputs={'cin'}, outputs={'cout'}, symbol_mapping={'k': 'zqe', 'i': 'i'})
 
 
 def test_deferred_scalar_nested_sdfg_same_scope():
