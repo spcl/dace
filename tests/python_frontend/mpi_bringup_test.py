@@ -19,6 +19,9 @@ import pytest
 from dace.frontend.python.preprocessing import ensure_mpi_initialized
 from dace.sdfg.sdfg import MPI_RANK_VARS
 
+#: Environment prefixes of the state an MPI launcher hands its ranks; a nested launcher must start without them.
+LAUNCHER_RUNTIME_PREFIXES = ("OMPI_", "PMIX_", "PRTE_", "ORTE_", "OPAL_", "HYDRA_", "PMI_")
+
 #: Run under a launcher, this brings MPI up and reports a rank and the thread level MPI granted;
 #: without the fix the rank call aborts, and with a bare ``MPI_Init`` the level comes back SINGLE.
 PROBE = ('import dace\n'
@@ -137,8 +140,13 @@ def test_unreachable_mpi_is_not_an_import_error(monkeypatch):
 
 
 def launcher_free_env() -> dict:
-    """The ambient environment minus the rank of the launcher that may be running this test."""
-    return {key: value for key, value in os.environ.items() if key not in MPI_RANK_VARS}
+    """The ambient environment minus the launcher that may be running this test: its rank and the runtime state it
+    hands its ranks (an inherited Open MPI/PMIx session makes the nested ``mpirun`` crash in hwloc)."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in MPI_RANK_VARS and not key.startswith(LAUNCHER_RUNTIME_PREFIXES)
+    }
 
 
 @pytest.mark.mpi
