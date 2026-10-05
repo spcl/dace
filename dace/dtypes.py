@@ -153,6 +153,14 @@ class AllocationLifetime(Enum):
     External = auto()  #: Allocated and managed outside the generated code
 
 
+class FunctionPlacement(Enum):
+    """ Where code generation emits the function of a ``CodeGeneratorFunctionRegion``. """
+
+    Default = auto()  #: An ``inline`` function in the translation unit of its caller
+    NoInline = auto()  #: A function in the translation unit of its caller that the compiler must not inline
+    SeparateUnit = auto()  #: A function in a translation unit of its own (see ``translation_unit`` of the region)
+
+
 @undefined_safe_enum
 class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """

@@ -4316,6 +4316,37 @@ class NamedRegion(ControlFlowRegion):
 
 
 @make_properties
+class CodeGeneratorFunctionRegion(NamedRegion):
+    """
+    A region whose contents code generation emits as a function of its own, called where the region is.
+
+    The region only marks where to divide the generated code: it neither changes what its contents compute nor which
+    data and symbols they access. Code generation derives the function's arguments from what the contents use, and
+    data the region allocates is allocated inside the function. Control flow must not leave the region other than by
+    completing it (no ``break``/``continue`` of an enclosing loop, no ``return``).
+    """
+
+    function_placement = EnumProperty(dtype=dtypes.FunctionPlacement,
+                                      desc='Where code generation emits the function of this region',
+                                      default=dtypes.FunctionPlacement.Default)
+    translation_unit = Property(dtype=str,
+                                desc='Name of the translation unit of a function placed in a separate unit. Functions '
+                                'with the same name share one unit, and an empty name gives the function a unit of its '
+                                'own',
+                                default='')
+
+    def __init__(self,
+                 label: str,
+                 sdfg: Optional['SDFG'] = None,
+                 debuginfo: Optional[dtypes.DebugInfo] = None,
+                 function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.Default,
+                 translation_unit: str = ''):
+        super().__init__(label, sdfg, debuginfo)
+        self.function_placement = function_placement
+        self.translation_unit = translation_unit
+
+
+@make_properties
 class FunctionCallRegion(NamedRegion):
 
     arguments = DictProperty(str, str)
