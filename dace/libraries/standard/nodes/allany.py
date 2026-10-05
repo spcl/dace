@@ -45,7 +45,7 @@ def _descriptors(node, parent_sdfg, parent_state):
     out_shape = [(e + 1 - b) // s for (b, e, s) in out_subset] if out_subset.dims() else [1]
     axis = _fortran_dim_to_axis(node.dim, len(mask_shape))
     mask_desc = dace.data.Array(mask.dtype, mask_shape, storage=mask.storage)
-    out_desc = dace.data.Array(dace.bool_, out_shape, storage=out.storage)
+    out_desc = dace.data.Array(out.dtype, out_shape, storage=out.storage)
     return mask_desc, out_desc, mask_shape, axis
 
 

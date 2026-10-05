@@ -159,6 +159,25 @@ def test_reduction_uint8_mask(op, expected):
     assert int(out[0]) == expected
 
 
+@pytest.mark.parametrize("implementation", ["reduction", "sequential"])
+@pytest.mark.parametrize("op,expected", [("all", 1), ("any", 1)])
+def test_logical4_output_and_foreign_true(op, expected, implementation):
+    """A Fortran LOGICAL(4) result is 4-byte storage: the expansion writes the output's own dtype (0 / 1), and any
+    non-zero mask value (-1, HUGE) is .TRUE."""
+    mask = np.array([1, 0xFFFFFFFF, 0x7FFFFFFF, 2], dtype=np.uint32)
+    sdfg = _build_allany_sdfg(f"l4_{op}_{implementation}",
+                              op, [4],
+                              dace.uint32,
+                              -1,
+                              None,
+                              dace.uint32,
+                              implementation=implementation)
+    sdfg.arrays["out"].dtype = dace.uint32
+    out = np.full(1, 7, dtype=np.uint32)
+    sdfg(mask=mask, out=out)
+    assert out[0] == expected
+
+
 # ---------------------------------------------------------------------------
 # default implementation is ``reduction``
 # ---------------------------------------------------------------------------

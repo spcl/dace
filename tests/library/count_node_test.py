@@ -170,3 +170,12 @@ def test_mode_d_uint8_mask_widens_to_int32():
     out = np.zeros(1, dtype=np.int32)
     sdfg(mask=mask, out=out)
     assert int(out[0]) == 7
+
+
+def test_mode_d_foreign_true_values_count_once():
+    """A LOGICAL(4) mask is the caller's storage: every non-zero value (-1, HUGE, 2) counts as one .TRUE."""
+    sdfg = _build_count_sdfg("d_foreign", [5], dace.uint32, dim=-1, out_shape=None, out_dtype=dace.int32)
+    mask = np.array([0, 1, 0xFFFFFFFF, 0x7FFFFFFF, 2], dtype=np.uint32)
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(mask=mask, out=out)
+    assert int(out[0]) == 4

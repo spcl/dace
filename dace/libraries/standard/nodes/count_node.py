@@ -79,7 +79,8 @@ class ExpandPure(ExpandTransformation):
         else:
             sdfg.add_scalar(out_name, out.dtype, storage=out.storage)
 
-        # COUNT returns int regardless of mask kind; cast before reducing.
+        # COUNT returns int regardless of mask kind; every non-zero mask value is .TRUE. (a LOGICAL(k) mask is the
+        # caller's storage, which another producer may fill with -1).
         cast_state = sdfg.add_state(f"{node.label}_cast", is_start_block=True)
         params = [f"__i{i}" for i in range(len(mask_shape))]
         rng = {p: f"0:{s}" for p, s in zip(params, mask_shape)}
@@ -88,7 +89,7 @@ class ExpandPure(ExpandTransformation):
             f"{node.label}_cast_tasklet",
             rng,
             inputs={"_in_v": dace.memlet.Memlet(f"{mask_name}[{idx}]")},
-            code="_out_v = _in_v",
+            code="_out_v = _in_v != 0",
             outputs={"_out_v": dace.memlet.Memlet(f"_mask_int[{idx}]")},
             external_edges=True,
         )
