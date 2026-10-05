@@ -67,20 +67,10 @@ def needs_global_memory(desc: dt.Data) -> bool:
     return desc.storage in DEVICE_LOCAL_STORAGE and any(symbolic.issymbolic(dim) for dim in desc.shape)
 
 
-def enclosing_maps(state: SDFGState, node: nodes.Node) -> list[Scope]:
-    """Map scopes enclosing ``node``, innermost first, continuing through enclosing nested SDFGs."""
-    scopes: list[Scope] = []
-    parent = helpers.get_parent_map(state, node)
-    while parent is not None:
-        scopes.append(parent)
-        parent = helpers.get_parent_map(parent[1], parent[0])
-    return scopes
-
-
 def gpu_levels(state: SDFGState, node: nodes.Node) -> list[Scope] | None:
     """GPU hierarchy maps enclosing ``node`` up to its innermost kernel, outermost first; ``None`` outside kernels."""
     levels: list[Scope] = []
-    for scope in enclosing_maps(state, node):
+    for scope in helpers.get_parent_maps(state, node):
         if scope[0].map.schedule in GPU_HIERARCHY_SCHEDULES:
             levels.append(scope)
         if scope[0].map.schedule == dtypes.ScheduleType.GPU_Device:
@@ -255,7 +245,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
             for state in owner.states():
                 for node in state.data_nodes():
                     if needs_global_memory(owner.arrays[node.data]):
-                        kernel = next((scope for scope in enclosing_maps(state, node)
+                        kernel = next((scope for scope in helpers.get_parent_maps(state, node)
                                        if scope[0].map.schedule == dtypes.ScheduleType.GPU_Device), None)
                         users.setdefault((owner, node.data), OrderedSet()).add(kernel)
         result = []
@@ -449,7 +439,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         desc = plan.desc
         exit_node = state.exit_node(kernel)
         source = self.get_nearest_access_node([node for node, _ in plan.accesses], exit_node, state)
-        entries = [entry for entry, _ in enclosing_maps(state, source)]
+        entries = [entry for entry, _ in helpers.get_parent_maps(state, source)]
         exits = [state.exit_node(entry) for entry in entries[:entries.index(kernel) + 1]]
         whole = subsets.Range.from_array(desc).ndrange()
         for src, dst in zip([source, *exits[:-1]], exits, strict=True):
@@ -471,7 +461,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
             outer.add_datadesc(name, new_desc)
 
             exits = []
-            for entry, entry_state in enclosing_maps(state, nsdfg_node):
+            for entry, entry_state in helpers.get_parent_maps(state, nsdfg_node):
                 if entry_state is not state:
                     break
                 exits.append(state.exit_node(entry))

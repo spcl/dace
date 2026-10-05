@@ -1958,6 +1958,22 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
     return None
 
 
+def get_parent_maps(state: SDFGState, node: nodes.Node) -> List[Tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
+
+    :param state: The state of the node.
+    :param node: The node to test.
+    :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
+    """
+    scopes = []
+    parent = get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = get_parent_map(parent[1], parent[0])
+    return scopes
+
+
 def redirect_edge(state: SDFGState,
                   edge: graph.MultiConnectorEdge[Memlet],
                   new_src: Optional[nodes.Node] = None,
