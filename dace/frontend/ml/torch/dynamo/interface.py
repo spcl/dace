@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """User-facing entry point: ``dace.ml.compile``."""
+import functools
 import inspect
 from typing import Any, Callable, Optional
 
 import torch
 
-from .backend import DaceBackend
+from .backend import CAPTURE_CONFIG, DaceBackend
 from . import shapes
 
 
@@ -79,7 +80,7 @@ def compile(model: Optional[Any] = None,
             raise ValueError('dynamic_shapes requires dynamic=True (or None)')
         backend = DaceBackend(dynamic_shapes=spec, signature=signature, **options)
         compiled = torch.compile(m, backend=backend, dynamic=dynamic, fullgraph=fullgraph, **torch_compile_kwargs)
-        compiled = shapes.install_marking(compiled, m, spec)
+        compiled = shapes.install_marking(_with_capture_config(compiled), m, spec)
         try:
             compiled._dace_backend = backend
         except AttributeError:  # pragma: no cover
@@ -89,3 +90,19 @@ def compile(model: Optional[Any] = None,
     if model is None:
         return _compile
     return _compile(model)
+
+
+def _with_capture_config(compiled: Callable) -> Callable:
+    """Traces every call of ``compiled`` with :data:`~.backend.CAPTURE_CONFIG` (modules stay modules)."""
+    call = compiled.forward if isinstance(compiled, torch.nn.Module) else compiled
+
+    @functools.wraps(call)
+    def configured(*args, **kwargs):
+        with torch._dynamo.config.patch(**CAPTURE_CONFIG):
+            return call(*args, **kwargs)
+
+    if isinstance(compiled, torch.nn.Module):
+        compiled.forward = configured
+        return compiled
+    configured.compiled = compiled
+    return configured

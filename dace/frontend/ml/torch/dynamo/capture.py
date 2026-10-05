@@ -18,7 +18,7 @@ from torch._dynamo.exc import BackendCompilerFailed
 from dace.sdfg import SDFG
 
 from . import shapes
-from .backend import DaceBackend, DaceBackendOptions
+from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions
 from .importer import GraphImporter, ImportResult
 from .runtime import CompiledGraph
 from .sources import CapturedGuard, GraphDescription, SourceRef, shape_assumptions
@@ -165,7 +165,7 @@ def capture(fn: Callable,
     if spec is not None:
         shapes.mark_arguments(signature.bind(*args, **kwargs), spec)
     try:
-        with torch.no_grad(), torch._dynamo.config.patch(specialize_float=specialize_float):
+        with torch.no_grad(), torch._dynamo.config.patch(specialize_float=specialize_float, **CAPTURE_CONFIG):
             compiled(*args, **kwargs)
     except BackendCompilerFailed as ex:
         if isinstance(ex.inner_exception, _CaptureComplete):

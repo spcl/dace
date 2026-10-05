@@ -6,7 +6,7 @@ Dynamo represents dynamic sizes and strides as sympy expressions over backed sym
 uses sympy, so the translation mostly re-roots the expression on DaCe ``symbol`` objects (minted exactly once per
 name) and rewrites the handful of torch-specific sympy functions (``FloorDiv``, ``CeilDiv``, ``PythonMod``, ...).
 """
-from typing import Dict, Iterable, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, Optional, Tuple, Union
 
 import sympy
 import torch
@@ -41,11 +41,25 @@ class SymbolTable:
         self.dtype = dtype
         self.symbols: Dict[str, symbolic.symbol] = {}
         self.names: Dict[str, str] = dict(names or {})  #: Dynamo symbol name -> DaCe symbol name
+        #: Dynamo symbols that stand for an expression over other symbols (e.g., the clamped extent of a slice with a
+        #: data-dependent bound); they are substituted instead of becoming DaCe symbols
+        self.aliases: Dict[str, SymExpr] = {}
 
     def get(self, sym: Union[sympy.Symbol, str]) -> symbolic.symbol:
         name = sym.name if isinstance(sym, sympy.Symbol) else str(sym)
         if name not in self.symbols:
             self.symbols[name] = symbolic.symbol(self.names.get(name, name), self.dtype, nonnegative=True)
+        return self.symbols[name]
+
+    def define(self, name: str, dtype: dtypes.typeclass, nonnegative: bool = False) -> symbolic.symbol:
+        """
+        Registers a symbol with an explicit type, e.g., an unbacked symbol (``u0``) that the program assigns from
+        data, which may be a float, a boolean, or negative.
+        """
+        if name not in self.symbols:
+            # ``nonnegative=False`` would assume a negative value: leave the sign unknown instead
+            assumptions = {'nonnegative': True} if nonnegative else {}
+            self.symbols[name] = symbolic.symbol(self.names.get(name, name), dtype, **assumptions)
         return self.symbols[name]
 
     def to_dace(self, expr) -> SymExpr:
@@ -66,6 +80,8 @@ class SymbolTable:
             return expr
         if isinstance(expr, (sympy.logic.boolalg.BooleanTrue, sympy.logic.boolalg.BooleanFalse)):
             return 1 if bool(expr) else 0
+        if isinstance(expr, sympy.Symbol) and expr.name in self.aliases:
+            return self.aliases[expr.name]
         if isinstance(expr, symbolic.symbol):
             return self.get(expr.name)
         if isinstance(expr, sympy.Symbol):

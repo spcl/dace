@@ -67,6 +67,7 @@ class CompiledGraph:
                 kwargs[spec.name] = t
 
         results: List[Any] = []
+        scalars: List[Any] = []  #: (index, buffer) of outputs only known after the call
         for out in self.outputs:
             if out.kind == 'tensor':
                 shape = [_evaluate(s, symvals) for s in out.tshape]
@@ -84,6 +85,11 @@ class CompiledGraph:
                 results.append(t)
             elif out.kind == 'sym':
                 results.append(_evaluate(out.expr, symvals))
+            elif out.kind == 'scalar':
+                buf = torch.empty(1, dtype=out.torch_dtype, device=out.device)
+                kwargs[out.name] = buf
+                scalars.append((len(results), buf))
+                results.append(None)
             elif out.kind == 'const':
                 results.append(out.value)
             else:
@@ -91,4 +97,6 @@ class CompiledGraph:
 
         kwargs.update(symvals)
         self.csdfg(**kwargs)
+        for index, buf in scalars:
+            results[index] = buf.item()
         return results

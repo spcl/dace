@@ -36,7 +36,7 @@ from torch._dynamo.variables.builder import wrap_fx_proxy
 from torch._dynamo.variables.functions import NestedUserFunctionVariable
 from torch._dynamo.variables.higher_order_ops import speculate_subgraph
 
-from ..backend import DaceBackend
+from ..backend import CAPTURE_CONFIG, DaceBackend
 from . import transport
 from .analysis import JUMP_ON_TRUTH, CodeInfo
 from .transport import BRANCH, GOTO, RETURN, Binding, BlockRecord, CfgRecord
@@ -424,7 +424,8 @@ def _capture_region(backend: 'ControlFlowBackend', tx, inst, value, original: Ca
         return original(tx, inst)
     backend.regions.append(region)
     try:
-        result = region.capture(value)
+        with torch._dynamo.config.patch(**CAPTURE_CONFIG):  # Blocks keep .item() (e.g., of float attributes)
+            result = region.capture(value)
     except Exception as ex:  # noqa: BLE001 - also Unsupported raised by nested speculation
         if isinstance(ex, _PASSTHROUGH_EXCEPTIONS) and not isinstance(ex, _SPECULATION_ERRORS):
             raise  # Dynamo control flow (returns, restarts, exceptions raised by the program)

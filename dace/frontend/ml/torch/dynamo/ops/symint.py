@@ -7,6 +7,7 @@ import operator
 import sympy
 import torch
 
+from dace import dtypes
 from dace import symbolic as dsym
 
 from ..context import ConstValue, SymValue, TensorValue, TupleValue, UnsupportedOpError, as_sym
@@ -69,6 +70,42 @@ def lower_sym_storage_offset(ctx, node, tensor):
     if v is None:
         raise UnsupportedOpError(node.target, 'storage offset without FakeTensor metadata')
     return v
+
+
+@register_lowering(*resolve('aten._local_scalar_dense.default'))
+def lower_local_scalar_dense(ctx, node, tensor):
+    """
+    ``.item()``: Dynamo's unbacked symbol (e.g., ``u0``) becomes an SDFG symbol assigned from the tensor's element on
+    an interstate edge, so that later shapes, indices, and control flow can use the data-dependent value.
+    """
+    val = node.meta.get('val', None)
+    unbacked = ctx.unassigned_unbacked(val)
+    if unbacked is None:
+        constant = value_from_meta(ctx, node)
+        if constant is None:
+            raise UnsupportedOpError(node.target, f'unexpected value {val!r}')
+        return constant
+    if isinstance(val, torch.SymFloat):
+        dtype = dtypes.float64
+    elif isinstance(val, torch.SymBool):
+        dtype = dtypes.bool_
+    else:
+        dtype = dtypes.int64
+    value_range = val.node.shape_env.var_to_range.get(unbacked)
+    nonnegative = value_range is not None and bool(value_range.lower >= 0)
+    if tensor.is_view:  # Interstate edges read containers, not views
+        element = ctx.add_array('item', (), tensor.torch_dtype, transient=True, device=tensor.device)
+        ctx.emit_copy(tensor, element)
+        tensor = element
+    read = f'{tensor.name}[{", ".join(["0"] * len(tensor.desc.shape))}]'
+    return SymValue(ctx.assign_symbol(unbacked, read, dtype, nonnegative))
+
+
+@register_lowering(*resolve('aten._assert_scalar.default', 'aten.sym_constrain_range.default',
+                            'aten.sym_constrain_range_for_size.default'))
+def lower_runtime_assertion(ctx, node, *args, **kwargs):
+    """Runtime checks of the value ranges Dynamo assumed for unbacked symbols; not checked in the SDFG."""
+    return ConstValue(None)
 
 
 _BINARY = {

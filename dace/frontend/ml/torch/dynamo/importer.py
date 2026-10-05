@@ -7,12 +7,15 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+import sympy
 import torch
 import torch.fx
+from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx.node import map_arg
 
 from dace import dtypes
+from dace import symbolic as dsym
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -33,8 +36,8 @@ class InputSpec:
 
 @dataclasses.dataclass
 class OutputSpec:
-    kind: str  #: 'tensor' | 'input' | 'sym' | 'const' | 'none'
-    name: Optional[str] = None  #: output container name (for 'tensor')
+    kind: str  #: 'tensor' | 'input' | 'sym' | 'scalar' | 'const' | 'none'
+    name: Optional[str] = None  #: output container name (for 'tensor' and 'scalar', a rank-0 container)
     tshape: Tuple[SymExpr, ...] = ()
     tstrides: Tuple[SymExpr, ...] = ()
     torch_dtype: Optional[torch.dtype] = None
@@ -316,6 +319,7 @@ class GraphImporter:
                 continue
             if node.op == 'call_function':
                 ctx.env[node] = self._lower_call(ctx, node)
+                _check_data_dependent_sizes(ctx, node)
                 continue
             raise UnsupportedOpError(node.op, f'FX node kind {node.op} ({node.target}) is not supported')
         return outputs
@@ -391,6 +395,12 @@ class GraphImporter:
                     v.desc.transient = False
                 already_returned.add(v.name)
                 specs.append(OutputSpec('tensor', v.name, v.tshape, v.tstrides, v.torch_dtype, v.device))
+            elif isinstance(v, SymValue) and _data_dependent_symbols(ctx, v.expr):
+                # Only the SDFG knows the value: return it through a rank-0 container
+                dtype = _SCALAR_TORCH_DTYPES.get(_scalar_type(v.expr), torch.int64)
+                out = ctx.add_array(f'out_{i}', (), dtype, transient=False)
+                ctx.emit_tasklet(f'out_{i}_set', {}, f'__out = {v.expr}', {'__out': out.memlet()})
+                specs.append(OutputSpec('scalar', out.name, torch_dtype=dtype, device=out.device))
             elif isinstance(v, SymValue):
                 specs.append(OutputSpec('sym', expr=v.expr))
             elif isinstance(v, ConstValue):
@@ -399,6 +409,11 @@ class GraphImporter:
                 specs.append(OutputSpec('none'))
             else:
                 raise UnsupportedOpError('output', f'cannot return value of type {type(v).__name__}')
+            if isinstance(v, TensorValue) and _data_dependent_symbols(ctx, *v.tshape, *v.tstrides):
+                raise UnsupportedOpError(
+                    'output', f'the shape {v.tshape} of output {i} depends on data '
+                    f'({", ".join(sorted(_data_dependent_symbols(ctx, *v.tshape)))}); data-dependent output shapes '
+                    'are not supported yet')
         return specs, finals
 
     def _return_outputs(self, ctx: LoweringContext, values: List[Value]) -> List[OutputSpec]:
@@ -426,6 +441,36 @@ class GraphImporter:
                 raise UnsupportedOpError('output', f'cannot return a value of type {type(v).__name__} as an array')
             specs.append(OutputSpec('tensor', out.name, out.tshape, out.tstrides, out.torch_dtype, out.device))
         return specs
+
+
+_SCALAR_TORCH_DTYPES = {dtypes.float64: torch.float64, dtypes.bool_: torch.bool, dtypes.int64: torch.int64}
+
+
+def _data_dependent_symbols(ctx: LoweringContext, *exprs) -> Set[str]:
+    """Names of the symbols in ``exprs`` that the program assigns from data (``.item()``)."""
+    assigned = {symbol.name for symbol in ctx.assigned_symbols.values()}
+    return {s.name for e in exprs if not isinstance(e, int) for s in e.free_symbols} & assigned
+
+
+def _scalar_type(expr) -> dtypes.typeclass:
+    if isinstance(expr, sympy.Basic) and (expr.is_Relational or expr.is_Boolean):
+        return dtypes.bool_
+    types = {s.dtype for s in expr.free_symbols if isinstance(s, dsym.symbol)}
+    if dtypes.float64 in types or (isinstance(expr, sympy.Basic) and expr.has(sympy.Float)):
+        return dtypes.float64
+    return dtypes.int64
+
+
+def _check_data_dependent_sizes(ctx: LoweringContext, node: torch.fx.Node) -> None:
+    """Raises if the value of ``node`` has a data-dependent size that no lowering assigned (e.g., ``nonzero``)."""
+    val = node.meta.get('val', None)
+    if val is None:
+        return
+    missing = [s for s in free_unbacked_symbols(val) if not ctx.defines_unbacked(s.name)]
+    if missing:
+        raise UnsupportedOpError(
+            node.target, f'the result has a data-dependent size ({", ".join(sorted(s.name for s in missing))}), '
+            'which is not supported yet')
 
 
 def _argument_names(inputs: List[InputSpec], outputs: List[OutputSpec]) -> List[str]:

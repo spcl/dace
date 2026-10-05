@@ -5,14 +5,15 @@ View and data-movement lowerings: ``view``, ``permute``, ``slice``, ``select``, 
 All reinterpretations use the output FakeTensor's shape and strides (``node.meta['val']``) directly: ATen only emits
 these operators when the result is expressible as a strided view of the input storage, so the metadata is exact.
 """
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 import sympy
 import torch
 
 from dace import subsets
+from dace import symbolic as dsym
 
-from ..context import ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError, as_sym
+from ..context import ConstValue, LoweringContext, TensorValue, TupleValue, UnsupportedOpError, as_sym
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
@@ -200,11 +201,32 @@ def lower_slice(ctx: LoweringContext, node, tensor: TensorValue, dim=0, start=No
         start = start + size
     elif not isinstance(start, int):
         start = sympy.Max(sympy.Min(start, size), 0) if not _nonnegative(start) else start
-    # The output extent is given by the FakeTensor; it already accounts for clamping of start/end.
-    length = ctx.symtab.to_dace(_val(node).shape[dim])
+    # The output extent is given by the FakeTensor; it already accounts for clamping of start/end. A data-dependent
+    # bound (``x[:t.item()]``) makes it a new unbacked symbol, which stands for the clamped extent computed here.
+    extent = _val(node).shape[dim]
+    unbacked = ctx.unassigned_unbacked(extent)
+    if unbacked is not None:
+        length = ctx.alias_unbacked(unbacked, _slice_extent(start, end, step, size))
+    else:
+        length = ctx.symtab.to_dace(extent)
     if start == 0 and step == 1 and length == size:
         return alias_view(ctx, node, tensor)  # full-range slice: identity (no view emitted)
     return alias_view(ctx, node, tensor, _slice_subset(tensor, dim, start, length, step))
+
+
+def _slice_extent(start, end, step, size):
+    """The number of elements of ``[start:end:step]`` along a dimension of ``size`` elements (``start`` clamped)."""
+    if end is None or (isinstance(end, ConstValue) and end.value is None):
+        stop = size
+    else:
+        end = as_sym(end)
+        if isinstance(end, int) and end < 0:
+            end = end + size
+        if isinstance(end, int) or _nonnegative(end):
+            stop = sympy.Min(end, size)
+        else:  # A negative end counts from the end of the dimension
+            stop = dsym.IfExpr(sympy.Ge(end, 0), sympy.Min(end, size), sympy.Max(end + size, 0))
+    return sympy.Max(dsym.int_ceil(stop - start, step), 0)
 
 
 def _nonnegative(expr) -> bool:

@@ -11,6 +11,7 @@ block. Simplification then raises the gotos into loops and conditionals.
 from typing import Any, Dict, List, Sequence
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
@@ -50,10 +51,20 @@ def _to_aten(graph: torch.fx.Graph, examples: Sequence[Any], decompositions: Dic
         seen.add(id(example))
         distinct.append(example)
     examples = distinct
-    with sdpa_kernel(SDPBackend.MATH):
-        return make_fx(torch.func.functionalize(gm, remove='mutations'),
-                       decomposition_table=decompositions,
-                       tracing_mode='real')(*examples)
+    # ``.item()`` in a block (e.g., of a float attribute) is a data-dependent symbol, which the fake mode of the frame
+    # only allows if it was created for scalar capture
+    fake_modes = list({id(e.fake_mode): e.fake_mode for e in examples if isinstance(e, FakeTensor)}.values())
+    allowed = [mode.allow_scalar_outputs for mode in fake_modes]
+    try:
+        for mode in fake_modes:
+            mode.allow_scalar_outputs = True
+        with sdpa_kernel(SDPBackend.MATH):
+            return make_fx(torch.func.functionalize(gm, remove='mutations'),
+                           decomposition_table=decompositions,
+                           tracing_mode='real')(*examples)
+    finally:
+        for mode, allow in zip(fake_modes, allowed):
+            mode.allow_scalar_outputs = allow
 
 
 @register_lowering(torch.ops.dace.cfg.default)

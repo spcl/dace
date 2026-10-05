@@ -25,6 +25,10 @@ from .importer import GraphImporter, PhaseInterface
 from .runtime import CompiledGraph
 from .sources import GraphDescription, describe_graph
 
+#: Dynamo settings for tracing programs that DaCe compiles: ``.item()`` stays in the graph as a data-dependent symbol
+#: (assigned from data in the SDFG) instead of breaking the graph
+CAPTURE_CONFIG = {'capture_scalar_outputs': True}
+
 
 @dataclasses.dataclass
 class DaceBackendOptions:

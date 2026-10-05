@@ -142,7 +142,7 @@ class _Gated(nn.Module):
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(4, 4)
-        self.scale = 2  # Float attributes are traced as 0-d tensors read with .item() in blocks (see 2e)
+        self.scale = 2.5  # A float attribute is a 0-d tensor read with .item() in the blocks
 
     def forward(self, x):
         h = self.fc(x)

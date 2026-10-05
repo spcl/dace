@@ -17,9 +17,11 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import sympy
 import torch
+from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 
-from dace import data, dtypes, nodes, subsets
+from dace import InterstateEdge, data, dtypes, nodes, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 from .dtypes import to_dace_dtype
@@ -159,6 +161,8 @@ class LoweringContext:
         self._counter = itertools.count()
         #: Compile-time constant containers (name -> (descriptor, value)), see ``ScheduleTreeRoot.constants``
         self.constants: Dict[str, Tuple[data.Data, Any]] = {}
+        #: Dynamo's unbacked (data-dependent) symbols the program assigns, by Dynamo name
+        self.assigned_symbols: Dict[str, symbolic.symbol] = {}
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:
@@ -244,6 +248,45 @@ class LoweringContext:
             yield children
         finally:
             self._scopes.pop()
+
+    # ------------------------------------------------------------------ data-dependent symbols
+    def unassigned_unbacked(self, value: Any) -> Optional[sympy.Symbol]:
+        """
+        If ``value`` (e.g., an output size in ``node.meta['val']``) is one of Dynamo's unbacked symbols that the
+        program has not assigned yet, returns it; the lowering that produces it must assign it.
+        """
+        if not isinstance(value, (torch.SymInt, torch.SymFloat, torch.SymBool)):
+            return None
+        expr = value.node.expr
+        if not isinstance(expr, sympy.Symbol) or self.defines_unbacked(expr.name):
+            return None
+        return expr if free_unbacked_symbols(value) else None
+
+    def defines_unbacked(self, name: str) -> bool:
+        """Whether the program assigns (or substitutes) Dynamo's unbacked symbol ``name``."""
+        return name in self.assigned_symbols or name in self.symtab.aliases
+
+    def alias_unbacked(self, unbacked: sympy.Symbol, value: SymExpr) -> SymExpr:
+        """Substitutes ``value`` (over other symbols) for an unbacked symbol, e.g., an extent computed from it."""
+        self.symtab.aliases[unbacked.name] = value
+        return value
+
+    def assign_symbol(self,
+                      unbacked: sympy.Symbol,
+                      value: Union[str, SymExpr],
+                      dtype: dtypes.typeclass = dtypes.int64,
+                      nonnegative: bool = False) -> symbolic.symbol:
+        """
+        Defines the DaCe symbol of an unbacked symbol and assigns it ``value`` (an expression over symbols and
+        containers) on an interstate edge at the current position of the program.
+        """
+        symbol = self.symtab.define(unbacked.name, dtype, nonnegative=nonnegative)
+        code = value if isinstance(value, str) else symbolic.symstr(value, cpp_mode=False)
+        self.emit(
+            tn.AssignNode(name=symbol.name, value=CodeBlock(code),
+                          edge=InterstateEdge(assignments={symbol.name: code})))
+        self.assigned_symbols[unbacked.name] = symbol
+        return symbol
 
     # ------------------------------------------------------------------ emission helpers
     def emit_view(self,
