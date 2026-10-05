@@ -6,6 +6,7 @@ from typing import Dict, List, Union, Optional
 from dace import Memlet, data as dt
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.autodiff.base_abc import AutoDiffException
+from dace.libraries.standard import Reduce
 
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutils
@@ -114,7 +115,8 @@ def make_backward_pass(sdfg: SDFG,
                        data_forwarding_strategy: str = "store_all",
                        data_to_recompute: Optional[List[str]] = None,
                        simplify: bool = True,
-                       simplified: bool = False) -> BackwardPass:
+                       simplified: bool = False,
+                       recompute_forward: bool = False) -> BackwardPass:
     """ Experimental: Creates a backward SDFG for ``sdfg`` using reverse-mode automatic differentiation, and makes the
         data the backward pass needs outputs of ``sdfg`` (which is modified in place).
 
@@ -128,6 +130,9 @@ def make_backward_pass(sdfg: SDFG,
         :param data_to_recompute: see :func:`add_backward_pass`.
         :param simplify: whether to apply the simplify pass to the forward and backward SDFGs.
         :param simplified: whether ``sdfg`` was already validated, simplified, and had its conditional blocks inlined.
+        :param recompute_forward: if True, the backward SDFG runs the forward pass again before the backward pass
+                                  (``sdfg`` differentiated in place, on a copy) and nothing is forwarded: the forward
+                                  SDFG is left unchanged, and the backward SDFG takes the forward SDFG's arguments.
         :return: the two SDFGs and how to call them.
     """
     if not simplified:
@@ -135,6 +140,34 @@ def make_backward_pass(sdfg: SDFG,
         if simplify:
             sdfg.simplify()
         inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
+
+    if recompute_forward:
+        joint = copy.deepcopy(sdfg)
+        joint.name = sdfg.name + "_backward"
+        # In-place differentiation needs one scalar output: differentiate the vector-Jacobian product
+        # ``sum_i sum(output_i * cotangent_i)``, whose gradients are the cotangents propagated to the inputs
+        product, cotangents = _add_vector_jacobian_product(joint,
+                                                           [o if isinstance(o, str) else o.data for o in outputs])
+        result, _, _ = BackwardPassGenerator(sdfg=joint,
+                                             given_gradients=[product],
+                                             required_gradients=inputs,
+                                             backward_sdfg=joint,
+                                             data_forwarding_strategy=data_forwarding_strategy,
+                                             data_to_recompute=data_to_recompute).backward()
+        # The product's own gradient is the constant 1
+        seed = result.given_grad_names[product]
+        joint.arrays[seed].transient = True
+        init = joint.add_state_before(joint.start_block, label='vjp_seed')
+        init.add_mapped_tasklet('vjp_seed', {'__i': '0:1'}, {},
+                                '__out = 1', {'__out': Memlet(f'{seed}[__i]')},
+                                external_edges=True)
+        joint.validate()
+        if simplify:
+            joint.simplify()
+        return BackwardPass(sdfg, joint, {}, {
+            k: v
+            for k, v in result.required_grad_names.items() if v is not None
+        }, cotangents)
 
     backward_sdfg = SDFG(sdfg.name + "_backward")
     gen = BackwardPassGenerator(sdfg=sdfg,
@@ -157,6 +190,51 @@ def make_backward_pass(sdfg: SDFG,
         k: v
         for k, v in result.given_grad_names.items() if v is not None
     })
+
+
+def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
+    """ Adds ``sum_i sum(output_i * cotangent_i)`` at the end of ``sdfg``, with a new input array per cotangent.
+
+        :return: the name of the (transient, shape ``(1,)``) product, and the cotangent array of every output.
+    """
+    sinks = sdfg.sink_nodes()
+    if len(sinks) != 1:
+        raise AutoDiffException('Cannot differentiate an SDFG with several sink blocks')
+    state = sdfg.add_state_after(sinks[0], label='vector_jacobian_product')
+    dtype = sdfg.arrays[outputs[0]].dtype
+    product, _ = sdfg.add_array('vjp', [1], dtype, transient=True, find_new_name=True)
+    cotangents: Dict[str, str] = {}
+    partials = []
+    for output in outputs:
+        desc = sdfg.arrays[output]
+        cotangent, _ = sdfg.add_array(f'{output}_cotangent', desc.shape, desc.dtype, find_new_name=True)
+        cotangents[output] = cotangent
+        terms, _ = sdfg.add_array(f'{output}_vjp_terms', desc.shape, desc.dtype, transient=True, find_new_name=True)
+        partial, _ = sdfg.add_array(f'{output}_vjp', [1], dtype, transient=True, find_new_name=True)
+        index = ', '.join(f'__i{d}' for d in range(len(desc.shape)))
+        terms_node = state.add_access(terms)
+        state.add_mapped_tasklet(f'{output}_vjp_terms', {
+            f'__i{d}': f'0:{s}'
+            for d, s in enumerate(desc.shape)
+        }, {
+            '__a': Memlet(f'{output}[{index}]'),
+            '__b': Memlet(f'{cotangent}[{index}]')
+        },
+                                 '__out = __a * __b', {'__out': Memlet(f'{terms}[{index}]')},
+                                 external_edges=True,
+                                 output_nodes={terms: terms_node})
+        reduce = Reduce('sum', wcr='lambda a, b: a + b', axes=None, identity=0)
+        state.add_node(reduce)
+        state.add_edge(terms_node, None, reduce, None, Memlet.from_array(terms, sdfg.arrays[terms]))
+        partial_node = state.add_access(partial)
+        state.add_edge(reduce, None, partial_node, None, Memlet(f'{partial}[0]'))
+        partials.append(partial_node)
+    inputs = {f'__p{k}': Memlet(f'{node.data}[0]') for k, node in enumerate(partials)}
+    total = state.add_tasklet('vjp_sum', set(inputs), {'__out'}, '__out = ' + ' + '.join(inputs))
+    for (connector, memlet), node in zip(inputs.items(), partials):
+        state.add_edge(node, None, total, connector, memlet)
+    state.add_edge(total, '__out', state.add_write(product), None, Memlet(f'{product}[0]'))
+    return product, cotangents
 
 
 def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.Data]) -> Dict[str, str]:
