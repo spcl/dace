@@ -298,13 +298,6 @@ class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
     def __getstate__(self):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
-    def _hashable_content(self):
-        # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
-        # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
-        # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
-        # comparing these tuples element-wise, and typeclasses define equality but no ordering.
-        return super()._hashable_content() + (self.dtype.ctype, )
-
     def _eval_subs(self, old, new):
         """
         From sympy: Override this stub if you want to do anything more than

@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for CanonicalizeNestedIndexNames and the per-output-file index-helper dedup.
 
-A nested SDFG that receives a view / non-full subset of a parent array under the SAME connector name
-gives the inner descriptor different strides/offset -- a different-body ``<name>_idx`` with the same
-base name -> a hard C++ ODR redefinition in one translation unit. The pass renames the inner occurrence
+A nested SDFG connector equals the parent container it is connected to except for its offset, which
+keeps the index space the inside is written in (one-based Fortran arrays). Under the SAME connector name
+that is a different-body ``<name>_idx`` with the same base name -> a hard C++ ODR redefinition in one
+translation unit. The pass renames the inner occurrence
 to a globally-unique name so every data name owns exactly one ``(ndim, strides, offset)`` signature.
 Separately, ``_flush_generated_functions`` must emit each helper once per OUTPUT FILE (not per stream),
 so an un-inlined nested-SDFG function does not re-emit an identical helper into the same host TU.
@@ -41,14 +42,15 @@ def _sig_of(desc):
     return (len(desc.shape), tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
 
 
-def _nested_sdfg(name, shape, strides):
-    """A standalone nested SDFG that reads+writes its single array ``name`` element-wise (so codegen
-    registers a ``<name>_idx`` helper built from ``strides``)."""
+def _nested_sdfg(name, offset):
+    """A standalone nested SDFG over ``name[N, N]`` indexed from ``offset``, reading+writing a 2x2 corner
+    element-wise (so codegen registers a ``<name>_idx`` helper built from the offset)."""
     nsdfg = dace.SDFG("inner")
-    nsdfg.add_array(name, shape, dace.float64, strides=strides)
+    nsdfg.add_array(name, [N, N], dace.float64)
+    nsdfg.arrays[name].offset = list(offset)
     ns = nsdfg.add_state("n")
     an = ns.add_access(name)
-    me, mx = ns.add_map("im", dict(i="0:2", j="0:2"))
+    me, mx = ns.add_map("im", dict(i=f"{-offset[0]}:{-offset[0]} + 2", j=f"{-offset[1]}:{-offset[1]} + 2"))
     tk = ns.add_tasklet("t", {"x"}, {"o"}, "o = x + 1.0")
     ns.add_memlet_path(an, me, tk, dst_conn="x", memlet=dace.Memlet(f"{name}[i,j]"))
     an2 = ns.add_access(name)
@@ -56,21 +58,13 @@ def _nested_sdfg(name, shape, strides):
     return nsdfg
 
 
-def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A", outer_name="A"):
+def _nested_view_sdfg(inner_offset, inner_name="A", outer_name="A"):
     """Parent ``outer_name[N,N]`` element-wise map, plus a no_inline nested SDFG whose connector ``inner_name``
-    is a view of it with the given (shape, strides). Returns the top SDFG."""
+    is the whole container, indexed from ``inner_offset``. Returns the top SDFG."""
     sdfg = dace.SDFG("nested_view")
     sdfg.add_array(outer_name, [N, N], dace.float64)
 
-    nsdfg = dace.SDFG("inner")
-    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides, transient=True)
-    ns = nsdfg.add_state("n")
-    an = ns.add_access(inner_name)
-    me, mx = ns.add_map("im", dict(i="0:2", j="0:2"))
-    tk = ns.add_tasklet("t", {"x"}, {"o"}, "o = x + 1.0")
-    ns.add_memlet_path(an, me, tk, dst_conn="x", memlet=dace.Memlet(f"{inner_name}[i,j]"))
-    an2 = ns.add_access(inner_name)
-    ns.add_memlet_path(tk, mx, an2, src_conn="o", memlet=dace.Memlet(f"{inner_name}[i,j]"))
+    nsdfg = _nested_sdfg(inner_name, inner_offset)
 
     st = sdfg.add_state("main")
     # parent element-wise access -> outer A_idx (strides N,1)
@@ -83,8 +77,8 @@ def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A", outer_name="A"
     ar, aw = st.add_access(outer_name), st.add_access(outer_name)
     nn = st.add_nested_sdfg(nsdfg, {inner_name}, {inner_name}, symbol_mapping={"N": N})
     nn.no_inline = True
-    st.add_edge(ar, None, nn, inner_name, dace.Memlet(f"{outer_name}[0:2, 0:2]"))
-    st.add_edge(nn, inner_name, aw, None, dace.Memlet(f"{outer_name}[0:2, 0:2]"))
+    st.add_edge(ar, None, nn, inner_name, dace.Memlet(f"{outer_name}[0:N, 0:N]"))
+    st.add_edge(nn, inner_name, aw, None, dace.Memlet(f"{outer_name}[0:N, 0:N]"))
     sdfg.validate()
     return sdfg
 
@@ -101,12 +95,10 @@ def _signatures(sdfg):
 
 
 def test_full_subset_same_name_not_renamed():
-    """Inner A with the SAME strides (row-major N,1... here 2x2 contiguous with strides matching a plain
-    row-major view) as a genuinely identical signature must NOT be renamed."""
-    # inner A[2,2] strides (2,1) -- distinct from outer A[N,N] strides (N,1): different signature.
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    """Inner A indexed from (-1, -1) has a different signature than the zero-based outer A and is renamed."""
+    sdfg = _nested_view_sdfg((-1, -1))
     before = _signatures(sdfg)
-    assert before["A"] == {(2, ("N", "1"), ("0", "0")), (2, ("2", "1"), ("0", "0"))} or len(before["A"]) == 2
+    assert before["A"] == {(2, ("N", "1"), ("0", "0")), (2, ("N", "1"), ("-1", "-1"))}
     renamed = CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     sdfg.validate()
     after = _signatures(sdfg)
@@ -118,7 +110,7 @@ def test_full_subset_same_name_not_renamed():
 
 def test_identical_signature_kept():
     """Inner A whose signature is identical to the outer A is left alone (emission dedup handles it)."""
-    sdfg = _nested_view_sdfg([N, N], [N, 1])
+    sdfg = _nested_view_sdfg((0, 0))
     renamed = CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     sdfg.validate()
     assert renamed is None  # no rename
@@ -127,7 +119,7 @@ def test_identical_signature_kept():
 
 def test_distinct_inner_name_kept():
     """A nested connector whose name is not present in the parent is never renamed."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1], inner_name="_inner")
+    sdfg = _nested_view_sdfg((-1, -1), inner_name="_inner")
     renamed = CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     sdfg.validate()
     assert renamed is None
@@ -137,7 +129,7 @@ def test_distinct_inner_name_kept():
 
 def test_root_argument_never_renamed():
     """The root SDFG's own array names always win; only the nested occurrence is renamed."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     assert "A" in sdfg.arrays  # root name intact
     # the nested SDFG's array was renamed away from 'A'
@@ -159,12 +151,9 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     sdfg = getattr(mod, kernel).to_sdfg(simplify=True)
-    forced = 0
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, nodes.NestedSDFG):
             n.no_inline = True
-            forced += 1
-    total_helpers = 0
     with use_implementation(EXPERIMENTAL):
         for co in sdfg.generate_code():
             if co.language != "cpp":
@@ -172,27 +161,24 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
             counts = {}
             for m in HELPER_DEF.finditer(co.code):
                 counts[m.group("name")] = counts.get(m.group("name"), 0) + 1
-            total_helpers += sum(counts.values())
+            # Guard against a silently-vacuous run: a regex that stopped matching (e.g. the emitted integer
+            # ctype changed) would make this test pass on anything, so it must match every emitted helper.
+            emitted = len(re.findall(r"\bDACE_HDFI\b", co.code))
+            assert sum(counts.values()) == emitted, f"{kernel}/{co.name}: HELPER_DEF regex is stale"
             dups = {k: v for k, v in counts.items() if v > 1}
             assert not dups, f"{kernel}/{co.name}: duplicate index helpers in one TU: {dups}"
-    # Guard against a silently-vacuous run: a regex that stopped matching (e.g. the emitted integer
-    # ctype changed) would make this test pass on anything. Held to the kernels that actually have a
-    # boundary to duplicate across -- ``lu`` simplifies to a single flat SDFG over one array, so it
-    # forces no nested SDFG, emits no helper, and has no ODR question to answer.
-    if forced:
-        assert total_helpers > 0, f"{kernel}: no ``<name>_idx`` helpers matched -- HELPER_DEF regex is stale"
 
 
 def test_pass_returns_rename_count():
     """The pass reports the number of renames it performed (truthy int), or None when it did nothing."""
-    assert CanonicalizeNestedIndexNames().apply_pass(_nested_view_sdfg([2, 2], [2, 1]), {}) == 1
-    assert CanonicalizeNestedIndexNames().apply_pass(_nested_view_sdfg([N, N], [N, 1]), {}) is None
+    assert CanonicalizeNestedIndexNames().apply_pass(_nested_view_sdfg((-1, -1)), {}) == 1
+    assert CanonicalizeNestedIndexNames().apply_pass(_nested_view_sdfg((0, 0)), {}) is None
 
 
 def test_no_mutation_when_nothing_applies():
     """A pass that does not apply must NOT mutate the SDFG (repo rule): identical-signature view -> the
     serialized SDFG is byte-for-byte unchanged and the pass returns None."""
-    sdfg = _nested_view_sdfg([N, N], [N, 1])
+    sdfg = _nested_view_sdfg((0, 0))
     before = sdfg.to_json()
     result = CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     assert result is None
@@ -201,7 +187,7 @@ def test_no_mutation_when_nothing_applies():
 
 def test_distinct_inner_name_no_mutation():
     """A nested connector whose name is absent from the parent cannot collide -> no rename, no mutation."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1], inner_name="_inner")
+    sdfg = _nested_view_sdfg((-1, -1), inner_name="_inner")
     before = sdfg.to_json()
     assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before
@@ -210,7 +196,7 @@ def test_distinct_inner_name_no_mutation():
 def test_every_name_owns_one_signature_after_pass():
     """The pass invariant: once it has run, no data name maps to two different ``(ndim, strides, offset)``
     signatures anywhere in the tree -- exactly the property that makes the ``<name>_idx`` map 1:1."""
-    sdfg = _nested_view_sdfg([2, 2], [4, 1])  # inner strides (4,1) != outer (N,1)
+    sdfg = _nested_view_sdfg((-2, -2))  # inner offset (-2, -2) != outer (0, 0)
     CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     sdfg.validate()
     for name, sigs in _signatures(sdfg).items():
@@ -220,7 +206,7 @@ def test_every_name_owns_one_signature_after_pass():
 def test_renamed_descriptor_preserves_shape_strides_offset():
     """A subset passed without a new name gets a fresh unique name whose descriptor COPIES the inner
     descriptor's info (shape/strides/offset) -- the body must stay identical, only the name changes."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     inner = [s for s in sdfg.all_sdfgs_recursive() if s is not sdfg][0]
     old_sig = _sig_of(inner.arrays["A"])
     CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
@@ -232,7 +218,7 @@ def test_renamed_descriptor_preserves_shape_strides_offset():
 def test_internal_occurrences_fully_rewritten():
     """``replace_dict`` must update every internal occurrence: no memlet inside the nested SDFG may still
     name the old data, and the connector + incident edges move to the new name in lockstep."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     inner = [s for s in sdfg.all_sdfgs_recursive() if s is not sdfg][0]
     node = inner.parent_nsdfg_node
@@ -248,12 +234,12 @@ def test_inout_connector_renamed_on_both_sides():
     sdfg = dace.SDFG("inout_top")
     sdfg.add_array("A", [N, N], dace.float64)
     st = sdfg.add_state("m")
-    nsdfg = _nested_sdfg("A", [2, 2], [2, 1])
+    nsdfg = _nested_sdfg("A", (-1, -1))
     r, w = st.add_access("A"), st.add_access("A")
     nn = st.add_nested_sdfg(nsdfg, {"A"}, {"A"}, symbol_mapping={"N": N})
     nn.no_inline = True
-    st.add_edge(r, None, nn, "A", dace.Memlet("A[0:2,0:2]"))
-    st.add_edge(nn, "A", w, None, dace.Memlet("A[0:2,0:2]"))
+    st.add_edge(r, None, nn, "A", dace.Memlet("A[0:N,0:N]"))
+    st.add_edge(nn, "A", w, None, dace.Memlet("A[0:N,0:N]"))
     sdfg.validate()
     assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
     sdfg.validate()
@@ -267,7 +253,7 @@ def test_inout_connector_renamed_on_both_sides():
 def test_new_name_avoids_existing_parent_name():
     """New names must be GLOBALLY unique: when ``A_v0`` is already taken in the parent, the rename skips
     it and picks the next free ``A_v*``."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     sdfg.add_array("A_v0", [N], dace.float64, transient=True)  # occupy the first candidate
     CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
     sdfg.validate()
@@ -278,25 +264,26 @@ def test_new_name_avoids_existing_parent_name():
 
 
 def test_three_level_nesting_all_renamed_uniquely():
-    """Three levels all named ``A`` with three different strides: every level ends up owning a distinct
+    """Three levels all named ``A`` with three different offsets: every level ends up owning a distinct
     unique name, so all three helper bodies live under separate names."""
-    lvl3 = _nested_sdfg("A", [2, 2], [4, 1])
+    lvl3 = _nested_sdfg("A", (-2, -2))
     lvl2 = dace.SDFG("lvl2")
-    lvl2.add_array("A", [2, 2], dace.float64, strides=[8, 1])
+    lvl2.add_array("A", [N, N], dace.float64)
+    lvl2.arrays["A"].offset = [-1, -1]
     s2 = lvl2.add_state("s")
     r2, w2 = s2.add_access("A"), s2.add_access("A")
-    n3 = s2.add_nested_sdfg(lvl3, {"A"}, {"A"}, symbol_mapping={})
+    n3 = s2.add_nested_sdfg(lvl3, {"A"}, {"A"}, symbol_mapping={"N": N})
     n3.no_inline = True
-    s2.add_edge(r2, None, n3, "A", dace.Memlet("A[0:2,0:2]"))
-    s2.add_edge(n3, "A", w2, None, dace.Memlet("A[0:2,0:2]"))
+    s2.add_edge(r2, None, n3, "A", dace.Memlet("A[1:N+1,1:N+1]"))
+    s2.add_edge(n3, "A", w2, None, dace.Memlet("A[1:N+1,1:N+1]"))
     top = dace.SDFG("three")
     top.add_array("A", [N, N], dace.float64)
     st = top.add_state("m")
     r, w = st.add_access("A"), st.add_access("A")
     n2 = st.add_nested_sdfg(lvl2, {"A"}, {"A"}, symbol_mapping={"N": N})
     n2.no_inline = True
-    st.add_edge(r, None, n2, "A", dace.Memlet("A[0:2,0:2]"))
-    st.add_edge(n2, "A", w, None, dace.Memlet("A[0:2,0:2]"))
+    st.add_edge(r, None, n2, "A", dace.Memlet("A[0:N,0:N]"))
+    st.add_edge(n2, "A", w, None, dace.Memlet("A[0:N,0:N]"))
     top.validate()
     assert CanonicalizeNestedIndexNames().apply_pass(top, {}) == 2  # two inner levels renamed
     top.validate()
@@ -310,11 +297,10 @@ def test_a_nested_return_is_not_renamed_into_the_return_namespace():
     sdfg = dace.SDFG("return_top")
     sdfg.add_array("__return", [N, N], dace.float64)
     st = sdfg.add_state("m")
-    nn = st.add_nested_sdfg(_nested_sdfg("__return", [2, 2], [2, 1]), {"__return"}, {"__return"},
-                            symbol_mapping={"N": N})
+    nn = st.add_nested_sdfg(_nested_sdfg("__return", (-1, -1)), {"__return"}, {"__return"}, symbol_mapping={"N": N})
     nn.no_inline = True
-    st.add_edge(st.add_access("__return"), None, nn, "__return", dace.Memlet("__return[0:2,0:2]"))
-    st.add_edge(nn, "__return", st.add_access("__return"), None, dace.Memlet("__return[0:2,0:2]"))
+    st.add_edge(st.add_access("__return"), None, nn, "__return", dace.Memlet("__return[0:N,0:N]"))
+    st.add_edge(nn, "__return", st.add_access("__return"), None, dace.Memlet("__return[0:N,0:N]"))
     sdfg.validate()
     assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
     sdfg.validate()
@@ -346,11 +332,11 @@ def test_scalar_connector_not_renamed():
 # Codegen-level: the pass + per-file dedup produce collision-free emitted C++.
 # #
 def test_synthetic_view_emits_no_colliding_helper(require_experimental):
-    """End-to-end reproduction on a synthetic SDFG: a nested ``A`` that is a differently-strided view of
+    """End-to-end reproduction on a synthetic SDFG: a nested ``A`` indexed from a different offset than
     the parent ``A``, forced ``no_inline``, must NOT yield two ``A_idx`` helpers (identical OR
     different-bodied). The pass renames the inner one, so the parent keeps ``A_idx`` and the view gets
     its own uniquely-named helper."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     sdfg.specialize({"N": 5})
     with use_implementation(EXPERIMENTAL):
         objs = sdfg.generate_code()
@@ -367,9 +353,9 @@ def test_synthetic_view_emits_no_colliding_helper(require_experimental):
 
 
 def test_synthetic_view_helpers_have_distinct_bodies(require_experimental):
-    """The renamed view's helper is not just uniquely named -- its body reflects the view's own strides,
+    """The renamed view's helper is not just uniquely named -- its body reflects the view's own offset,
     proving the rename kept the (different) offset math instead of collapsing it onto the parent's."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1])
+    sdfg = _nested_view_sdfg((-1, -1))
     sdfg.specialize({"N": 5})
     with use_implementation(EXPERIMENTAL):
         code = "\n".join(co.code for co in sdfg.generate_code() if co.language == "cpp")
@@ -381,7 +367,7 @@ def test_synthetic_view_helpers_have_distinct_bodies(require_experimental):
 
 def test_renamed_return_value_leaves_the_tuple_return_prefix():
     """A nested ``__return`` renamed to ``__return_v0`` reads as a misnumbered tuple return and fails validation."""
-    sdfg = _nested_view_sdfg([2, 2], [2, 1], inner_name="__return", outer_name="__return")
+    sdfg = _nested_view_sdfg((-1, -1), inner_name="__return", outer_name="__return")
     assert CanonicalizeNestedIndexNames().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     nested = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
