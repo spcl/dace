@@ -11,8 +11,9 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (S
 def _kernel_in_a_host_map_scope() -> dace.SDFG:
     """``map i (host) { nested SDFG { map j (GPU_Device) } }``."""
     inner = dace.SDFG('inner_kernel_kernel_in_a_host_map_scope')
-    inner.add_array('a_in', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    inner.add_array('b_out', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_symbol('i', dace.int64)
+    inner.add_array('a_in', [4, 16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_array('b_out', [4, 16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner_state = inner.add_state('inner_state', is_start_block=True)
     kernel_entry, kernel_exit = inner_state.add_map('gpu_map',
                                                     dict(j='0:16'),
@@ -22,12 +23,12 @@ def _kernel_in_a_host_map_scope() -> dace.SDFG:
                                 kernel_entry,
                                 tasklet,
                                 dst_conn='_a',
-                                memlet=dace.Memlet('a_in[j]'))
+                                memlet=dace.Memlet('a_in[i, j]'))
     inner_state.add_memlet_path(tasklet,
                                 kernel_exit,
                                 inner_state.add_write('b_out'),
                                 src_conn='_b',
-                                memlet=dace.Memlet('b_out[j]'))
+                                memlet=dace.Memlet('b_out[i, j]'))
 
     sdfg = dace.SDFG('kernel_under_host_map')
     sdfg.add_array('A', [4, 16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)

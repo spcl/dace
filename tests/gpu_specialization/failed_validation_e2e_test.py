@@ -121,8 +121,8 @@ def _build_failed_validation_shape() -> dace.SDFG:
     # Stage 3 (NestedSDFG ``reduce_with_skip_values_0``) -- the structure that the previous
     # recursive sync walk used to splice a sync state into.
     inner = dace.SDFG('reduce_with_skip_values_0')
-    inner.add_array('a_in', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
-    inner.add_array('b_out', [1], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_array('a_in', [4], dace.float64, storage=dace.dtypes.StorageType.Register)
+    inner.add_scalar('b_out', dace.float64, storage=dace.dtypes.StorageType.Register)
     init = inner.add_state('init', is_start_block=True)
     reduce_state = inner.add_state('reduce')
     inner.add_edge(init, reduce_state, dace.InterstateEdge())
