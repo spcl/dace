@@ -53,6 +53,8 @@ class CfgRecord:
     output_examples: List[Any]  #: Example (fake) values of the flat outputs
     code_name: str = ''
     entry_constants: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Python integers for symbolic inputs
+    #: The entry predicate as an expression over symbols (e.g., a comparison of sizes), instead of an operator input
+    entry_condition: Any = None
 
     def block(self, block_id: int) -> BlockRecord:
         return self.blocks[block_id]

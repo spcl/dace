@@ -189,7 +189,10 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
     children: List[tn.ScheduleTreeNode] = [tn.StateLabel(state=f'{prefix}_entry')]
     with ctx.scope(children):
         entry_values = {name: bound(binding) for name, binding in record.entry_bindings.items()}
-        if record.entry_predicate is None:  # Into a loop
+        if record.entry_condition is not None:
+            condition = SymValue(ctx.symtab.to_dace(record.entry_condition))
+            branch(condition, entry_values, record.entry_constants, record.entry_successors)
+        elif record.entry_predicate is None:  # Into a loop
             successor = record.entry_successors[None]
             goto(successor, pass_values(entry_values, record.entry_constants, successor))
         else:

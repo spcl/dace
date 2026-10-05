@@ -17,9 +17,9 @@ from dace.frontend.ml.torch.dynamo.cfg.blocks import ControlFlowBackend  # noqa:
 OFFSET = torch.tensor([1.5])
 
 
-def _check(fn, inputs, expect_capture=True, expected_compiles=1):
+def _check(fn, inputs, expect_capture=True, expected_compiles=1, **options):
     """Compares ``fn`` compiled with control-flow capture against eager PyTorch on every input."""
-    backend = ControlFlowBackend()
+    backend = ControlFlowBackend(**options)
     compiled = torch.compile(fn, backend=backend, dynamic=True)
     with torch.no_grad():
         for args in inputs:
@@ -392,6 +392,67 @@ def test_match_on_bool_of_tensor_falls_back():
     assert 'cfg' not in backend.kinds()
 
 
+@pytest.mark.torch
+def test_symbolic_branches_opt_in():
+    """Branches on sizes are guards (one compilation per outcome) unless ``symbolic_branches`` makes them edges."""
+
+    def f(x):
+        if x.shape[0] > 4:
+            y = x * 2
+        else:
+            y = x - 1
+        return y + 1
+
+    inputs = [torch.randn(6, 2), torch.randn(3, 2), torch.randn(8, 2)]
+    backend = _check(f, inputs, expect_capture=False)
+    assert 'cfg' not in backend.kinds() and backend.compile_count == 2
+    _check(f, inputs, symbolic_branches=True)
+
+
+@pytest.mark.torch
+def test_while_counter():
+    """A counter compared with a size: with ``symbolic_branches``, the loop has a symbolic trip count."""
+
+    def f(x):
+        i = 0
+        y = x[0] * 0
+        while i < x.shape[0]:
+            y = y + x[i]
+            i += 1
+        return y
+
+    _check(f, [torch.randn(4, 3), torch.randn(6, 3)], symbolic_branches=True)
+
+
+@pytest.mark.torch
+def test_counting_down():
+    """A loop variable that may become negative is not assumed nonnegative (the capture falls back)."""
+
+    def f(x):
+        i = x.shape[0] - 1
+        y = x[0] * 0
+        while i >= 0:
+            y = y * 2 + x[i]
+            i -= 1
+        return y
+
+    _check(f, [torch.randn(4, 3), torch.randn(6, 3)], expect_capture=False, symbolic_branches=True)
+
+
+@pytest.mark.torch
+def test_branch_on_item():
+    """A branch on a data-dependent scalar (``.item()``) is an edge of the graph."""
+
+    def f(x):
+        n = (x > 0).sum().item()
+        if n > 2:
+            return x * n
+        return x - 1
+
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        _check(f, [torch.randn(6), -torch.rand(5), torch.rand(3)])
+
+
 if __name__ == '__main__':
     test_if_else()
     test_if_without_else_and_elif()
@@ -413,4 +474,8 @@ if __name__ == '__main__':
     test_symbolic_range_with_break_continue_else()
     test_nested_loops_with_while()
     test_loop_over_modules_falls_back()
+    test_symbolic_branches_opt_in()
+    test_while_counter()
+    test_counting_down()
+    test_branch_on_item()
     test_match_on_bool_of_tensor_falls_back()

@@ -48,6 +48,7 @@ from torch._dynamo.variables.functions import NestedUserFunctionVariable
 from torch._dynamo.variables.higher_order_ops import speculate_subgraph
 from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch.utils._sympy.numbers import int_oo
+from torch.utils._sympy.value_ranges import bound_sympy
 
 from ..backend import CAPTURE_CONFIG, DaceBackend
 from . import transport
@@ -111,6 +112,7 @@ class Region:
         self.return_examples: Optional[List[Any]] = None
         self.return_count: Optional[int] = None
         self._widened: Dict[Tuple[int, str], SymNodeVariable] = {}
+        self._nonnegative_assumed: set = set()
         self.entry_constants: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------------------------------ operator inputs
@@ -147,17 +149,31 @@ class Region:
         result = dict(incoming)
         for name, value in incoming.items():
             if name in carried and (_is_int_constant(value) or _is_symint(value)):
-                result[name] = self._widened_symbol(start, name)
+                widened = self._widened_symbol(start, name, nonnegative=self._nonnegative(value))
+                if (start, name) in self._nonnegative_assumed and value is not widened and not self._nonnegative(value):
+                    # The assumption made when widening does not hold on this edge (checked on every edge, this
+                    # proves it by induction)
+                    raise CaptureFallback(f'loop variable {name} may become negative')
+                result[name] = widened
         return result
 
-    def _widened_symbol(self, start: int, name: str) -> SymNodeVariable:
+    def _nonnegative(self, value) -> bool:
+        if _is_int_constant(value):
+            return value.as_python_constant() >= 0
+        expr = value.sym_num.node.expr
+        return bool(bound_sympy(expr, self.tx.output.shape_env.var_to_range).lower >= 0)
+
+    def _widened_symbol(self, start: int, name: str, nonnegative: bool = False) -> SymNodeVariable:
         key = (start, name)
         if key not in self._widened:
             shape_env = self.tx.output.shape_env
             with shape_env.ignore_fresh_unbacked_symbols():
                 symbol = shape_env.create_unbacked_symint()
-            if name.startswith(_INDEX_PREFIX):  # Loop counters count up from 0
+            if nonnegative or name.startswith(_INDEX_PREFIX):
+                # Assumed when the first value is nonnegative, and checked on every other edge into the loop. Bounds
+                # make indexing with the variable possible (Dynamo needs to know the sign of an index).
                 shape_env.constrain_symbol_range(symbol.node.expr, compiler_min=0, compiler_max=int_oo)
+                self._nonnegative_assumed.add(key)
             # Only the example value of a block input's node is used (the CFG binds the input along its edges)
             graph = torch.fx.Graph()
             node = graph.placeholder(f'widened_{start}_{name.strip("_")}')
@@ -317,9 +333,9 @@ class Region:
         """Registers the graph and emits the ``dace::cfg`` call in the frame; returns the frame's return value."""
         tx = self.tx
         predicate_binding = self._predicate_binding
-        record = transport.register(
-            lambda cfg_id: CfgRecord(cfg_id, self.blocks, predicate_binding, self.entry_successors, self.entry_bindings,
-                                     self.return_examples, tx.f_code.co_name, self.entry_constants))
+        record = transport.register(lambda cfg_id: CfgRecord(
+            cfg_id, self.blocks, predicate_binding, self.entry_successors, self.entry_bindings, self.return_examples, tx
+            .f_code.co_name, self.entry_constants, self._predicate_expr))
         proxy = tx.output.create_proxy('call_function', torch.ops.dace.cfg.default,
                                        (record.id, list(self._outer_tensors), list(self._outer_syms)), {})
         result = wrap_fx_proxy(tx, proxy, example_value=list(self.return_examples))
@@ -333,7 +349,11 @@ class Region:
         :param predicate: The entry branch's predicate, or ``None`` for a goto.
         :param entry_values: The variables at the entry.
         """
-        self._predicate_binding = self.bind_outer(predicate.as_proxy()) if predicate is not None else None
+        self._predicate_binding, self._predicate_expr = None, None
+        if isinstance(predicate, SymNodeVariable):  # Over symbols of the frame, which the SDFG knows
+            self._predicate_expr = predicate.sym_num.node.expr
+        elif predicate is not None:
+            self._predicate_binding = self.bind_outer(predicate.as_proxy())
         self.trace(entry_values)
         return self.emit()
 
@@ -428,6 +448,12 @@ def _is_marker(vt) -> bool:
 def _is_data_dependent_bool(vt) -> bool:
     """A symbolic boolean over data-dependent symbols (loop counters, ``.item()``), which Dynamo cannot guard on."""
     return isinstance(vt, SymNodeVariable) and bool(free_unbacked_symbols(vt.sym_num))
+
+
+def _is_symbolic_bool(vt) -> bool:
+    """A symbolic boolean, e.g., a comparison of sizes (Dynamo would guard on its value and specialize)."""
+    return (isinstance(vt, SymNodeVariable) and isinstance(vt.sym_num, torch.SymBool)
+            and bool(vt.sym_num.node.expr.free_symbols))
 
 
 def _loop_header(info: CodeInfo, get_iter: int) -> Optional[int]:
@@ -577,7 +603,11 @@ def _make_jump_handler(original: Callable) -> Callable:
         if backend is None or not self.stack:
             return original(self, inst)
         value = self.stack[-1].realize()
-        if _is_data_dependent_bool(value) and region is not None and region.is_block_translator(self):
+        symbolic = _is_data_dependent_bool(value) or (backend.symbolic_branches and _is_symbolic_bool(value))
+        if symbolic and region is None:
+            # A branch on sizes (with ``symbolic_branches``) or on data-dependent scalars: an edge, not a guard
+            return _capture_region(backend, self, inst, value, original)
+        if symbolic and region is not None and region.is_block_translator(self):
             # A comparison of loop counters or data-dependent scalars (e.g., ``.item()``) in a captured block
             successors = region.info.branch_successors(self.indexof[inst] - region.active.prefix)
             self.pop()
@@ -852,10 +882,14 @@ class ControlFlowBackend(DaceBackend):
     """
     ``DaceBackend`` that captures data-dependent ``if``/``while`` (and every other control flow in the rest of the
     frame) as a control-flow graph instead of graph-breaking (EXPERIMENTAL).
+
+    :param symbolic_branches: Also capture branches on symbolic sizes (``if x.shape[0] > 4``) as edges of the graph,
+                              instead of guarding on their outcome and compiling once per outcome.
     """
 
-    def __init__(self, **options):
+    def __init__(self, symbolic_branches: bool = False, **options):
         super().__init__(**options)
+        self.symbolic_branches = symbolic_branches
         self.regions: List[Region] = []
         self.blacklist: set = set()
         self.loop_requests: set = set()  #: GET_ITERs whose loops are captured because their bodies need it
