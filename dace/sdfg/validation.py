@@ -948,16 +948,19 @@ def validate_state(
         src_node = path[0].src
         dst_node = path[-1].dst
 
-        # NestedSDFGs must connect to AccessNodes
-        if not e.data.is_empty():
-            if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG source nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
-            if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG destination nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
+        # Data moves through AccessNodes: a memlet path starts or ends at one, never connects two code nodes directly
+        if (
+            not e.data.is_empty()
+            and not isinstance(src_node, nd.AccessNode)
+            and not isinstance(dst_node, nd.AccessNode)
+        ):
+            raise InvalidSDFGEdgeError(
+                f'Memlet path from "{src_node}" to "{dst_node}" must start or end at an AccessNode; '
+                f'route "{e.data.data}" through an AccessNode',
+                state.parent_graph,
+                state_id,
+                eid,
+            )
 
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)

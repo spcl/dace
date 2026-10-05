@@ -55,10 +55,14 @@ def mapfission_sdfg():
     state.add_memlet_path(rnode, ome, ime3, t3, memlet=dace.Memlet.simple("A", "2*i:2*i+2"), dst_conn="a")
     state.add_memlet_path(t3, imx3, s34node, memlet=dace.Memlet.simple("s3out", "0"), src_conn="b")
 
-    state.add_edge(t1, "b", t4, "ione", dace.Memlet.simple("s1", "0"))
+    s1node = state.add_access("s1")
+    state.add_edge(t1, "b", s1node, None, dace.Memlet.simple("s1", "0"))
+    state.add_edge(s1node, None, t4, "ione", dace.Memlet.simple("s1", "0"))
     state.add_edge(s24node, None, t4, "itwo", dace.Memlet.simple("s2", "0:2"))
     state.add_edge(s34node, None, t4, "ithree", dace.Memlet.simple("s3out", "0"))
-    state.add_edge(scalar, "out", t4, "sc", dace.Memlet.simple("scal", "0"))
+    scalnode = state.add_access("scal")
+    state.add_edge(scalar, "out", scalnode, None, dace.Memlet.simple("scal", "0"))
+    state.add_edge(scalnode, None, t4, "sc", dace.Memlet.simple("scal", "0"))
     state.add_memlet_path(t4, omx, wnode, memlet=dace.Memlet.simple("B", "i"), src_conn="out")
 
     sdfg.validate()

@@ -258,9 +258,7 @@ def _generate_single_tasklet_symbol_only_sdfg(expression_str: str) -> dace.SDFG:
 _double_tasklet_sdfg_counter = 0
 
 
-def _generate_double_tasklet_sdfg(
-    expression_strs: typing.Tuple[str, str], direct_connection_between_tasklets: bool = False
-) -> dace.SDFG:
+def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
@@ -290,8 +288,7 @@ def _generate_double_tasklet_sdfg(
             sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64 if not gen_integer else dace.int64)
             in_accesses.add(state.add_access(var + "_ARR"))
 
-    if not direct_connection_between_tasklets:
-        tmp_access = state.add_access("tmp_Scalar")
+    tmp_access = state.add_access("tmp_Scalar")
     map_entry, map_exit = state.add_map(
         name="double_taskelt_map",
         ndrange={"i": dace.subsets.Range([(0, 0, 1)])},
@@ -343,23 +340,14 @@ def _generate_double_tasklet_sdfg(
                 )
                 map_entry.add_out_connector(f"OUT_{rhs_var}_ARR")
                 t.add_in_connector(rhs_var)
-            if not direct_connection_between_tasklets:
-                for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
-                    t.add_out_connector(lhs_var)
-            else:
-                for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, added_tasklets[i + 1], "tmp", dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
-                    t.add_out_connector(lhs_var)
+            for lhs_var in lhs_vars:
+                state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                t.add_out_connector(lhs_var)
         elif i == 1:
             for rhs_var in rhs_vars:
                 if rhs_var == "tmp":
-                    if not direct_connection_between_tasklets:
-                        state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
-                        t.add_in_connector(rhs_var)
-                    else:
-                        # Handled already on the out connection
-                        pass
+                    state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    t.add_in_connector(rhs_var)
                 else:
                     state.add_edge(
                         map_entry,
@@ -643,28 +631,7 @@ def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
 
 @pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)
 def test_double_tasklet_split(id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
-    sdfg = _generate_double_tasklet_sdfg(expression_strs, False)
-    sdfg.name = sdfg.name + f"_id{id}"
-    sdfg.validate()
-    sdfg.compile()
-
-    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
-    sdfg.validate()
-
-    for n, g in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.nodes.MapEntry):
-            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
-            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
-
-    assert_all_tasklets_are_ssa(sdfg)
-    _run_compile_and_comparison_test(sdfg, expected_num_statements)
-
-
-@pytest.mark.parametrize("id, expression_strs,expected_num_statements", example_double_expressions)
-def test_double_tasklet_split_direct_tasklet_connection(
-    id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int
-):
-    sdfg = _generate_double_tasklet_sdfg(expression_strs, True)
+    sdfg = _generate_double_tasklet_sdfg(expression_strs)
     sdfg.name = sdfg.name + f"_id{id}"
     sdfg.validate()
     sdfg.compile()
@@ -1236,8 +1203,6 @@ if __name__ == "__main__":
         test_single_tasklet_split(expression_str, expected_num_statements)
     for expression_strs, expected_num_statements in example_double_expressions:
         test_double_tasklet_split(expression_strs, expected_num_statements)
-    for expression_strs, expected_num_statements in example_double_expressions:
-        test_double_tasklet_split_direct_tasklet_connection(expression_strs, expected_num_statements)
     for expression_strs, expected_num_statements in example_symbol_only_expressions:
         test_single_tasklet_symbol_only_split(expression_str, expected_num_statements)
     test_complex_expression()
