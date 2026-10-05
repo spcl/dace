@@ -958,7 +958,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
-            # Guards of converted objects are only known after parsing; they become part of the cache key
+            # Closure arrays and guards that SDFG-convertible objects only report once converted join the closure
+            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
             self.closure_guards = closure.guards()
 
         self.closure_constant_keys |= set(self.closure_guards.keys())

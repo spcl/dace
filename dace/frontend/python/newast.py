@@ -19,7 +19,7 @@ from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
-                                         StringLiteral)
+                                         StringLiteral, flatten_structured_arguments)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -176,6 +176,11 @@ def _is_equivalent(first: data.Data, second: data.Data):
     return True
 
 
+def _closure_evaluator(obj: Any, name: str) -> Callable[[], Any]:
+    """Returns a function that evaluates closure array ``name`` of an SDFG-convertible object at call time."""
+    return lambda: obj.__sdfg_closure__()[name]
+
+
 def parse_dace_program(name: str,
                        preprocessed_ast: ast.AST,
                        argtypes: Dict[str, data.Data],
@@ -239,7 +244,7 @@ def parse_dace_program(name: str,
 
         # Combine nested closures with the current one
         nested_closure_replacements: Dict[str, str] = {}
-        for name, (arr, _) in visitor.nested_closure_arrays.items():
+        for name, (arr, desc) in visitor.nested_closure_arrays.items():
             # Check if the same array is already passed as part of a nested closure
             if id(arr) in closure.array_mapping:
                 existing_name = closure.array_mapping[id(arr)]
@@ -248,6 +253,10 @@ def parse_dace_program(name: str,
                         nested_closure_replacements[name] = existing_name
                     else:  # Callbacks should be mapped
                         sdfg.callback_mapping[name] = existing_name
+            elif name in visitor.nested_closure_evaluators:
+                # An array that an SDFG-convertible object only reported during conversion: pass it on every call
+                closure.closure_arrays[name] = (name, desc, visitor.nested_closure_evaluators[name], True)
+                closure.array_mapping[id(arr)] = name
 
         # Make safe replacements
         def repl_callback(repldict):
@@ -1275,6 +1284,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
+        #: Evaluators of nested closure arrays reported by SDFG-convertible objects (re-evaluated on every call)
+        self.nested_closure_evaluators: Dict[str, Callable[[], Any]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
         # Keep track of map symbols from upper scopes
@@ -4116,6 +4127,18 @@ class ProgramVisitor(ExtNodeVisitor):
     def _has_sdfg(self, value: Any) -> bool:
         return isinstance(value, SDFG) or hasattr(value, '__sdfg__')
 
+    def _eval_structured_arg(self, arg: Any) -> Any:
+        """
+        Evaluates an argument like :meth:`_eval_arg`, descending into lists, tuples, and dicts (whose string literal
+        keys become strings).
+        """
+        if isinstance(arg, (list, tuple)):
+            return type(arg)(self._eval_structured_arg(a) for a in arg)
+        if isinstance(arg, dict):
+            keys = [k.value if isinstance(k, StringLiteral) else k for k in arg.keys()]
+            return dict(zip(keys, (self._eval_structured_arg(v) for v in arg.values())))
+        return self._eval_arg(arg)
+
     def _eval_arg(self, arg: Union[str, Any]) -> Any:
         if not isinstance(arg, str):
             return arg
@@ -4193,12 +4216,22 @@ class ProgramVisitor(ExtNodeVisitor):
                     fcopy.signature = copy.deepcopy(func.signature)
                     sdfg = fcopy.to_sdfg(*fargs, **fkwargs, simplify=self.simplify, save=False)
                 else:
-                    sdfg = fcopy.__sdfg__(*fargs, **fkwargs)
+                    # Lists, tuples, and dicts of data are given as structures of descriptors
+                    structured_args = [self._eval_structured_arg(arg) for _, arg in posargs]
+                    structured_kwargs = {k: self._eval_structured_arg(arg) for k, arg in kwargs}
+                    sdfg = fcopy.__sdfg__(*structured_args, **structured_kwargs)
 
                     # Filter out parsed/omitted arguments
                     posargs = [(k, v) for k, v in posargs if k in required_args]
                     kwargs = [(k, v) for k, v in kwargs if k in required_args]
                     args = posargs + kwargs
+
+                    # Elements of list, tuple, and dict arguments bind to separate arguments of the SDFG
+                    structured = {k for k, v in args if isinstance(v, (list, tuple, dict))}
+                    if structured:
+                        args = flatten_structured_arguments(args, set(sdfg.arglist().keys()) | set(sdfg.symbols.keys()))
+                        required_args = [a for a in required_args if a not in structured]
+                        required_args += [k for k, _ in args if k not in required_args]
 
                 # Handle parsing progress bar for non-dace-program SDFG convertibles
                 if cnt == self.progress_count():
@@ -4268,6 +4301,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     outer_name = aname
                 if not desc.transient:
                     self.nested_closure_arrays[outer_name] = (arr, desc)
+                    self.nested_closure_evaluators[outer_name] = _closure_evaluator(fcopy, aname)
                     # Add closure arrays as function arguments
                     args.append((aname, outer_name))
                     required_args.append(aname)
