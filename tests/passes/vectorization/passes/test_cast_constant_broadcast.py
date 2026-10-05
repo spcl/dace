@@ -122,8 +122,9 @@ def test_cast_and_separate_forms_emit_equivalent_shape():
 
 # value-exactness vs numpy
 def test_cast_inline_value_exact():
+    rng = np.random.default_rng(42)
     sdfg = _vectorize(_cast_inline16)
-    A = np.random.rand(M).astype(np.float16)
+    A = rng.random(M).astype(np.float16)
     C = np.zeros(M, np.float16)
     sdfg(A=A, C=C, N=M)
     ref = np.float16(0.125) * A
@@ -132,8 +133,9 @@ def test_cast_inline_value_exact():
 
 
 def test_cast_separate_value_exact():
+    rng = np.random.default_rng(42)
     sdfg = _vectorize(_cast_separate16)
-    A = np.random.rand(M).astype(np.float16)
+    A = rng.random(M).astype(np.float16)
     C = np.zeros(M, np.float16)
     sdfg(A=A, C=C, N=M)
     ref = A * np.float16(0.125)

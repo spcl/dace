@@ -67,8 +67,9 @@ def _num_conditional_blocks(sdfg: dace.SDFG) -> int:
 
 
 def test_two_sibling_guarded_maps_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 6, 5
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_two.to_sdfg(simplify=True)
 
     def run(s, flag):
@@ -100,8 +101,9 @@ def test_two_sibling_guarded_maps_pushed_in():
 
 
 def test_single_guarded_map_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 7, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_one.to_sdfg(simplify=True)
 
     ref = np.zeros((n, m))
@@ -122,8 +124,9 @@ def test_condition_on_outer_param_pushed_in():
     (the outer param, constant across the inner iterations) threaded in. This
     reproduces the original whole-inner-map guard exactly, so the push is
     sound and value-preserving."""
+    rng = np.random.default_rng(42)
     n, m = 5, 6
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_by_outer_param.to_sdfg(simplify=True)
 
     ref = np.zeros((n, m))
@@ -145,8 +148,9 @@ def test_condition_on_outer_param_pushed_in():
 
 
 def test_three_sibling_guarded_maps_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 5, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_three.to_sdfg(simplify=True)
 
     def run(s, flag):

@@ -152,8 +152,9 @@ def _build_interstate_sdfg() -> dace.SDFG:
 def test_pre_only_sift():
     """``for i: { s[i]=a[i,0]; for j: b=a+s }`` -> the pre state moves into a ``j == 0`` guard
     that is the first inner block; outer body left with one child; bit-exact."""
+    rng = np.random.default_rng(42)
     n = 7
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     base = _pre_only.to_sdfg(simplify=True)
     ref_b, ref_s = np.zeros((n, 5)), np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), b=ref_b, s=ref_s, N=n)
@@ -178,8 +179,9 @@ def test_pre_only_sift():
 def test_post_only_sift():
     """``for i: { for j: b=a+1; c[i]=b[i,4]*2 }`` -> the post state moves into a ``j == 4`` guard
     that is the last inner block; bit-exact vs the pre-sift SDFG."""
+    rng = np.random.default_rng(42)
     n = 7
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     base = _post_only.to_sdfg(simplify=True)
     ref_b, ref_c = np.zeros((n, 5)), np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), b=ref_b, c=ref_c, N=n)
@@ -205,8 +207,9 @@ def test_post_only_sift():
 def test_pre_and_post_sift():
     """``for i: { acc=0; for j: acc+=a; c[i]=acc }`` -> two guards: ``j == 0`` first (reset) and
     ``j == 4`` last (store); bit-exact reduction."""
+    rng = np.random.default_rng(42)
     n = 8
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
 
     sdfg = _pre_and_post.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
@@ -236,8 +239,9 @@ def test_pre_and_post_sift():
 def test_interstate_assignment_sifts_with_statement():
     """The interstate assignment ``t = 2*i`` feeding the pre state must sift down WITH the state
     into the ``j == 0`` guard; nothing is left assigning ``t`` in the outer body; bit-exact."""
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     base = _build_interstate_sdfg()
     base.validate()
     ref = np.zeros((n, 5))
@@ -280,8 +284,9 @@ def test_refuses_possibly_empty_inner_loop():
 def test_cpu_target_noop():
     """The sink is GPU-only. The matcher itself is target-agnostic, so the policy lives in
     ``PerfectLoopNesting``: under ``target='cpu'`` no boundary guard is ever introduced."""
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     base = _pre_and_post.to_sdfg(simplify=True)
     ref = np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), c=ref, N=n)
@@ -300,9 +305,10 @@ def test_cpu_target_noop():
 def test_refuses_outer_axis_carry():
     """An outer-i loop-carried dependence (pre reads row i-1 that post wrote at i-1) is refused
     (S7): interchange after perfect nesting would break it. No-op, bit-exact vs sequential oracle."""
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
-    y0 = np.random.rand(n)
+    a = rng.random((n, 5))
+    y0 = rng.random(n)
     z0 = np.zeros((n, 5))
 
     sdfg = _outer_carry.to_sdfg(simplify=True)
@@ -326,8 +332,9 @@ def test_refuses_outer_axis_carry():
 def test_new_start_block_set_correctly():
     """After a pre-sift the inner loop's start block must BE the pre-guard ConditionalBlock, so
     dominator-based analysis stays correct: simplify() runs without KeyError and stays bit-exact."""
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
 
     sdfg = _pre_only.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
@@ -356,8 +363,9 @@ def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
 
     Asserted on the boundary guards rather than on a named loop: the pass SSA-renames iterators.
     """
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     ref = np.zeros(n)
     _pre_and_post.to_sdfg(simplify=True)(a=a.copy(), c=ref, N=n)
 
@@ -382,8 +390,9 @@ def test_aligned_pre_shape_is_distributed_not_sunk(target):
     then ``s[i]`` read -- the distribution separates them into two perfect nests on either target,
     and no boundary guard is needed. The sink runs last in the round precisely so it only has to
     handle what distribution could not separate."""
+    rng = np.random.default_rng(42)
     n = 6
-    a = np.random.rand(n, 5)
+    a = rng.random((n, 5))
     ref_b, ref_s = np.zeros((n, 5)), np.zeros(n)
     _pre_only.to_sdfg(simplify=True)(a=a.copy(), b=ref_b, s=ref_s, N=n)
 

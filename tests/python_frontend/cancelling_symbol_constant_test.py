@@ -15,12 +15,14 @@ def test_cancelling_symbols_fold_to_a_constant():
     that ABC tower, and raised ``KeyError: <class 'sympy.core.numbers.Float'>``.
     """
 
+    rng = np.random.default_rng(42)
+
     @dace.program
     def cancels(a: dace.float64[N], out: dace.float64[N]):
         scale = 1.0 / (2.0 / N * N)
         out[:] = a * scale
 
-    a = np.random.rand(16)
+    a = rng.random(16)
     out = np.zeros(16)
     cancels(a=a, out=out, N=16)
     assert np.allclose(out, a * 0.5)
@@ -29,12 +31,14 @@ def test_cancelling_symbols_fold_to_a_constant():
 def test_surviving_symbol_still_reaches_the_kernel():
     """The control: a symbol that does NOT cancel stays symbolic and still binds per call."""
 
+    rng = np.random.default_rng(42)
+
     @dace.program
     def survives(a: dace.float64[N], out: dace.float64[N]):
         scale = 1.0 / (2.0 / N)
         out[:] = a * scale
 
-    a = np.random.rand(16)
+    a = rng.random(16)
     out = np.zeros(16)
     survives(a=a, out=out, N=16)
     assert np.allclose(out, a * 8.0)

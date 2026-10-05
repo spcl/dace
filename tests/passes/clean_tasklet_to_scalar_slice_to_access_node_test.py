@@ -17,6 +17,7 @@ from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pat
 def test_scalar_slice_removed_when_not_reused():
     """``tasklet -> tmp[0] -> A[5]``: tmp is dead elsewhere, so the pass
     removes it and wires the tasklet output straight into ``A``."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('test_clean_scalar_out')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('tmp', [1], dace.float64, transient=True)
@@ -42,7 +43,7 @@ def test_scalar_slice_removed_when_not_reused():
     assert str(out_edges[0].data.subset) == '5'
 
     sdfg.validate()
-    B = np.random.rand(10)
+    B = rng.random(10)
     A = np.zeros(10)
     sdfg(A=A, B=B)
     assert np.isclose(A[5], B[5] * 2.0)

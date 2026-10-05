@@ -64,6 +64,7 @@ def _block_k(sdfg, state, td, M, Kb, b, N):
 @pytest.mark.tblis
 def test_gemm_to_tblis_matches_numpy():
     """CPU-BLAS Gemm -> GemmToTensorDot -> (auto-selected) TBLIS contraction == numpy matmul."""
+    rng = np.random.default_rng(42)
     M, K, N = 8, 12, 6
     sdfg, _ = _gemm_sdfg("gemm_tblis", M, K, N)
     assert GemmToTensorDot().apply_pass(sdfg, {}) == 1
@@ -71,8 +72,8 @@ def test_gemm_to_tblis_matches_numpy():
     assert _the_tensordot(sdfg).implementation == "TBLIS"
     sdfg.validate()
 
-    A = np.random.rand(M, K)
-    B = np.random.rand(K, N)
+    A = rng.random((M, K))
+    B = rng.random((K, N))
     C = np.zeros((M, N))
     sdfg(A=A.copy(), B=B.copy(), C=C)
     assert np.allclose(C, A @ B)
@@ -81,6 +82,7 @@ def test_gemm_to_tblis_matches_numpy():
 @pytest.mark.tblis
 def test_gemm_blocked_tblis_matches_numpy():
     """The full chain: Gemm -> GemmToTensorDot -> block K into [Kb,b] -> auto-select TBLIS == numpy."""
+    rng = np.random.default_rng(42)
     M, Kb, b, N = 8, 3, 4, 6
     K = Kb * b
     sdfg, st = _gemm_sdfg("gemm_blocked_tblis", M, K, N)
@@ -91,8 +93,8 @@ def test_gemm_blocked_tblis_matches_numpy():
     assert td.implementation == "TBLIS"
     sdfg.validate()
 
-    A = np.random.rand(M, Kb, b)
-    B = np.random.rand(Kb, b, N)
+    A = rng.random((M, Kb, b))
+    B = rng.random((Kb, b, N))
     C = np.zeros((M, N))
     sdfg(A=A.copy(), B=B.copy(), C=C)
     assert np.allclose(C, A.reshape(M, K) @ B.reshape(K, N))

@@ -66,6 +66,7 @@ def flag_every_column(a: dace.float64[N], out: dace.float64[N], flag: dace.int32
 
 def test_a_vectorized_map_storing_a_negated_literal_into_one_element_stores_it():
     """CloudSC's ``imelt[4] = -99`` in miniature, main tile and masked tail both."""
+    rng = np.random.default_rng(42)
     sdfg = flag_every_column.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(2, ), target_isa='SCALAR', remainder_strategy='masked_tail',
@@ -73,7 +74,7 @@ def test_a_vectorized_map_storing_a_negated_literal_into_one_element_stores_it()
     stores = [(n.has_mask, str(e.data)) for n, state in sdfg.all_nodes_recursive() if isinstance(n, TileUnop)
               for e in state.out_edges(n)]
     assert sorted(stores) == [(False, 'flag[4]'), (True, 'flag[4]')], stores
-    a = np.random.rand(7)
+    a = rng.random(7)
     out = np.zeros(7)
     flag = np.zeros(5, dtype=np.int32)
     sdfg(a=a, out=out, flag=flag, N=7)

@@ -189,7 +189,8 @@ def index_function_body(code):
 # #
 def test_fortran_column_major(require_experimental):
     """Case 1: column-major / Fortran strides ``[1, 6]`` on a ``(6, 8)`` transient."""
-    base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random((6, 8)), B=np.zeros((6, 8)))
     build = lambda name: elementwise_2d_sdfg(
         name, strides=[1, 6], offset=None, total_size=48, irange='0:6', jrange='0:8')
 
@@ -204,7 +205,8 @@ def test_fortran_column_major(require_experimental):
 
 def test_padded_row_strides(require_experimental):
     """Case 2: rows padded to 16 elements -- strides ``[16, 1]`` on ``(6, 8)``."""
-    base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random((6, 8)), B=np.zeros((6, 8)))
     build = lambda name: elementwise_2d_sdfg(
         name, strides=[16, 1], offset=None, total_size=6 * 16, irange='0:6', jrange='0:8')
 
@@ -223,7 +225,8 @@ def test_nonzero_offset(require_experimental):
     validates ``offset`` against ``shape``). The offset contributes a constant
     ``1*8 + 2*1 = 10`` to every ``T_idx`` call.
     """
-    base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random((6, 8)), B=np.zeros((6, 8)))
     build = lambda name: elementwise_2d_sdfg(
         name, strides=[8, 1], offset=[1, 2], total_size=58, irange='0:5', jrange='0:6')
 
@@ -239,8 +242,9 @@ def test_nonzero_offset(require_experimental):
 
 def test_strided_stencil(require_experimental):
     """Case 4: ``i-1``/``i+1`` stencil on a stride-2 ``T[32]`` transient."""
+    rng = np.random.default_rng(42)
     n = 32
-    base = dict(A=np.random.rand(n), B=np.zeros(n))
+    base = dict(A=rng.random(n), B=np.zeros(n))
     build = lambda name: stencil_1d_sdfg(
         name, n=n, strides=[2], offset=None, total_size=64, write_range='0:32', stencil_range='1:31')
 
@@ -255,8 +259,9 @@ def test_strided_stencil(require_experimental):
 
 def test_alignment(require_experimental):
     """Case 6: heap transient allocated with the same aligned ``new[]`` as the legacy generator."""
+    rng = np.random.default_rng(42)
     n = 200
-    base = dict(A=np.random.rand(n), B=np.zeros(n))
+    base = dict(A=rng.random(n), B=np.zeros(n))
     build = lambda name: aligned_1d_sdfg(name, n=n, alignment=128)
 
     _, experimental = assert_bit_exact(build, 'aligned', base)

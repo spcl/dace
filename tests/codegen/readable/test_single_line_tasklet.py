@@ -142,7 +142,8 @@ def run_variant(build, name, implementation, target, base):
 def test_single_line_bit_exact(require_experimental, target):
     """The single-line add reproduces the legacy result exactly (CPU) / within a
     tight tolerance (GPU)."""
-    base = dict(A=np.random.rand(6, 7), B=np.random.rand(6, 7), C=np.zeros((6, 7)))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random((6, 7)), B=rng.random((6, 7)), C=np.zeros((6, 7)))
     legacy = run_variant(add_2d_sdfg, f'sl_run_leg_{target}', LEGACY, target, base)
     experimental = run_variant(add_2d_sdfg, f'sl_run_exp_{target}', EXPERIMENTAL, target, base)
     assert_outputs_equivalent(legacy, experimental, target, label='single_line_add')
@@ -152,7 +153,8 @@ def test_single_line_bit_exact(require_experimental, target):
 
 def test_wcr_reduction_bit_exact(require_experimental, target):
     """The WCR reduction (block-retained tasklet) is still equivalent to legacy."""
-    base = dict(A=np.random.rand(16), s=np.zeros(1))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random(16), s=np.zeros(1))
     legacy = run_variant(wcr_reduction_sdfg, f'wcr_run_leg_{target}', LEGACY, target, base)
     experimental = run_variant(wcr_reduction_sdfg, f'wcr_run_exp_{target}', EXPERIMENTAL, target, base)
     assert_outputs_equivalent(legacy, experimental, target, label='wcr_reduction')

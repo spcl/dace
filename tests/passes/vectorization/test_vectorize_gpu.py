@@ -288,13 +288,14 @@ def test_gpu_vectorize_width_gt2_numeric(width):
     import numpy as np
     import cupy
     sdfg = _prep(_add16)
+    rng = np.random.default_rng(42)
     sdfg.name = f"add16_w{width}"
     VectorizeGPU(VectorizeConfig(widths=(width, ), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even keeps one map; got {len(maps)}"
     n = 8 * width  # a multiple of the width (assume_even)
-    A = np.random.rand(n).astype(np.float16)
-    B = np.random.rand(n).astype(np.float16)
+    A = rng.random(n).astype(np.float16)
+    B = rng.random(n).astype(np.float16)
     dA, dB, dC = cupy.asarray(A), cupy.asarray(B), cupy.zeros(n, cupy.float16)
     sdfg(A=dA, B=dB, C=dC, N=n)
     assert np.allclose(dC.get().astype(np.float32), (A + B).astype(np.float32), rtol=1e-2, atol=1e-2)
@@ -335,12 +336,13 @@ def test_gpu_multidim_k2_runs():
     contiguous axis, K=1); still one strided map per axis (assume_even) and numerically exact."""
     import numpy as np
     import cupy
+    rng = np.random.default_rng(42)
     sdfg = _prep(_add16)
     sdfg.name = "add16_k2"
     VectorizeGPU(VectorizeConfig(widths=(2, 2))).apply_pass(sdfg, {})
     n = 16  # a multiple of 2 on both tiled axes (assume_even)
-    A = np.random.rand(n, n).astype(np.float16)
-    B = np.random.rand(n, n).astype(np.float16)
+    A = rng.random((n, n)).astype(np.float16)
+    B = rng.random((n, n)).astype(np.float16)
     dA, dB, dC = cupy.asarray(A), cupy.asarray(B), cupy.zeros((n, n), cupy.float16)
     sdfg(A=dA, B=dB, C=dC, N=n)
     assert np.allclose(dC.get().astype(np.float32), (A + B).astype(np.float32), rtol=1e-2, atol=1e-2)

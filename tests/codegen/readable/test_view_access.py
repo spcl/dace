@@ -115,7 +115,8 @@ def run_variant(build, name, implementation, target, base):
 def test_view_access_bit_exact(require_experimental, target):
     """The strided-view copy reproduces the legacy result (bit-exact CPU / tight
     tolerance GPU) and equals the analytical ``A[:, ::2]``."""
-    base = dict(A=np.random.rand(8, 16), C=np.zeros((8, 8)))
+    rng = np.random.default_rng(42)
+    base = dict(A=rng.random((8, 16)), C=np.zeros((8, 8)))
     legacy = run_variant(strided_view_copy_sdfg, f'view_run_leg_{target}', LEGACY, target, base)
     experimental = run_variant(strided_view_copy_sdfg, f'view_run_exp_{target}', EXPERIMENTAL, target, base)
     assert_outputs_equivalent(legacy, experimental, target, label='strided_view_copy')

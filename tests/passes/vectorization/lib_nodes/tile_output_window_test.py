@@ -59,6 +59,7 @@ def lane_indexed_buffer(a: dace.float64[N], out: dace.float64[N]):
 
 def test_a_windowed_tile_write_vectorizes_and_keeps_its_numbers():
     """End to end: the kernel tiles, and the widened window writes the cells it names."""
+    rng = np.random.default_rng(42)
     sdfg = lane_indexed_buffer.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     with warnings.catch_warnings(record=True) as caught:
@@ -75,7 +76,7 @@ def test_a_windowed_tile_write_vectorizes_and_keeps_its_numbers():
         type(node).__name__.startswith('Tile') for sd in sdfg.all_sdfgs_recursive() for state in sd.states()
         for node in state.nodes()), 'kernel produced no tile lib nodes'
 
-    a = np.random.rand(64)
+    a = rng.random(64)
     out = np.zeros(64)
     sdfg.compile()(a=a, out=out, N=64)
     assert np.allclose(out, a * 6.0, rtol=1e-12, atol=1e-12), f'{out[:4]} != {(a * 6.0)[:4]}'

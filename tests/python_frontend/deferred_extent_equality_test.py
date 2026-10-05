@@ -53,7 +53,8 @@ def method_min(x: dace.float64[N, 4, 8, 8], out: dace.float64[N, 4, 4, 4]):
 
 @pytest.mark.parametrize('program', [lenet_pool, outer])
 def test_the_call_site_proves_the_extents_a_pooling_callee_assigned(program):
-    x = np.random.rand(2, 6, 8, 6)
+    rng = np.random.default_rng(42)
+    x = rng.random((2, 6, 8, 6))
     y = np.zeros((2, 3, 4, 6))
     program.to_sdfg()(x=x, y=y, N=2, H=6, W=8)
     assert np.allclose(y, x.reshape(2, 3, 2, 4, 2, 6).max(axis=(2, 4)))
@@ -63,10 +64,11 @@ def test_the_call_site_proves_the_extents_a_pooling_callee_assigned(program):
 def test_the_pooling_callee_validates_as_a_nested_sdfg_of_its_own(program):
     """Without simplification the callee stays a nested SDFG and validates alone, so the extent the
     call site proved must be spelled into it rather than live only in the caller's check."""
+    rng = np.random.default_rng(42)
     with dace.config.set_temporary('optimizer', 'automatic_simplification', value=False):
         sdfg = program.to_sdfg()
     sdfg.validate()
-    x = np.random.rand(2, 6, 8, 6)
+    x = rng.random((2, 6, 8, 6))
     y = np.zeros((2, 3, 4, 6))
     sdfg(x=x, y=y, N=2, H=6, W=8)
     assert np.allclose(y, x.reshape(2, 3, 2, 4, 2, 6).max(axis=(2, 4)))
@@ -84,7 +86,8 @@ def test_a_call_site_whose_extents_disagree_is_refused():
 
 @pytest.mark.parametrize(('program', 'reduce'), [(method_max, np.max), (method_min, np.min)])
 def test_ndarray_max_and_min_take_a_tuple_axis(program, reduce):
-    x = np.random.rand(3, 4, 8, 8)
+    rng = np.random.default_rng(42)
+    x = rng.random((3, 4, 8, 8))
     out = np.zeros((3, 4, 4, 4))
     program.to_sdfg()(x=x, out=out, N=3)
     assert np.allclose(out, reduce(x.reshape(3, 4, 4, 2, 4, 2), axis=(3, 5)))

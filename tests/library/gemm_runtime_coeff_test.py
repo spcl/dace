@@ -72,10 +72,11 @@ def _coeff_arg(value: float, coeff_kind: str, coeff_storage):
 
 
 def _check(implementation: str, coeff_kind: str, coeff_storage, mat_storage, name: str) -> None:
+    rng = np.random.default_rng(42)
     sdfg = _build(implementation, coeff_kind, coeff_storage, mat_storage, name)
-    A = np.random.rand(M, K)
-    B = np.random.rand(K, N)
-    C = np.random.rand(M, N)
+    A = rng.random((M, K))
+    B = rng.random((K, N))
+    C = rng.random((M, N))
     C_ref = ALPHA * (A @ B) + BETA * C
     a_arg = _to_device(A) if mat_storage == GPU else A
     b_arg = _to_device(B) if mat_storage == GPU else B
@@ -122,12 +123,13 @@ def test_cublas_host_scalar_through_gpu_offload():
     """The realistic offload path: a host CPU scalar coefficient stays on the host
     (no register->global promotion) through ``apply_gpu_transformations``, and
     cuBLAS uses host pointer mode."""
+    rng = np.random.default_rng(42)
     sdfg = _build("cuBLAS", "scalar", CPU, CPU, "gemm_rt_offload")
     sdfg.apply_gpu_transformations()
     assert sdfg.arrays["alpha_s"].storage == CPU, "host scalar must not be promoted to GPU"
-    A = np.random.rand(M, K)
-    B = np.random.rand(K, N)
-    C = np.random.rand(M, N)
+    A = rng.random((M, K))
+    B = rng.random((K, N))
+    C = rng.random((M, N))
     C_ref = ALPHA * (A @ B) + BETA * C
     sdfg(A=A, B=B, C=C, alpha_s=np.float64(ALPHA), beta_s=np.float64(BETA))
     assert np.allclose(C, C_ref, rtol=1e-5, atol=1e-6), np.max(np.abs(C - C_ref))

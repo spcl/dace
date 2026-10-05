@@ -202,9 +202,10 @@ def test_array_slot_dot_widens_with_or_without_the_prep():
     scalar the backend can put in an OpenMP ``reduction`` clause), no longer the thing that decides
     whether the kernel vectorizes at all.
     """
+    rng = np.random.default_rng(42)
     n = 60
-    a = np.random.random(n)
-    b = np.random.random(n)
+    a = rng.random(n)
+    b = rng.random(n)
     ref = np.zeros(8)
     ref[3] = float((a * b).sum())
 
@@ -230,8 +231,9 @@ def test_array_slot_dot_widens_with_or_without_the_prep():
 
 def test_sum_into_slot_widens_and_correct():
     """Sum into a fixed slot ``s[2] += a[i]`` -- widened result matches numpy (all-zero elsewhere)."""
+    rng = np.random.default_rng(42)
     n = 55
-    a = np.random.random(n)
+    a = rng.random(n)
     s = np.zeros(4)
     ref = np.zeros(4)
     ref[2] = float(a.sum())
@@ -243,8 +245,9 @@ def test_sum_into_slot_widens_and_correct():
 
 def test_prod_into_slot_widens_and_correct():
     """Product into a fixed slot ``s[1] *= a[i]`` -- widened result matches numpy."""
+    rng = np.random.default_rng(42)
     n = 40
-    a = np.random.random(n) * 0.5 + 0.75  # keep away from 0 so the product is well-conditioned
+    a = rng.random(n) * 0.5 + 0.75  # keep away from 0 so the product is well-conditioned
     s = np.ones(4)  # product seed 1.0 in slot 1
     ref = np.ones(4)
     ref[1] = float(np.prod(a))
@@ -256,8 +259,9 @@ def test_prod_into_slot_widens_and_correct():
 
 def test_recurrence_value_preserving_through_pipeline():
     """A scan recurrence stays sequential + correct through the pipeline (prep is a no-op on it)."""
+    rng = np.random.default_rng(42)
     n = 32
-    a = np.random.random(n)
+    a = rng.random(n)
     ref = a.copy()
     for i in range(1, n):
         ref[i] = ref[i - 1] + ref[i]

@@ -99,8 +99,9 @@ def test_coexisting_index_guards_collapse_to_single_nest():
     therefore punish the merge; what must hold is that both guard
     predicates still gate their own store, i.e. the surviving conditions
     together depend on exactly the two map parameters."""
+    rng = np.random.default_rng(42)
     n, m = 8, 9
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     eA, eB = _oracle(a, n, m)
 
     sdfg = two_guarded_nests.to_sdfg(simplify=True)

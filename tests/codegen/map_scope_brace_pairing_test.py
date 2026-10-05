@@ -139,9 +139,10 @@ def test_sibling_maps_in_one_state_stay_balanced(implementation):
 @pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
 def test_map_compiles_and_runs(implementation):
     """The balance check above is structural; this one proves the emitted code is real C++."""
+    rng = np.random.default_rng(42)
     with set_temporary('compiler', 'cpu', 'implementation', value=implementation):
         csdfg = _map_sdfg(f'runs_{implementation}').compile()
-    A = np.random.rand(20)
+    A = rng.random(20)
     B = np.zeros(20)
     csdfg(A=A, B=B)
     assert np.allclose(B, A + 1)

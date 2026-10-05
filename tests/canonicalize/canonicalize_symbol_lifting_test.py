@@ -101,8 +101,9 @@ def outer_only_promoted_bound(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_outer_only_promoted_bound_value_preserving():
+    rng = np.random.default_rng(42)
     n = 10
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = outer_only_promoted_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -157,8 +158,9 @@ def transitive_invariant_chain(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_transitive_invariant_chain_value_preserving():
+    rng = np.random.default_rng(42)
     n, k = 12, 7
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = transitive_invariant_chain.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -182,8 +184,9 @@ def multiple_distinct_outer_bounds(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_multiple_distinct_outer_bounds_value_preserving():
+    rng = np.random.default_rng(42)
     n = 14
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = multiple_distinct_outer_bounds.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -214,8 +217,9 @@ def loop_var_dependent_inner_bound(a: dace.float64[N, M], b: dace.float64[N]):
 
 
 def test_loop_var_dependent_inner_bound_value_preserving():
+    rng = np.random.default_rng(42)
     n, m = 6, 8
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = loop_var_dependent_inner_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -247,8 +251,9 @@ def mixed_outer_plus_loop_var(a: dace.float64[N, M], b: dace.float64[N], k: dace
 
 
 def test_mixed_outer_plus_loop_var_value_preserving():
+    rng = np.random.default_rng(42)
     n, m, k = 8, 11, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = mixed_outer_plus_loop_var.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -278,9 +283,10 @@ def data_dependent_index(a: dace.float64[N], idx: dace.int32[N], b: dace.float64
 
 
 def test_data_dependent_index_value_preserving():
+    rng = np.random.default_rng(42)
     n = 12
-    a = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     sdfg = data_dependent_index.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -306,9 +312,10 @@ def data_dependent_bound(a: dace.float64[N], lengths: dace.int32[N], b: dace.flo
 
 
 def test_data_dependent_bound_value_preserving():
+    rng = np.random.default_rng(42)
     n, m = 7, 10
-    a = np.random.rand(n)
-    lengths = np.random.randint(0, m, size=n).astype(np.int32)
+    a = rng.random(n)
+    lengths = rng.integers(0, m, size=n).astype(np.int32)
     sdfg = data_dependent_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -342,8 +349,9 @@ def test_irrelevant_outer_symbol_clutter_robust_to_unused_symbols():
     """Dead-symbol cleanup REMOVES a declared symbol the program never reads, so the compiled
     signature drops it and the program keeps its meaning. Pinned rather than tolerated: whether a
     symbol survives decides what the caller has to pass."""
+    rng = np.random.default_rng(42)
     n = 9
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = irrelevant_outer_symbol_clutter.to_sdfg(simplify=True)
     sdfg.add_symbol('UNUSED_A', dace.int32)
     sdfg.add_symbol('UNUSED_B', dace.int32)
@@ -375,8 +383,9 @@ def cloudsc_style_range_plus_one(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_cloudsc_style_range_plus_one_value_preserving():
+    rng = np.random.default_rng(42)
     n = 12
-    a = np.random.rand(n)
+    a = rng.random(n)
     kidia, kfdia = 2, 8  # half-open: range(2, 9) -> i in 2..8
     sdfg = cloudsc_style_range_plus_one.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -411,8 +420,9 @@ def guarded_promoted_bound(a: dace.float64[N], b: dace.float64[N], c: dace.int32
 
 @pytest.mark.parametrize('cv', [1, 0])
 def test_guarded_promoted_bound_value_preserving(cv):
+    rng = np.random.default_rng(42)
     n = 10
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = guarded_promoted_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
@@ -452,8 +462,9 @@ def reduction_with_inner_accumulator(a: dace.float64[N, M], b: dace.float64[N]):
 
 
 def test_reduction_with_inner_accumulator_value_preserving():
+    rng = np.random.default_rng(42)
     n, m = 6, 9
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = reduction_with_inner_accumulator.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()

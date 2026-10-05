@@ -102,8 +102,9 @@ def _move_if_ok(sdfg):
 def test_move_if_into_guarded_1d_stencil():
     """`if active: for i in 1:N-1: b=a[i-1]+a[i]+a[i+1]` -> guard pushed into
     the loop; value-preserving for active taken and not-taken."""
+    rng = np.random.default_rng(42)
     n = 32
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = guarded_stencil_1d.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full(n, 5.0)
@@ -127,9 +128,10 @@ def test_move_if_into_guarded_1d_stencil():
 
 def test_move_if_into_guarded_gather_stencil():
     """Indirect (gather) stencil under a guard: pushed in, value-preserving."""
+    rng = np.random.default_rng(42)
     n = 24
-    a = np.random.rand(n)
-    idx = np.random.randint(1, n - 1, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(1, n - 1, size=n).astype(np.int32)
     base = guarded_gather_stencil.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full(n, 3.0)
@@ -149,9 +151,10 @@ def test_move_if_into_guarded_gather_stencil():
 
 def test_move_if_into_guarded_scatter():
     """Indirect (scatter) write under a guard: pushed in, value-preserving."""
+    rng = np.random.default_rng(42)
     n = 20
-    a = np.random.rand(n)
-    idx = np.random.permutation(n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.permutation(n).astype(np.int32)
     base = guarded_scatter.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full(n, -1.0)
@@ -176,9 +179,10 @@ def test_move_if_into_guarded_scatter():
 def test_move_if_into_guarded_semi_indirect_stencil():
     """Semi-indirect 2-D stencil (structured i, gathered j) under a guard:
     the outer loop is hoisted and wraps the guard; value-preserving."""
+    rng = np.random.default_rng(42)
     n, m = 12, 18
-    a = np.random.rand(n, m)
-    col = np.random.randint(1, m - 1, size=m).astype(np.int32)
+    a = rng.random((n, m))
+    col = rng.integers(1, m - 1, size=m).astype(np.int32)
     base = guarded_semi_indirect.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full((n, m), 2.0)
@@ -200,8 +204,9 @@ def test_move_if_into_nested_dimension_guards():
     """`if gi: if gj: for i: for j: jacobi` -> the fixpoint pushes BOTH
     guards into the top-level i-loop; value-preserving for all guard
     combinations."""
+    rng = np.random.default_rng(42)
     n, m = 10, 14
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     base = nested_dim_guards.to_sdfg(simplify=True)
     for gi, gj in ((1, 1), (1, 0), (0, 1), (0, 0)):
         ref = np.full((n, m), 8.0)
@@ -262,8 +267,9 @@ def guarded_stencil_with_else(a: dace.float64[N], b: dace.float64[N], active: da
 def test_move_if_into_loop_refuses_and_stays_correct(prog, extra):
     """When the precondition does not hold the pass is a provable no-op and
     the SDFG remains numerically correct for the condition taken/not-taken."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = prog.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full(n, 4.0)
@@ -284,8 +290,9 @@ def test_move_if_into_loop_fires_on_free_state_imperfect_nest():
     state in a trivial single-iteration loop, duplicates the guard into every
     sibling, leaves no top-level guard, value-preserving for guard taken /
     not-taken."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = guard_then_loop_then_stmt.to_sdfg(simplify=True)
     for av in (1, 0):
         ref = np.full(n, 4.0)
@@ -340,9 +347,10 @@ def prefix_sum_only(a: dace.float64[N], b: dace.float64[N]):
 def test_loop_fission_splits_two_independent_stencils():
     """Two data-independent stencils in one loop fission into two loops;
     numerically identical to the pre-pass run."""
+    rng = np.random.default_rng(42)
     n = 28
-    a = np.random.rand(n)
-    c = np.random.rand(n)
+    a = rng.random(n)
+    c = rng.random(n)
     base = two_independent_stencils.to_sdfg(simplify=True)
     assert len(_loops(base)) == 1
 
@@ -366,10 +374,11 @@ def test_loop_fission_splits_two_independent_stencils():
 def test_loop_fission_indirect_shared_input_does_not_merge():
     """Two independent gathers sharing a read-only index array fission into
     two loops (the shared read-only input must not couple them)."""
+    rng = np.random.default_rng(42)
     n = 22
-    a = np.random.rand(n)
-    c = np.random.rand(n)
-    idx = np.random.permutation(n).astype(np.int32)
+    a = rng.random(n)
+    c = rng.random(n)
+    idx = rng.permutation(n).astype(np.int32)
     base = two_independent_gathers.to_sdfg(simplify=True)
 
     ref_b, ref_e = np.zeros(n), np.zeros(n)
@@ -389,9 +398,10 @@ def test_loop_fission_indirect_shared_input_does_not_merge():
 def test_loop_fission_keeps_recurrence_whole_splits_independent():
     """A loop-carried recurrence stays in one loop while the independent
     statement splits off; the recurrence must remain correct."""
+    rng = np.random.default_rng(42)
     n = 30
-    a = np.random.rand(n)
-    c = np.random.rand(n)
+    a = rng.random(n)
+    c = rng.random(n)
     base = recurrence_plus_independent.to_sdfg(simplify=True)
 
     ref_b, ref_d = np.zeros(n), np.zeros(n)
@@ -421,8 +431,9 @@ def test_loop_fission_keeps_recurrence_whole_splits_independent():
 
 def test_loop_fission_pure_recurrence_is_noop():
     """A single-group recurrence loop has nothing to fission: no-op, correct."""
+    rng = np.random.default_rng(42)
     n = 15
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = prefix_sum_only.to_sdfg(simplify=True)
     ref = np.zeros(n)
     ref[0] = 2.0

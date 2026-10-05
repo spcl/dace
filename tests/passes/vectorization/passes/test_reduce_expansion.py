@@ -51,10 +51,11 @@ def _sum_sdfg(schedule):
     dtypes.ScheduleType.CPU_Multicore,
 ])
 def test_vectorized_reduce_expands_and_is_numerically_correct(schedule):
+    rng = np.random.default_rng(42)
     sdfg = _sum_sdfg(schedule)
     sdfg.expand_library_nodes()
     assert not any(isinstance(n, Reduce) for n, _ in sdfg.all_nodes_recursive())
-    a = np.random.rand(64).astype(np.float64)
+    a = rng.random(64).astype(np.float64)
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=a, out=out, N=64)
     assert np.allclose(out[0], a.sum(), atol=1e-12), f"{out[0]} vs {a.sum()}"
@@ -122,9 +123,10 @@ SIZES = [7, 8, 9, 16, 17, 64]
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize("wcr,identity,ref", FP_OPS)
 def test_vectorized_fp_reduction_matrix(wcr, identity, ref, size):
+    rng = np.random.default_rng(42)
     sdfg = _reduce_sdfg(wcr, identity, dace.float64, tag=f"fp{size}")
     sdfg.expand_library_nodes()
-    a = (np.random.rand(size) + 0.5).astype(np.float64)
+    a = (rng.random(size) + 0.5).astype(np.float64)
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=a, out=out, N=size)
     assert np.allclose(out[0], ref(a), atol=1e-10), f"size={size} {wcr}: {out[0]} vs {ref(a)}"
@@ -133,19 +135,21 @@ def test_vectorized_fp_reduction_matrix(wcr, identity, ref, size):
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize("wcr,identity,ref", INT_OPS)
 def test_vectorized_int_reduction_matrix(wcr, identity, ref, size):
+    rng = np.random.default_rng(42)
     sdfg = _reduce_sdfg(wcr, identity, dace.int64, tag=f"int{size}")
     sdfg.expand_library_nodes()
-    a = np.random.randint(1, 9999, size=size, dtype=np.int64)
+    a = rng.integers(1, 9999, size=size, dtype=np.int64)
     out = np.zeros(1, dtype=np.int64)
     sdfg(A=a, out=out, N=size)
     assert out[0] == ref(a), f"size={size} {wcr}: {out[0]} vs {ref(a)}"
 
 
 def test_symbolic_length_vectorized_reduction():
+    rng = np.random.default_rng(42)
     sdfg = _reduce_sdfg("lambda a, b: a + b", 0.0, dace.float64, tag="symlen")
     sdfg.expand_library_nodes()
     for n in (13, 100, 257):
-        a = np.random.rand(n).astype(np.float64)
+        a = rng.random(n).astype(np.float64)
         out = np.zeros(1, dtype=np.float64)
         sdfg(A=a, out=out, N=n)
         assert np.allclose(out[0], a.sum(), atol=1e-10), f"N={n}"
@@ -160,6 +164,7 @@ def test_1d_full_reduction_takes_vectorized_path():
 
 
 def test_2d_partial_reduction_falls_back_to_pure():
+    rng = np.random.default_rng(42)
     M = dace.symbol("M")
     sdfg = dace.SDFG("vecred_2d")
     sdfg.add_array("A", [M, N], dace.float64)
@@ -175,7 +180,7 @@ def test_2d_partial_reduction_falls_back_to_pure():
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert not any("horizontal_reduce" in c for c in codes), \
         "partial 2-D reduction must fall back to ExpandReducePure (no horizontal_reduce)"
-    a = np.random.rand(5, 9).astype(np.float64)
+    a = rng.random((5, 9)).astype(np.float64)
     out = np.zeros(5, dtype=np.float64)
     sdfg(A=a, out=out, M=5, N=9)
     assert np.allclose(out, a.sum(axis=1), atol=1e-12)

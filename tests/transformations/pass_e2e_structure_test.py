@@ -69,8 +69,9 @@ def test_move_if_into_loop_gather_nest_inside_and_e2e():
     """``if c: for i: for k: out = 2*w[cidx[i,0],k] - w[cidx[i,1],k]`` -- the
     loop-invariant guard is pushed inside; no top-level ConditionalBlock
     survives; value-preserving for c taken and not-taken."""
+    rng = np.random.default_rng(42)
     n, l = 9, 5
-    w = np.random.rand(n, l)
+    w = rng.random((n, l))
     cidx = _neighbours(n, 1)
     for av in (1, 0):
         sdfg = guarded_gather_nest.to_sdfg(simplify=True)
@@ -108,8 +109,9 @@ def two_independent_gathers(w: dace.float64[N, L], v: dace.float64[N, L], cidx: 
 def test_loop_fission_splits_independent_gathers_and_e2e():
     """Two data-independent neighbour-gather statements in one loop nest
     fission into separate loops; numerically identical to the pre-pass run."""
+    rng = np.random.default_rng(42)
     n, l = 11, 4
-    w, v = np.random.rand(n, l), np.random.rand(n, l)
+    w, v = rng.random((n, l)), rng.random((n, l))
     cidx, vidx = _neighbours(n, 2), _neighbours(n, 3)
     sdfg = two_independent_gathers.to_sdfg(simplify=True)
     pre = _n_loops(sdfg)
@@ -147,8 +149,9 @@ def producer_consumer_gather(w: dace.float64[N, L], v: dace.float64[N, L], cidx:
 def test_map_fusion_vertical_gather_merges_and_e2e():
     """A neighbour-gather producer and its consumer (communicating through a
     transient) fuse into a single map; numerically identical."""
+    rng = np.random.default_rng(42)
     n, l = 13, 6
-    w, v = np.random.rand(n, l), np.random.rand(n, l)
+    w, v = rng.random((n, l)), rng.random((n, l))
     cidx, vidx = _neighbours(n, 4), _neighbours(n, 5)
     sdfg = producer_consumer_gather.to_sdfg(simplify=True)
     assert _n_maps(sdfg) == 2, f"frontend should emit two maps, got {_n_maps(sdfg)}"
@@ -182,8 +185,9 @@ def test_loop_to_map_gather_nest_parallelizes_and_e2e():
     """Each ``(i, k)`` writes the distinct ``out[i, k]`` (the gather is only on
     reads), so the sequential nest is provably parallel: LoopToMap converts
     the loops to maps; numerically identical."""
+    rng = np.random.default_rng(42)
     n, l = 10, 7
-    w = np.random.rand(n, l)
+    w = rng.random((n, l))
     cidx = _neighbours(n, 6)
     sdfg = sequential_gather_nest.to_sdfg(simplify=True)
     assert _n_loops(sdfg) >= 1 and _n_maps(sdfg) == 0

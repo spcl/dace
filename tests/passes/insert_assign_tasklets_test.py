@@ -42,6 +42,7 @@ def _assign_tasklets(sdfg: dace.SDFG):
 
 def test_unit_copy_with_other_subset_is_split():
     """``A[5] -[B[2]]-> B`` is a single element on both sides: rewritten."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('unit_copy_othersub')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('B', [10], dace.float64)
@@ -52,7 +53,7 @@ def test_unit_copy_with_other_subset_is_split():
     sdfg.validate()
 
     ref = copy.deepcopy(sdfg)
-    A = np.random.rand(10)
+    A = rng.random(10)
     B0 = np.full(10, -1.0)
     pre = B0.copy()
     ref(A=A, B=pre)
@@ -88,6 +89,7 @@ def test_multi_element_copy_is_left_unchanged():
 
 def test_scalar_copy_without_other_subset_is_split():
     """A plain single-element copy (no ``other_subset``) is rewritten."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('scalar_copy')
     sdfg.add_array('S1', [1], dace.float64)
     sdfg.add_array('S2', [1], dace.float64)
@@ -98,7 +100,7 @@ def test_scalar_copy_without_other_subset_is_split():
     sdfg.validate()
 
     ref = copy.deepcopy(sdfg)
-    S1 = np.random.rand(1)
+    S1 = rng.random(1)
     pre = np.full(1, -1.0)
     ref(S1=S1, S2=pre)
 
@@ -158,9 +160,10 @@ def _staging_sdfg() -> dace.SDFG:
 
 
 def test_map_boundary_staging_is_split():
+    rng = np.random.default_rng(42)
     sdfg = _staging_sdfg()
     ref = copy.deepcopy(sdfg)
-    A = np.random.rand(16)
+    A = rng.random(16)
     pre = np.full(16, -1.0)
     ref(A=A, B=pre, N=16)
 
@@ -176,6 +179,7 @@ def test_map_boundary_staging_is_split():
 
 def test_map_boundary_other_subset_an_edge_is_split():
     """A bare ``other_subset`` ``AccessNode -> AccessNode`` copy is split."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('othersub_an')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('B', [10], dace.float64)
@@ -188,7 +192,7 @@ def test_map_boundary_other_subset_an_edge_is_split():
     # No reference run here: DaCe codegen for a bare ``other_subset`` AN->AN
     # copy is the unreliable shape this pass exists to remove, so the pre-pass
     # SDFG is not a valid oracle. Assert analytically.
-    A = np.random.rand(10)
+    A = rng.random(10)
 
     changed = InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
     assert changed == 1
@@ -290,6 +294,7 @@ def test_wcr_stage_out_executes_correctly_after_split():
     closes), the result would be a single ``A[last]`` write instead of the
     full sum.
     """
+    rng = np.random.default_rng(42)
     N = dace.symbol("N")
     sdfg = dace.SDFG("wcr_stage_out_exec")
     sdfg.add_array("A", [N], dace.float64)
@@ -306,7 +311,7 @@ def test_wcr_stage_out_executes_correctly_after_split():
     InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
     sdfg.validate()
 
-    A = np.random.rand(16)
+    A = rng.random(16)
     out = np.zeros(1)
     sdfg(A=A, acc=out, N=16)
     assert np.isclose(out[0], A.sum()), (f'WCR semantics lost across the split: got {out[0]}, '
@@ -434,6 +439,7 @@ def test_staging_split_reanchors_a_locally_named_boundary_memlet():
     The split moves that memlet onto the ``MapEntry -> tasklet`` edge, where the local AccessNode is
     no longer an endpoint: reused verbatim it names data that is neither end of its path.
     """
+    rng = np.random.default_rng(42)
     sdfg = _fissioned_staging_sdfg()
     state = next(iter(sdfg.states()))
     entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
@@ -450,7 +456,7 @@ def test_staging_split_reanchors_a_locally_named_boundary_memlet():
     assert state.in_edges(tasklet)[0].data.data == outer_name
     assert state.out_edges(tasklet)[0].data.data == local_name
 
-    A = np.random.rand(16)
+    A = rng.random(16)
     B = np.full(16, -1.0)
     sdfg(A=A, B=B, N=16)
     assert np.allclose(B, 2.0 * A)
@@ -464,6 +470,7 @@ def test_staging_split_declines_a_locally_named_memlet_with_a_wider_outer_contai
     container is ``N`` wide, and the split drops ``other_subset``, so every iteration would read
     ``A[0]``.
     """
+    rng = np.random.default_rng(42)
     N = dace.symbol('N')
     sdfg = dace.SDFG('dst_anchored_staging')
     sdfg.add_array('A', [N], dace.float64)
@@ -490,7 +497,7 @@ def test_staging_split_declines_a_locally_named_memlet_with_a_wider_outer_contai
     assert boundary.data.data == 'tmp'
     assert str(boundary.data.other_subset) == 'i'
 
-    A = np.random.rand(16)
+    A = rng.random(16)
     B = np.full(16, -1.0)
     sdfg(A=A, B=B, N=16)
     assert np.allclose(B, A + 1.0)

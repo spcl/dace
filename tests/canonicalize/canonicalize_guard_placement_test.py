@@ -40,8 +40,9 @@ def _map_params(sdfg):
 
 
 def test_index_dependent_guard_stays_inside_map_nest():
+    rng = np.random.default_rng(42)
     n, m = 8, 6
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     exp = np.full((n, m), 7.0)
     for i in range(n):
         if i % 2 == 0:

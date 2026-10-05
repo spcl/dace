@@ -82,10 +82,11 @@ def _fission(sdfg):
 
 def test_mapfission_splits_two_independent_gathers():
     """`b=a[idx]; e=c[idx]` -> two independent maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n = 20
-    a = np.random.rand(n)
-    c = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    c = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_two.to_sdfg(simplify=True)
     assert _nmaps(base) == 1
 
@@ -106,10 +107,11 @@ def test_mapfission_splits_two_independent_gathers():
 
 def test_mapfission_splits_two_independent_scatters():
     """`b[idx]=2a; e[idx]=c+1` -> two independent maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
-    c = np.random.rand(n)
-    idx = np.random.permutation(n).astype(np.int32)
+    a = rng.random(n)
+    c = rng.random(n)
+    idx = rng.permutation(n).astype(np.int32)
     base = scatter_two.to_sdfg(simplify=True)
 
     ref_b, ref_e = np.zeros(n), np.zeros(n)
@@ -133,10 +135,11 @@ def test_mapfission_splits_two_independent_scatters():
 def test_mapfission_splits_semi_indirect():
     """Semi-indirect 2-D (structured dim 0, gathered dim 1) splits into two
     maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n, m = 8, 12
-    a = np.random.rand(n, m)
-    c = np.random.rand(n, m)
-    col = np.random.randint(0, m, size=m).astype(np.int32)
+    a = rng.random((n, m))
+    c = rng.random((n, m))
+    col = rng.integers(0, m, size=m).astype(np.int32)
     base = semi_indirect_two.to_sdfg(simplify=True)
 
     ref_b, ref_e = np.zeros((n, m)), np.zeros((n, m))
@@ -156,9 +159,10 @@ def test_mapfission_splits_semi_indirect():
 
 def test_mapfission_single_output_indirect_is_noop():
     """A single-output indirect map has nothing to fission: no-op, correct."""
+    rng = np.random.default_rng(42)
     n = 14
-    a = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_single.to_sdfg(simplify=True)
     ref = np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), idx=idx.copy(), b=ref, N=n)
@@ -174,9 +178,10 @@ def test_mapfission_single_output_indirect_is_noop():
 def test_mapfission_coupled_outputs_not_split_but_correct():
     """Outputs sharing a non-input transient are one group: no independent
     split is possible, and the result stays numerically correct."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_coupled.to_sdfg(simplify=True)
     ref_b, ref_e = np.zeros(n), np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), idx=idx.copy(), b=ref_b, e=ref_e, N=n)

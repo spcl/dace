@@ -105,8 +105,9 @@ def guarded(a: dace.float64[N], b: dace.float64[N], active: dace.int32[1]):
 
 
 def test_canonicalize_elementwise():
+    rng = np.random.default_rng(42)
     n = 24
-    a = np.random.rand(n)
+    a = rng.random(n)
     ref = np.zeros(n)
     copy.deepcopy(elemwise.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n)
 
@@ -119,8 +120,9 @@ def test_canonicalize_elementwise():
 
 
 def test_canonicalize_stencil_1d():
+    rng = np.random.default_rng(42)
     n = 32
-    a = np.random.rand(n)
+    a = rng.random(n)
     ref = np.zeros(n)
     copy.deepcopy(stencil1d.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n)
 
@@ -136,8 +138,9 @@ def test_canonicalize_stencil_1d():
 
 
 def test_canonicalize_two_independent_fission_fuse_roundtrip():
+    rng = np.random.default_rng(42)
     n = 20
-    a, c = np.random.rand(n), np.random.rand(n)
+    a, c = rng.random(n), rng.random(n)
     ref_b, ref_d = np.zeros(n), np.zeros(n)
     copy.deepcopy(two_independent.to_sdfg(simplify=True))(a=a.copy(), b=ref_b, c=c.copy(), d=ref_d, N=n)
 
@@ -152,8 +155,9 @@ def test_canonicalize_two_independent_fission_fuse_roundtrip():
 
 
 def test_canonicalize_jacobi_2d():
+    rng = np.random.default_rng(42)
     n, m = 16, 12
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     ref = np.zeros((n, m))
     copy.deepcopy(jacobi2d.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m)
 
@@ -169,9 +173,10 @@ def test_canonicalize_jacobi_2d():
 
 
 def test_canonicalize_indirect_gather():
+    rng = np.random.default_rng(42)
     n = 28
-    a, c = np.random.rand(n), np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a, c = rng.random(n), rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     ref_b, ref_e = np.zeros(n), np.zeros(n)
     copy.deepcopy(gather.to_sdfg(simplify=True))(a=a.copy(), idx=idx.copy(), b=ref_b, c=c.copy(), e=ref_e, N=n)
 
@@ -185,7 +190,8 @@ def test_canonicalize_indirect_gather():
 
 
 def test_canonicalize_strided_map_normalized():
-    a = np.random.rand(40)
+    rng = np.random.default_rng(42)
+    a = rng.random(40)
     ref = np.zeros(40)
     copy.deepcopy(strided.to_sdfg(simplify=True))(a=a.copy(), b=ref)
 
@@ -203,8 +209,9 @@ def test_canonicalize_strided_map_normalized():
 
 @pytest.mark.parametrize('av', [1, 0])
 def test_canonicalize_guarded_conditional(av):
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
+    a = rng.random(n)
     ref = np.full(n, 7.0)
     copy.deepcopy(guarded.to_sdfg(simplify=True))(a=a.copy(), b=ref, active=np.array([av], np.int32), N=n)
 
@@ -222,8 +229,9 @@ def test_canonicalize_is_idempotent():
     """The second application is a FIXED POINT: same values is the weaker half, the structure being
     byte-identical is the claim, since a pipeline that keeps rewriting its own output can stay
     value-preserving forever while the graph drifts."""
+    rng = np.random.default_rng(42)
     n = 22
-    a, c = np.random.rand(n), np.random.rand(n)
+    a, c = rng.random(n), rng.random(n)
     ref_b, ref_d = np.zeros(n), np.zeros(n)
     copy.deepcopy(two_independent.to_sdfg(simplify=True))(a=a.copy(), b=ref_b, c=c.copy(), d=ref_d, N=n)
 

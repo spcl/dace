@@ -83,6 +83,7 @@ def run_two_sdfgs(sdfg1, sdfg2, inputs: dict):
 # Pytest test function
 @pytest.mark.parametrize("input", input_sets)
 def test_single_edge(input: Tuple[int, str, str, int]):
+    rng = np.random.default_rng(42)
     sdfgA = make_sdfg(input[1], input[2])
     sdfgB = make_sdfg(input[1], input[2])
     sdfgA.name = f"pattern_{input[0]}_original"
@@ -102,7 +103,7 @@ def test_single_edge(input: Tuple[int, str, str, int]):
     _N = 10
 
     inputs = {
-        'za': np.random.rand(_N, _N),
+        'za': rng.random((_N, _N)),
         '_for_it_47': np.int64(5),
         '_for_it_23': np.int64(7),
         'rcldtopcf': np.float64(0.3),

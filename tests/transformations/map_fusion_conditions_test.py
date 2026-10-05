@@ -105,8 +105,9 @@ def _fuse_recipe(sdfg):
 def test_two_identical_guards_fuse_to_one_map():
     """`if c: A` ; `if c: B` (the branch-replicated-fission shape) recombine
     into one guard whose two maps fuse: 1 map, 1 conditional."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(two_guarded.to_sdfg(simplify=True))
     assert len(_conds(base)) == 2 and len(_maps(base)) == 2
 
@@ -133,8 +134,9 @@ def test_two_identical_guards_fuse_to_one_map():
 
 def test_two_maps_in_one_guard_fuse_to_one_map():
     """`if c: { A ; B }` -> the two guarded maps fuse: 1 map, 1 conditional."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(if_two_maps_inside.to_sdfg(simplify=True))
 
     for mval in (1, 0):
@@ -156,8 +158,9 @@ def test_distinct_guards_merge_to_one_conditional_three_maps():
     ConditionalBlock but the maps cannot share a guard: the feasible
     cartesian combinations leave 3 maps, 1 conditional. Value-preserving
     across all (c1, c2) truth combinations."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(two_guarded_diff.to_sdfg(simplify=True))
 
     for mval in (6, 1, 0):  # (c1&c2), (c1&!c2), (!c1&!c2)
@@ -179,8 +182,9 @@ def test_distinct_guards_merge_to_one_conditional_three_maps():
 def test_three_identical_guards_fuse_to_one_map():
     """Three `if c: <map>` blocks collapse to 1 map, 1 conditional with a
     minimal predicate; value-preserving for c taken and not-taken."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(three_guarded.to_sdfg(simplify=True))
 
     for mval in (1, 0):

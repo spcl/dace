@@ -58,11 +58,12 @@ def _arith(A: dace.float32[M], B: dace.float32[M], D: dace.float32[M], C: dace.f
 
 
 def test_elementwise_arithmetic():
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(_arith, width=4)
     _assert_really_vectorized(sdfg, pristine)
-    A = np.random.rand(M).astype(np.float32) + 0.5
-    B = np.random.rand(M).astype(np.float32) + 0.5
-    D = np.random.rand(M).astype(np.float32) + 0.5
+    A = rng.random(M).astype(np.float32) + 0.5
+    B = rng.random(M).astype(np.float32) + 0.5
+    D = rng.random(M).astype(np.float32) + 0.5
     C = np.zeros(M, np.float32)
     sdfg(A=A, B=B, D=D, C=C)
     ref = (A + B) * D - A / (B + 1.0)
@@ -77,10 +78,11 @@ def _axpy_const(A: dace.float32[M], B: dace.float32[M], C: dace.float32[M]):
 
 
 def test_broadcast_constant():
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(_axpy_const, width=4)
     _assert_really_vectorized(sdfg, pristine)
-    A = np.random.rand(M).astype(np.float32)
-    B = np.random.rand(M).astype(np.float32)
+    A = rng.random(M).astype(np.float32)
+    B = rng.random(M).astype(np.float32)
     C = np.zeros(M, np.float32)
     sdfg(A=A, B=B, C=C)
     ref = 0.25 * A + 3.0 * B
@@ -142,10 +144,11 @@ def _u_tan(A: dace.float32[M], C: dace.float32[M]):
     (_u_tan, np.tan),
 ])
 def test_transcendental_unop(prog, ref):
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(prog, width=4)
     _assert_really_vectorized(sdfg, pristine)
     # Domain (0.2, 1.0): valid for log/sqrt and away from tan's asymptotes.
-    A = (np.random.rand(M).astype(np.float32) * 0.8 + 0.2)
+    A = (rng.random(M).astype(np.float32) * 0.8 + 0.2)
     C = np.zeros(M, np.float32)
     sdfg(A=A, C=C)
     assert np.allclose(C, ref(A), rtol=1e-4, atol=1e-5), np.nanmax(np.abs(C - ref(A)))
@@ -159,9 +162,10 @@ def _clamp(A: dace.float32[M], C: dace.float32[M]):
 
 
 def test_min_max_constant():
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(_clamp, width=4)
     _assert_really_vectorized(sdfg, pristine)
-    A = np.random.rand(M).astype(np.float32)
+    A = rng.random(M).astype(np.float32)
     C = np.zeros(M, np.float32)
     sdfg(A=A, C=C)
     ref = np.minimum(np.maximum(A, 0.3), 0.7)
@@ -176,9 +180,10 @@ def _jacobi2d(A: dace.float32[M, M], B: dace.float32[M, M]):
 
 
 def test_stencil_jacobi2d():
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(_jacobi2d, width=4)
     _assert_really_vectorized(sdfg, pristine)
-    A = np.random.rand(M, M).astype(np.float32)
+    A = rng.random((M, M)).astype(np.float32)
     B = np.zeros((M, M), np.float32)
     sdfg(A=A, B=B)
     ref = B.copy()
@@ -196,10 +201,11 @@ def _fp16_fma(A: dace.float16[M], B: dace.float16[M], C: dace.float16[M]):
 def test_fp16_matches_numpy():
     """The fp16 tile arithmetic (the half2 element type) matches numpy fp16.
     Width-2 tile is exactly the half2 packing the GPU path uses."""
+    rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(_fp16_fma, width=2)
     _assert_really_vectorized(sdfg, pristine)
-    A = np.random.rand(M).astype(np.float16)
-    B = np.random.rand(M).astype(np.float16)
+    A = rng.random(M).astype(np.float16)
+    B = rng.random(M).astype(np.float16)
     C = np.zeros(M, np.float16)
     sdfg(A=A, B=B, C=C)
     ref = (np.float16(0.5) * A + B)

@@ -41,7 +41,8 @@ def register_scratch_sdfg(name: str,
 
 
 def run_scratch(sdfg: dace.SDFG, size: int, **symbols):
-    a = np.random.rand(size)
+    rng = np.random.default_rng(42)
+    a = rng.random(size)
     b = np.zeros(size)
     sdfg(a=a, b=b, **symbols)
     np.testing.assert_allclose(b, a + 1.0, rtol=0, atol=0)

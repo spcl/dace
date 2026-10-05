@@ -66,23 +66,28 @@ def _equivalence(prog, args):
 
 
 def test_elementwise():
-    _equivalence(ew, lambda: dict(A=np.random.rand(6, 8), B=np.random.rand(6, 8), C=np.zeros((6, 8)), M=6, N=8))
+    rng = np.random.default_rng(42)
+    _equivalence(ew, lambda: dict(A=rng.random((6, 8)), B=rng.random((6, 8)), C=np.zeros((6, 8)), M=6, N=8))
 
 
 def test_reduction_wcr():
-    _equivalence(red, lambda: dict(A=np.random.rand(64), s=np.zeros(1), N=64))
+    rng = np.random.default_rng(42)
+    _equivalence(red, lambda: dict(A=rng.random(64), s=np.zeros(1), N=64))
 
 
 def test_matmul_library():
-    _equivalence(mm, lambda: dict(A=np.random.rand(6, 5), B=np.random.rand(5, 7), C=np.zeros((6, 7)), M=6, K=5, N=7))
+    rng = np.random.default_rng(42)
+    _equivalence(mm, lambda: dict(A=rng.random((6, 5)), B=rng.random((5, 7)), C=np.zeros((6, 7)), M=6, K=5, N=7))
 
 
 def test_jacobi_stencil():
-    _equivalence(jac, lambda: dict(A=np.random.rand(32), B=np.zeros(32), N=32))
+    rng = np.random.default_rng(42)
+    _equivalence(jac, lambda: dict(A=rng.random(32), B=np.zeros(32), N=32))
 
 
 def test_transient():
-    _equivalence(trans, lambda: dict(A=np.random.rand(20), B=np.zeros(20), N=20))
+    rng = np.random.default_rng(42)
+    _equivalence(trans, lambda: dict(A=rng.random(20), B=np.zeros(20), N=20))
 
 
 def test_const_init_constexpr():

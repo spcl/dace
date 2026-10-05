@@ -120,8 +120,9 @@ def test_inlined_two_independent_maps_are_split():
 
 
 def test_intervening_producer_is_replicated():
+    rng = np.random.default_rng(42)
     n, m = 7, 4
-    a = np.random.rand(m)
+    a = rng.random(m)
     sdfg = intervening_producer.to_sdfg(simplify=True)
 
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))
@@ -177,8 +178,9 @@ def test_nested_parent_with_intervening_producer():
     """A three-level nest whose middle map has an intervening producer feeding
     both inner maps: the structured fission must cascade the nested split
     *and* replicate the producer, staying valid and numerically exact."""
+    rng = np.random.default_rng(42)
     n, m, p = 4, 3, 2
-    a = np.random.rand(m)
+    a = rng.random(m)
     sdfg = nested_intervening.to_sdfg(simplify=True)
 
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))

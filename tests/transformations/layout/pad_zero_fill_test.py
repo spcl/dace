@@ -42,6 +42,7 @@ def _tensordot_sdfg(M, K, N):
 
 def test_pad_contracted_dim_zero_fill_is_legal():
     """Padding the contracted K axis of a TensorDot and zero-filling it leaves the live result unchanged."""
+    rng = np.random.default_rng(42)
     M, K, p, N = 4, 5, 3, 6
     sdfg = _tensordot_sdfg(M, K, N)
     # A padded on dim 1 (K), B padded on dim 0 (K); grow, then zero those pad slices.
@@ -49,8 +50,8 @@ def test_pad_contracted_dim_zero_fill_is_legal():
     sdfg.validate()
 
     Kpad = K + p
-    A = np.random.rand(M, Kpad)  # random pad columns -> zeroed by the pass
-    B = np.random.rand(Kpad, N)  # random pad rows    -> zeroed by the pass
+    A = rng.random((M, Kpad))  # random pad columns -> zeroed by the pass
+    B = rng.random((Kpad, N))  # random pad rows    -> zeroed by the pass
     C = np.zeros((M, N))
     sdfg(A=A.copy(), B=B.copy(), C=C)
     assert np.allclose(C, A[:, :K] @ B[:K, :])  # == the live (unpadded) contraction
@@ -58,14 +59,15 @@ def test_pad_contracted_dim_zero_fill_is_legal():
 
 def test_pad_free_output_dim_zero_fill():
     """Padding a free (M) dim: with the pad rows of A zeroed, the pad output rows of C are 0; the live rows match."""
+    rng = np.random.default_rng(42)
     M, K, p, N = 4, 5, 2, 6
     sdfg = _tensordot_sdfg(M, K, N)
     assert _pad_then_zero(sdfg, {"A": [p, 0], "C": [p, 0]}) == 0
     sdfg.validate()
 
     Mpad = M + p
-    A = np.random.rand(Mpad, K)
-    B = np.random.rand(K, N)
+    A = rng.random((Mpad, K))
+    B = rng.random((K, N))
     C = np.zeros((Mpad, N))
     sdfg(A=A.copy(), B=B.copy(), C=C)
     assert np.allclose(C[:M], A[:M] @ B)
@@ -89,12 +91,13 @@ def _reduce_sdfg(name, wcr, identity, M=4, K=6):
 
 def test_pad_sum_reduction_over_pad_is_legal():
     """A sum reduction over a padded axis is legal after zero-fill (pad cells add 0)."""
+    rng = np.random.default_rng(42)
     sdfg, M, K = _reduce_sdfg("pad_sum", "lambda a, b: a + b", 0.0)
     assert _pad_then_zero(sdfg, {"X": [0, 2]}) == 0
     sdfg.validate()
 
     Kpad = K + 2
-    X = np.random.rand(M, Kpad)
+    X = rng.random((M, Kpad))
     Y = np.zeros(M)
     sdfg(X=X.copy(), Y=Y)
     assert np.allclose(Y, X[:, :K].sum(axis=1))  # pad columns contributed 0

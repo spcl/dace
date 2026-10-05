@@ -122,10 +122,11 @@ def _nest_param_order(sdfg: dace.SDFG):
 
 
 def test_integer_dims_two_level_reordered():
+    rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_2d_int)
     assert _nest_param_order(sdfg) == ['i', 'j']
 
-    a = np.random.rand(7, 11)
+    a = rng.random((7, 11))
     ref = np.zeros((7, 11))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref)
 
@@ -146,10 +147,11 @@ def test_integer_dims_already_canonical_is_noop():
 
 
 def test_integer_dims_three_level_reordered():
+    rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_3d_int)
     assert _nest_param_order(sdfg) == ['i', 'j', 'k']
 
-    a = np.random.rand(5, 7, 11)
+    a = rng.random((5, 7, 11))
     ref = np.zeros((5, 7, 11))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref)
 
@@ -167,11 +169,12 @@ def test_symbolic_dims_two_level_reordered():
         follows from the shape contract and ``i`` (the unit-stride parameter)
         belongs innermost -- the same order the concrete ``(11, 1)`` nest gets.
     """
+    rng = np.random.default_rng(42)
     n, m = 12, 17
     sdfg = _expanded(transposed_2d_sym)
     assert _nest_param_order(sdfg) == ['i', 'j']
 
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     ref = np.zeros((n, m))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref, N=n, M=m)
 
@@ -194,11 +197,12 @@ def test_symbolic_dims_three_level_is_safe_noop():
         guessing. Guards the escape hatch, which is still reachable and still
         numerically transparent (declining is conservative, not wrong).
     """
+    rng = np.random.default_rng(42)
     k, n, m = 5, 7, 11
     sdfg = _expanded(transposed_3d_sym)
     assert _nest_param_order(sdfg) == ['i', 'j', 'k']
 
-    a = np.random.rand(k, n, m)
+    a = rng.random((k, n, m))
     ref = np.zeros((k, n, m))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref, K=k, N=n, M=m)
 
@@ -225,10 +229,11 @@ def _assert_mixed_reordered(program, shape, symbols, order_before, order_after, 
                          applications (1 for a two-level reversal, 3 for a
                          three-level one).
     """
+    rng = np.random.default_rng(42)
     sdfg = _expanded(program)
     assert _nest_param_order(sdfg) == order_before
 
-    a = np.random.rand(*shape)
+    a = rng.random(shape)
     ref = np.zeros(shape)
     copy.deepcopy(sdfg)(A=a.copy(), B=ref, **symbols)
 
@@ -271,9 +276,10 @@ def test_all_concrete_mixed_magnitudes_still_reorders():
     """Sanity: when every dimension is a concrete integer (even with very
     different magnitudes) the order IS deducible, so the pass still
     permutes -- the symbolic guard does not over-suppress."""
+    rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_3d_int)
     assert _nest_param_order(sdfg) == ['i', 'j', 'k']
-    a = np.random.rand(5, 7, 11)
+    a = rng.random((5, 7, 11))
     ref = np.zeros((5, 7, 11))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref)
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None

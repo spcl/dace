@@ -143,8 +143,9 @@ def test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet():
 
 def test_canonicalize_accumulator_reduction():
     """The scalar accumulator becomes a Reduce library node with no loop left behind."""
+    rng = np.random.default_rng(42)
     n = 25
-    a = np.random.rand(n)
+    a = rng.random(n)
     ref = np.zeros(1)
     copy.deepcopy(accumulator.to_sdfg(simplify=True))(a=a.copy(), s=ref, N=n)
 
@@ -159,8 +160,9 @@ def test_canonicalize_accumulator_reduction():
 
 def test_canonicalize_perfect_loop_nesting():
     """The two sibling j-nests fuse with their shared i into one collapsed 2D map."""
+    rng = np.random.default_rng(42)
     n, m = 14, 10
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     ref_b, ref_c = np.zeros((n, m)), np.zeros((n, m))
     copy.deepcopy(perfect_nest.to_sdfg(simplify=True))(a=a.copy(), b=ref_b, c=ref_c, N=n, M=m)
 
@@ -176,8 +178,9 @@ def test_canonicalize_perfect_loop_nesting():
 
 def test_canonicalize_partially_shared_transient():
     """The partially-shared transient does not force a fission: one map survives."""
+    rng = np.random.default_rng(42)
     n = 20
-    a, cc = np.random.rand(n), np.random.rand(n)
+    a, cc = rng.random(n), rng.random(n)
     ref_b, ref_d = np.zeros(n), np.zeros(n)
     copy.deepcopy(shared_transient.to_sdfg(simplify=True))(a=a.copy(), b=ref_b, d=ref_d, cc=cc.copy(), N=n)
 
@@ -193,8 +196,9 @@ def test_canonicalize_partially_shared_transient():
 @pytest.mark.parametrize('av', [1, 0])
 def test_canonicalize_conditional_with_else(av):
     """Both arms of the guard parallelize: one map per branch under one top-level guard."""
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
+    a = rng.random(n)
     ref = np.zeros(n)
     copy.deepcopy(cond_else.to_sdfg(simplify=True))(a=a.copy(), b=ref, act=np.array([av], np.int32), N=n)
 
@@ -210,9 +214,10 @@ def test_canonicalize_conditional_with_else(av):
 
 def test_canonicalize_indirect_scatter():
     """A scatter through an unproven-injective index table stays sequential."""
+    rng = np.random.default_rng(42)
     n = 22
-    a, cc = np.random.rand(n), np.random.rand(n)
-    idx = np.random.permutation(n).astype(np.int32)
+    a, cc = rng.random(n), rng.random(n)
+    idx = rng.permutation(n).astype(np.int32)
     ref_b, ref_e = np.zeros(n), np.zeros(n)
     copy.deepcopy(scatter.to_sdfg(simplify=True))(a=a.copy(), idx=idx.copy(), b=ref_b, cc=cc.copy(), e=ref_e, N=n)
 
@@ -235,8 +240,9 @@ def test_canonicalize_indirect_scatter():
 @pytest.mark.parametrize('av', [1, 0])
 def test_canonicalize_guarded_two_stencils(av):
     """Guard + two independent stencils fuse to one guarded map, values preserved."""
+    rng = np.random.default_rng(42)
     n = 24
-    a, cc = np.random.rand(n), np.random.rand(n)
+    a, cc = rng.random(n), rng.random(n)
     ref_b, ref_d = np.full(n, 5.0), np.full(n, 5.0)
     copy.deepcopy(guarded_two_stencils.to_sdfg(simplify=True))(a=a.copy(),
                                                                b=ref_b,

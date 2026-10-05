@@ -20,6 +20,7 @@ def gather_load(A: dace.float64[Y, X], B: dace.int64[Y, X], C: dace.float64[Y, X
 # Test function
 def test_nested_sdfg():
     # Create SDFG
+    rng = np.random.default_rng(42)
     sdfg = gather_load.to_sdfg()
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
@@ -29,8 +30,8 @@ def test_nested_sdfg():
 
     # Create inputs
     y_val, x_val = 32, 16
-    A = np.random.rand(y_val, x_val)
-    B = np.random.randint(0, x_val, size=(y_val, x_val), dtype=np.int64)
+    A = rng.random((y_val, x_val))
+    B = rng.integers(0, x_val, size=(y_val, x_val), dtype=np.int64)
     C_orig = np.zeros((y_val, x_val))
     C_spec = np.zeros((y_val, x_val))
 
@@ -95,6 +96,7 @@ def _canonical_json(sdfg):
 
 def test_batched_specialization_matches_one_at_a_time():
     """Baking the set in one walk must land the same graph as one call per scalar, and still run."""
+    rng = np.random.default_rng(42)
     values = {'a': 2.0, 'b': 3.0, 'c': 4.0}
 
     looped = affine.to_sdfg()
@@ -105,7 +107,7 @@ def test_batched_specialization_matches_one_at_a_time():
     assert _canonical_json(batched) == _canonical_json(looped)
 
     x_val = 16
-    A = np.random.rand(x_val)
+    A = rng.random(x_val)
     B = np.zeros(x_val)
     batched(A=A, B=B, X=x_val, **values)
     np.testing.assert_allclose(B, A * 2.0 + 3.0 - 4.0)

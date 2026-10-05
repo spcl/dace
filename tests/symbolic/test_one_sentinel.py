@@ -195,6 +195,7 @@ def test_one_emitted_as_constexpr_at_compile():
     """
     import numpy as np
 
+    rng = np.random.default_rng(42)
     N = dace.symbol("N")
 
     @dace.program
@@ -207,8 +208,8 @@ def test_one_emitted_as_constexpr_at_compile():
     sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
     compiled = sdfg.compile()
     n_val = 8
-    a = np.random.random(n_val)
-    b = np.random.random(n_val)
+    a = rng.random(n_val)
+    b = rng.random(n_val)
     c = np.zeros(n_val)
     compiled(a=a, b=b, c=c, N=n_val)
     np.testing.assert_allclose(c, a + b, rtol=1e-12)

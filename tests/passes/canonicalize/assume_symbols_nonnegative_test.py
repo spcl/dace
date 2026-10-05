@@ -128,6 +128,7 @@ def test_pass_wrapper_matches_helper():
 
 
 def test_survives_full_canonicalize_and_runs():
+    rng = np.random.default_rng(42)
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
     traps = _trap_tasklets(sdfg)
@@ -139,8 +140,8 @@ def test_survives_full_canonicalize_and_runs():
     sdfg.validate()
 
     a = 2.0
-    x = np.random.rand(16)
-    y = np.random.rand(16)
+    x = rng.random(16)
+    y = rng.random(16)
     ref = a * x + y
     sdfg(a=a, x=x, y=y, N=16)
     assert np.allclose(y, ref)

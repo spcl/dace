@@ -52,8 +52,9 @@ def sym_guard_in_loop(a: dace.float64[N], b: dace.float64[N], active: dace.int32
 
 
 def test_invariant_symbolic_guard_hoisted_and_e2e():
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     for av in (1, 0):
         sdfg = sym_guard_in_loop.to_sdfg(simplify=True)
         assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, "must hoist"
@@ -77,8 +78,9 @@ def data_guard_in_loop(a: dace.float64[N], b: dace.float64[N], thr: dace.float64
 
 
 def test_invariant_data_guard_hoisted_and_e2e():
+    rng = np.random.default_rng(42)
     n = 14
-    a = np.random.rand(n)
+    a = rng.random(n)
     for tv in (0.9, 0.1):
         sdfg = data_guard_in_loop.to_sdfg(simplify=True)
         assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, "must hoist"
@@ -102,8 +104,9 @@ def loopvar_guard(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_loopvar_dependent_guard_not_hoisted_and_e2e():
+    rng = np.random.default_rng(42)
     n = 15
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = loopvar_guard.to_sdfg(simplify=True)
     base = copy.deepcopy(sdfg)
     assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None, "must NOT hoist a loop-var guard"
@@ -131,8 +134,9 @@ def nested_invariant_guard(a: dace.float64[N, M], b: dace.float64[N, M], active:
 
 
 def test_innermost_guard_sifts_all_the_way_up_and_e2e():
+    rng = np.random.default_rng(42)
     n, m = 6, 5
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     for av in (1, 0):
         sdfg = nested_invariant_guard.to_sdfg(simplify=True)
         applied = MoveLoopInvariantIfUp().apply_pass(sdfg, {})
@@ -169,8 +173,9 @@ def assignment_chain_guard(a: dace.float64[N], b: dace.float64[N], flag: dace.in
 
 
 def test_invariant_assignment_chain_hoisted_with_guard_and_e2e():
+    rng = np.random.default_rng(42)
     n = 12
-    a = np.random.rand(n)
+    a = rng.random(n)
     for fv in (1, 0):
         sdfg = assignment_chain_guard.to_sdfg(simplify=True)
         MoveLoopInvariantIfUp().apply_pass(sdfg, {})
@@ -193,8 +198,9 @@ def data_and_loopvar_guard(a: dace.float64[N], b: dace.float64[N]):
 
 
 def test_data_and_loopvar_guard_not_hoisted_and_e2e():
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = data_and_loopvar_guard.to_sdfg(simplify=True)
     base = copy.deepcopy(sdfg)
     assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None, \
@@ -217,6 +223,7 @@ def test_empty_boundary_states_cleaned_and_e2e():
     """``for k: { empty ; if c: body ; empty }`` -- the guard hoists and the
     empty boundary states are dropped (built imperatively: the frontend will
     not emit empty in-loop boundary states)."""
+    rng = np.random.default_rng(42)
     from dace.sdfg.state import ControlFlowRegion
     from dace.sdfg.sdfg import InterstateEdge
     from dace.properties import CodeBlock
@@ -252,7 +259,7 @@ def test_empty_boundary_states_cleaned_and_e2e():
         assert not empties, f"empty boundary states not cleaned: {[e.label for e in empties]}"
 
     for av in (1, 0):
-        a = np.random.rand(n)
+        a = rng.random(n)
         out = np.full(n, 4.0)
         sdfg(a=a.copy(), b=out, active=np.int32(av), N=n)
         assert np.allclose(out, a + 1.0 if av > 0 else 4.0), f"mismatch active={av}"
@@ -273,8 +280,9 @@ def mixed_map_loop(a: dace.float64[N, M], b: dace.float64[N, M], active: dace.in
 
 
 def test_mixed_map_loop_guard_hoisted_out_of_loop_and_e2e():
+    rng = np.random.default_rng(42)
     n, m = 7, 5
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     for av in (1, 0):
         sdfg = mixed_map_loop.to_sdfg(simplify=True)
         assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, \
@@ -331,9 +339,10 @@ def test_outer_index_data_guard_partial_then_full_hoist_modes():
     NOT ``i``. Default mode hoists it out of the j-loop but it must stall
     inside the i-loop (cannot go all the way up). ``require_full_hoist``
     mode must then refuse entirely (it cannot clear the i-loop)."""
+    rng = np.random.default_rng(42)
     n, m = 6, 5
-    a = np.random.rand(n, m)
-    g = np.random.rand(n)
+    a = rng.random((n, m))
+    g = rng.random(n)
     mask = np.broadcast_to((g > 0.5)[:, None], (n, m))
     exp = _nest_oracle(a, mask, n, m)
 
@@ -362,9 +371,10 @@ def test_outer_index_data_guard_partial_then_full_hoist_modes():
 def test_inner_index_data_guard_not_movable():
     """``g[j] > 0.5`` depends on the innermost loop variable: it cannot be
     hoisted out of the j-loop at all (no-op in either mode)."""
+    rng = np.random.default_rng(42)
     n, m = 5, 7
-    a = np.random.rand(n, m)
-    g = np.random.rand(m)
+    a = rng.random((n, m))
+    g = rng.random(m)
     mask = np.broadcast_to((g > 0.5)[None, :], (n, m))
     exp = _nest_oracle(a, mask, n, m)
     for full in (False, True):
@@ -381,8 +391,9 @@ def test_scalar_guard_sifts_all_the_way_up_both_modes():
     """A truly scalar guard ``c[0] > 0.5`` is fully invariant: it sifts all
     the way out above both loops in BOTH the default and the
     ``require_full_hoist`` modes."""
+    rng = np.random.default_rng(42)
     n, m = 6, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     for full in (False, True):
         for cv in (0.9, 0.1):
             sdfg = scalar_guard_nest.to_sdfg(simplify=True)
@@ -412,8 +423,9 @@ def guard_beside_an_independent_statement(a: dace.float64[N], b: dace.float64[N]
 def test_splitting_and_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """The split clones the loop once per group and the hoist moves it under the guard; neither needs a
     whole-tree CFG-list rebuild."""
+    rng = np.random.default_rng(42)
     n = 9
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = guard_beside_an_independent_statement.to_sdfg(simplify=True)
     resets = spy_on_resets(monkeypatch)
     assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) == 1, "must split, then hoist"
@@ -430,8 +442,9 @@ def test_splitting_and_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch)
 
 def test_hoist_moves_the_guard_out_of_the_loop_it_is_given_only():
     """Hoisting from the inner loop leaves the guard between the two loops, where the fixpoint pass would not stop."""
+    rng = np.random.default_rng(42)
     n, m = 6, 5
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = nested_invariant_guard.to_sdfg(simplify=True)
     (outer, ) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
     (inner, ) = [lp for lp in _loops(sdfg) if lp is not outer]

@@ -20,6 +20,7 @@ from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pat
 def test_scalar_slice_removed():
     """``A[5] -> tmp[0] -> tasklet -> B[5]``: tmp is dead elsewhere, so the
     pass removes it and wires ``A`` straight into the tasklet."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('test_clean_scalar')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('tmp', [1], dace.float64, transient=True)
@@ -45,7 +46,7 @@ def test_scalar_slice_removed():
     assert str(in_edges[0].data.subset) == '5'
 
     sdfg.validate()
-    A = np.random.rand(10)
+    A = rng.random(10)
     B = np.zeros(10)
     sdfg(A=A, B=B)
     assert np.isclose(B[5], A[5] * 2.0)
@@ -82,6 +83,7 @@ def _build_two_state_sdfg():
 def test_scalar_reused_gets_assign_tasklet():
     """When ``tmp`` is read in another state, the pass keeps it and turns
     the ``A -> tmp`` copy into an assignment tasklet (no map)."""
+    rng = np.random.default_rng(42)
     sdfg, s0 = _build_two_state_sdfg()
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
 
@@ -98,7 +100,7 @@ def test_scalar_reused_gets_assign_tasklet():
     assert in_e.data.data == 'A' and str(in_e.data.subset) == '5'
 
     sdfg.validate()
-    A = np.random.rand(10)
+    A = rng.random(10)
     B = np.zeros(10)
     C = np.zeros(10)
     sdfg(A=A, B=B, C=C)
@@ -117,6 +119,7 @@ def test_dtype_mismatch_not_reused_compiles():
     """The motivating case: a double->float32 ``A -> A_slice`` copy fails
     in CopyNDDynamic. Removing the scalar (not reused) wires the f64 read
     straight into the tasklet, so the cast happens in the tasklet body."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('test_dtype_fold')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('tmp', [1], dace.float32, transient=True)
@@ -135,7 +138,7 @@ def test_dtype_mismatch_not_reused_compiles():
     assert not any(n.data == 'tmp' for n in state.data_nodes())
 
     sdfg.validate()
-    A = np.random.rand(10)
+    A = rng.random(10)
     B = np.zeros(10, dtype=np.float32)
     sdfg(A=A, B=B)
     assert np.isclose(B[5], np.float32(A[5] * 2.0), atol=1e-6)
@@ -144,6 +147,7 @@ def test_dtype_mismatch_not_reused_compiles():
 def test_dtype_mismatch_reused_compiles():
     """Same dtype mismatch but the scalar is reused: the assign tasklet
     carries the f64->f32 cast and the copy compiles."""
+    rng = np.random.default_rng(42)
     sdfg = dace.SDFG('test_dtype_assign')
     sdfg.add_array('A', [10], dace.float64)
     sdfg.add_array('tmp', [1], dace.float32, transient=True)
@@ -171,7 +175,7 @@ def test_dtype_mismatch_reused_compiles():
     assert any(n.data == 'tmp' for n in s0.data_nodes())
 
     sdfg.validate()
-    A = np.random.rand(10)
+    A = rng.random(10)
     B = np.zeros(10, dtype=np.float32)
     C = np.zeros(10, dtype=np.float32)
     sdfg(A=A, B=B, C=C)

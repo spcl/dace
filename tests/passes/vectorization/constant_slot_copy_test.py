@@ -32,11 +32,12 @@ def fill_slot_four(a: dace.float64[N], out: dace.float64[N], v: dace.float64[5],
 
 @pytest.mark.parametrize('program,slot', [(fill_slot_one, 1), (fill_slot_four, 4)])
 def test_a_vectorized_constant_slot_copy_writes_its_own_slot(program, slot):
+    rng = np.random.default_rng(42)
     sdfg = program.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(2, ), target_isa='SCALAR', remainder_strategy='masked_tail',
                         validate_all=True)).apply_pass(sdfg, {})
-    a = np.random.rand(7)
+    a = rng.random(7)
     out = np.zeros(7)
     v = np.zeros(5)
     sdfg(a=a, out=out, v=v, s=3.5, N=7)

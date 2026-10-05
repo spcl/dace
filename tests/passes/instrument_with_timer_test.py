@@ -39,7 +39,8 @@ def run(sdfg: dace.SDFG, a: np.ndarray, out: np.ndarray) -> Tuple[int, int]:
 
 
 def test_trivial_roundtrip():
-    a = np.random.rand(16)
+    rng = np.random.default_rng(42)
+    a = rng.random(16)
     out = np.zeros(16)
 
     ns, outer = run(instrument(add_one), a, out)
@@ -49,7 +50,8 @@ def test_trivial_roundtrip():
 
 
 def test_measures_real_work():
-    a = np.random.rand(BIG)
+    rng = np.random.default_rng(42)
+    a = rng.random(BIG)
     out = np.zeros(BIG)
 
     ns, outer = run(instrument(heavy), a, out)

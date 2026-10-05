@@ -37,7 +37,8 @@ def test_struct_pointer_vector_stringify():
 
 
 def test_argmax_matches_numpy():
-    a = np.random.rand(64)
+    rng = np.random.default_rng(42)
+    a = rng.random(64)
     b = np.zeros(1, dtype=np.int64)
     argmax_kernel(a=a, b=b, N=64)
     assert b[0] == np.argmax(a)

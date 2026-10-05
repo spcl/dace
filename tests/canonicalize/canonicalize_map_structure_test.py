@@ -95,8 +95,9 @@ def dependent_plus_independent(a: dace.float64[N], b: dace.float64[N], c: dace.f
 
 
 def test_elementwise_single_map():
+    rng = np.random.default_rng(42)
     n = 24
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = elemwise.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1
@@ -112,8 +113,9 @@ def test_two_independent_statements_single_map():
     the ``UniqueLoopIterators`` post-value epilogue off the
     inter-statement boundary state no longer carries a fragmenting
     interstate-edge assignment, and the maps fuse.)"""
+    rng = np.random.default_rng(42)
     n = 20
-    a, c = np.random.rand(n), np.random.rand(n)
+    a, c = rng.random(n), rng.random(n)
     sdfg = two_independent.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1
@@ -128,8 +130,9 @@ def test_producer_consumer_single_map():
     kept them as two maps; with the post-value epilogue off the producer's
     closing state no longer separates them with an interstate-edge
     assignment, enabling vertical fusion.)"""
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = producer_consumer.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1
@@ -139,8 +142,9 @@ def test_producer_consumer_single_map():
 
 
 def test_stencil_single_map():
+    rng = np.random.default_rng(42)
     n = 32
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = stencil1d.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1
@@ -152,8 +156,9 @@ def test_stencil_single_map():
 
 
 def test_jacobi2d_single_map():
+    rng = np.random.default_rng(42)
     n, m = 16, 12
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = jacobi2d.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1
@@ -168,8 +173,9 @@ def test_dependency_aware_split_one_map_one_loop():
     """A loop-carried recurrence and an independent statement in the same
     loop split: the recurrence stays a sequential ``LoopRegion`` while the
     independent statement becomes a parallel ``Map`` (one map, one loop)."""
+    rng = np.random.default_rng(42)
     n = 25
-    a, c = np.random.rand(n), np.random.rand(n)
+    a, c = rng.random(n), rng.random(n)
     sdfg = dependent_plus_independent.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1, f'expected the independent part as one map, got {_nmaps(sdfg)}'
@@ -217,9 +223,10 @@ def mixed_direct_indirect_stencil(a: dace.float64[N, M], idx: dace.int32[N], b: 
 
 
 def test_mixed_direct_indirect_stencil_value_preserving():
+    rng = np.random.default_rng(42)
     n, m = 12, 9
-    a = np.random.rand(n, m)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random((n, m))
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     sdfg = mixed_direct_indirect_stencil.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 1, f'the mixed stencil must stay one map, got {_nmaps(sdfg)}'
@@ -249,8 +256,9 @@ def two_ranges_same_arith_bound(a: dace.float64[N], b: dace.float64[N], c: dace.
 
 
 def test_two_ranges_share_arith_bound_no_symbol_duplication():
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = two_ranges_same_arith_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     # Both loops should fuse to a single Map (knob-off enables this) or stay
@@ -287,8 +295,9 @@ def guarded_arith_bound(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]
 
 
 def test_guarded_arith_bound_clean_after_canonicalize():
+    rng = np.random.default_rng(42)
     n = 10
-    a = np.random.rand(n)
+    a = rng.random(n)
     sdfg = guarded_arith_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     # Validates after canonicalize: any leaked-symbol leak (e.g. an
@@ -332,8 +341,9 @@ def stencil_reduction_mixed(a: dace.float64[N, M], b: dace.float64[N]):
 
 
 def test_stencil_reduction_mixed_value_preserving():
+    rng = np.random.default_rng(42)
     n, m = 8, 11
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = stencil_reduction_mixed.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     assert _nmaps(sdfg) == 2, f'expected a row map and a reduction map, got {_nmaps(sdfg)}'

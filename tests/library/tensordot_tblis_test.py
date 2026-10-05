@@ -47,8 +47,9 @@ def test_tblis_registered():
 @pytest.mark.parametrize("left_shape,right_shape,left_axes,right_axes,permutation", CASES)
 def test_contraction_labels_match_numpy(left_shape, right_shape, left_axes, right_axes, permutation):
     """The TBLIS index labels are correct iff einsum(labels) == np.tensordot(+permute)."""
-    A = np.random.rand(*left_shape)
-    B = np.random.rand(*right_shape)
+    rng = np.random.default_rng(42)
+    A = rng.random(left_shape)
+    B = rng.random(right_shape)
     ia, ib, ic = ExpandTBLIS.contraction_labels(len(left_shape), len(right_shape), left_axes, right_axes, permutation)
     ref = np.tensordot(A, B, axes=(left_axes, right_axes))
     if permutation:
@@ -78,8 +79,9 @@ def test_unsupported_dtype_raises():
 @pytest.mark.parametrize("left_shape,right_shape,left_axes,right_axes,permutation", CASES)
 def test_tblis_execution(left_shape, right_shape, left_axes, right_axes, permutation):
     """Compile + run through TBLIS and compare to numpy. Requires the TBLIS library."""
-    A = np.random.rand(*left_shape)
-    B = np.random.rand(*right_shape)
+    rng = np.random.default_rng(42)
+    A = rng.random(left_shape)
+    B = rng.random(right_shape)
     ref = np.tensordot(A, B, axes=(left_axes, right_axes))
     if permutation:
         ref = ref.transpose(permutation)

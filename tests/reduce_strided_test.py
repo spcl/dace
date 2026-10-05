@@ -12,8 +12,9 @@ def test_strided_reduce(implementation):
     input subset's STEP, so the reduction walks the strided view correctly.
     (Long disabled with "Incorrect outputs" because the expansions dropped the
     subset step and read the input contiguously.)"""
-    A = np.random.rand(50, 50)
-    B = np.random.rand(25)
+    rng = np.random.default_rng(42)
+    A = rng.random((50, 50))
+    B = rng.random(25)
 
     # Python version of the SDFG below
     # @dace.program

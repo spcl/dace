@@ -205,6 +205,7 @@ def test_end_to_end_numbers_are_unchanged():
 
 
 def test_pipeline_kernel_is_still_correct():
+    rng = np.random.default_rng(42)
     N = dace.symbol('N', dtype=dace.int64)
 
     @dace.program
@@ -218,7 +219,7 @@ def test_pipeline_kernel_is_still_correct():
     canonicalize(sdfg)
     sdfg.validate()
 
-    a = np.random.rand(24)
+    a = rng.random(24)
     b = np.zeros(24)
     out = np.zeros(24)
     sdfg(a=a, b=b, out=out, N=24)
