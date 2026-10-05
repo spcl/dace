@@ -165,9 +165,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         gpu_block_size = self.preprocess_default_dims()
         kernel_map_entry = self.map_entry
 
-        # Reverse for map tiling to prioritize later dimensions for better memory/performance
-        reversed_block_size = gpu_block_size[::-1]
-
         # Get tile size
         num_dims = len(kernel_map_entry.map.params)
 
