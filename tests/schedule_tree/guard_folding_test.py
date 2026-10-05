@@ -1223,6 +1223,7 @@ if __name__ == '__main__':
     test_fold_constant_array_atom()
     test_fold_does_not_use_symbol_assigned_in_body()
     test_split_outer_loop_on_guards_in_inner_loop()
+    test_split_excludes_loops_with_direct_callback_child(True, True)
     test_split_both_dimensions_of_nested_loops(8)
     test_split_map_privatizes_transients()
     test_split_loop_keeps_values_flowing_between_parts()
