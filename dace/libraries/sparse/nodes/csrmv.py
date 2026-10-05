@@ -213,7 +213,9 @@ class ExpandCSRMVPure(ExpandTransformation):
         nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
 
         # indirection -> spmv
-        nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
+        b_value = nstate.add_access("_b_value")
+        nstate.add_edge(tasklet_ind, "lookup", b_value, None, mm.Memlet.simple("_b_value", "0"))
+        nstate.add_edge(b_value, None, tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
 
         # spmv -> inner map
         inner_map_exit.add_in_connector("IN__c_1")
