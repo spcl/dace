@@ -56,15 +56,6 @@ class OutlineTopLevelNests(ppl.Pass):
 
     CATEGORY: str = 'Optimization Preparation'
 
-    full_data = Property(dtype=bool,
-                         default=False,
-                         desc='Nest entire input/output arrays instead of only the accessed subrange. '
-                         'The default (False) gives accurate accessed-subrange connectors; set True '
-                         'to keep whole-array signatures at the nest boundary.')
-
-    def __init__(self, full_data: bool = False):
-        self.full_data = full_data
-
     def modifies(self) -> ppl.Modifies:
         # Creates NestedSDFG nodes and rewrites a state's dataflow (Nodes covers NestedSDFGs/Scopes);
         # the loop-region path replaces a CFG block with a state (States) and registers loop symbols
@@ -102,7 +93,7 @@ class OutlineTopLevelNests(ppl.Pass):
             # changed the node set, but this MapEntry object is still present and its scope intact.
             subgraph = state.scope_subgraph(entry, include_entry=True, include_exit=True)
             name = self._unique_label(sdfg, count)
-            nsdfg = helpers.nest_state_subgraph(sdfg, state, subgraph, name=name, full_data=self.full_data)
+            nsdfg = helpers.nest_state_subgraph(sdfg, state, subgraph, name=name)
             self._mark(nsdfg, name)
             count += 1
 
@@ -139,6 +130,6 @@ class OutlineTopLevelNests(ppl.Pass):
         return '%s_nest_%d' % (sdfg.label, index)
 
 
-def outline_top_level_nests(sdfg: SDFG, full_data: bool = False) -> int:
+def outline_top_level_nests(sdfg: SDFG) -> int:
     """Outline the root SDFG's top-level loop nests in place; returns the number outlined."""
-    return OutlineTopLevelNests(full_data=full_data).apply_pass(sdfg, {}) or 0
+    return OutlineTopLevelNests().apply_pass(sdfg, {}) or 0

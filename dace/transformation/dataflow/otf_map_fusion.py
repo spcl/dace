@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This module contains classes that implement the OTF map fusion transformation.
 """
@@ -17,6 +17,7 @@ from dace import dtypes
 from dace import symbolic, nodes
 from dace.properties import SymbolicProperty, make_properties
 
+from dace.sdfg import dealias
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
 from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
 
@@ -119,7 +120,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for edge in consume_edges:
             read_memlet = edge.data
             write_memlet = produce_edge.data
-            if not write_memlet.subset.covers(read_memlet.subset):
+            if not write_memlet.subset.covers_precise(read_memlet.subset):
                 return False
 
         # First memlets
@@ -339,6 +340,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Add edges from temporary buffer to second map's content
                 for edge in consume_memlets[array][second_accesses]:
                     otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=None)
+                    # A nested SDFG connector follows the read into the per-iteration buffer
+                    if isinstance(edge.dst, nds.NestedSDFG) and edge.dst_conn in edge.dst.sdfg.arrays:
+                        if not edge.dst.sdfg.arrays[edge.dst_conn].is_equivalent(tmp_desc):
+                            dealias.reduce_connector(edge.dst.sdfg, edge.dst_conn, tmp_desc, offset=edge.data.subset)
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
                 # Step 3: Copy content of first map into second map
@@ -349,6 +354,13 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     # Connect new OTF nodes to tmp_access for write
                     for edge in graph.edges_between(node, first_map_exit):
                         otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
+                        # A nested SDFG connector follows the write into the per-iteration buffer
+                        if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
+                            if not edge.src.sdfg.arrays[edge.src_conn].is_equivalent(tmp_desc):
+                                dealias.reduce_connector(edge.src.sdfg,
+                                                         edge.src_conn,
+                                                         tmp_desc,
+                                                         offset=first_memlet.subset)
                         graph.add_edge(edge.src, edge.src_conn, tmp_access, None, otf_memlet)
                         graph.remove_edge(edge)
 

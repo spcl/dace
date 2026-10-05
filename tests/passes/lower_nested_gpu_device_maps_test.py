@@ -29,8 +29,8 @@ def build_outer_with_two_sibling_inner_gpu_kernels(j_ranges: tuple[str, str] = (
 
     inner = dace.SDFG('nested_sdfg_build_outer_with_two_sibling_inner_gpu_kernels')
     inner.add_symbol('__k', dace.int32)
-    inner.add_array('a_in', [J + 1, I_SIZE], dace.float64, storage=GPU_GLOBAL)
-    inner.add_array('b_out', [J, I_SIZE], dace.float64, storage=GPU_GLOBAL)
+    inner.add_array('a_in', [K, J + 1, I_SIZE], dace.float64, storage=GPU_GLOBAL)
+    inner.add_array('b_out', [K, J, I_SIZE], dace.float64, storage=GPU_GLOBAL)
     inner_state = inner.add_state('nested_root', is_start_block=True)
 
     for label, j_range, out, value in (('a', j_ranges[0], 'a_in', '1.0'), ('b', j_ranges[1], 'b_out', '2.0')):
@@ -41,9 +41,9 @@ def build_outer_with_two_sibling_inner_gpu_kernels(j_ranges: tuple[str, str] = (
                                     mx,
                                     inner_state.add_write(out),
                                     src_conn='_o',
-                                    memlet=dace.Memlet(f'{out}[__j, __i]'))
+                                    memlet=dace.Memlet(f'{out}[__k, __j, __i]'))
 
-    nsdfg = state.add_nested_sdfg(inner, {}, {'a_in': None, 'b_out': None}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, {}, {'a_in': None, 'b_out': None})
     state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
     state.add_memlet_path(nsdfg,
                           outer_mx,
@@ -110,7 +110,7 @@ def build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
 
     inner = dace.SDFG('nested_sdfg_build_nested_kernel_with_internal_inout_node')
     inner.add_symbol('__k', dace.int32)
-    inner.add_array('c_io', [J], dace.float64, storage=GPU_GLOBAL)
+    inner.add_array('c_io', [K, J], dace.float64, storage=GPU_GLOBAL)
     inner_state = inner.add_state('nested_root', is_start_block=True)
 
     me, mx = inner_state.add_map('horizontal_loop', dict(__j='0:J'), schedule=GPU_DEVICE)
@@ -119,12 +119,12 @@ def build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
     c_write = inner_state.add_write('c_io')
     t1 = inner_state.add_tasklet('bump', {'i': None}, {'o': None}, 'o = i + 1.0')
     t2 = inner_state.add_tasklet('bump2', {'i': None}, {'o': None}, 'o = i + 2.0')
-    inner_state.add_memlet_path(c_read, me, t1, dst_conn='i', memlet=dace.Memlet('c_io[__j]'))
-    inner_state.add_edge(t1, 'o', c_mid, None, dace.Memlet('c_io[__j]'))
-    inner_state.add_edge(c_mid, None, t2, 'i', dace.Memlet('c_io[__j]'))
-    inner_state.add_memlet_path(t2, mx, c_write, src_conn='o', memlet=dace.Memlet('c_io[__j]'))
+    inner_state.add_memlet_path(c_read, me, t1, dst_conn='i', memlet=dace.Memlet('c_io[__k, __j]'))
+    inner_state.add_edge(t1, 'o', c_mid, None, dace.Memlet('c_io[__k, __j]'))
+    inner_state.add_edge(c_mid, None, t2, 'i', dace.Memlet('c_io[__k, __j]'))
+    inner_state.add_memlet_path(t2, mx, c_write, src_conn='o', memlet=dace.Memlet('c_io[__k, __j]'))
 
-    nsdfg = state.add_nested_sdfg(inner, {'c_io': None}, {'c_io': None}, symbol_mapping={'__k': '__k'})
+    nsdfg = state.add_nested_sdfg(inner, {'c_io': None}, {'c_io': None})
     state.add_memlet_path(state.add_read('C'), outer_me, nsdfg, dst_conn='c_io', memlet=dace.Memlet('C[__k, 0:J]'))
     state.add_memlet_path(nsdfg, outer_mx, state.add_write('C'), src_conn='c_io', memlet=dace.Memlet('C[__k, 0:J]'))
     return sdfg
@@ -153,7 +153,7 @@ def build_inner_kernel_with_range(inner_range: str,
     With ``loop_var``, the map sits in a loop ``loop_var = 0..3`` inside the NestedSDFG. With ``sequential_scope``,
     it sits in a sequential map ``__t`` over ``0:2``, inside the NestedSDFG or around the NestedSDFG in the kernel.
     """
-    symbol_mapping = symbol_mapping or {'__k': '__k'}
+    symbol_mapping = {'K': 'K', **(symbol_mapping or {'__k': '__k'})}
     sdfg = dace.SDFG('inner_range_kernel')
     sdfg.add_symbol('K', dace.int32)
     for value in symbol_mapping.values():
@@ -168,7 +168,7 @@ def build_inner_kernel_with_range(inner_range: str,
     inner = dace.SDFG('nested_build_inner_kernel_with_range')
     for name in symbol_mapping:
         inner.add_symbol(name, dace.int32)
-    inner.add_array('a_out', [32], dace.float64, storage=GPU_GLOBAL)
+    inner.add_array('a_out', [K, 32], dace.float64, storage=GPU_GLOBAL)
     region = inner
     if loop_var is not None:
         region = dace.sdfg.state.LoopRegion('time', f'{loop_var} < 4', loop_var, f'{loop_var} = 0',
@@ -184,7 +184,7 @@ def build_inner_kernel_with_range(inner_range: str,
                                 *(exit_node for _, exit_node in reversed(scopes)),
                                 inner_state.add_write('a_out'),
                                 src_conn='_a',
-                                memlet=dace.Memlet(f'a_out[{param}]'))
+                                memlet=dace.Memlet(f'a_out[__k, {param}]'))
 
     nsdfg = state.add_nested_sdfg(inner, {}, {'a_out': None}, symbol_mapping=symbol_mapping)
     kernel_scopes = [(outer_me, outer_mx)]
@@ -238,7 +238,7 @@ def test_a_bound_naming_a_nested_scope_symbol_is_hoisted_in_the_kernel_symbols(n
     if nest_twice:
         inner = nested_sdfg_nodes(sdfg)[0].sdfg
         body = inner.start_block
-        helpers.nest_state_subgraph(inner, body, StateSubgraphView(body, body.nodes()), full_data=True)
+        helpers.nest_state_subgraph(inner, body, StateSubgraphView(body, body.nodes()))
         assert len(nested_sdfg_nodes(sdfg)) == 2
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 

@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
@@ -917,6 +917,9 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def out_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().out_edges(node)
+
+    def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]:
+        return super().all_edges(*nodes)
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[MultiConnectorEdge[EdgeT]]:
         return super().edges_between(source, destination)

@@ -1055,7 +1055,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if self._needs_nesting_for_dynamic_inputs(state, node) and (self._detect_contiguous_memcpy_paths(
                     state, node) or self._detect_contiguous_memset_paths(state, node)):
                 subgraph = state.scope_subgraph(node, include_entry=True, include_exit=True)
-                nsdfg_node = helpers.nest_state_subgraph(state.sdfg, state, subgraph, full_data=True)
+                nsdfg_node = helpers.nest_state_subgraph(state.sdfg, state, subgraph)
                 rmed_memcpies[node] = self.apply_pass(nsdfg_node.sdfg, {})
                 rmed_memsets[node] = 0
                 continue

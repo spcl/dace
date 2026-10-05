@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that distribute Map computations """
 
 from copy import deepcopy
@@ -6,7 +6,7 @@ from numbers import Number
 import dace
 import sympy
 from dace import data, subsets, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
@@ -401,6 +401,8 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data.data = local_name
+                        # Connectors reading the array now describe this rank's block
+                        dealias.rebase_reconnected_edges([e])
 
             else:
                 raise NotImplementedError
@@ -453,6 +455,8 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data.data = local_name
+                        # Connectors writing the array describe the block too
+                        dealias.rebase_reconnected_edges([e])
             else:
                 raise NotImplementedError
 

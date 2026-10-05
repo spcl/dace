@@ -62,11 +62,10 @@ def test_internal_outarray():
     assert a[1] == 0
 
 
-@pytest.mark.parametrize('full_data', [False, True])
-def test_nest_keeps_ordering_memlets_empty(full_data):
+def test_nest_keeps_ordering_memlets_empty():
     """ An empty (happens-before) memlet hanging off the same scope connector as a boundary memlet
         must stay empty after nesting, rather than being stamped with the boundary array. """
-    sdfg = dace.SDFG(f'ordering_memlet_nesting_{int(full_data)}')
+    sdfg = dace.SDFG('ordering_memlet_nesting')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
     sdfg.add_scalar('tmp', dace.float64, transient=True)
@@ -93,7 +92,7 @@ def test_nest_keeps_ordering_memlets_empty(full_data):
     state.add_edge(mx, 'OUT_B', b, None, dace.Memlet('B[0:20]'))
     sdfg.validate()
 
-    nsdfg_node = nest_state_subgraph(sdfg, state, state.scope_subgraph(me), full_data=full_data)
+    nsdfg_node = nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
     sdfg.validate()
 
     nstate = nsdfg_node.sdfg.states()[0]
@@ -622,8 +621,7 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
-    test_nest_keeps_ordering_memlets_empty(False)
-    test_nest_keeps_ordering_memlets_empty(True)
+    test_nest_keeps_ordering_memlets_empty()
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()

@@ -171,6 +171,7 @@ def _two_level_sdfg(setzero: bool = False) -> dace.SDFG:
                           state.add_write('B'),
                           src_conn='y',
                           memlet=dace.Memlet('B[i + j]'))
+    nsdfg.integrate_into_parent()
     sdfg.validate()
     return sdfg
 

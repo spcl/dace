@@ -1,4 +1,4 @@
-# Copyright 2020-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2020-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import copy
 import os
@@ -991,6 +991,8 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     body.add_edge(me, "OUT_src", nested, "src", mm.Memlet("src[i, level]"))
     body.add_edge(nested, "cfl", mx, "IN_cfl", mm.Memlet("cfl_clipping[i, level]"))
     body.add_edge(mx, "OUT_cfl", w_cfl, None, mm.Memlet("cfl_clipping[0:NPROMA, level]"))
+
+    nested.integrate_into_parent()
 
     sdfg.validate()
     propagate_memlets_sdfg(sdfg)

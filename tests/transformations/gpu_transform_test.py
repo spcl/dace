@@ -1,9 +1,32 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Unit tests for the GPU to-device transformation. """
 
 import dace
 import numpy as np
 import pytest
+from dace.transformation.dataflow import GPUTransformLocalStorage
+from dace.transformation.interstate import GPUTransformSDFG
+
+
+def test_toplevel_transient_lifetime():
+    N = dace.symbol('N')
+
+    @dace.program
+    def program(A: dace.float64[20, 20]):
+        for i in range(20):
+            tmp = A[:i, :i]
+            tmp2 = A[:5, :N]
+            tmp *= 5
+            tmp2 *= 10
+
+    sdfg = program.to_sdfg()
+    sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
+
+    for name, desc in sdfg.arrays.items():
+        if name == 'tmp2' and type(desc) is dace.data.Array:
+            assert desc.lifetime is dace.AllocationLifetime.SDFG
+        else:
+            assert desc.lifetime is not dace.AllocationLifetime.SDFG
 
 
 @pytest.mark.gpu
@@ -174,27 +197,44 @@ def test_free_tasklet(transient, scalar):
     sdfg.validate()
 
 
-def test_free_tasklet_connectorless_dependency_edge():
-    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge --
-    e.g. an edge sequencing a reduction-init tasklet -- must wrap in the GPU_Device map
-    without crashing. Pre-fix the connector rebuild did ``'IN_' + e.dst_conn`` and threw
-    ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
-    dependency edge with no IN_/OUT_ connector."""
-    sdfg = dace.SDFG("gcode_depedge")
-    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
-    state = sdfg.add_state("main")
+def _row_doubling_body(shape):
+    """``b[0, j] = 2 * a[0, j]``, with both connectors describing the whole container."""
+    sdfg = dace.SDFG('body')
+    sdfg.add_array('a', shape, dace.float64)
+    sdfg.add_array('b', shape, dace.float64)
+    sdfg.add_symbol('j', dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x * 2')
+    state.add_edge(state.add_read('a'), None, tasklet, 'x', dace.Memlet('a[0, j]'))
+    state.add_edge(tasklet, 'y', state.add_write('b'), None, dace.Memlet('b[0, j]'))
+    return sdfg
 
-    seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
-    state.add_edge(seed, "_o", state.add_access(arr_name), None, dace.memlet.Memlet("A[0]"))
 
-    follow = state.add_tasklet("follow", {}, {"_o2"}, "_o2 = 1.0")
-    state.add_edge(follow, "_o2", state.add_access(arr_name), None, dace.memlet.Memlet("A[1]"))
+def test_gpu_local_storage_of_a_nested_sdfg_row():
+    """The copy on the device holds one row, so the connectors describe a row rather than a matrix.
 
-    # Connector-less empty-memlet dependency edge: seed must run before follow.
-    state.add_nedge(seed, follow, dace.memlet.Memlet())
-
+    ``GPUTransformLocalStorage`` copies only the part of each array the map reads, dropping the
+    dimensions the copy is a single index of. Under the nested SDFG contract (see
+    ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container it is connected to,
+    so the connectors below have to be restated the same way.
+    """
+    shape = (4, 5)
+    sdfg = dace.SDFG('gpu_local_storage_nested')
+    sdfg.add_array('A', shape, dace.float64)
+    sdfg.add_array('B', shape, dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(j='0:%d' % shape[1]))
+    node = state.add_nested_sdfg(_row_doubling_body(shape), {'a'}, {'b'}, {'j': 'j'})
+    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='a', memlet=dace.Memlet('A[0, j]'))
+    state.add_memlet_path(node, exit_, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[0, j]'))
     sdfg.validate()
-    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+
+    assert sdfg.apply_transformations(GPUTransformLocalStorage) == 1
+
+    for edge in state.all_edges(node):
+        connector = edge.dst_conn if edge.dst is node else edge.src_conn
+        assert len(node.sdfg.arrays[connector].shape) == 1
+        assert node.sdfg.arrays[connector].is_equivalent(sdfg.arrays[edge.data.data])
     sdfg.validate()
 
 
@@ -210,3 +250,4 @@ if __name__ == '__main__':
     for scalar in [False, True]:
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)
+    test_gpu_local_storage_of_a_nested_sdfg_row()

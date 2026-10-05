@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from typing import Dict
 import dace
@@ -472,8 +472,8 @@ def test_nested_sdfg_in_map_nest():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -511,16 +511,13 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    # The loop runs j = 2 .. N-1, so columns 0 and 1 are never written. The old expectation
-    # "0:M, 0:N - 2" had the right extent at the wrong origin, which is not an underapproximation
-    # of this write at all -- it claims two columns nobody touches.
     assert (str(write_set) == "0:M, 2:N")
 
 
@@ -860,8 +857,8 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
     write_approx = result[sdfg.cfg_id].approximation
     write_set = None
     accessnode = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -894,8 +891,8 @@ def test_loop_in_nested_sdfg_simple():
     write_approx = result[sdfg.cfg_id].approximation
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():

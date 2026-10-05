@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Pass derived from ``propagation.py`` that under-approximates write-sets of for-loops and Maps in an SDFG.
 """
@@ -407,64 +407,6 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> Set[SDFGState]:
     # holds blocks rather than AccessNodes, so handing one back raises KeyError. Dropping them only
     # loses write sites, which is the safe direction for an under-approximation.
     return {state for state in states if isinstance(state, SDFGState)}
-
-
-def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Memlet, parent_sdfg: dace.SDFG,
-                                  nsdfg: NestedSDFG) -> Memlet:
-    """
-    Helper method that tries to unsqueeze a memlet, containing a SubsetUnion as subset, in
-    a nested SDFG. If it fails it falls back to an empty memlet.
-
-    :param internal_memlet: The internal memlet to unsqueeze.
-    :param
-    """
-
-    from dace.transformation.helpers import unsqueeze_memlet
-
-    if isinstance(external_memlet.subset, subsets.SubsetUnion):
-        external_memlet.subset = external_memlet.subset.subset_list[0]
-    if isinstance(external_memlet.dst_subset, subsets.SubsetUnion):
-        external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
-    if isinstance(external_memlet.src_subset, subsets.SubsetUnion):
-        external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
-    if isinstance(internal_memlet.subset, subsets.SubsetUnion):
-        _subsets = internal_memlet.subset.subset_list
-    else:
-        _subsets = [internal_memlet.subset]
-
-    tmp_memlet = Memlet(data=internal_memlet.data,
-                        subset=internal_memlet.subset,
-                        other_subset=internal_memlet.other_subset)
-
-    internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
-    external_array = parent_sdfg.arrays[external_memlet.data]
-
-    for j, subset in enumerate(_subsets):
-        if subset is None:
-            continue
-        tmp_memlet.subset = subset
-        try:
-            unsqueezed_memlet = unsqueeze_memlet(tmp_memlet,
-                                                 external_memlet,
-                                                 False,
-                                                 internal_offset=internal_array.offset,
-                                                 external_offset=external_array.offset)
-            subset = unsqueezed_memlet.subset
-        except (ValueError, NotImplementedError):
-            # In any case of memlets that cannot be unsqueezed (i.e.,
-            # reshapes), use empty memlets.
-            subset = None
-        _subsets[j] = subset
-
-    # if all subsets are empty make memlet empty
-    if all(s is None for s in _subsets):
-        external_memlet.subset = None
-        external_memlet.other_subset = None
-    else:
-        external_memlet = unsqueezed_memlet
-        external_memlet.subset = subsets.SubsetUnion(_subsets)
-
-    return external_memlet
 
 
 def _freesyms(expr):
@@ -1088,8 +1030,8 @@ class UnderapproximateWrites(ppl.Pass):
             # filter out subsets that use symbols that are not defined outside of the nsdfg
             _filter_undefined_symbols(border_memlet, outer_symbols)
 
-        # Propagate the inside 'border' memlets outside the SDFG by
-        # offsetting, and unsqueezing if necessary.
+        # Propagate the inside 'border' memlets outside the SDFG. Connectors are the containers they are
+        # connected to, so only the container name changes.
         for edge in parent_state.out_edges(nsdfg_node):
             out_memlet = self.approximation_dict[edge]
             if edge.src_conn in border_memlets:
@@ -1099,7 +1041,9 @@ class UnderapproximateWrites(ppl.Pass):
                     out_memlet.dst_subset = None
                     self.approximation_dict[edge] = out_memlet
                     continue
-                out_memlet = _unsqueeze_memlet_subsetunion(internal_memlet, out_memlet, parent_sdfg, nsdfg_node)
+                # The connector is the container it is connected to, so only the name changes
+                out_memlet = copy.deepcopy(internal_memlet)
+                out_memlet.data = edge.data.data
                 self.approximation_dict[edge] = out_memlet
 
     def _underapproximate_writes_loop(self, sdfg: SDFG, loops: Dict[SDFGState,

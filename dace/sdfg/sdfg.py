@@ -173,6 +173,11 @@ def _replace_dict_keys(d, old, new):
         del d[old]
 
 
+def _remove_dict_keys(d, old):
+    if old in d:
+        del d[old]
+
+
 def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
@@ -1083,7 +1088,12 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
-        if symrepl:
+        if symrepl is None:
+            symrepl = {
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repldict.items()
+            }
+        else:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
 
         symrepl = symrepl or symbolic_replacements(repldict, self.symbols)
@@ -1094,12 +1104,23 @@ class SDFG(ControlFlowRegion):
             repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
             for name, new_name in repldict_filtered.items():
                 new_key = str(new_name)
-                if new_key != str(name) and validate_name(new_key):
-                    _replace_dict_keys(self._arrays, name, new_key)
-                    _replace_dict_keys(self.symbols, name, new_key)
-                    _replace_dict_keys(self.constants_prop, name, new_key)
-                    _replace_dict_keys(self.callback_mapping, name, new_key)
-                    _replace_dict_values(self.callback_mapping, name, new_key)
+                if validate_name(new_key):
+                    if new_key != str(name):
+                        _replace_dict_keys(self._arrays, name, new_key)
+                        _replace_dict_keys(self.symbols, name, new_key)
+                        _replace_dict_keys(self.constants_prop, name, new_key)
+                        _replace_dict_keys(self.callback_mapping, name, new_key)
+                        _replace_dict_values(self.callback_mapping, name, new_key)
+                else:
+                    _remove_dict_keys(self._arrays, name)
+                    if name in self.symbols:
+                        old_sym = self.symbols[name]
+                        del self.symbols[name]
+                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
+                        self.symbols.update({str(s): old_sym for s in new_syms})
+
+                    _remove_dict_keys(self.constants_prop, name)
+                    _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -2427,13 +2448,13 @@ class SDFG(ControlFlowRegion):
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
-            #  of strictures.
+            #  of structures.
             # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
             #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
             #   is still "cleaned", i.e. dots are replaced with underscores. However, if
             #   `find_new_name` is `False` then this cleaning is not applied and it is possible
             #   to create names that are formally invalid. The above code reproduces the exact
-            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             name = self._find_new_name(name)
             name = name.replace('.', '_')

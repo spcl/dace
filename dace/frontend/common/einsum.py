@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Classes to handle Einstein-notation sums (einsum) as a library node. """
 from itertools import chain
 from string import ascii_letters
@@ -11,7 +11,7 @@ import dace
 from dace import dtypes, subsets, symbolic
 from dace.utils import prod
 from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, dealias
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.memlet import Memlet
 
@@ -586,5 +586,6 @@ def _create_einsum_internal(sdfg: SDFG,
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))
+        dealias.integrate_nested_sdfg(nsdfg)
 
     return output, c

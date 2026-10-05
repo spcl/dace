@@ -18,7 +18,6 @@ from typing import Any, Callable, Dict, List, Set, Tuple, Union
 # Transformations
 from dace.transformation.passes import FuseMaps
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
-from dace.transformation.interstate import RefineNestedAccess
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
@@ -926,7 +925,6 @@ def auto_optimize(sdfg: SDFG,
         l2ms = ParallelizeLoops().apply_pass(sdfg, {}) or 0
         if validate_all:
             sdfg.validate()
-        l2ms += sdfg.apply_transformations_repeated(RefineNestedAccess, validate=False, validate_all=validate_all)
         transformed = l2ms > 0
 
     # Collapse maps and eliminate trivial dimensions

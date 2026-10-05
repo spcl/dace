@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
-from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
@@ -1275,6 +1275,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         reduced_intermediate_desc=new_inter_desc,
                         inner_data=new_pre_exit_edge.src_conn,
                         outer_edge=new_pre_exit_edge,
+                        old_intermediate_desc=inter_desc,
+                        offset=producer_offset,
+                        squeezed_dims=squeezed_dims,
                     )
 
                 self._reduce_producer_tree(
@@ -1364,6 +1367,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             reduced_intermediate_desc=new_inter_desc,
                             inner_data=new_inner_edge.dst_conn,
                             outer_edge=new_inner_edge,
+                            old_intermediate_desc=inter_desc,
+                            offset=consumer_offset,
+                            squeezed_dims=squeezed_dims,
                         )
 
                     # Now we have to make sure that all consumers are properly updated.
@@ -1396,6 +1402,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 reduced_intermediate_desc=new_inter_desc,
                                 inner_data=consumer_edge.dst_conn,
                                 outer_edge=consumer_edge,
+                                old_intermediate_desc=inter_desc,
+                                offset=consumer_offset,
+                                squeezed_dims=squeezed_dims,
                             )
 
                 # The edge that leaves the second MapEntry was already deleted. We now delete
@@ -2214,6 +2223,25 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
             return True
 
+        if inner_desc.is_equivalent(intermediate.desc(sdfg)):
+            # The connector is the intermediate itself and is reduced with it (see ``dealias.reduce_connector``),
+            # which also restates the views of it whose rank matches the reduced intermediate, with or without its
+            # degenerate dimensions (depending on `strict_dataflow`). A view of a single element has no strides.
+            allowed_view_ranks = {len(reduced_intermediate_shape), sum(1 for s in reduced_intermediate_shape if s != 1)}
+            for inner_state in inner_sdfg.all_states():
+                for inner_node in inner_state.data_nodes():
+                    if inner_node.data != inner_data:
+                        continue
+                    for other_node in itertools.chain(inner_state.predecessors(inner_node),
+                                                      inner_state.successors(inner_node)):
+                        if not isinstance(other_node, nodes.AccessNode):
+                            continue
+                        view_desc = other_node.desc(inner_sdfg)
+                        if (isinstance(view_desc, data.View) and len(view_desc.shape) not in allowed_view_ranks
+                                and not all(s == 1 for s in view_desc.shape)):
+                            return False
+            return True
+
         # We do not allow nested handling, i.e. the data can not be passed to another
         #  nested SDFG. Otherwise it would become too complicated. Thus we now check
         #  if the data is passed further down, by inspecting all nested SDFG.
@@ -2452,10 +2480,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         reduced_intermediate_desc: data.Data,
         inner_data: str,
         outer_edge: graph.MultiConnectorEdge[dace.Memlet],
+        old_intermediate_desc: Optional[data.Data] = None,
+        offset: Optional[subsets.Subset] = None,
+        squeezed_dims: Optional[List[int]] = None,
     ) -> None:
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         inner_desc = inner_sdfg.arrays[inner_data]
         outer_sdfg: dace.SDFG = nsdfg.sdfg.parent_sdfg
+
+        if old_intermediate_desc is not None and inner_desc.is_equivalent(old_intermediate_desc):
+            dealias.reduce_connector(
+                inner_sdfg,
+                inner_data,
+                reduced_intermediate_desc,
+                offset=offset,
+                squeeze=squeezed_dims or None,
+            )
+            return
 
         # NOTE: The current implementation of this function assumes that there is no
         #   recursive propagation of the change in strides needed.

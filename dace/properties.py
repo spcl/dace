@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -274,7 +274,7 @@ class Property(Generic[T]):
         self._setter = val
 
     @property
-    def dtype(self):
+    def dtype(self) -> type[T]:
         return self._dtype
 
     @property
@@ -835,10 +835,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
             return None
 
 
-class RangeProperty(Property):
+class RangeProperty(Property[dace.subsets.Range]):
     """ Custom Property type for `dace.subsets.Range` members. """
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value: Union[dace.subsets.Range, List[int]]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
         super(RangeProperty, self).__set__(obj, value)

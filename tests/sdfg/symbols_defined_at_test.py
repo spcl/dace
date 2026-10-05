@@ -490,6 +490,37 @@ def test_inter_state_edges_define_symbols_in_nested_regions():
     assert "k" not in top_level.symbols_defined_at_state()
 
 
-if __name__ == '__main__':
-    import sys
-    sys.exit(pytest.main([__file__, '-v']))
+def test_forgetting_an_sdfg_resolves_it_again():
+    """
+    A resolver holds on to what it resolved until it is told that the SDFG changed, and then only drops that SDFG.
+    """
+    sdfg = _make_sdfg("forget", nested=True)
+    outer_state = sdfg.states()[0]
+    nsdfg_node = next(n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG))
+    inner_state = nsdfg_node.sdfg.states()[0]
+    tasklet = next(n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet))
+
+    resolver = SymbolResolver()
+    assert "M" not in resolver.defined_at(inner_state, tasklet)
+    outer_symbols = resolver.defined_at(outer_state, outer_state.nodes()[0])
+    nsdfg_node.sdfg.add_symbol("M", dace.int32)
+    assert "M" not in resolver.defined_at(inner_state, tasklet)
+
+    resolver.forget(nsdfg_node.sdfg)
+    assert resolver.defined_at(inner_state, tasklet)["M"] == dace.int32
+    with mock.patch.object(SDFGState, "symbols_defined_at_state", autospec=True) as spy:
+        assert resolver.defined_at(outer_state, outer_state.nodes()[0]) == outer_symbols
+    assert spy.call_count == 0
+
+
+if __name__ == "__main__":
+    test_state_symbols_give_the_same_result()
+    test_propagation_resolves_the_state_symbols_once_per_state()
+    test_propagation_is_unchanged()
+    test_the_enclosing_regions_are_part_of_the_state_symbols()
+    test_propagation_keeps_the_loop_iterator()
+    test_an_error_leaves_no_state_behind()
+    test_declared_symbol_types_win_over_descriptor_instances()
+    test_inter_state_edges_define_symbols_for_the_states_after_them()
+    test_inter_state_edges_define_symbols_in_nested_regions()
+    test_forgetting_an_sdfg_resolves_it_again()

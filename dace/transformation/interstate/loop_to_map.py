@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop to map transformation """
 
 from collections import Counter, defaultdict
@@ -12,7 +12,7 @@ import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
 from dace.sdfg.type_inference import infer_expr_type
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import dealias, graph as gr, nodes
 from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -2219,3 +2219,6 @@ class LoopToMap(xf.MultiStateTransformation):
                                 pending.append(n.sdfg)
             if lift_ctx is not None:
                 lift_ctx.invariants.nested_references_current = True
+
+        # Integrate the nested SDFG into the parent SDFG
+        dealias.integrate_nested_sdfg(nsdfg.sdfg)

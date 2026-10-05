@@ -9,6 +9,7 @@ import sympy as sp
 from collections import deque
 import copy
 from typing import Any, Deque, Dict, List, Set, Tuple, Union, Optional
+from numpy.typing import ArrayLike
 from numbers import Number
 from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
@@ -20,11 +21,6 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
 from dace.ordered import OrderedSet
-
-try:
-    from numpy.typing import ArrayLike
-except ImportError:
-    ArrayLike = Any  # type: ignore
 
 
 class SDFGCutout(SDFG):
