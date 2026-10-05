@@ -6,6 +6,8 @@ from typing import NamedTuple, cast
 
 import sympy
 
+from dace import symbolic
+
 
 class Predicate(enum.Enum):
     """ A sign fact about one symbol. """
@@ -81,9 +83,9 @@ class Facts:
             reduced(relation, integers, self.substitution) for relation in self.relations
             if relation.kind is RelationKind.NE)
 
-    @staticmethod
-    def none() -> 'Facts':
-        return Facts((), frozenset())
+    @classmethod
+    def none(cls) -> 'Facts':
+        return cls((), frozenset())
 
 
 def relation_names(relation: Relation) -> set[str]:
@@ -106,10 +108,30 @@ def linear_symbols(difference: sympy.Expr) -> list[sympy.Symbol]:
         free for free in difference.free_symbols
         if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
     ]
-    return sorted(
-        (free for free in symbols
-         if cast(sympy.Expr, difference.coeff(free)).is_number and sympy.Poly(difference, free).degree() == 1),
-        key=lambda free: free.name)
+    return sorted((free for free in symbols if cast(sympy.Expr, difference.coeff(free)).is_number and (
+        poly := difference.as_poly(free)) is not None and poly.degree() == 1),
+                  key=lambda free: free.name)
+
+
+def split_extrema(relation: Relation) -> list[Relation]:
+    """
+    An ordering whose difference ``rhs - lhs`` adds a ``Min`` (or subtracts a ``Max``) as one relation per argument,
+    since it holds exactly when it holds for every one; ``a <= Min(b, c) - 1`` is ``a <= b - 1`` and ``a <= c - 1``.
+    """
+    if relation.kind not in (RelationKind.LT, RelationKind.LE):
+        return [relation]
+    difference = cast(sympy.Expr, sympy.sympify(relation.rhs - relation.lhs))
+    for extremum in sorted(difference.atoms(sympy.Min, sympy.Max), key=str):
+        coefficient = cast(sympy.Expr, difference.coeff(extremum))
+        rest = sympy.expand(difference - coefficient * extremum)
+        if not coefficient.is_number or extremum in rest.atoms(sympy.Min, sympy.Max):
+            continue
+        if coefficient.is_positive if isinstance(extremum, sympy.Min) else coefficient.is_negative:
+            return [
+                split for arg in extremum.args
+                for split in split_extrema(Relation(relation.kind, sympy.Integer(0), rest + coefficient * arg))
+            ]
+    return [relation]
 
 
 def eliminate(relations: Iterable[Relation], integers: frozenset[str]) -> dict[sympy.Symbol, sympy.Expr]:
@@ -118,8 +140,11 @@ def eliminate(relations: Iterable[Relation], integers: frozenset[str]) -> dict[s
     nonnegative slack (zero for an equality), and substitutes the result into the rest.
     """
     substitution: dict[sympy.Symbol, sympy.Expr] = {}
-    for relation in relations:
-        if relation.kind is RelationKind.NE:
+    for relation in (split for relation in relations for split in split_extrema(relation)):
+        # SymPy rewrites a ``Mod`` it is substituted into by Python's rounding (``Mod(x + 2, 2)`` is ``Mod(x, 2)``),
+        # which C's ``%`` does not share; leaving such a fact out only proves less
+        if relation.kind is RelationKind.NE or any(
+                sympy.sympify(side).atoms(sympy.Mod) for side in (relation.lhs, relation.rhs)):
             continue
         difference = reduced(relation, integers, substitution)
         if relation.kind is RelationKind.LT and difference.is_integer:
@@ -145,16 +170,137 @@ def reduced(relation: Relation, integers: frozenset[str], substitution: dict[sym
     return sympy.expand(difference.xreplace(substitution))
 
 
+class DivisionKind(enum.Enum):
+    FLOOR = enum.auto()
+    CEIL = enum.auto()
+    MOD = enum.auto()
+
+
+class Division(NamedTuple):
+    """
+    An ``int_floor``, ``int_ceil`` or ``Mod`` in a query. C++ divides with truncation (``/``, ``%``, and
+    ``dace::math::int_ceil`` is ``(x + y - 1) / y``) while Python and SymPy round down; the two agree when the numerator
+    is nonnegative and the denominator positive, so only there are the bounds of a division known.
+    """
+    kind: DivisionKind
+    numerator: sympy.Expr
+    denominator: sympy.Expr
+
+    def bounds(self, lower: bool) -> tuple[sympy.Expr, ...]:
+        """ The lower (or upper) bounds of the quotient (or remainder), for a nonnegative numerator over a positive
+        denominator. """
+        x, y = self.numerator, self.denominator
+        if self.kind is DivisionKind.FLOOR:
+            return (sympy.Integer(0), (x - y + 1) / y) if lower else (x / y, x)
+        if self.kind is DivisionKind.CEIL:
+            return (sympy.Integer(0), x / y) if lower else ((x + y - 1) / y, x)
+        return (sympy.Integer(0), ) if lower else (y - 1, x)
+
+
+def division_kind(atom: sympy.Expr) -> DivisionKind:
+    if isinstance(atom, symbolic.int_floor):
+        return DivisionKind.FLOOR
+    if isinstance(atom, symbolic.int_ceil):
+        return DivisionKind.CEIL
+    return DivisionKind.MOD
+
+
+def lowered(expr: sympy.Expr, integers: frozenset[str], substitution: dict[sympy.Symbol, sympy.Expr],
+            divisions: dict[sympy.Symbol, Division]) -> sympy.Expr:
+    """
+    ``expr`` with every division replaced, innermost first, by an integer placeholder recorded in ``divisions`` (the
+    same division by the same placeholder), whose operands are rewritten through ``substitution``. This comes before
+    anything rebuilds ``expr``, which would have SymPy rewrite a ``Mod`` by Python's rounding.
+    """
+    division_types = (symbolic.int_floor, symbolic.int_ceil, sympy.Mod)
+    while innermost := [
+            atom for atom in expr.atoms(*division_types) if not any(arg.atoms(*division_types) for arg in atom.args)
+    ]:
+        replacements: dict[sympy.Expr, sympy.Symbol] = {}
+        for atom in sorted(innermost, key=str):
+            # Placeholders of inner divisions are integers too
+            known = integers | {placeholder.name for placeholder in divisions}
+            numerator, denominator = (lowered(
+                sympy.expand(with_integers(cast(sympy.Expr, arg), known).xreplace(substitution)), integers, {},
+                divisions) for arg in atom.args)
+            division = Division(division_kind(atom), numerator, denominator)
+            placeholder = next((known for known, existing in divisions.items() if existing == division), None)
+            if placeholder is None:
+                # The name cannot be a program symbol, so the placeholder never meets the substitution
+                placeholder = sympy.Symbol(f'{division.kind.name.lower()}:{len(divisions)}', integer=True)
+                divisions[placeholder] = division
+            replacements[atom] = placeholder
+        expr = expr.xreplace(replacements)
+    return expr
+
+
+def proves_sign(expr: sympy.Expr, divisions: dict[sympy.Symbol, Division], strict: bool) -> bool:
+    """
+    Whether ``expr`` is provably nonnegative (positive if ``strict``). A placeholder it is linear in is replaced by
+    each bound of its division in turn, the lower ones if its coefficient is nonnegative and the upper ones if it is
+    nonpositive, outermost first; for an integer ``expr``, a bound above -1 suffices.
+    """
+    expr = sympy.expand(expr)
+    if strict and expr.is_integer:
+        expr, strict = expr - 1, False
+    placeholder = next((known for known in reversed(divisions) if known in expr.free_symbols), None)
+    if placeholder is None:
+        return (expr.is_positive if strict else expr.is_nonnegative) is True
+    division = divisions[placeholder]
+    poly = expr.as_poly(placeholder)
+    if poly is None or poly.degree() != 1 or not (proves_sign(division.numerator, divisions, False)
+                                                  and proves_sign(division.denominator, divisions, True)):
+        return False
+    coefficient = cast(sympy.Expr, poly.coeff_monomial(placeholder))
+    if proves_sign(coefficient, divisions, False):
+        bounds = division.bounds(lower=True)
+    elif proves_sign(-coefficient, divisions, False):
+        bounds = division.bounds(lower=False)
+    else:
+        return False
+    integer = not strict and expr.is_integer
+    return any(
+        proves_sign(expr.xreplace({placeholder: bound}) + 1, divisions, True
+                    ) if integer else proves_sign(expr.xreplace({placeholder: bound}), divisions, strict)
+        for bound in bounds)
+
+
+def by_cases(expr: sympy.Expr, kind: RelationKind, extremum: sympy.Expr, facts: Facts) -> Truth:
+    """ ``0 <kind> expr`` asked once for each argument the ``Min`` or ``Max`` can equal, assuming it does. """
+    truths: set[Truth] = set()
+    for arg in cast(tuple[sympy.Expr, ...], extremum.args):
+        others = [other for other in cast(tuple[sympy.Expr, ...], extremum.args) if other != arg]
+        case = [
+            Relation(RelationKind.LE, arg, other) if isinstance(extremum, sympy.Min) else Relation(
+                RelationKind.LE, other, arg) for other in others
+        ]
+        try:
+            case_facts = Facts(facts.relations + tuple(case), facts.integers)
+        except InconsistentAssumptionsError:
+            continue  # The argument is never the extremum
+        truths.add(ask(Relation(kind, sympy.Integer(0), cast(sympy.Expr, expr.xreplace({extremum: arg}))), case_facts))
+    return truths.pop() if len(truths) == 1 else Truth.UNKNOWN
+
+
 def ask(query: Relation, facts: Facts) -> Truth:
-    difference = reduced(query, facts.integers, facts.substitution)
+    expr = cast(sympy.Expr, sympy.sympify(query.rhs - query.lhs))
+    extrema = sorted(expr.atoms(sympy.Min, sympy.Max), key=str)
+    if extrema:
+        return by_cases(expr, query.kind, extrema[0], facts)
+    divisions: dict[sympy.Symbol, Division] = {}
+    difference = lowered(expr, facts.integers, facts.substitution, divisions)
+    difference = with_integers(difference, facts.integers | {placeholder.name for placeholder in divisions})
+    # The substitution may bring in divisions of its own
+    difference = lowered(sympy.expand(difference.xreplace(facts.substitution)), facts.integers, {}, divisions)
     if query.kind is RelationKind.EQ:
         answer = difference.is_zero
-    elif query.kind is RelationKind.LE:
-        answer = difference.is_nonnegative
-    elif query.kind is RelationKind.LT:
-        answer = difference.is_positive
-    else:
+    elif query.kind is RelationKind.NE:
         answer = difference.is_nonzero or (difference in facts.nonzero or -difference in facts.nonzero or None)
+    else:
+        strict = query.kind is RelationKind.LT
+        if proves_sign(difference, divisions, strict):
+            return Truth.TRUE
+        return Truth.FALSE if proves_sign(-difference, divisions, not strict) else Truth.UNKNOWN
     if answer is None:
         return Truth.UNKNOWN
     return Truth.TRUE if answer else Truth.FALSE

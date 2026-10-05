@@ -13,6 +13,7 @@ K = symbolic.symbol('K', dtypes.int32)
 M = symbolic.symbol('M', dtypes.int64)
 ITERATOR = symbolic.symbol('i', dtypes.int32)
 ZERO = sympy.Integer(0)
+ONE = sympy.Integer(1)
 INTEGERS = frozenset({'N', 'K', 'M', 'i'})
 
 
@@ -72,10 +73,59 @@ def test_predicates_survive_elimination():
     assert ask(Relation(RelationKind.LT, ZERO, N), facts) is Truth.TRUE
 
 
-def test_int_floor_sign_is_not_derived():
+def test_int_floor_of_nonnegative_is_bounded():
+    floor = cast(sympy.Expr, symbolic.int_floor(N, 2))
     facts = facts_of(predicate_relation(Predicate.NONNEGATIVE, N))
-    query = Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, 2)))
-    assert ask(query, facts) is Truth.UNKNOWN
+    assert ask(Relation(RelationKind.LE, ZERO, floor), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, floor, N), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, N - 1, 2 * floor), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, ONE, floor), facts_of(Relation(RelationKind.LE, sympy.Integer(2),
+                                                                        N))) is Truth.TRUE
+
+
+def test_division_of_unknown_sign_is_not_bounded():
+    """ C++ truncates where Python rounds down, so nothing is known unless the numerator is nonnegative. """
+    assert ask(Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, 2))),
+               Facts.none()) is Truth.UNKNOWN
+    shifted = sympy.Mod(ITERATOR - 2, 2, evaluate=False)
+    assert ask(Relation(RelationKind.LE, ZERO, shifted), facts_of(Relation(RelationKind.LE, ZERO,
+                                                                           ITERATOR))) is Truth.UNKNOWN
+    assert ask(Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, K))),
+               facts_of(predicate_relation(Predicate.NONNEGATIVE, N))) is Truth.UNKNOWN
+
+
+def test_int_ceil_bounds():
+    ceil = cast(sympy.Expr, symbolic.int_ceil(N, 32))
+    facts = facts_of(predicate_relation(Predicate.NONNEGATIVE, N))
+    assert ask(Relation(RelationKind.LE, N, 32 * ceil), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, ceil, N), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, ONE, ceil), facts_of(Relation(RelationKind.LE, ONE, N))) is Truth.TRUE
+
+
+def test_mod_of_iterator_is_bounded():
+    remainder = sympy.Mod(ITERATOR, N)
+    facts = facts_of(Relation(RelationKind.LE, ZERO, ITERATOR), Relation(RelationKind.LT, ITERATOR, N))
+    assert ask(Relation(RelationKind.LE, ZERO, remainder), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LT, remainder, N), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, remainder, ITERATOR), facts) is Truth.TRUE
+    nested = cast(sympy.Expr, symbolic.int_floor(remainder, 2))
+    assert ask(Relation(RelationKind.LT, nested, N), facts) is Truth.TRUE
+
+
+def test_min_and_max_are_split_into_cases():
+    assert ask(Relation(RelationKind.LE, sympy.Min(N, K), N), Facts.none()) is Truth.TRUE
+    assert ask(Relation(RelationKind.LE, K, sympy.Max(N, K)), Facts.none()) is Truth.TRUE
+    assert ask(Relation(RelationKind.LT, N, sympy.Min(N, K)), Facts.none()) is Truth.FALSE
+    only_n = facts_of(predicate_relation(Predicate.NONNEGATIVE, N))
+    assert ask(Relation(RelationKind.LE, ZERO, sympy.Min(N, K)), only_n) is Truth.UNKNOWN
+
+
+def test_tiled_range_bounds_the_index():
+    tile = symbolic.symbol('T', dtypes.int64)
+    facts = Facts(
+        (Relation(RelationKind.LE, ZERO, ITERATOR), Relation(RelationKind.LE, ITERATOR,
+                                                             sympy.Min(N, tile + 32) - 1)), INTEGERS | {'T'})
+    assert ask(Relation(RelationKind.LT, ITERATOR, N), facts) is Truth.TRUE
 
 
 def test_contradicting_predicates_raise():
@@ -99,6 +149,11 @@ if __name__ == '__main__':
     test_no_facts_prove_nothing()
     test_strictness_needs_declared_integers()
     test_predicates_survive_elimination()
-    test_int_floor_sign_is_not_derived()
+    test_int_floor_of_nonnegative_is_bounded()
+    test_division_of_unknown_sign_is_not_bounded()
+    test_int_ceil_bounds()
+    test_mod_of_iterator_is_bounded()
+    test_min_and_max_are_split_into_cases()
+    test_tiled_range_bounds_the_index()
     test_contradicting_predicates_raise()
     test_contradicting_relations_raise()
