@@ -1,5 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Training a ``@dace.program`` that uses modules with DaCe's automatic differentiation (``dace.ml.training_step``)."""
+"""
+Training a ``@dace.program`` that uses modules with DaCe's automatic differentiation: as one SDFG that computes the
+loss and the gradients (``dace.ml.training_step``), or as a differentiable function with a forward and a backward SDFG
+(``dace.ml.differentiable``).
+"""
 import numpy as np
 import pytest
 
@@ -129,9 +133,88 @@ def test_loss_must_be_scalar():
         dace.ml.training_step(not_a_loss)(torch.randn(3, 2))
 
 
+@pytest.mark.torch
+def test_differentiable_composes_with_torch():
+    """A program between PyTorch layers: autograd runs its backward SDFG and reaches the layers on both sides."""
+    torch.manual_seed(0)
+    model, reference = _models(lambda: nn.Sequential(nn.Linear(4, 6), nn.Tanh(), nn.Linear(6, 4)))
+    before, before_ref = _models(lambda: nn.Linear(3, 4))
+    after, after_ref = _models(lambda: nn.Linear(4, 2))
+
+    @dace.program
+    def block(x: dace.float32[N, 4]):
+        y = model(x)
+        return y * y + x
+
+    block = dace.ml.differentiable(block)
+    for n in (5, 7):
+        x = torch.randn(n, 3)
+        target = torch.randn(n, 2)
+        loss = nn.functional.mse_loss(after(block(before(x))), target)
+        loss.backward()
+        h = before_ref(x)
+        y = reference(h)
+        loss_ref = nn.functional.mse_loss(after_ref(y * y + h), target)
+        loss_ref.backward()
+        torch.testing.assert_close(loss, loss_ref, rtol=1e-4, atol=1e-6)
+        for pair in ((model, reference), (before, before_ref), (after, after_ref)):
+            _assert_gradients(*pair)
+            pair[0].zero_grad()
+            pair[1].zero_grad()
+    assert block.compile_count == 2  # One forward and one backward SDFG for all sizes
+
+
+@pytest.mark.torch
+def test_differentiable_interleaved_and_two_outputs():
+    """Saved forward data belongs to each call; outputs that the loss does not use get zero gradients."""
+    model, reference = _models(lambda: nn.Linear(3, 3))
+
+    @dace.program
+    def two(x: dace.float32[N, 3]):
+        y = model(x)
+        return np.tanh(y), y * 2
+
+    two = dace.ml.differentiable(two)
+    a, b = torch.randn(4, 3), torch.randn(6, 3)
+    a_first, _ = two(a)
+    b_first, b_second = two(b)
+    (b_first.sum() + b_second.square().sum()).backward()
+    a_first.square().sum().backward()
+    y_b, y_a = reference(b), reference(a)
+    (torch.tanh(y_b).sum() + (y_b * 2).square().sum()).backward()
+    torch.tanh(y_a).square().sum().backward()
+    _assert_gradients(model, reference)
+
+
+@pytest.mark.torch
+def test_differentiable_training_loop():
+    model, reference = _models(lambda: nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 1)))
+
+    @dace.program
+    def forward(x: dace.float32[N, 4]):
+        return model(x)
+
+    forward = dace.ml.differentiable(forward)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
+    optimizer_ref = torch.optim.SGD(reference.parameters(), lr=0.05)
+    for step in range(3):
+        x, y = torch.randn(6 + step, 4), torch.randn(6 + step, 1)
+        optimizer.zero_grad()
+        optimizer_ref.zero_grad()
+        nn.functional.mse_loss(forward(x), y).backward()
+        nn.functional.mse_loss(reference(x), y).backward()
+        _assert_gradients(model, reference)
+        optimizer.step()
+        optimizer_ref.step()
+    assert forward.compile_count == 2
+
+
 if __name__ == '__main__':
     test_sgd_steps_compile_once()
     test_argument_gradient_and_accumulation()
     test_frozen_parameters()
     test_module_in_loop()
     test_loss_must_be_scalar()
+    test_differentiable_composes_with_torch()
+    test_differentiable_interleaved_and_two_outputs()
+    test_differentiable_training_loop()

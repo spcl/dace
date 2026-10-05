@@ -131,6 +131,16 @@ How programs are lowered
           loss = step(x, y)
           optimizer.step()
 
+  ``dace.ml.differentiable(program)`` instead makes a program a differentiable PyTorch function with a forward and a
+  backward SDFG (``dace.autodiff.make_backward_pass``): its outputs can feed further PyTorch operations, and
+  ``backward()`` runs the backward SDFG, accumulating gradients into the parameters of the modules it uses.
+
+  .. code-block:: python
+
+      block = dace.ml.differentiable(block_program)
+      loss = torch.nn.functional.mse_loss(head(block(x)), y)
+      loss.backward()
+
   See ``samples/ml`` for complete examples of both ways of training.
 
 Limitations

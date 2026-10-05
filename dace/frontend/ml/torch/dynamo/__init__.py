@@ -14,6 +14,9 @@ Usage::
 from .backend import DaceBackend, dace_backend
 from .capture import CapturedProgram, capture
 from .interface import compile
-from .training import TrainingStep, training_step
+from .training import DifferentiableProgram, TrainingStep, differentiable, training_step
 
-__all__ = ['DaceBackend', 'dace_backend', 'compile', 'capture', 'CapturedProgram', 'TrainingStep', 'training_step']
+__all__ = [
+    'DaceBackend', 'dace_backend', 'compile', 'capture', 'CapturedProgram', 'TrainingStep', 'training_step',
+    'DifferentiableProgram', 'differentiable'
+]
