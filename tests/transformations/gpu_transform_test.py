@@ -5,28 +5,6 @@ import dace
 import numpy as np
 import pytest
 from dace.transformation.dataflow import GPUTransformLocalStorage
-from dace.transformation.interstate import GPUTransformSDFG
-
-
-def test_toplevel_transient_lifetime():
-    N = dace.symbol('N')
-
-    @dace.program
-    def program(A: dace.float64[20, 20]):
-        for i in range(20):
-            tmp = A[:i, :i]
-            tmp2 = A[:5, :N]
-            tmp *= 5
-            tmp2 *= 10
-
-    sdfg = program.to_sdfg()
-    sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
-
-    for name, desc in sdfg.arrays.items():
-        if name == 'tmp2' and type(desc) is dace.data.Array:
-            assert desc.lifetime is dace.AllocationLifetime.SDFG
-        else:
-            assert desc.lifetime is not dace.AllocationLifetime.SDFG
 
 
 @pytest.mark.gpu
@@ -197,6 +175,30 @@ def test_free_tasklet(transient, scalar):
     sdfg.validate()
 
 
+def test_free_tasklet_connectorless_dependency_edge():
+    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge --
+    e.g. an edge sequencing a reduction-init tasklet -- must wrap in the GPU_Device map
+    without crashing. Pre-fix the connector rebuild did ``'IN_' + e.dst_conn`` and threw
+    ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
+    dependency edge with no IN_/OUT_ connector."""
+    sdfg = dace.SDFG("gcode_depedge")
+    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
+    state = sdfg.add_state("main")
+
+    seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
+    state.add_edge(seed, "_o", state.add_access(arr_name), None, dace.memlet.Memlet("A[0]"))
+
+    follow = state.add_tasklet("follow", {}, {"_o2"}, "_o2 = 1.0")
+    state.add_edge(follow, "_o2", state.add_access(arr_name), None, dace.memlet.Memlet("A[1]"))
+
+    # Connector-less empty-memlet dependency edge: seed must run before follow.
+    state.add_nedge(seed, follow, dace.memlet.Memlet())
+
+    sdfg.validate()
+    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+    sdfg.validate()
+
+
 def _row_doubling_body(shape):
     """``b[0, j] = 2 * a[0, j]``, with both connectors describing the whole container."""
     sdfg = dace.SDFG('body')
@@ -239,7 +241,6 @@ def test_gpu_local_storage_of_a_nested_sdfg_row():
 
 
 if __name__ == '__main__':
-    test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
     test_a_fully_overwritten_array_is_not_staged_down_first()

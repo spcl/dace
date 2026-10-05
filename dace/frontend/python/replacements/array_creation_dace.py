@@ -40,7 +40,7 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
         return shape, False
 
     # One symbol per distinct name; sorted() keeps the promotion states deterministic.
-    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
+    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n) for n in sorted(names)}
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved], True
 
 
