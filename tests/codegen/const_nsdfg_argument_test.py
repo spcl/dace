@@ -28,6 +28,7 @@ def _signature(inner: dace.SDFG, in_conns, out_conns, wirings) -> str:
             state.add_memlet_path(access, entry, nsdfg, dst_conn=conn, memlet=dace.Memlet(data=oname, subset=sub))
         else:
             state.add_memlet_path(nsdfg, exit_, access, src_conn=conn, memlet=dace.Memlet(data=oname, subset=sub))
+    nsdfg.integrate_into_parent()
 
     code = '\n'.join(o.code for o in sdfg.generate_code())
     match = re.search(r'void %s\w*\(([^)]*)\)' % re.escape(inner.name), code)
@@ -77,8 +78,8 @@ def _inner_with_view(name: str, write_through_view: bool) -> dace.SDFG:
 
 def test_readonly_input_is_const_and_written_output_is_not():
     sig = _signature(_inner_copy('roarr'), {'a'}, {'b'}, [('a', 'A', 'i,0:8', True), ('b', 'B', 'i,0:8', False)])
-    assert _param(sig, 'a').startswith('const '), _param(sig, 'a')
-    assert not _param(sig, 'b').startswith('const '), _param(sig, 'b')
+    assert _param(sig, 'A').startswith('const '), _param(sig, 'A')
+    assert not _param(sig, 'B').startswith('const '), _param(sig, 'B')
 
 
 def test_inout_array_is_not_const():
@@ -90,7 +91,7 @@ def test_inout_array_is_not_const():
                          'w = v + 1.0', {'w': dace.Memlet('d[j]')},
                          external_edges=True)
     sig = _signature(g, {'d'}, {'d'}, [('d', 'D', 'i,0:8', True), ('d', 'D', 'i,0:8', False)])
-    assert not _param(sig, 'd').startswith('const '), _param(sig, 'd')
+    assert not _param(sig, 'D').startswith('const '), _param(sig, 'D')
 
 
 def test_a_read_view_of_a_const_input_is_emitted_const():
@@ -104,8 +105,11 @@ def test_a_read_view_of_a_const_input_is_emitted_const():
     nsdfg = state.add_nested_sdfg(inner, {'a': None}, {'b': None})
     state.add_memlet_path(state.add_access('A'), entry, nsdfg, dst_conn='a', memlet=dace.Memlet('A[i, 0:8]'))
     state.add_memlet_path(nsdfg, exit_, state.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i, 0:8]'))
+    nsdfg.integrate_into_parent()
     code = '\n'.join(o.code for o in sdfg.generate_code())
 
+    # Integration leaves "a" a view of the const parameter "A", and "av" a view of that view.
+    assert re.search(r'const\s+double\s*\*\s*a\s*;', code), 'view "a" is not pointer-to-const'
     assert re.search(r'const\s+double\s*\*\s*av\s*;', code), 'view "av" is not pointer-to-const'
 
 

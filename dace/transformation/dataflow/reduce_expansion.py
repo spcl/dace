@@ -1,9 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the reduce-map transformation.
 """
 
 from dace import dtypes
-from dace.sdfg import SDFG, nodes, utils, graph
+from dace.sdfg import SDFG, nodes, utils, graph, dealias
 from dace.memlet import Memlet
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import SDFGState
@@ -378,5 +378,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         utils.change_edge_dest(state, node, nsdfg)
         utils.change_edge_src(state, node, nsdfg)
         state.remove_node(node)
+        dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
         return nsdfg
