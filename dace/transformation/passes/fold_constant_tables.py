@@ -25,8 +25,6 @@ class FoldConstantTables(ppl.Pass):
     assigning a literal, in one state outside every loop, and that nothing else writes.
     """
 
-    CATEGORY: str = 'Simplification'
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
 

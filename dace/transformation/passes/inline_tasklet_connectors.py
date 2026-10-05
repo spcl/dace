@@ -30,8 +30,6 @@ from dace.transformation.pass_pipeline import Modifies
 class InlineTaskletConnectors(ppl.Pass):
     """ Rewrites eligible tasklet connectors into direct array accesses. """
 
-    CATEGORY = 'Optimization Preparation'
-
     def modifies(self) -> Modifies:
         return Modifies.Tasklets
 

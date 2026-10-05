@@ -22,8 +22,6 @@ class PromoteConstantTransients(ppl.Pass):
     to a constant subset and no two writes overlap. A write is a data-free tasklet or a map filling one literal.
     Reading an element before its only write is undefined, so the literal is a valid value for every read. """
 
-    CATEGORY: str = 'Optimization'
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
