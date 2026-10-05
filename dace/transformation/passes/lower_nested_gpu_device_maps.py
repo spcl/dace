@@ -60,8 +60,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     Bounds must be evaluable where the kernel is launched.
     """
 
-    CATEGORY: str = 'Simplification'
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -78,8 +76,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                                                  state,
                                                  StateSubgraphView(state,
                                                                    list(state.all_nodes_between(map_entry, map_exit))),
-                                                 name=f'if_of_nested_{map_entry.label}',
-                                                 full_data=True)
+                                                 name=f'if_of_nested_{map_entry.label}')
         inner = nsdfg_node.sdfg
         for sym, sym_type in defined.items():
             if sym not in inner.symbols:
@@ -96,7 +93,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
         self.dissolve_map_scope(state, map_entry, map_exit)
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
-        state.sdfg.reset_cfg_list()
 
     def dissolve_map_scope(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> None:
         """Remove a map scope, reconnecting its contents to the scope's outer neighbors."""
