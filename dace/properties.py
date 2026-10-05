@@ -1219,27 +1219,20 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
-                and not isinstance(val, sbs.SubsetUnion)):
-            raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
+        if val is not None and not isinstance(val, (sbs.Range, sbs.SubsetUnion)):
+            raise TypeError("Subset property must be either Range or SubsetUnion: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
     @staticmethod
     def from_string(s):
         if s is None or s == 'None' or len(s) == 0:
             return None
-        ranges = sbs.Range.from_string(s)
-        if ranges:
-            return ranges
-        else:
-            return sbs.Indices.from_string(s)
+        return sbs.Range.from_string(s)
 
     @staticmethod
     def to_string(val):
         if isinstance(val, sbs.Range):
             return sbs.Range.ndslice_to_string(val)
-        elif isinstance(val, sbs.Indices):
-            return sbs.Indices.__str__(val)
         elif val is None:
             return 'None'
         raise TypeError

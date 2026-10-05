@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.config import Config
-from dace.subsets import Indices, Range
+from dace.subsets import Range
 
 
 def test_integer_overlap_same_step_no_cover():
@@ -135,17 +135,17 @@ def test_range_indices():
     If i is not in r's bounding box i.covers_precise(r) and r.covers_precise(i)
     should return false
     """
-    subset1 = Indices.from_string('1')
+    subset1 = Range.from_string('1')
     subset2 = Range.from_string('0:2:1')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2) is False)
 
-    subset1 = Indices.from_string('3')
+    subset1 = Range.from_string('3')
     subset2 = Range.from_string('0:4:2')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset2.covers_precise(subset1) is False)
 
-    subset1 = Indices.from_string('3')
+    subset1 = Range.from_string('3')
     subset2 = Range.from_string('0:2:1')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
@@ -156,43 +156,43 @@ def test_index_index():
     Tests the handling of indices covering indices.
     Given two indices i1 and i2 i1.covers_precise should only return true iff i1 = i2
     """
-    subset1 = Indices.from_string('1')
-    subset2 = Indices.from_string('1')
+    subset1 = Range.from_string('1')
+    subset2 = Range.from_string('1')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2))
 
-    subset1 = Indices.from_string('1')
-    subset2 = Indices.from_string('2')
+    subset1 = Range.from_string('1')
+    subset2 = Range.from_string('2')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
 
-    subset1 = Indices.from_string('1, 2')
-    subset2 = Indices.from_string('1, 2')
+    subset1 = Range.from_string('1, 2')
+    subset2 = Range.from_string('1, 2')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2))
 
-    subset1 = Indices.from_string('2, 1')
-    subset2 = Indices.from_string('1, 2')
+    subset1 = Range.from_string('2, 1')
+    subset2 = Range.from_string('1, 2')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
 
-    subset1 = Indices.from_string('i')
-    subset2 = Indices.from_string('j')
+    subset1 = Range.from_string('i')
+    subset2 = Range.from_string('j')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
 
-    subset1 = Indices.from_string('i')
-    subset2 = Indices.from_string('i')
+    subset1 = Range.from_string('i')
+    subset2 = Range.from_string('i')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2))
 
-    subset1 = Indices.from_string('i, j')
-    subset2 = Indices.from_string('i, k')
+    subset1 = Range.from_string('i, j')
+    subset2 = Range.from_string('i, k')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
 
-    subset1 = Indices.from_string('i, j')
-    subset2 = Indices.from_string('i, j')
+    subset1 = Range.from_string('i, j')
+    subset2 = Range.from_string('i, j')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2))
 

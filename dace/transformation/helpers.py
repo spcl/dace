@@ -1183,7 +1183,7 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) 
     :return: A list of contiguous subsets.
     """
     # Currently O(n^3) worst case. TODO: improve
-    subset_set = set(subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list)
+    subset_set = set(subset_list)
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:

@@ -540,7 +540,7 @@ def cpp_array_expr(sdfg,
                    referenced_array=None,
                    codegen: Optional['TargetCodeGenerator'] = None,
                    framecode: Optional['DaCeCodeGenerator'] = None):
-    """ Converts an Indices/Range object to a C++ array access string. """
+    """ Converts a Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
