@@ -8,7 +8,7 @@ import functools
 import platform
 import dace.serialize
 import dace.library
-from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
+from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, propagation
 from dace.sdfg import graph
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import unparse
@@ -1401,6 +1401,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                        final_inner_smem,
                                        src_conn='o',
                                        memlet=dace.Memlet('s_mem[0]', wcr=node.wcr))
+
+            # Integrate only once every inner access node is connected
+            dealias.integrate_nested_sdfg(nested_sdfg)
 
             if mini_warps:
                 bme3, bmx3 = nstate.add_map('block', {

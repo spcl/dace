@@ -1,17 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
 import struct
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 from numbers import Number
 import os
 
 from dace import dtypes, SDFG
-try:
-    from numpy.typing import ArrayLike
-except ImportError:
-    ArrayLike = Any  # type: ignore
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 
 @dataclass

@@ -2530,6 +2530,50 @@ _PYSTR2SYM_locals = {
 _PYSTR2SYM_locals.update(_sympy_clash)
 
 
+def symbol_replacements(
+        symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]]) -> Optional[Dict[str, sympy.Basic]]:
+    """
+    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that
+    ``replace_symbols`` replaces all at once. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols rather than
+    replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+
+    The dictionary is keyed by symbol name: a mapping names its symbols, which have a type of their own that is part
+    of their identity (e.g., ``symbol('N')`` is not ``symbol('N', dtype=dace.int64)``).
+
+    :param symbol_mapping: A mapping from symbol names or symbols to expressions, or None.
+    :return: The replacement dictionary, or None if the mapping replaces nothing.
+    """
+    if not symbol_mapping:
+        return None
+    result = {}
+    for key, value in symbol_mapping.items():
+        key = str(key)
+        value = value if isinstance(value, sympy.Basic) else pystr_to_symbolic(value)
+        # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
+        if isinstance(value, sympy.Symbol) and value.name == key:
+            continue
+        result[key] = value
+    return result or None
+
+
+def replace_symbols(expr: Any, replacements: Optional[Dict[str, sympy.Basic]]) -> Any:
+    """
+    Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
+    whatever their types.
+
+    :param expr: The expression, or a non-symbolic value, which is returned as is.
+    :param replacements: Expressions to replace the symbols with, by symbol name, or None.
+    :return: The expression with the symbols replaced.
+    """
+    if not replacements or not isinstance(expr, sympy.Basic):
+        return expr
+    found = {
+        s: replacements[s.name]
+        for s in expr.free_symbols if isinstance(s, sympy.Symbol) and s.name in replacements
+    }
+    return expr.xreplace(found) if found else expr
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """
     The visitor reconstructs symbolic expressions with non-evaluating SymPy
@@ -2825,6 +2869,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
     invrepl = {}
+    symbolic_repl = {}
     for k, v in mapping.items():
         # Degenerate
         if str(k) == str(v):
@@ -2851,8 +2896,28 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
             pass
 
         # Otherwise, symbolic replacement
-        repl[k] = f'__dacesym_{k}'
-        invrepl[f'__dacesym_{k}'] = v
+        symbolic_repl[str(k)] = v
+
+    # Two-step replacement is only needed when replaced keys (including ones mapped to constants) appear in the
+    # symbolic values (e.g., {M: N, N: M} or {M: N, N: 5}), as the callback may replace sequentially
+    if symbolic_repl:
+        keys = set(symbolic_repl.keys()) | {str(k) for k in repl.keys()}
+        overlap = False
+        for v in symbolic_repl.values():
+            try:
+                vsyms = {str(s) for s in pystr_to_symbolic(v).free_symbols}
+            except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+                overlap = True  # Cannot analyze, be safe
+                break
+            if keys & vsyms:
+                overlap = True
+                break
+        if overlap:
+            for k, v in symbolic_repl.items():
+                repl[k] = f'__dacesym_{k}'
+                invrepl[f'__dacesym_{k}'] = v
+        else:
+            repl.update(symbolic_repl)
 
     if len(repl) == 0:
         return
