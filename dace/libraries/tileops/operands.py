@@ -5,14 +5,12 @@ from dataclasses import dataclass
 
 import dace
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from dace.libraries.tileops.validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
-from dace.optionals import required
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,17 +42,17 @@ def input_connectors(operands: Sequence[Operand], has_mask: bool) -> list[str]:
     return [operand.conn for operand in operands if operand.reads_connector] + (["_mask"] if has_mask else [])
 
 
-def connected_edges(state: dace.SDFGState, node: nodes.LibraryNode) -> dict[str, MultiConnectorEdge[Memlet]]:
+def connected_edges(state: dace.SDFGState, node: nodes.LibraryNode) -> dict[str, MultiConnectorEdge]:
     return {edge.dst_conn: edge for edge in state.in_edges(node) if edge.dst_conn is not None}
 
 
-def output_edge(state: dace.SDFGState, node: nodes.LibraryNode, conn: str) -> MultiConnectorEdge[Memlet]:
+def output_edge(state: dace.SDFGState, node: nodes.LibraryNode, conn: str) -> MultiConnectorEdge:
     return next(edge for edge in state.out_edges(node) if edge.src_conn == conn)
 
 
-def edge_ctype(sdfg: dace.SDFG, edge: MultiConnectorEdge[Memlet]) -> str:
+def edge_ctype(sdfg: dace.SDFG, edge: MultiConnectorEdge) -> str:
     """The C++ element type of the array an edge moves."""
-    return required(sdfg.arrays[required(edge.data.data)]).dtype.ctype
+    return sdfg.arrays[edge.data.data].dtype.ctype
 
 
 def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], offset: str) -> tuple[str, bool]:
@@ -69,7 +67,7 @@ def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], o
     return conn, True
 
 
-def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge[Memlet]], sdfg: dace.SDFG,
+def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge], sdfg: dace.SDFG,
                  fallback: str) -> str:
     """The C++ type the value operands of a node share.
 
@@ -106,7 +104,7 @@ def operands_share_output_type(node: nodes.LibraryNode, state: dace.SDFGState, s
     return shared_ctype(operands, connected_edges(state, node), sdfg, out_ctype) == out_ctype
 
 
-def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnectorEdge[Memlet]) -> bool:
+def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnectorEdge) -> bool:
     """Whether every lane computes one value into a one-element output: no tile operand, no tile to write.
 
     Codegen binds a one-element connector by value, so such a node assigns its output once and never walks it.
@@ -118,7 +116,7 @@ def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnec
 class LaneOperands:
     """The operands of one node as the ``pure`` expansion reads them, one lane at a time."""
     sdfg: dace.SDFG
-    in_edges: dict[str, MultiConnectorEdge[Memlet]]
+    in_edges: dict[str, MultiConnectorEdge]
     widths: list[int]
     offset: str
     shared: str
@@ -139,7 +137,7 @@ class LaneOperands:
         """The C++ type the operand is read as, after the cast of a broadcast."""
         if operand.kind == SYMBOL:
             return self.shared
-        desc = self.sdfg.arrays[required(self.in_edges[operand.conn].data.data)]
+        desc = self.sdfg.arrays[self.in_edges[operand.conn].data.data]
         if operand.kind == SCALAR and scalar_operand_ref(desc, operand.conn, self.widths, self.offset)[1]:
             return self.shared
         return desc.dtype.ctype
@@ -154,7 +152,7 @@ class LaneOperands:
         """
         if operand.kind == SYMBOL:
             return f"{self.cast}({pyexpr2cpp(operand.expr)})"
-        desc = self.sdfg.arrays[required(self.in_edges[operand.conn].data.data)]
+        desc = self.sdfg.arrays[self.in_edges[operand.conn].data.data]
         if operand.kind == TILE:
             reference = f"{operand.conn}[{self.offset}]"
         else:
@@ -167,12 +165,12 @@ class LaneOperands:
 
 
 def elementwise_tasklet(node: nodes.LibraryNode, state: dace.SDFGState, operands: Sequence[Operand], out_conn: str,
-                        rhs: str, out_ctype: str, in_edges: dict[str, MultiConnectorEdge[Memlet]]) -> nodes.Tasklet:
+                        rhs: str, out_ctype: str, in_edges: dict[str, MultiConnectorEdge]) -> nodes.Tasklet:
     """The ``pure`` tasklet of an elementwise node: ``out = rhs`` over the lanes, zero where the mask is off."""
     widths = list(node.widths)
     offset = tile_offset(widths)
     if has_lane_invariant_output(operands, output_edge(state, node, out_conn)):
-        mask_elements = required(in_edges["_mask"].data.subset).num_elements() if node.has_mask else None
+        mask_elements = in_edges["_mask"].data.subset.num_elements() if node.has_mask else None
         code = lane_invariant_assign(out_conn, rhs, out_ctype, widths, mask_elements)
     else:
         if node.has_mask:
@@ -218,7 +216,7 @@ def validate_elementwise(
     for operand in operands:
         if operand.reads_connector and operand.conn not in in_edges:
             raise ValueError(f"{node.label}: kind={operand.kind!r} but {operand.conn!r} not connected")
-    out_desc = sdfg.arrays[required(out_edges[out_conn].data.data)]
+    out_desc = sdfg.arrays[out_edges[out_conn].data.data]
     widths = tuple(node.widths)
     if any(operand.kind == TILE for operand in operands) and not (is_tile_shape(out_desc, widths)
                                                                   or edge_moves_a_tile(out_edges[out_conn], widths)):
@@ -229,7 +227,7 @@ def validate_elementwise(
         return
     for operand in operands:
         if operand.kind == TILE and operand.conn not in unpromoted:
-            src = required(sdfg.arrays[required(in_edges[operand.conn].data.data)]).dtype
+            src = sdfg.arrays[in_edges[operand.conn].data.data].dtype
             if not promotion(src, out_desc.dtype):
                 raise NotImplementedError(
                     f"{node.label}: Tile operand {operand.conn!r} dtype {src} cannot be promoted to output "

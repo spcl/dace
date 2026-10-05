@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileReduce``: a reduction inside a tile, along one axis or over all of it."""
 import dace
-from dace import cpf_lowering, library, properties
+from dace import library, properties
 from dace.sdfg import nodes
 
 from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
@@ -26,15 +26,14 @@ def identity_literal(op: str, ctype: str) -> str:
     raise ValueError(f"unknown op {op!r}")
 
 
-def combine_expr(op: str, acc: str, value: str, ctype: str) -> str:
-    """The C++ expression combining the accumulator and a value; ``ctype`` names ``std::min<T>`` for the C dialect."""
+def combine_expr(op: str, acc: str, value: str) -> str:
+    """The C++ expression combining the accumulator and a value."""
     if op == "+":
         return f"{acc} + {value}"
     if op == "*":
         return f"{acc} * {value}"
     if op in ("min", "max"):
-        template = f"<{ctype}>" if cpf_lowering.standalone_c() else ""
-        return f"std::{op}{template}({acc}, {value})"
+        return f"std::{op}({acc}, {value})"
     raise ValueError(f"unknown op {op!r}")
 
 
@@ -166,7 +165,7 @@ class TileReduce(TileOp):
             out_edge = output_edge(state, self, "_dst")
             scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
             writeback = "_dst = __acc;" if scalar_destination else "_dst[0] = __acc;"
-            body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{source_offset}]', ctype)};"
+            body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{source_offset}]')};"
             code = f"{ctype} __acc = {identity};\n{nested_loops(widths, body)}\n{writeback}"
         else:
             kept = [dim for dim in range(len(widths)) if dim != self.axis]
@@ -175,7 +174,7 @@ class TileReduce(TileOp):
             # which renumbers its lane names from ``__l0``.
             reduce_offset = tile_offset(kept_widths, [f"__l{dim}" for dim in kept])
             init_offset = tile_offset(kept_widths)
-            combined = combine_expr(self.op, f"_dst[{reduce_offset}]", f"_src[{source_offset}]", ctype)
+            combined = combine_expr(self.op, f"_dst[{reduce_offset}]", f"_src[{source_offset}]")
             code = (f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};')}\n"
                     f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};')}")
         return nodes.Tasklet(

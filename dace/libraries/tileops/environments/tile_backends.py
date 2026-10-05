@@ -6,26 +6,25 @@ The backends expose the same ``dace::tileops`` signatures and differ in the inst
 selected only for a target that supports it, so its compile flag is safe to add.
 """
 import dace.library
-from typing import Dict, List
 
 
 class TileOpsHeaderOnly:
     """The fields of an environment that adds a header and nothing else."""
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_includes: List[str] = []
-    cmake_libraries: List[str] = []
-    cmake_compile_flags: List[str] = []
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
 
-    headers: Dict[str, List[str]] = {}
-    state_fields: List[str] = []
+    headers = {}
+    state_fields = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies = []
 
 
 @dace.library.environment

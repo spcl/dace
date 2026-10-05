@@ -1349,7 +1349,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        onode = store_through_exit(sdfg, graph, acc, dname, in_subset, global_map_exit, onode)
+                        # Skip a store the downstream chain overwrites: it would leave the fused
+                        # MapExit and that chain writing the same slot unordered.
+                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
+                                                        global_map_exit.map.params, global_map_exit.map.range).subset
+                        downstream = sdutil.find_downstream_nodes(acc, graph)
+                        superseded = any(
+                            ie.src in downstream and not ie.data.is_empty()
+                            and ie.data.get_dst_subset(ie, graph) is not None
+                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
+                            for ds in graph.data_nodes() if ds.data == dname and graph.out_degree(ds) == 0
+                            for ie in graph.in_edges(ds))
+                        if not superseded:
+                            if not onode:
+                                onode = graph.add_access(dname)
+                            graph.add_memlet_path(acc,
+                                                  global_map_exit,
+                                                  onode,
+                                                  memlet=Memlet(data=dname, subset=in_subset),
+                                                  src_conn=None)
 
                 # Connectors follow the data into the transient covering the union of the incoming subsets
                 for e in graph.edges():

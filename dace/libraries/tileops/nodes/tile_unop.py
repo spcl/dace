@@ -16,7 +16,6 @@ from dace.libraries.tileops.operands import (Operand, check_operands, connected_
 from dace.libraries.tileops.ops import CAST_OPS, UNARY_OPS
 from dace.libraries.tileops.validation import promotion_ok
 from dace.libraries.tileops.nodes.tile_op import TileOp
-from dace.optionals import required
 
 
 @library.expansion
@@ -168,8 +167,7 @@ class TileUnop(TileOp):
             source = reference = f"_a[{offset}]"
             operand_ctype = edge_ctype(sdfg, in_edges["_a"])
         else:
-            source, broadcast = scalar_operand_ref(sdfg.arrays[required(in_edges["_a"].data.data)], "_a", self.widths,
-                                                   offset)
+            source, broadcast = scalar_operand_ref(sdfg.arrays[in_edges["_a"].data.data], "_a", self.widths, offset)
             operand_ctype = out_ctype if broadcast else edge_ctype(sdfg, in_edges["_a"])
             reference = f"{cast}({source})" if broadcast else source
         if self.op in CAST_OPS:

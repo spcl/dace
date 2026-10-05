@@ -16,11 +16,10 @@ import dace
 from dace.libraries.tileops import TileBinop, TileITE, TileUnop
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.memlet import Memlet
-from dace.transformation.passes.vectorization.enums import ISA
 
 
 def _wire_binop(kind_a, kind_b, out_shape, src_dtype=dace.float64):
-    sdfg = dace.SDFG("binop_fixture_wire_binop")
+    sdfg = dace.SDFG("binop_fixture")
     sdfg.add_array("A", (8, ), src_dtype, transient=True)
     sdfg.add_array("B", (8, ), src_dtype, transient=True)
     if out_shape == "scalar":
@@ -235,7 +234,7 @@ def test_unop_with_a_scalar_output_lowers_to_a_scalar_assignment():
     state.add_node(node)
     state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
     state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
-    node.target_isa = ISA.SCALAR
+    node.target_isa = "SCALAR"
     node.implementation = select_tile_implementation(node, state)
     assert node.implementation == "pure"
     sdfg.expand_library_nodes()
@@ -259,7 +258,7 @@ def test_binop_with_a_scalar_output_lowers_to_a_scalar_assignment():
     state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
     state.add_edge(state.add_access("B"), None, node, "_b", Memlet("B"))
     state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
-    node.target_isa = ISA.SCALAR
+    node.target_isa = "SCALAR"
     node.implementation = select_tile_implementation(node, state)
     assert node.implementation == "pure"
     sdfg.expand_library_nodes()

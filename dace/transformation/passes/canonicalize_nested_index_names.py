@@ -27,8 +27,6 @@ RETURN_NAMESPACE = '__return'
 class CanonicalizeNestedIndexNames(ppl.Pass):
     """Rename nested-SDFG arrays so each data name owns a single ``(ndim, strides, offset)`` signature."""
 
-    CATEGORY: str = 'Optimization Preparation'
-
     def modifies(self) -> Modifies:
         return Modifies.Descriptors | Modifies.AccessNodes | Modifies.Edges
 

@@ -9,9 +9,8 @@ import threading
 import pickle
 import re
 import types
-import weakref
-from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, TypeVar,
-                    Union, TYPE_CHECKING)
+from typing import (Any, Callable, Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Sequence, Set, Tuple, Union,
+                    TYPE_CHECKING, List)
 import numpy
 import sympy.abc
 import sympy.parsing.sympy_parser
@@ -376,39 +375,8 @@ class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
         # yapf: enable
 
 
-def sympy_symbol(name=None, dtype=None, **assumptions) -> symbol:
-    """DaCe symbol as a genuine sympy object, bypassing the backend factory.
-
-    Sympy island only: the value-to-sympy converter (the factory would recurse forever) and the
-    printers/serializers, where a foreign leaf grafted into a sympy tree just converts straight back.
-    """
-    return symbol.__new__(symbol, name, dtype, **assumptions)
-
-
-def is_symbol_leaf(value) -> bool:
-    """Plain DaCe symbol leaf carrying an authoritative `.dtype`.
-
-    Exact-kind, not `isinstance`: `UndefinedSymbol` subclasses `symbol` and a dtype must not be read
-    off the `?` sentinel. Replaces `type(value).__name__ == 'symbol'`, False for every native value.
-    """
-    return type(value) is symbol or symbolic_engine.is_native_symbol(value)
-
-
-#: Sentinel symbol for tile-shape broadcast dimensions in the K-dim
-#: vectorisation track (design section 3.8.1).
-#:
-#: A descriptor with shape ``(W_0, ONE, W_2)`` declares that dim 1 is a
-#: broadcast (size-1) dimension that downstream codegen must address as
-#: replicated -- not collapse-and-fold-out. Transformations that special-case
-#: literal-1 dims (length-1-array-to-scalar conversion, soft-squeeze in cpp
-#: codegen, ``to_unsqueeze`` in schedule trees) skip dims marked ``ONE`` via
-#: :func:`has_one_marker`.
-#:
-#: Final lowering substitutes ``ONE -> 1`` at the bottom of the per-arch
-#: codegen pipeline, so the C++ literal is unchanged for actual indexing.
-#: User direction 2026-06-10: name is literally ``"ONE"``; full-tile idx
-#: arrays always carry ``ONE`` for non-dependent dims so the gather lib
-#: nodes' broadcast lowering is uniform across CPU and GPU expansions.
+#: A descriptor with shape ``(W_0, ONE, W_2)`` declares that dim 1 is a broadcast (size-1) dimension of a tile, which
+#: the tile library nodes address as replicated rather than collapse out. Final lowering substitutes ``ONE -> 1``.
 ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
 
 #: The marker's name -- the only part of :data:`ONE` that survives storage in an SDFG.
@@ -418,52 +386,15 @@ ONE_NAME = 'ONE'
 def has_one_marker(s) -> bool:
     """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
 
-    Matches on the symbol NAME, not on sympy object identity. A same-named ``ONE`` reparsed from
-    a subset or shape string carries no assumptions, so it is a different sympy object than
-    :data:`ONE` (which carries ``positive=True``) and compares unequal. The name is what the
-    marker contract is written on (user direction 2026-06-10).
+    Matches on the symbol NAME, not on sympy object identity: a same-named ``ONE`` reparsed from a subset or shape
+    string carries no assumptions, so it is a different sympy object than :data:`ONE` and compares unequal.
 
-    :param s: A shape entry: Python int, sympy ``Basic``, :class:`SymExpr`, or native expression.
+    :param s: A shape entry: Python int or sympy ``Basic``.
     :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
     """
-    if to_sympy is not None:
-        converted = to_sympy(s)
-        if converted is not None:
-            s = converted
     if not isinstance(s, sympy.Basic):
         return False
     return any(isinstance(fs, sympy.Symbol) and fs.name == ONE_NAME for fs in s.free_symbols)
-
-
-def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
-    """Drop literal-1 dims (and optionally :data:`ONE`-marked dims) from a shape.
-
-    Two modes per user direction 2026-06-10:
-
-    * **Default** (``treat_one_symbol_as_one=False``): drops literal Python
-      ``1`` entries only. The sympy :data:`ONE` sentinel survives so
-      transformations that special-case its identity (per design 3.8.2 the
-      ``ONE``-marker firewall in :class:`ConvertLengthOneArraysToScalars`)
-      keep working. ``(8, 1)`` -> ``(8,)``; ``(8, ONE)`` -> ``(8, ONE)``.
-
-    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims that
-      :func:`has_one_marker` accepts. Used by sites that need the
-      "structural-equivalent" view (e.g. ``resolve_gather_deps`` in
-      :mod:`dace.libraries.tileops.lanes`, the GatherLift tile-shape
-      lookup, and test assertions). ``(8, ONE)`` -> ``(8,)`` here.
-
-    :param shape: A shape tuple / list / sequence; entries may be Python
-        ints, sympy ``Basic`` instances, or :class:`SymExpr`.
-    :param treat_one_symbol_as_one: Whether to also drop ``ONE``-symbol dims.
-    :returns: A new tuple with the requested entries removed in source order.
-    """
-
-    def _is_dropped(s):
-        if s == 1:
-            return True
-        return treat_one_symbol_as_one and has_one_marker(s)
-
-    return tuple(s for s in shape if not _is_dropped(s))
 
 
 class UndefinedSymbol(symbol):
@@ -4916,40 +4847,6 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
             repldict[b_syms[name]] = a_syms[name]
         b = b.subs(repldict)
     return a, b
-
-
-def equalize_symbols_across(*exprs: SympyT) -> Tuple[SympyT, ...]:
-    """The input expressions rewritten so every same-named free symbol is ONE instance across ALL of
-    them, chosen by :func:`symbol_merge_key`.
-
-    Use this before any operation that goes through symbol identity rather than name -- subtraction
-    that should cancel, ``.match`` against a ``Wild(exclude=[sym])``, ``sym in expr.free_symbols``,
-    ``expr.coeff(sym)`` -- whenever the expressions come from different sources (two memlets, a subset
-    against a reparsed loop bound). See :func:`equalize_symbol` for why one name yields several
-    instances; none of those operations raises when it happens, they just quietly answer wrong.
-
-    ⛔ Equalizing PAIRWISE is not the same as equalizing a GROUP, so this is not
-    :func:`equalize_symbols` applied repeatedly: three expressions equalized in pairs can still
-    disagree, and a linear system over them then puts one name in two monomials, making a solution
-    that exists unreachable. Unlike the 2-argument form, which keeps the FIRST expression's instance,
-    this picks the group's :func:`symbol_merge_key` minimum so the result does not depend on argument
-    order.
-    """
-    equalized = tuple(equalize_symbol(e) for e in exprs)
-    by_name: Dict[str, List[sympy.Symbol]] = {}
-    for e in equalized:
-        # plain int/float bounds pass through untouched rather than raising on free_symbols
-        if not isinstance(e, sympy.Basic):
-            continue
-        for s in e.free_symbols:
-            by_name.setdefault(s.name, []).append(s)
-    repl = {}
-    for group in by_name.values():
-        keep = min(group, key=symbol_merge_key)
-        repl.update({s: keep for s in group if s is not keep})
-    if not repl:
-        return equalized
-    return tuple(e.xreplace(repl) if isinstance(e, sympy.Basic) else e for e in equalized)
 
 
 def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:

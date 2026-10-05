@@ -690,86 +690,6 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
-def test_persistent_transient_reallocates_when_its_symbol_changes():
-    """A persistent transient sized by a call-time symbol keeps the FIRST call's extent.
-
-    ``__dace_init`` runs once, so the allocation is sized by whatever symbols the first call
-    carried; a later call with a larger value then writes past it. Observed as a SIGSEGV on the
-    canonicalized examinimd, whose scratch buffers ``make_transients_persistent`` promotes.
-    """
-    sdfg = dace.SDFG('persistent_resize')
-    n = dace.symbol('n', dace.int64)
-    sdfg.add_array('A', [n], dace.float64)
-    sdfg.add_array('B', [n], dace.float64)
-    sdfg.add_transient('scratch', [n],
-                       dace.float64,
-                       storage=dace.StorageType.CPU_Heap,
-                       lifetime=dace.AllocationLifetime.Persistent)
-
-    produce = sdfg.add_state()
-    me, mx = produce.add_map('produce', dict(i='0:n'))
-    doubler = produce.add_tasklet('doubler', {'a'}, {'s'}, 's = a * 2.0')
-    produce.add_memlet_path(produce.add_read('A'), me, doubler, dst_conn='a', memlet=dace.Memlet('A[i]'))
-    produce.add_memlet_path(doubler, mx, produce.add_write('scratch'), src_conn='s', memlet=dace.Memlet('scratch[i]'))
-
-    consume = sdfg.add_state_after(produce)
-    cme, cmx = consume.add_map('consume', dict(i='0:n'))
-    adder = consume.add_tasklet('adder', {'s'}, {'b'}, 'b = s + 1.0')
-    consume.add_memlet_path(consume.add_read('scratch'), cme, adder, dst_conn='s', memlet=dace.Memlet('scratch[i]'))
-    consume.add_memlet_path(adder, cmx, consume.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
-
-    assert sdfg.arrays['scratch'].lifetime == dace.AllocationLifetime.Persistent
-    csdfg = sdfg.compile()
-    # Small first, then large enough that the overflow leaves the first allocation's pages.
-    for size in (16, 1 << 20):
-        a = np.arange(size, dtype=np.float64)
-        b = np.zeros(size, dtype=np.float64)
-        csdfg(A=a, B=b, n=size)
-        assert np.allclose(b, a * 2.0 + 1.0)
-
-    del csdfg
-
-
-def test_a_view_does_not_reallocate_the_array_it_views():
-    """Viewing a transient in a LATER state must not allocate it a second time.
-
-    ``allocate_view`` allocates the viewed data "if necessary", and the necessity test lives in
-    ``allocate_array``: it returns early when the name is in ``defined_vars``. That set is SCOPED,
-    so once the allocating state's scope has been popped the guard cannot see the earlier
-    allocation, and the view gets a fresh buffer -- silently discarding everything the earlier state
-    wrote. It only bites a transient the frame allocates in ONE state rather than at SDFG entry,
-    i.e. one whose size depends on a loop variable. stockham_fft and velocity_tendencies both read
-    zeros out of transients for this; the frame's own DECLARATION is the marker that it already owns
-    the allocation.
-    """
-    N = dace.symbol('N', dtype=dace.int64)
-    i = dace.symbol('i', dtype=dace.int64)
-
-    sdfg = dace.SDFG('view_realloc')
-    sdfg.add_array('a', [N, N], dace.float64)
-    sdfg.add_array('out', [N], dace.float64)
-    sdfg.add_transient('t', [i + 1], dace.float64)
-    sdfg.add_view('tv', [i + 1], dace.float64)
-
-    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
-    sdfg.add_node(loop, is_start_block=True)
-
-    fill = loop.add_state('fill', is_start_block=True)
-    fill.add_mapped_tasklet('fill', {'j': '0:i + 1'}, {'x': dace.Memlet('a[i, j]')},
-                            'o = x', {'o': dace.Memlet('t[j]')},
-                            external_edges=True)
-
-    use = loop.add_state_after(fill)
-    tnode, vnode = use.add_access('t'), use.add_access('tv')
-    use.add_edge(tnode, None, vnode, 'views', dace.Memlet('t[0:i + 1]'))
-    use.add_edge(vnode, None, use.add_access('out'), None, dace.Memlet('tv[0] -> [i]'))
-
-    code = sdfg.generate_code()[0].clean_code
-    allocations = re.findall(r'\bt = new\b', code)
-    assert len(allocations) == 1, (f"'t' is allocated {len(allocations)} times; the second one is the view's, "
-                                   'and it throws away what the fill state wrote')
-
-
 def add_map_scoped_mutable_scalar(sdfg: dace.SDFG, state: dace.SDFGState) -> None:
     """``B[i] = ((A[i] * 2) + 1) * 3`` computed through a transient scalar ``zqe`` that is written
     TWICE inside the map, so it stays a mutable scalar."""
@@ -802,28 +722,6 @@ def run_deferred_scalar_case(sdfg: dace.SDFG, **extra) -> None:
     assert np.allclose(b, (a * 2.0 + 1.0) * 3.0)
 
 
-def test_deferred_scalar_code_use_outer_scope():
-    """The scalar's accesses all live in one map, but a tasklet at STATE TOP LEVEL names it as a free
-    name in its CODE (no connector / memlet / AccessNode). The eager declaration goes to the state, so
-    deferring into the map's brace puts it out of scope of that read."""
-    sdfg = dace.SDFG('deferred_scalar_code_use_outer_scope')
-    sdfg.add_array('A', [16], dace.float64)
-    sdfg.add_array('B', [16], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar('zqe', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    add_map_scoped_mutable_scalar(sdfg, state)
-
-    rc = state.add_read('A')
-    reader = state.add_tasklet('codeonly', {'a'}, {'o'}, 'o = a + zqe')
-    wc = state.add_write('C')
-    state.add_edge(rc, None, reader, 'a', dace.Memlet('A[0]'))
-    state.add_edge(reader, 'o', wc, None, dace.Memlet('C[0]'))
-
-    # C is not checked: it reads whatever `zqe` holds where the eager declaration puts it.
-    run_deferred_scalar_case(sdfg, C=np.zeros(1))
-
-
 def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
     """A NestedSDFG node computing ``cout = cin + k``, with ``k`` bound to the scalar ``zqe`` through
     ``symbol_mapping`` -- a use of ``zqe`` with no AccessNode, no memlet and no tasklet code."""
@@ -839,27 +737,6 @@ def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
     nest_state.add_edge(nr, None, nt, 'x', dace.Memlet('cin[i]'))
     nest_state.add_edge(nt, 'y', nw, None, dace.Memlet('cout[i]'))
     return state.add_nested_sdfg(nest, inputs={'cin'}, outputs={'cout'}, symbol_mapping={'k': 'zqe', 'i': 'i'})
-
-
-def test_deferred_scalar_nested_sdfg_symbol_mapping():
-    """The scalar is named by a NestedSDFG's ``symbol_mapping`` VALUE at state top level, while its
-    accesses are all inside a map. The eager declaration goes to the state; deferring into the map's
-    brace hides it from the nest's symbol binding."""
-    sdfg = dace.SDFG('deferred_scalar_nested_sdfg_symbol_mapping')
-    sdfg.add_array('A', [16], dace.float64)
-    sdfg.add_array('B', [16], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar('zqe', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    add_map_scoped_mutable_scalar(sdfg, state)
-
-    rc = state.add_read('A')
-    nsdfg = add_scalar_reading_nest(state)
-    wc = state.add_write('C')
-    state.add_edge(rc, None, nsdfg, 'cin', dace.Memlet('A[0]'))
-    state.add_edge(nsdfg, 'cout', wc, None, dace.Memlet('C[0]'))
-
-    run_deferred_scalar_case(sdfg, C=np.zeros(1))
 
 
 def test_deferred_scalar_nested_sdfg_same_scope():
@@ -925,7 +802,7 @@ def test_deferred_scalar_cpp_tasklet_same_scope():
 
 
 def test_deferred_scalar_still_applies():
-    """The counterpart of the three refusal tests: a scalar with NO use outside its map scope must
+    """The counterpart of the refusal tests: a scalar with NO use outside its map scope must
     still get the fused ``T zqe = expr;`` declaration, or the refusals above have simply turned the
     feature off instead of making it sound."""
     sdfg = dace.SDFG('deferred_scalar_still_applies')
@@ -935,11 +812,53 @@ def test_deferred_scalar_still_applies():
     state = sdfg.add_state('main')
     add_map_scoped_mutable_scalar(sdfg, state)
 
-    with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
-        code = sdfg.generate_code()[0].clean_code
-    assert 'double zqe = ' in code
-    assert 'double zqe;' not in code
-    run_deferred_scalar_case(sdfg)
+    # Only the readable generator defers a scalar declaration to its first write.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
+            code = sdfg.generate_code()[0].clean_code
+        assert 'double zqe = ' in code
+        assert 'double zqe;' not in code
+        run_deferred_scalar_case(sdfg)
+
+
+def test_a_view_does_not_reallocate_the_array_it_views():
+    """Viewing a transient in a LATER state must not allocate it a second time.
+
+    ``allocate_view`` allocates the viewed data "if necessary", and the necessity test lives in
+    ``allocate_array``: it returns early when the name is in ``defined_vars``. That set is SCOPED,
+    so once the allocating state's scope has been popped the guard cannot see the earlier
+    allocation, and the view gets a fresh buffer -- silently discarding everything the earlier state
+    wrote. It only bites a transient the frame allocates in ONE state rather than at SDFG entry,
+    i.e. one whose size depends on a loop variable. stockham_fft and velocity_tendencies both read
+    zeros out of transients for this; the frame's own DECLARATION is the marker that it already owns
+    the allocation.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+    i = dace.symbol('i', dtype=dace.int64)
+
+    sdfg = dace.SDFG('view_realloc')
+    sdfg.add_array('a', [N, N], dace.float64)
+    sdfg.add_array('out', [N], dace.float64)
+    sdfg.add_transient('t', [i + 1], dace.float64)
+    sdfg.add_view('tv', [i + 1], dace.float64)
+
+    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+
+    fill = loop.add_state('fill', is_start_block=True)
+    fill.add_mapped_tasklet('fill', {'j': '0:i + 1'}, {'x': dace.Memlet('a[i, j]')},
+                            'o = x', {'o': dace.Memlet('t[j]')},
+                            external_edges=True)
+
+    use = loop.add_state_after(fill)
+    tnode, vnode = use.add_access('t'), use.add_access('tv')
+    use.add_edge(tnode, None, vnode, 'views', dace.Memlet('t[0:i + 1]'))
+    use.add_edge(vnode, None, use.add_access('out'), None, dace.Memlet('tv[0] -> [i]'))
+
+    code = sdfg.generate_code()[0].clean_code
+    allocations = re.findall(r'\bt = new\b', code)
+    assert len(allocations) == 1, (f"'t' is allocated {len(allocations)} times; the second one is the view's, "
+                                   'and it throws away what the fill state wrote')
 
 
 if __name__ == '__main__':
@@ -970,9 +889,7 @@ if __name__ == '__main__':
     test_view_read_without_an_access_node(True)
     test_view_read_without_an_access_node(False)
     test_multisize()
-    test_persistent_transient_reallocates_when_its_symbol_changes()
-    test_deferred_scalar_code_use_outer_scope()
-    test_deferred_scalar_nested_sdfg_symbol_mapping()
     test_deferred_scalar_nested_sdfg_same_scope()
     test_deferred_scalar_cpp_tasklet_same_scope()
     test_deferred_scalar_still_applies()
+    test_a_view_does_not_reallocate_the_array_it_views()

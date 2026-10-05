@@ -34,7 +34,7 @@ def tile_subset(shape):
 
 def lane_mask(mask, shape):
     """The mask over the lanes of a tile of ``shape``; the 2-D tile repeats the 1-D pattern along its rows."""
-    return np.resize(np.array(mask, dtype=bool), shape)
+    return np.resize(np.array(mask, dtype=bool), shape).copy()
 
 
 def window_slices(window):

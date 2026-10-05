@@ -20,6 +20,8 @@ CPU generator instance -- inside ``__global__`` kernels.
 """
 import copy
 
+import re
+
 import numpy as np
 import pytest
 
@@ -73,15 +75,11 @@ def generated_for(build, name, implementation, gpu=False):
         return '\n'.join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
 
 
-def tasklet_body_line(code, suffix=''):
-    """The single emitted line that stores into ``C`` through the index functions.
-
-    ``suffix`` is appended to each array name: ``apply_gpu_transformations`` renames the arrays to
-    ``A_gpu``/``B_gpu``/``C_gpu``, and the index helpers follow the container they index.
-    """
-    names = ['%s%s_idx(' % (n, suffix) for n in ('A', 'B', 'C')]
-    lines = [ln.strip() for ln in code.splitlines() if all(name in ln for name in names)]
-    assert lines, 'no C[C%s_idx(..)] = A[..] + B[..] line found:\n%s' % (suffix, code)
+def tasklet_body_line(code):
+    """The single emitted line that stores into ``C`` through the index functions."""
+    # A GPU build names the device copies ``<name>_gpu``
+    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf'\b{x}(_gpu)?_idx\(', ln) for x in 'CAB')]
+    assert lines, 'no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n' + code
     return lines[0]
 
 

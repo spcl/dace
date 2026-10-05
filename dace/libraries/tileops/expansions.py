@@ -7,13 +7,12 @@ lowering itself is the node's ``pure_tasklet`` and ``isa_tasklet``.
 import dace
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-from typing import List
 
 
 class ExpandTilePure(ExpandTransformation):
     """The per-lane C++ loop, which the compiler can still vectorize."""
 
-    environments: List[type] = []
+    environments = []
 
     @classmethod
     def expansion(cls, node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:

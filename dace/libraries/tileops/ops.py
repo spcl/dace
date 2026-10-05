@@ -56,9 +56,8 @@ BINARY_OPS = {
     "-": infix_op("-", "-"),
     "*": infix_op("*", "*"),
     "/": infix_op("/", "/"),
-    "%": call_op("py_mod", "p"),  # Python's ``%`` floors
+    "%": call_op("c_mod", "%"),  # C's modulo, which ``c_mod`` also takes on floats
     "py_mod": call_op("py_mod", "p"),
-    "c_mod": call_op("c_mod", "%"),  # C's modulo, which ``c_mod`` also takes on floats
     "<": infix_op("<", "<", comparison=True),
     "<=": infix_op("<=", "l", comparison=True),
     ">": infix_op(">", ">", comparison=True),
@@ -115,4 +114,5 @@ CAST_OPS = {dtype_name.split("::")[-1]: dtype_name for dtype_name in dace.dtypes
 REDUCE_OPS = ("+", "*", "min", "max")
 
 #: The op codes of the ops that have one.
+BINARY_ISA_CODES = {op: spec.isa_code for op, spec in BINARY_OPS.items() if spec.isa_code is not None}
 UNARY_ISA_CODES = {op: spec.isa_code for op, spec in UNARY_OPS.items() if spec.isa_code is not None}

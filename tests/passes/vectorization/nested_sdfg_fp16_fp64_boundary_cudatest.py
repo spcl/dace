@@ -81,7 +81,8 @@ def test_boundary_division_operand_is_explicitly_typed():
     # The match window is the whole NUMERATOR of a divide by ``a_gpu[...]``, not just the ``1.0``:
     # a cast sits between the two, so a window that ended at the literal could only ever match the
     # spelling being ruled out -- and would then report "no division emitted" once it is gone.
-    divides = re.findall(r"([^;\n=]*\b1\.0\b[^;\n=]*)/\s*a_gpu\[[^\]]*\]", code)
+    # The operand is ``a_gpu[...]`` once the tasklet connector is inlined, its connector otherwise.
+    divides = re.findall(r"([^;\n=]*\b1\.0\b[^;\n=]*)/\s*(?:a_gpu\[[^\]]*\]|__in2\b)", code)
     assert divides, "no reciprocal division emitted; the test would prove nothing"
     for expr in divides:
         assert "dace::float16(" in expr or "static_cast<double>" in expr or "double(" in expr, \

@@ -1,11 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for the InlineTaskletConnectors pass. """
 import numpy as np
+import pytest
 import dace
 from dace.sdfg import nodes as dnodes
 from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
 
 N, M = dace.symbol('N'), dace.symbol('M')
+
+
+@pytest.fixture(autouse=True)
+def readable_cpu_generator():
+    """Only the readable generator emits a tasklet whose connectors the pass inlined."""
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+        yield
 
 
 def _tasklets(sdfg):

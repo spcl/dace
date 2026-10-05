@@ -5,67 +5,67 @@
  },
  "TileBinop[0/16]": {
   "configurations": 600,
-  "sha256": "3e340c0ae7a5e279c51353d0ef5d7a1c0ab64a728ac3e3aa13ebf7f840b7d686"
+  "sha256": "b85843311ea32df896987aa8430ab308c8b1b061336c58fda3cfae4dd2a43fc9"
  },
  "TileBinop[1/16]": {
   "configurations": 600,
-  "sha256": "d0351b4060014f6f6592454888695722d253c3c6097570af743d36aeb53ecb6d"
+  "sha256": "ac082e6fac67b478a754e262abbf2650c8d9516425044e60714ad0a67550a60f"
  },
  "TileBinop[10/16]": {
   "configurations": 600,
-  "sha256": "8a2df4eded8928df147b5a49c019edcd87c0858c834d3824a81a30e63a2ec4c1"
+  "sha256": "88ce031a53dfec8ca4f0ce6a3482b08b2fc06ce212a3ca802bdca32e2b7b4113"
  },
  "TileBinop[11/16]": {
   "configurations": 600,
-  "sha256": "b5a89de84349176e44119fb4b2309f1246781c27610a3bfa95f3c8a566d2b534"
+  "sha256": "a1c700a7c559f110e09ef85ac77b3158c31835f15b851e989752eb57fbc8f0a1"
  },
  "TileBinop[12/16]": {
   "configurations": 600,
-  "sha256": "47cca079f902362d4128533db4146bbab9a2d387063732ce818aade0c589ae68"
+  "sha256": "7291943e60e33fbf4c2d7c962662ef8bf35cf715445cd4d994a5141bb0a2d07a"
  },
  "TileBinop[13/16]": {
   "configurations": 600,
-  "sha256": "993b856f3cd90e401fbf79efa1b427e7989515f88f40ab9f615c1de4707020ea"
+  "sha256": "44930e629d1e6a652f58fa4861ae14f9d2de6e3758a4ce71ff7199121acf30a8"
  },
  "TileBinop[14/16]": {
   "configurations": 600,
-  "sha256": "a3212b2e258b7d0344212525789d0149edcceb4f3796267aed135473a9c646b7"
+  "sha256": "96d279d95caf62b157c55eddd590e7f2ef2fd9418f82196f31f372cc9ab3c283"
  },
  "TileBinop[15/16]": {
   "configurations": 600,
-  "sha256": "0e3b8c25a538cedc784b4ff6908f852060da2496f99aa27357e7138c02bca997"
+  "sha256": "9cde85422d7b2ed4a5e64de31a4e11d1b7dc97c12c80bfc23b265cd4efc7c8b1"
  },
  "TileBinop[2/16]": {
   "configurations": 600,
-  "sha256": "373d19bc427c34af9dc8b425bfeb57bfb2b18fc6e3b09abce6ea212770e4f2d4"
+  "sha256": "d9d9b25543f261cf8c0a1eaa8057379dba3e3c934910a75aec87e85621d9826f"
  },
  "TileBinop[3/16]": {
   "configurations": 600,
-  "sha256": "b9f3693e996cd7192b23828995895171558e0b0e3e93e764b259f9bbec34725d"
+  "sha256": "627f531c7107a56bde19f9b49f27603b2305454193c3a48d48f0fc9fcd2c5ae6"
  },
  "TileBinop[4/16]": {
   "configurations": 600,
-  "sha256": "7eb970618f3daed038edfe2b87d57d3a6d57bc6ffe4b678ae6d349f48a05f86c"
+  "sha256": "8501ba66bea09660a14fd913e7c3c6dba3ad931198cc70a48cbde93b97a710ff"
  },
  "TileBinop[5/16]": {
   "configurations": 600,
-  "sha256": "44c9ce3ad5fbc6c6aa981c59148e953af2f50474b97f1552d084c8343890739f"
+  "sha256": "d4f434973fc4292c39b37aef36e3a28f608e4b73e0d5b44c7e0a17e386a12b9f"
  },
  "TileBinop[6/16]": {
   "configurations": 600,
-  "sha256": "adb9e6825d3501a0790a58dc2dc80f6b120ff30cf667ed5f69b84a206f0cd2c7"
+  "sha256": "715bd1ac5d24fe0ebb4f6053991f2a84d391d032abd500923a1e49fe9e8298f5"
  },
  "TileBinop[7/16]": {
   "configurations": 600,
-  "sha256": "1ed27437cabfa4659506ea93b03e946b794054599cac70c45c42e289e5ba4860"
+  "sha256": "c8ba29ccb29e102a58f09faa8d91d7d70d0fa2f565fff68aabdd8890337e89ce"
  },
  "TileBinop[8/16]": {
   "configurations": 600,
-  "sha256": "a345ebe4baa1920c373e4b765c10eeb55a9778cdee3dc457b95b52ab9d6c1130"
+  "sha256": "89ad88ce4d333b5c75335371dbd3ae8d80d90dc3156e097dba6bccce7d36a028"
  },
  "TileBinop[9/16]": {
   "configurations": 600,
-  "sha256": "cd371363c0653e7ae861bb3416595c63a150efb40dc2e574d45aa06083eb1129"
+  "sha256": "d38674aca9988a9987323ddef985937022231c7c92b42f1ad4e5a3aa13450f7f"
  },
  "TileFMA": {
   "configurations": 504,

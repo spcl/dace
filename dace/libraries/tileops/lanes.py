@@ -252,7 +252,7 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
         or ``None`` when the shape cannot be reconciled with ``widths``.
     """
 
-    def extents_equal(a: int | sympy.Expr, b: int | sympy.Expr) -> bool:
+    def extents_equal(a: int | sympy.Basic, b: int | sympy.Basic) -> bool:
         """Symbolic-safe extent equality."""
         try:
             return bool(dace.symbolic.simplify(a - b) == 0)

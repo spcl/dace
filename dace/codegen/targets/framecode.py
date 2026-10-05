@@ -19,8 +19,9 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, SymbolResolver)
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.state import (AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver,
+                             UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 from dace.transformation.passes.canonicalize import supply_num_threads
 
@@ -90,10 +91,6 @@ class DaCeCodeGenerator(object):
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: Dict[int, bool] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
-        # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
-        self._symbol_resolver = SymbolResolver()
-        self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -985,26 +982,21 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 # Code nodes reading the container directly from their code (no
                 # AccessNode) count as uses for the scope decision as well.
-                code_users = code_instances[sdfg.cfg_id].get(name, [])
-                # A state with neither an access node for `name` nor a code user of it contributes
-                # nothing below, so skipping it avoids its scope_dict and node walk.
-                relevant = alloc_scopes['root_data_states'][sdfg.cfg_id].get(name,
-                                                                             frozenset()) | {s
-                                                                                             for s, _ in code_users}
+                state_users: Dict[SDFGState, List[nodes.Node]] = {
+                    st: list(accs)
+                    for st, accs in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
+                }
+                for code_state, code_node in code_instances[sdfg.cfg_id].get(name, []):
+                    users = state_users.setdefault(code_state, [])
+                    if code_node not in users:
+                        users.append(code_node)
                 for state in sdfg.states():
                     if multistate:
                         break
-                    if state not in relevant:
+                    if state not in state_users:
                         continue
                     sdict = state.scope_dict()
-                    state_code_users = {n for s, n in code_users if s is state}
-                    for node in state.nodes():
-                        if node not in state_code_users:
-                            if not isinstance(node, nodes.AccessNode):
-                                continue
-                            if node.root_data != name:
-                                continue
-
+                    for node in state_users[state]:
                         # If already found in another state, set scope to SDFG
                         if curstate is not None and curstate != state:
                             multistate = True

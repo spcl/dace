@@ -17,8 +17,6 @@ from dace.sdfg.nodes import Node, Tasklet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import SymbolicType
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry, as_range
 
 #: Suffix of the label of the map a tile-remainder split leaves fully in bounds. The vectorizer writes it and the proof
 #: below reads it: a tiled dim of such a map has an extent that is a whole number of tiles.
@@ -75,13 +73,13 @@ def enclosing_param_ranges(
     while state is not None:
         entry = state.entry_node(cur_node)
         while entry is not None:
-            for param, rng in zip(as_map_entry(entry).map.params, as_map_entry(entry).map.range):
+            for param, rng in zip(entry.map.params, entry.map.range):
                 ranges.setdefault(str(param), (rng[0], rng[1], rng[2]))
                 step = dace.symbolic.simplify(rng[2])
                 # Only a TILED dim (step == its width > 1) carries a guarantee; a step-1 dim's
                 # extent divides 1 and says nothing.
-                if as_map_entry(entry).map.label.endswith(TILE_MAIN_MARKER) and as_basic(step).is_Integer and step > 1:
-                    even.append((rng[1] - rng[0] + 1, int(as_expr(step))))
+                if entry.map.label.endswith(TILE_MAIN_MARKER) and step.is_Integer and step > 1:
+                    even.append((rng[1] - rng[0] + 1, int(step)))
             entry = state.entry_node(entry)
         nsdfg_node = sdfg.parent_nsdfg_node
         if nsdfg_node is None:
@@ -117,15 +115,15 @@ def even_extent_substitutions(even: list[tuple[SymbolicType, int]]) -> dict[Symb
     # Widest first: two tiled dims can constrain the same symbol, and the wider one is stronger.
     for n, (extent, width) in enumerate(sorted(even, key=lambda ew: -ew[1])):
         extent = dace.symbolic.simplify(extent)
-        free = list(as_basic(extent).free_symbols)
+        free = list(extent.free_symbols)
         if len(free) != 1 or free[0] in subs:
             continue
         sym = free[0]
         rest = dace.symbolic.simplify(extent - sym)
-        if not as_basic(rest).is_Integer:
+        if not rest.is_Integer:
             continue
         t = dace.symbolic.symbol(f"__dace_align_t{n}", nonnegative=True, integer=True)
-        subs[sym] = width * t - int(as_expr(rest))
+        subs[sym] = width * t - int(rest)
     return subs
 
 
@@ -207,7 +205,7 @@ def base_offset_is_visible(sdfg: SDFG, name: str) -> bool:
         for e in edges:
             if e.data.subset is None:
                 return False
-            if any(dace.symbolic.simplify(s) != 0 for s in as_range(e.data.subset).min_element()):
+            if any(dace.symbolic.simplify(s) != 0 for s in e.data.subset.min_element()):
                 return False
             outer_names.add(e.data.data)
         if len(outer_names) != 1:
@@ -230,7 +228,7 @@ def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
     which is what a symbolic shape needs to decide anything at all -- and which the size has to
     carry too, or the bound is compared against the wrong allocation.
     """
-    arr = parent_sdfg.arrays[required(edge.data.data)]
+    arr = parent_sdfg.arrays[edge.data.data]
     # A view starts wherever its source says, and a start_offset shifts the base out from under
     # the allocator's guarantee.
     if isinstance(arr, dace.data.View) or arr.start_offset != 0:
@@ -240,7 +238,7 @@ def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
     subset = edge.data.subset
     if subset is None:
         return None
-    offset = dace.symbolic.pystr_to_symbolic(sum(s * st for s, st in zip(as_range(subset).min_element(), arr.strides)))
+    offset = dace.symbolic.pystr_to_symbolic(sum(s * st for s, st in zip(subset.min_element(), arr.strides)))
     ranges, even = enclosing_param_ranges(node, parent_state, parent_sdfg)
     at_base, at_end = offset, offset
     # Match params against the symbols the offset ACTUALLY holds, by name. A freshly built
@@ -260,8 +258,8 @@ def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
         sym = by_name.get(param)
         if sym is None:
             continue
-        coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(as_expr(offset).diff(sym).subs(subs)))
-        if as_basic(coeff).is_nonnegative is not True:
+        coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(offset.diff(sym).subs(subs)))
+        if coeff.is_nonnegative is not True:
             return None
         k = dace.symbolic.symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
@@ -287,7 +285,7 @@ def add_stride_substitutions(subs: dict[SymbolicType, SymbolicType], facts: dict
     pinned = {str(s) for s in subs}
     by_name = {}
     for expr in exprs:
-        for sym in as_basic(expr).free_symbols:
+        for sym in expr.free_symbols:
             by_name.setdefault(str(sym), sym)
     for n, (name, modulus) in enumerate(sorted(facts.items())):
         sym = by_name.get(name)
@@ -342,7 +340,7 @@ def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, ed
     ``N*i + j``, whose parity is unknown, so neither a divisibility nor a residue is decidable and
     the caller keeps the scalar path. Returns the element size and shift 0 when nothing is provable.
     """
-    arr = parent_sdfg.arrays[required(edge.data.data)]
+    arr = parent_sdfg.arrays[edge.data.data]
     elem_bytes = arr.dtype.bytes
     base_bytes = base_align_bytes(arr)
     if base_bytes < elem_bytes:
@@ -363,11 +361,11 @@ def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, ed
     if not allow_shift or chunk < 2 or vlen % chunk != 0 or chunk * elem_bytes > base_bytes:
         return declined(arr, edge, elem_bytes, allow_shift)
     shift = dace.symbolic.simplify(at_base % chunk)
-    if not as_basic(shift).is_Integer:
+    if not shift.is_Integer:
         return declined(arr, edge, elem_bytes, allow_shift)
-    if as_basic(dace.symbolic.simplify(at_end + vlen + chunk - int(as_expr(shift)) - size)).is_nonpositive is not True:
+    if dace.symbolic.simplify(at_end + vlen + chunk - int(shift) - size).is_nonpositive is not True:
         return declined(arr, edge, elem_bytes, allow_shift)
-    return chunk * elem_bytes, int(as_expr(shift))
+    return chunk * elem_bytes, int(shift)
 
 
 def align_template_arg(node: Node,
@@ -389,7 +387,7 @@ def align_template_arg(node: Node,
     """
     if backend != "cuda":
         return ""
-    arr = parent_sdfg.arrays[required(edge.data.data)]
+    arr = parent_sdfg.arrays[edge.data.data]
     if arr.dtype != dace.float16:
         return ""
     align, shift = array_align_shift(node, parent_state, parent_sdfg, edge, vlen, allow_shift)

@@ -18,7 +18,6 @@ from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.libraries.tileops.nodes.tile_op import TileOp
-from dace.optionals import required
 
 MASK_CONNECTOR_NAME = "_mask"
 
@@ -184,7 +183,7 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         if len(mask_edges) != int(self.has_mask):
             raise ValueError(f"{self.label}: has_mask={self.has_mask} but {len(mask_edges)} "
                              f"{MASK_CONNECTOR_NAME!r} edges are connected.")
-        inp, out = sdfg.arrays[required(in_edges[0].data.data)], sdfg.arrays[required(out_edges[0].data.data)]
+        inp, out = sdfg.arrays[in_edges[0].data.data], sdfg.arrays[out_edges[0].data.data]
         in_subset, out_subset = in_edges[0].data.subset, out_edges[0].data.subset
         if inp.dtype != out.dtype:
             raise ValueError(f"{self.label}: a masked copy does not convert dtypes (got {inp.dtype} to {out.dtype}).")
@@ -195,8 +194,8 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
                              f"{tuple(out_extents)}; a masked copy does not transpose or reshape.")
         is_load(inp, out, self.label)
         if self.has_mask:
-            validate_mask_descriptor_lock(self.label, MASK_CONNECTOR_NAME,
-                                          sdfg.arrays[required(mask_edges[0].data.data)], tuple(self.widths))
+            validate_mask_descriptor_lock(self.label, MASK_CONNECTOR_NAME, sdfg.arrays[mask_edges[0].data.data],
+                                          tuple(self.widths))
         return INPUT_CONNECTOR_NAME, inp, in_subset, OUTPUT_CONNECTOR_NAME, out, out_subset
 
     def stores(self, state: dace.SDFGState) -> bool:

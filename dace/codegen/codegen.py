@@ -369,19 +369,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Wrap top-level map-nests/loops into no_inline nested SDFGs (own .cpp each, via the do_split path
-    # in _generate_NestedSDFG; and, for GPU nests, own standalone SDFG + .cu via the do_external path).
-    # Must run before inline_host_nested_sdfgs below (which would otherwise inline them straight back)
-    # and after expand_library_nodes.
-    if (config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units')
-            or config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'external_translation_units')):
-        from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
-        outline_top_level_nests(sdfg)
-        infer_types.infer_connector_types(sdfg)
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
-
-    # Experimental readable generator: flatten nested SDFGs, promote literal-only transients to constants, and
-    # inline tasklet connectors. Runs after library expansion so post-expansion tasklets are seen too.
+    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
+    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
+    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
+    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
     if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.transformation.pass_pipeline import Pipeline
         from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
@@ -436,19 +427,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
 
-    elif (config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and not copies_lifted
-          and sdfg_uses_gpu(sdfg)):
-        # The experimental CUDA generator REQUIRES the lowering, the way the readable CPU one does,
-        # whichever CPU generator it is paired with -- so it is unconditional here rather than left
-        # to the knob, and runs only when the site above has not already lifted.
-        lower_implicit_copies(sdfg)
-
-    # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in
-    # simplify) so SymPy's power laws can still fold Pow expressions beforehand.
+    # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
+    # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
     RelaxIntegerPowers().apply_pass(sdfg, {})
-    # Storage is final, so the stack placement of register arrays can be decided
-    from dace.transformation.passes.resolve_stack_allocation import ResolveStackAllocation
-    ResolveStackAllocation().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
