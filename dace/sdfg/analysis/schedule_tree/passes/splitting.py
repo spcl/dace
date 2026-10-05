@@ -32,9 +32,10 @@ def _has_direct_callback(scope: tn.ScheduleTreeScope) -> bool:
     for child in scope.children:
         if not isinstance(child, tn.TaskletNode) or child.node.code.language != dtypes.Language.Python:
             continue
-        if any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-               and isinstance(symbols.get(call.func.id), dtypes.callback) for stmt in child.node.code.code
-               for call in ast.walk(stmt)):
+        if any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and isinstance(symbols.get(call.func.id), dtypes.callback) for stmt in child.node.code.code
+                for call in ast.walk(stmt)):
             return True
     return False
 
