@@ -76,8 +76,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                                                  state,
                                                  StateSubgraphView(state,
                                                                    list(state.all_nodes_between(map_entry, map_exit))),
-                                                 name=f'if_of_nested_{map_entry.label}',
-                                                 full_data=True)
+                                                 name=f'if_of_nested_{map_entry.label}')
         inner = nsdfg_node.sdfg
         for sym, sym_type in defined.items():
             if sym not in inner.symbols:
