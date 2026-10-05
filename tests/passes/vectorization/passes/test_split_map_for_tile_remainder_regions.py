@@ -34,7 +34,7 @@ def _count_range_guards(sdfg):
     """
     guards = 0
     traps = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if "tile_even_range_check" not in state.label:
             continue
         guards += 1

@@ -96,7 +96,7 @@ def written_in_scope(state: SDFGState, outer: nodes.MapEntry) -> OrderedSet:
 
 
 def private_to(sdfg: SDFG, name: str, members: List[nodes.Node]) -> bool:
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if any(n.data == name and n not in members for n in state.data_nodes()):
             return False
     return all(name not in e.data.read_symbols() for e in sdfg.all_interstate_edges(recursive=True))
@@ -252,7 +252,7 @@ class ContiguousAxisToThreads(ppl.Pass):
         collapse = MapCollapse()
         collapsed = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.all_states():
+            for state in sd.states():
                 scope = state.scope_dict()
                 kernels = [
                     n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope[n] is None

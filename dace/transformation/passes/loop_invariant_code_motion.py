@@ -283,7 +283,7 @@ def _region_rw_sets(region: Any) -> Tuple[Set[str], Set[str]]:
                 reads.add(n.data)
         return reads, writes
     if hasattr(region, "all_states"):
-        for s in region.all_states():
+        for s in region.states():
             for n in s.data_nodes():
                 if s.in_degree(n) > 0:
                     writes.add(n.data)
@@ -310,7 +310,7 @@ def _region_has_work(region: Any) -> bool:
                 return True
         return False
     if hasattr(region, "all_states"):
-        for s in region.all_states():
+        for s in region.states():
             if _region_has_work(s):
                 return True
     return False
@@ -327,7 +327,7 @@ def _region_has_side_effect(region: Any) -> bool:
                     return True
         return False
     if hasattr(region, "all_states"):
-        for s in region.all_states():
+        for s in region.states():
             if _region_has_side_effect(s):
                 return True
     return False
@@ -345,7 +345,7 @@ def _variant_symbols_of_loop(loop: LoopRegion) -> Set[str]:
 def _written_data_in_region(region: ControlFlowRegion) -> Set[str]:
     """Names of data containers written in ``region`` (any state, any depth)."""
     written: Set[str] = set()
-    for state in region.all_states():
+    for state in region.states():
         for n in state.data_nodes():
             if state.in_degree(n) > 0:
                 written.add(n.data)
@@ -369,7 +369,7 @@ def _region_writer_counts(region: ControlFlowRegion) -> Dict[str, int]:
     constant.
     """
     counts: Dict[str, int] = {}
-    for state in region.all_states():
+    for state in region.states():
         for n in state.data_nodes():
             counts[n.data] = counts.get(n.data, 0) + write_edge_count(state, n)
     return counts

@@ -202,7 +202,7 @@ def data_dependent_scatter_wcr_edge(nsdfg: nodes.NestedSDFG, oc: str):
         return None
     in_conns = set(nsdfg.in_connectors.keys())
     found = None
-    for ist in inner.all_states():
+    for ist in inner.states():
         for e in ist.edges():
             if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
                     and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc
@@ -268,7 +268,7 @@ class PrivatizeScatterReduction(ppl.Pass):
         """
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.all_states():
+            for state in sd.states():
                 for nsdfg in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
                     if not isinstance(state.entry_node(nsdfg), nodes.MapEntry):
                         continue

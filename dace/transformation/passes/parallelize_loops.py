@@ -60,7 +60,7 @@ class LiftSite:
         region = loop.parent_graph
         return LiftSite(level_order=list(cfg_analysis.blockorder_topological_sort(region, recursive=False)),
                         subtree_size=1 + sum(1 for _ in cfg_analysis.blockorder_topological_sort(loop)),
-                        loop_states=OrderedSet(loop.all_states()),
+                        loop_states=OrderedSet(loop.states()),
                         region_edges=Counter(k for e in region.edges() for k in e.data.assignments),
                         loop_edges=edge_assignment_counts(loop),
                         inner_loops=[r for r in candidate_loops(loop) if r is not loop])

@@ -116,7 +116,7 @@ def _sdfg_loops_depend_on_symbols(sdfg: dace.SDFG, param_syms: set[str]) -> bool
     for region in sdfg.all_control_flow_regions(recursive=False):
         if isinstance(region, LoopRegion) and _loop_bound_uses_symbols(region, param_syms):
             return True
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, dace.nodes.NestedSDFG):
                 continue
@@ -189,7 +189,7 @@ def _sdfg_conditions_depend_on_symbols(sdfg: dace.SDFG, param_syms: set[str]) ->
     for region in sdfg.all_control_flow_regions(recursive=False):
         if isinstance(region, ConditionalBlock) and condition_guards_symbols(region, param_syms):
             return True
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, dace.nodes.NestedSDFG):
                 continue
@@ -552,7 +552,7 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
             if isinstance(node, dace.nodes.NestedSDFG):
                 inner_iter = _inner_lane_vars(outer_params, node)
                 inner_aliases = lane_param_aliases(outer_params, node)
-                for ist in node.sdfg.all_states():
+                for ist in node.sdfg.states():
                     for an in ist.nodes():
                         if not isinstance(an, dace.nodes.AccessNode):
                             continue
@@ -831,7 +831,7 @@ def _no_edge_attr_state(state: SDFGState, attr: str, recursive: bool) -> bool:
 
 def _no_edge_attr_sdfg(sdfg: dace.SDFG, attr: str, recursive: bool) -> bool:
     """True iff no edge in any state of ``sdfg`` has the attribute set."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if not _no_edge_attr_state(state, attr, recursive):
             return False
     return True

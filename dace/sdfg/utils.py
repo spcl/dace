@@ -2578,6 +2578,10 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
     The graph operations keep both in place; this is the repair for a tree assembled around them.
     """
     sdfg.reset_cfg_list()
+    point_nested_sdfgs_at_their_parents(sdfg)
+
+
+def point_nested_sdfgs_at_their_parents(sdfg: SDFG):
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
@@ -2844,7 +2848,7 @@ def specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[s
 
     nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG):
                 nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
@@ -3126,7 +3130,7 @@ def structural_symbols(sdfg: 'dace.SDFG') -> Set[str]:
     for cfr in sdfg.all_control_flow_regions():
         if isinstance(cfr, LoopRegion) and cfr.loop_variable:
             structural.add(str(cfr.loop_variable))
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
                 structural.update(str(s) for s in node.map.range.free_symbols)
@@ -3161,7 +3165,7 @@ def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str, structura
     for cfr in sdfg.all_control_flow_regions():
         if isinstance(cfr, LoopRegion) and cfr.loop_variable == symbol_str:
             return True
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
                 return True
@@ -3221,7 +3225,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
 
     # 1
     # Replace all code in tasklets and access nodes
-    for g in sdfg.all_states():
+    for g in sdfg.states():
         # Once per state, not per match: the mutations below clear the scope-dict cache, and no
         # lookup here is of a node they touch. Lazy, so a state with no match is never walked.
         sdict = None

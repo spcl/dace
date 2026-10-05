@@ -485,7 +485,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
     def _apply(self, sdfg: SDFG) -> int:
         # Stage every eligible bridge in ``sdfg`` and recurse into NSDFGs.
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for bridge, producers, consumers in self._collect_occurrences(state):
                 if bridge not in state.nodes():
                     continue

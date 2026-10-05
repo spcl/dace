@@ -288,7 +288,7 @@ def _walk_sdfgs(sdfg: SDFG) -> Iterator[SDFG]:
         NestedSDFG nodes (``all_sdfgs_recursive`` only descends control-flow regions, not NSDFGs).
     """
     yield sdfg
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 yield from _walk_sdfgs(node.sdfg)
@@ -304,7 +304,7 @@ def _iter_all_symbol_strings(sdfg: SDFG) -> Iterator[str]:
     for inner in _walk_sdfgs(sdfg):
         yield from inner.arrays.keys()
         yield from inner.symbols.keys()
-        for state in inner.all_states():
+        for state in inner.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
                     yield from node.in_connectors.keys()

@@ -507,7 +507,7 @@ def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
     """
     reads: Set[str] = set()
     writes: Set[str] = set()
-    states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+    states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode):

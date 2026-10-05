@@ -112,7 +112,7 @@ def unschedule_maps_inside_kernels(sdfg: SDFG) -> None:
     for schedule inference instead, so the outermost of them becomes the thread block -- the shape a body that
     stages tiles in ``GPU_Shared`` memory is written for.
     """
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for kernel in state.nodes():
             if not (isinstance(kernel, nodes.MapEntry) and kernel.map.schedule == dtypes.ScheduleType.GPU_Device):
                 continue

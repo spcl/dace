@@ -555,7 +555,7 @@ def nest_state_subgraph(sdfg: SDFG,
     subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
     other_nodes = {}
     # Lazily: the scan mostly stops at the first state, and ``states()`` would list every state first.
-    for s in sdfg.all_states():
+    for s in sdfg.states():
         if len(other_nodes) == len(wanted):
             break  # every name already has an occurrence outside; the rest of the scan cannot change an answer
         for n in s.nodes():

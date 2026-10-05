@@ -197,7 +197,7 @@ def test_a_later_loop_rebinding_the_iterator_is_not_a_read_of_its_exit_value():
 
     sdfg.validate()
     assert not _has_loop_exit_sym(sdfg, 'i')
-    (edge, ) = [e for state in second.all_states() for e in state.edges() if e.data.data == 'a']
+    (edge, ) = [e for state in second.states() for e in state.edges() if e.data.data == 'a']
     assert str(edge.data.subset) == 'i + 1'
 
 

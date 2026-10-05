@@ -579,7 +579,7 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
 def _subset_reads_array(sdfg: dace.SDFG) -> bool:
     """True iff any memlet subset embeds a data-array access (a nested Subscript)."""
     return any(e.data is not None and e.data.subset is not None and symbolic.arrays(str(e.data.subset))
-               for state in sdfg.all_states() for e in state.edges())
+               for state in sdfg.states() for e in state.edges())
 
 
 @dace.program
@@ -632,7 +632,7 @@ def test_array_load_not_inlined_as_iv_handbuilt():
 
     # ``idx`` stays a plain symbol in the subset; the load stays on the interstate edge.
     b_subsets = [
-        str(e.data.subset) for st in loop.all_states() for e in st.edges() if e.data is not None and e.data.data == 'B'
+        str(e.data.subset) for st in loop.states() for e in st.edges() if e.data is not None and e.data.data == 'B'
     ]
     assert b_subsets == ['jl, idx'], b_subsets
     assert any('idx' in (e.data.assignments or {}) for e in sdfg.all_interstate_edges()), \

@@ -375,7 +375,7 @@ class OffloadToAccelerator(ppl.Pass):
             if isinstance(region, LoopRegion):
                 if region not in self._host_only_loops:
                     self._host_only_loops[region] = not any(
-                        self.is_device_work(node) for body in region.all_states() for node in body.nodes())
+                        self.is_device_work(node) for body in region.states() for node in body.nodes())
                 return self._host_only_loops[region]
             region = region.parent_graph
         return False

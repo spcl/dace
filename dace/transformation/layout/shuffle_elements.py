@@ -52,12 +52,10 @@ class ShuffleElements(ppl.Pass):
         return 0
 
     def _is_read(self, sdfg: dace.SDFG, arr: str) -> bool:
-        return any(an.data == arr and state.out_degree(an) > 0 for state in sdfg.all_states()
-                   for an in state.data_nodes())
+        return any(an.data == arr and state.out_degree(an) > 0 for state in sdfg.states() for an in state.data_nodes())
 
     def _is_written(self, sdfg: dace.SDFG, arr: str) -> bool:
-        return any(an.data == arr and state.in_degree(an) > 0 for state in sdfg.all_states()
-                   for an in state.data_nodes())
+        return any(an.data == arr and state.in_degree(an) > 0 for state in sdfg.states() for an in state.data_nodes())
 
     def _shuffle_array(self, sdfg: dace.SDFG, arr: str, fns: Dict[int, Any]) -> None:
         self._guard_no_interstate(sdfg, arr)
@@ -141,7 +139,7 @@ class ShuffleElements(ppl.Pass):
     def _rewrite_body(self, sdfg, arr, shuffled, fns, sizes, skip) -> None:
         # collect nested boundaries before the rename below, or the recursion misses them
         nested = list(self._nested_targets(sdfg, arr))
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             if state in skip:
                 continue
             for node in state.nodes():
@@ -165,7 +163,7 @@ class ShuffleElements(ppl.Pass):
             self._rewrite_inner(nsdfg, inner, fns, sizes)
 
     def _rewrite_inner(self, sdfg, arr, fns, sizes) -> None:
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is None or edge.data.data != arr:
                     continue
@@ -193,7 +191,7 @@ class ShuffleElements(ppl.Pass):
     def _nested_targets(self, sdfg, arr):
         """Yield ``(nested_sdfg, inner_connector_name)`` once per inner array (dedup avoids double sigma^{-1})."""
         seen = set()
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nd.NestedSDFG):
                     continue

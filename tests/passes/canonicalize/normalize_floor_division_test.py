@@ -6,7 +6,7 @@ import sympy
 
 import dace
 from dace.codegen.targets.cpp import sym2cpp
-from dace.subsets import Indices, Range
+from dace.subsets import Range
 from dace.symbolic import head_name, pystr_to_symbolic, symbol
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision, normalize
 
@@ -46,7 +46,11 @@ def test_pass_rewrites_map_ranges_memlets_and_shapes():
     entry.map.range = Range([((i + 1) // 2, N - 1, 1)])
     tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp + 1.0")
     read, write = state.add_read("a"), state.add_write("a")
-    state.add_memlet_path(read, entry, tasklet, dst_conn="inp", memlet=dace.Memlet(data="a", subset=Indices([i // 2])))
+    state.add_memlet_path(read,
+                          entry,
+                          tasklet,
+                          dst_conn="inp",
+                          memlet=dace.Memlet(data="a", subset=Range.from_indices([i // 2])))
     state.add_memlet_path(tasklet, exit_node, write, src_conn="out", memlet=dace.Memlet("a[i]"))
 
     assert NormalizeFloorDivision().apply_pass(sdfg, {}) >= 3

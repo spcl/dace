@@ -241,7 +241,7 @@ class NormalizeWCR(ppl.Pass):
         # (a) A scalar WCR edge inside the body writing `oc` into a pure-sink AccessNode.
         wcr_edge = None
         wcr_state = None
-        for ist in inner.all_states():
+        for ist in inner.states():
             for e in ist.edges():
                 if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
                         and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode)
@@ -346,7 +346,7 @@ class NormalizeWCR(ppl.Pass):
             if isinstance(block, (ConditionalBlock, LoopRegion)):
                 return False
             block = block.parent_graph
-        for ist in inner.all_states():
+        for ist in inner.states():
             for e in ist.edges():
                 if e is wcr_edge:
                     continue
@@ -365,7 +365,7 @@ class NormalizeWCR(ppl.Pass):
         desc = sdfg.arrays.get(acc)
         if desc is None:
             return
-        for st in sdfg.all_states():
+        for st in sdfg.states():
             for e in st.edges():
                 if (e.data is not None and e.data.data == acc and e.data.wcr is None
                         and isinstance(e.dst, nodes.AccessNode) and e.dst.data == acc):
@@ -397,7 +397,7 @@ class NormalizeWCR(ppl.Pass):
         ``oc[param]`` WCR write aggregates to the slice output ``oc``. ``None`` unless the
         producer is exactly one single-param per-element scatter map.
         """
-        for ist in inner.all_states():
+        for ist in inner.states():
             for tasklet in [n for n in ist.nodes() if isinstance(n, nodes.Tasklet)]:
                 for oe in ist.out_edges(tasklet):
                     if (oe.data is not None and oe.data.data == oc and oe.data.wcr is not None
@@ -536,7 +536,7 @@ class NormalizeWCR(ppl.Pass):
         # (a) Unique scalar WCR edge inside the body writing the connector array `oc`.
         wcr_edge = None
         wcr_state = None
-        for ist in inner.all_states():
+        for ist in inner.states():
             for e in ist.edges():
                 if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
                         and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode)
@@ -617,7 +617,7 @@ class NormalizeWCR(ppl.Pass):
     def _apply(self, sdfg: SDFG) -> int:
         total = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.all_states():
+            for state in sd.states():
                 for nsdfg in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
                     if not isinstance(state.entry_node(nsdfg), nodes.MapEntry):
                         continue

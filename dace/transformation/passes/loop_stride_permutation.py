@@ -325,7 +325,7 @@ class LoopStridePermutation(ppl.Pass):
         concrete (no symbolic stride comparison needed).
         """
         result: Set[str] = set()
-        for state in inner.all_states():
+        for state in inner.states():
             if not isinstance(state, SDFGState):
                 continue
             for edge in state.edges():

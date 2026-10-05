@@ -137,7 +137,7 @@ _EXPECTED_SEQUENTIAL_LOOPS = 3
 def _wcr_edges(sdfg: dace.SDFG):
     """Every WCR edge across the SDFG and all nested SDFGs (recursive)."""
     return [
-        e for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
 

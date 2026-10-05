@@ -73,8 +73,7 @@ def assert_symbols_bound(sdfg: dace.SDFG) -> None:
 def materializes_intermediate(sdfg: dace.SDFG) -> bool:
     """Whether ``t`` is still written to memory (the descriptor outlives the fusion either way)."""
     return any(
-        isinstance(node, nodes.AccessNode) and node.data == 't' for state in sdfg.all_states()
-        for node in state.nodes())
+        isinstance(node, nodes.AccessNode) and node.data == 't' for state in sdfg.states() for node in state.nodes())
 
 
 def run(sdfg: dace.SDFG, n: int = 24) -> None:

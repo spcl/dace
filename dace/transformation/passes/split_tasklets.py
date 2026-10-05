@@ -830,7 +830,7 @@ class SplitTasklets(ppl.Pass):
         :returns: The names of the symbols that were added (empty if the symbol table was already complete).
         """
         added: OrderedSet = OrderedSet()
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     added |= self._add_missing_symbols(node.sdfg)

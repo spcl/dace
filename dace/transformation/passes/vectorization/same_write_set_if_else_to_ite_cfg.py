@@ -209,7 +209,7 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     for _cond, body in cb.branches:
         if not isinstance(body, ControlFlowRegion):
             return False
-        for state in body.all_states():
+        for state in body.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet is None or memlet.data is None:
@@ -385,7 +385,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, skip_cb: Condi
     # Same reach as the ConditionalBlock scan above: ``all_states`` stops at this SDFG, so walk
     # every nested SDFG's states too.
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for n in state.nodes():
                 if isinstance(n, dace.nodes.Tasklet):
                     code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)

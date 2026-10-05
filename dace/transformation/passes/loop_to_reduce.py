@@ -934,7 +934,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         # copy) from a loop-invariant scalar that merely happens to be scalar-equivalent to the
         # write target -- e.g. scaled scatter ``out_slice = arr[jl, jk] * zq`` (``zq = 1/ptsphy``
         # hoisted out), NOT a reduction.
-        carried = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
+        carried = {an.data for st in loop.states() for an in st.data_nodes() if st.in_degree(an) > 0}
         accum_ok = False
         array, arr_subset = None, None
         carried_accum, carried_sub = None, None
@@ -983,7 +983,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         #       TASKLET (not the accumulator) is loop-local and stays allowed, so strided reductions that
         #       stage into a moving-slot temp are not affected.
         allowed = {accum} | ({carried_accum} if carried_accum is not None else set())
-        for st in loop.all_states():
+        for st in loop.states():
             for an in st.data_nodes():
                 if st.in_degree(an) == 0 or an.data in allowed:
                     continue
@@ -1444,7 +1444,7 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     # writes a different slot -> not a single-accumulator reduction.
     loop_iedge_assignees = loop_iteration_assigned_symbols(loop)
     candidates = []
-    for state in loop.all_states():
+    for state in loop.states():
         # A WCR write inside a nested loop is the nested loop's reduction, not ours.
         if _state_in_nested_loop(state, loop):
             continue
@@ -1498,7 +1498,7 @@ def slot_accessed_besides(loop: LoopRegion, own_edges: Set[gr.MultiConnectorEdge
     start, end, stride = (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
                           loop_analysis.get_loop_stride(loop))
     iterations = None if None in (start, end, stride) else subsets.Range([(start, end, stride)])
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.data_nodes():
             if node.data != accum_name:
                 continue
@@ -1599,7 +1599,7 @@ def _slot_accumulated_more_than_once(loop: LoopRegion, accum_name: str, accum_su
     """
     want = str(accum_subset)
     seen = 0
-    for state in loop.all_states():
+    for state in loop.states():
         if _state_in_nested_loop(state, loop):
             continue
         reads = writes = False
@@ -1644,7 +1644,7 @@ def _slot_overwritten_in_body(loop: LoopRegion, accum_name: str, accum_subset) -
     :param accum_subset: the slot the chain reads and writes.
     """
     want = str(accum_subset)
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
                 continue
@@ -1685,7 +1685,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
     # mentions the loop variable and the ``_uses`` test below passes. Privatising that collapses
     # every scattered bin onto one scalar -- azimint_naive lost 999 of 1000 bins to it, silently.
     loop_iedge_assignees = loop_iteration_assigned_symbols(loop)
-    for state in loop.all_states():
+    for state in loop.states():
         # A reduction chain inside a nested loop belongs to that nested loop; retargeting
         # the outer loop would wrap the init/writeback outside the inner reduction and lose
         # the per-outer-iteration accumulator reset (TSVC s212/s319 family with a guarded

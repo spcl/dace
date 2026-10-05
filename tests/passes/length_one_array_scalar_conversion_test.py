@@ -235,10 +235,10 @@ def test_repeated_forward_is_idempotent_and_stays_correct():
     stays eligible forever and each re-run chains another copy hop onto the last."""
     sdfg = _io_sdfg()
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    before, before_states = set(sdfg.arrays), len(list(sdfg.all_states()))
+    before, before_states = set(sdfg.arrays), len(list(sdfg.states()))
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
     assert set(sdfg.arrays) == before, "second application re-staged an already-staged array"
-    assert len(list(sdfg.all_states())) == before_states, "second application added copy states"
+    assert len(list(sdfg.states())) == before_states, "second application added copy states"
     sdfg.validate()
     assert _run(sdfg, 3.0) == pytest.approx(6.0)
 
@@ -447,7 +447,7 @@ def test_control_flow_only_gate_gets_a_copyin():
     assert any(scal in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), \
         "the gate assignment was not repointed at the staged scalar"
     writers = sum(
-        st.in_degree(nd) for st in sdfg.all_states() for nd in st.nodes()
+        st.in_degree(nd) for st in sdfg.states() for nd in st.nodes()
         if isinstance(nd, dace.nodes.AccessNode) and nd.data == scal)
     assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
     sdfg.validate()
@@ -477,7 +477,7 @@ def test_control_flow_only_signature_scalar_gets_a_copyin():
     arr = staged[0]
     assert any(f"{arr}[0]" in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), \
         "the gate assignment was not repointed at the staged array"
-    copyins = [(st.label, e.src.data) for st in sdfg.all_states() for e in st.edges()
+    copyins = [(st.label, e.src.data) for st in sdfg.states() for e in st.edges()
                if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == arr]
     assert copyins == [("stage_copyin", "flag")], f"{arr} is read from control flow; copy-ins found: {copyins}"
     sdfg.validate()

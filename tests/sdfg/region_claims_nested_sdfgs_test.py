@@ -70,14 +70,14 @@ def host_sdfg(name: str) -> dace.SDFG:
 
 def nested_nodes(sdfg: dace.SDFG):
     """Every nested-SDFG node in ``sdfg``'s own namespace."""
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
 
 
 def assert_homed(sdfg: dace.SDFG, expected_count: int) -> None:
     """Every nested SDFG directly under ``sdfg`` names ``sdfg``, its own state and its own node."""
     found = nested_nodes(sdfg)
     assert len(found) == expected_count, [n.label for n in found]
-    states = list(sdfg.all_states())
+    states = list(sdfg.states())
     for node in found:
         assert node.sdfg.parent_sdfg is sdfg, node.label
         assert node.sdfg.parent_nsdfg_node is node, node.label

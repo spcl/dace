@@ -83,6 +83,12 @@ def experimental_available():
     return experimental_code != legacy_code
 
 
+def without_fma_contraction():
+    """Builds without fused multiply-add contraction. The two generators nest the same computation differently, so
+    the compiler contracts different multiply-adds and an accumulating kernel drifts by far more than 1 ULP."""
+    return set_temporary(*CPU_ARGS_KEY, value=f"{Config.get(*CPU_ARGS_KEY)} -ffp-contract=off")
+
+
 def to_host(value):
     """Return a host numpy array for ``value`` (handles cupy device arrays)."""
     if type(value).__module__.split(".")[0] == "cupy":
@@ -206,9 +212,9 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
 # #
 @pytest.fixture
 def require_experimental():
-    """Skip the test unless the readable generator is wired up (see the gate)."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
+    """Assert the readable generator is wired up; it is required, not optional."""
+    assert experimental_available(), (
+        "the readable CPU generator produced byte-identical output to legacy -- it is not wired up")
 
 
 @pytest.fixture(params=[

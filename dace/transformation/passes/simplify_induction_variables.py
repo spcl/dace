@@ -367,7 +367,7 @@ def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool
         return False
 
     # Collect read sites of ``name`` inside the loop.
-    readers = {state for state in loop.all_states() if _state_reads_symbol(state, name)}
+    readers = {state for state in loop.states() if _state_reads_symbol(state, name)}
     if not readers:
         return True  # Nothing to read — substitution is vacuously correct.
 
@@ -454,7 +454,7 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
 
     # Nodes inside the loop itself are already substituted; we only need to
     # check the rest of the SDFG.
-    loop_states = set(loop.all_states())
+    loop_states = set(loop.states())
     loop_edges: Set[int] = {id(e) for e in loop.all_interstate_edges()}
 
     # Check interstate-edge assignments and conditions everywhere in the SDFG.
@@ -472,7 +472,7 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
         # does not make the symbol live here.
 
     # Check memlets / tasklets in every state outside the loop.
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if state in loop_states:
             continue
         for e in state.edges():
@@ -517,7 +517,7 @@ def _remove_dead_scalar(loop: LoopRegion, name: str) -> None:
     from dace.sdfg import nodes as _nodes
     if not isinstance(desc, _data.Scalar) or not desc.transient:
         return
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if isinstance(n, _nodes.AccessNode) and n.data == name:
                 return

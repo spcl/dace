@@ -54,7 +54,7 @@ def _two_plain_loops(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N])
 def _body_nsdfg_count(sdfg: dace.SDFG) -> int:
     """Max number of NestedSDFG nodes inside any single top-level map body."""
     counts = [0]
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None:
                 counts.append(
@@ -156,7 +156,7 @@ def test_merge_siblings_data_vs_connector_name_collision():
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, 'the two siblings should merge'
     sdfg.validate()  # would raise the connector/array-name collision without the fix
-    merged = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    merged = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
     assert len(merged) == 1, 'siblings merged into one nested SDFG'
 
     n = 8
@@ -199,7 +199,7 @@ def sdfg_backpointer_violations(sdfg: dace.SDFG):
     ``NestedSDFG`` codenode) must have ``state.sdfg is sdfg``; recurse into each NestedSDFG's own
     SDFG separately. Returns the ``(sdfg label, state label)`` pairs that violate this."""
     violations = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if state.sdfg is not sdfg:
             violations.append((sdfg.label, state.label))
         for node in state.nodes():
@@ -506,7 +506,7 @@ def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(
     monkeypatch.undo()
     assert resets == []
     assert_tree_matches_a_reset(sdfg)
-    merged = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    merged = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
     assert len(merged) == 1
     assert len([b for b in merged[0].sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 2
     before = list(sdfg.cfg_list)

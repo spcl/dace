@@ -81,7 +81,7 @@ def offloaded(host_read: Optional[str] = None, looped: bool = False) -> dace.SDF
 def table_copies(sdfg: dace.SDFG) -> list[tuple[str, str]]:
     """``(source, destination)`` of every host/device copy of the table."""
     found = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             if not (isinstance(edge.src, dace.nodes.AccessNode) and isinstance(edge.dst, dace.nodes.AccessNode)):
                 continue
@@ -95,7 +95,7 @@ def table_copies(sdfg: dace.SDFG) -> list[tuple[str, str]]:
 
 def fill_scopes(sdfg: dace.SDFG) -> list:
     """The scope entry of every tasklet in the fill state: None for host code."""
-    fill = next(state for state in sdfg.all_states() if state.label == 'fill')
+    fill = next(state for state in sdfg.states() if state.label == 'fill')
     scopes = fill.scope_dict()
     return [scopes[node] for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)]
 

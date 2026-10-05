@@ -65,7 +65,7 @@ def nest_claimed(sdfg: dace.SDFG, levels: int) -> bool:
 def phases_under_a_loop(sdfg: dace.SDFG) -> bool:
     """True if a loop re-enters a phase -- one fork/join pair per phase per outer iteration."""
     buffers = [name for name in sdfg.arrays if name.startswith((MASK_PREFIX, IDX_PREFIX))]
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if not any(node.data in buffers for node in state.data_nodes()):
             continue
         region = state.parent_graph
@@ -705,7 +705,7 @@ def test_refuse_side_effecting_body():
 
     marked = prefix_up_to_loop_to_x()
     loop = [r for r in marked.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable][0]
-    tasklets = [n for state in loop.all_states() for n in state.nodes() if isinstance(n, nd.Tasklet)]
+    tasklets = [n for state in loop.states() for n in state.nodes() if isinstance(n, nd.Tasklet)]
     assert tasklets
     for tasklet in tasklets:
         tasklet.side_effects = True

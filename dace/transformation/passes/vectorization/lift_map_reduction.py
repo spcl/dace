@@ -371,7 +371,7 @@ class LiftMapReductionToReduce(ppl.Pass):
                                        transient=False,
                                        find_new_name=True)
         renamed = False
-        for st in inner.all_states():
+        for st in inner.states():
             for an in list(st.data_nodes()):
                 if an.data == conn and st.in_degree(an) >= 1 and st.out_degree(an) == 0:
                     an.data = new_inner

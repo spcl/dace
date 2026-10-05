@@ -18,7 +18,7 @@ N = dace.symbol('N', dtype=dace.int64)
 def lifted(sdfg: dace.SDFG) -> bool:
     """An ``ArgReduce`` is present and no sequential loop survives."""
     libs = [
-        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
         if isinstance(n, nodes.LibraryNode)
     ]
     loops = sum(1 for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)
@@ -79,7 +79,7 @@ def test_a_real_offset_is_not_folded_away():
     sdfg = argmax_offset.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     libs = [
-        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
         if isinstance(n, nodes.LibraryNode)
     ]
     assert 'ArgReduce' not in libs, 'a carrier write that adds 1.0 must not be read as an argmax'

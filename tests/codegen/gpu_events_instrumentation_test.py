@@ -22,7 +22,7 @@ def instrumented_code() -> str:
         sdfg = axpy.to_sdfg(simplify=True)
         sdfg.specialize({'N': 1024})
         sdfg.apply_gpu_transformations()
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             state.instrument = dace.InstrumentationType.GPU_Events
         return '\n'.join(code.clean_code for code in sdfg.generate_code())
 

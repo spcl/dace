@@ -204,7 +204,7 @@ def referenced_arrays(expr) -> Set[str]:
 def written_data(loop: LoopRegion) -> Set[str]:
     """Every data container written anywhere in ``loop``'s body."""
     written: Set[str] = set()
-    for st in loop.all_states():
+    for st in loop.states():
         for n in st.data_nodes():
             for e in st.in_edges(n):
                 if e.data is not None and not e.data.is_empty():
@@ -507,14 +507,14 @@ class BreakAntiDependence(ppl.Pass):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
         Returns the RHS string, or ``None``.
 
-        ``loop.all_states()`` recurses into nested control-flow regions
+        ``loop.states()`` recurses into nested control-flow regions
         (LoopRegion / ConditionalBlock / etc.); a state inside a nested
         region is NOT in ``loop._nodes`` directly, so asking
         ``loop.in_edges(st)`` for such a state raises ``KeyError``. Use
         ``st.parent_graph`` instead -- each state's parent CFR knows
         about that state.
         """
-        for st in loop.all_states():
+        for st in loop.states():
             parent = st.parent_graph
             if parent is None:
                 continue
@@ -657,7 +657,7 @@ class BreakAntiDependence(ppl.Pass):
 
         # 3. Find the tasklet that writes ``scalar_name`` inside the loop body.
         writer_tasklet = None
-        for st in loop.all_states():
+        for st in loop.states():
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data == scalar_name and st.in_degree(n) > 0:
                     for e in st.in_edges(n):
@@ -755,7 +755,7 @@ class BreakAntiDependence(ppl.Pass):
         internal: Set[str] = set()
         if loop.loop_variable:
             internal.add(loop.loop_variable)
-        for st in loop.all_states():
+        for st in loop.states():
             for n in st.nodes():
                 if isinstance(n, nodes.MapEntry):
                     internal.update(str(p) for p in n.map.params)
@@ -782,7 +782,7 @@ class BreakAntiDependence(ppl.Pass):
         reads: Dict[str, Dict[Any, Any]] = {}
         read_states: Dict[str, Dict[Any, Any]] = {}
         writes: Dict[str, Dict[Any, Any]] = {}
-        for st in loop.all_states():
+        for st in loop.states():
             for n in st.data_nodes():
                 if not isinstance(sdfg.arrays.get(n.data), data.Array):
                     continue
@@ -990,7 +990,7 @@ class BreakAntiDependence(ppl.Pass):
         # as :meth:`_renamable_arrays`) so each read edge can be classified and
         # only the strict read-ahead ones moved.
         unique_writes: Dict[Any, Any] = {}
-        for st in loop.all_states():
+        for st in loop.states():
             for n in st.data_nodes():
                 if n.data != name:
                     continue
@@ -1017,7 +1017,7 @@ class BreakAntiDependence(ppl.Pass):
         # Read subsets with the same ndrange classify identically, so the verdict is
         # cached per subset instead of re-derived for every edge that carries it.
         is_ahead: Dict[Any, bool] = {}
-        for st in loop.all_states():
+        for st in loop.states():
             for n in list(st.data_nodes()):
                 if n.data != name:
                     continue
@@ -1257,7 +1257,7 @@ class BreakAntiDependence(ppl.Pass):
         str_repl = {str(k): f'({symbolic.symstr(v)})' for k, v in subs.items()}
         # Substitute the binding's RHS into every body memlet / tasklet so the
         # body indexes via the forward iterator directly.
-        for st in loop.all_states():
+        for st in loop.states():
             replace_dict(st, str_repl)
         # Substitute into interstate-edge conditions and other assignments' RHS
         # (``replace_keys=False`` keeps the binding's own key intact), then drop

@@ -655,7 +655,7 @@ def stale_nested_references(root: dace.SDFG) -> List[str]:
     stale = []
     pending = [root]
     while pending:
-        for state in pending.pop().all_states():
+        for state in pending.pop().states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     inner = node.sdfg

@@ -413,7 +413,7 @@ class LoopToStreamCompaction(ppl.Pass):
         for blk in loop.all_control_flow_blocks(recursive=False):
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
                 return False
-        for state in loop.all_states():
+        for state in loop.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     return False  # opaque body; purity and dependences are not analyzable here
@@ -492,7 +492,7 @@ class LoopToStreamCompaction(ppl.Pass):
         cursor_read: Dict[str, int] = {}
         plain_written: Dict[str, int] = {}
         read: Dict[str, int] = {}
-        for state in loop.all_states():
+        for state in loop.states():
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
@@ -543,7 +543,7 @@ class LoopToStreamCompaction(ppl.Pass):
         if not guard_reads:
             return True
         loop_vars = [symbolic.pystr_to_symbolic(level.loop.loop_variable) for level in levels]
-        for state in loop.all_states():
+        for state in loop.states():
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
@@ -734,7 +734,7 @@ class LoopToStreamCompaction(ppl.Pass):
         part of symbol identity here: a rename that retypes the iterator turns one axis into two
         symbols across the three phases.
         """
-        body = next(iter(loop.all_states()), None)
+        body = next(iter(loop.states()), None)
         if body is not None:
             scoped = resolver.tabulate(body)[None].get(loop.loop_variable)
             if scoped is not None:

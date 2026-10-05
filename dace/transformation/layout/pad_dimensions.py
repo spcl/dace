@@ -46,7 +46,7 @@ class PadDimensions(ppl.Pass):
 
     def _grow_recursive(self, sdfg: dace.SDFG, arr_name: str, pads: List[int]):
         self._grow(sdfg, arr_name, pads)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
@@ -149,7 +149,7 @@ class PadZeroFill(ppl.Pass):
         from dace.dtypes import ReductionType
 
         padded = {arr: {d for d, p in enumerate(pads) if p > 0} for arr, pads in self._pad_map.items()}
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, Reduce):
                     continue

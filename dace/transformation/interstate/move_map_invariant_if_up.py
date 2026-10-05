@@ -267,8 +267,7 @@ def _branch_holds_a_map(cb: ConditionalBlock) -> bool:
     :param cb: The guarding conditional block.
     :returns: ``True`` if a ``MapEntry`` appears in any branch.
     """
-    return any(
-        isinstance(n, MapEntry) for _c, branch in cb.branches for bst in branch.all_states() for n in bst.nodes())
+    return any(isinstance(n, MapEntry) for cond, branch in cb.branches for bst in branch.states() for n in bst.nodes())
 
 
 def _enclosing_map_params(st: SDFGState, me: MapEntry) -> Set[str]:
@@ -297,10 +296,10 @@ def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: b
         nest is not split partway up.
     :returns: An iterator of candidate tuples.
     """
-    # ``all_states`` stops at the nested-SDFG boundary, so recurse explicitly:
+    # ``states()`` stops at the nested-SDFG boundary, so recurse explicitly:
     # after an inner map is isolated, its guard lives one nesting level down.
     for sd in sdfg.all_sdfgs_recursive():
-        for st in sd.all_states():
+        for st in sd.states():
             for me in [n for n in st.nodes() if isinstance(n, MapEntry)]:
                 cand = _candidate_at(st, me, allow_inner_defs)
                 if cand is None:
@@ -353,7 +352,7 @@ def _candidate_at(st: SDFGState,
         return None
     # A branch with no blocks has no start block to splice in its place, and
     # ``start_block`` raises on a node-less region rather than returning None.
-    if any(not branch.nodes() for _c, branch in cb.branches):
+    if any(not branch.nodes() for cond, branch in cb.branches):
         return None
     return st, me, ns, cb
 
@@ -578,9 +577,9 @@ class MoveMapInvariantIfUp(ppl.Pass):
         # The guard's definitions now belong one level out, in the wrapper's
         # own CFG; leaving copies behind would keep the condition looking
         # body-defined (and so non-invariant) to the next match.
-        inner_ns = next(n for w in wrapper.sdfg.all_states() for n in w.nodes()
+        inner_ns = next(n for w in wrapper.sdfg.states() for n in w.nodes()
                         if isinstance(n, NestedSDFG) and n.sdfg is ns.sdfg)
-        inner_st = next(w for w in wrapper.sdfg.all_states() if inner_ns in w.nodes())
+        inner_st = next(w for w in wrapper.sdfg.states() if inner_ns in w.nodes())
         # Recompute against the wrapper's own memlets: nesting re-bases data
         # names and subsets, so expressions built from the outer state would
         # read the wrong element here.

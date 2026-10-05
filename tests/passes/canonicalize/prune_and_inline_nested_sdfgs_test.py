@@ -23,7 +23,7 @@ def ordered_signature(sdfg: dace.SDFG) -> list:
     sig = []
     for sd in sdfg.all_sdfgs_recursive():
         sig.append(('arrays', sd.label, list(sd.arrays.keys())))
-        for state in sd.all_states():
+        for state in sd.states():
             index = {node: i for i, node in enumerate(state.nodes())}
             sig.append(('nodes', state.label, [(type(n).__name__, str(n)) for n in state.nodes()]))
             sig.append(('edges', state.label, [(index[e.src], e.src_conn, index[e.dst], e.dst_conn, str(e.data.data),

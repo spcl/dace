@@ -148,7 +148,7 @@ def test_subset_naming_no_defined_symbol_is_refused_before_resolution():
     assert may_rewrite(subsets.Range.from_string('__sym'), defs, {})
     assert may_rewrite(subsets.Range.from_string('0:__sym'), defs, {})
     assert not may_rewrite(subsets.Range.from_string('i, 0:N'), defs, {})
-    assert not may_rewrite(subsets.Indices.from_string('0'), defs, {})
+    assert not may_rewrite(subsets.Range.from_string('0'), defs, {})
 
 
 def test_iplusoffset_kernel_emits_no_gather():

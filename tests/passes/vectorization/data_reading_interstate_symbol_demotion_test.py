@@ -106,7 +106,7 @@ def test_the_read_becomes_a_scalar_and_a_tasklet():
     # The assignment is gone from every edge, and some state now reads ``b`` into ``elem``.
     assert not any('elem' in e.data.assignments for e in sdfg.all_interstate_edges())
     writes_elem = [
-        state.label for state in sdfg.all_states() for n in state.nodes()
+        state.label for state in sdfg.states() for n in state.nodes()
         if isinstance(n, nodes.AccessNode) and n.data == 'elem' and state.in_degree(n) > 0
     ]
     assert writes_elem, 'nothing writes the scalar the assignment was demoted into'

@@ -159,7 +159,7 @@ def close_induction_variables(sdfg):
 
 def written_arrays(block):
     """The non-transient containers ``block`` writes, in first-seen order."""
-    states = list(block.all_states()) if isinstance(block, LoopRegion) else [block]
+    states = list(block.states()) if isinstance(block, LoopRegion) else [block]
     names = []
     for state in states:
         for node in state.data_nodes():

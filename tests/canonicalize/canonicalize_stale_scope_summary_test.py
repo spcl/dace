@@ -49,7 +49,7 @@ def scope_summaries(sdfg: dace.SDFG):
     """Every map-exit edge's subset, keyed by where it sits, i.e. the derived scope summaries."""
     return {
         (st.label, st.edge_id(e)): str(e.data.subset)
-        for st in sdfg.all_states()
+        for st in sdfg.states()
         for e in st.edges() if isinstance(e.src, nodes.MapExit)
     }
 

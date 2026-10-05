@@ -108,13 +108,6 @@ def _union_into(
         # fallback: per-dimension bounding-box union via sympy
         import sympy as sp
 
-        if (not isinstance(existing, dace.subsets.Range) or not isinstance(new_subset, dace.subsets.Range)):
-            # convert Indices to Range first
-            if isinstance(new_subset, dace.subsets.Indices):
-                new_subset = dace.subsets.Range([(idx, idx, 1) for idx in new_subset])
-            if isinstance(existing, dace.subsets.Indices):
-                existing = dace.subsets.Range([(idx, idx, 1) for idx in existing])
-
         new_ranges = []
         for (rb, re, rs), (nb, ne, ns) in zip(existing.ranges, as_range(new_subset).ranges):
             lo = sp.Min(rb, nb)

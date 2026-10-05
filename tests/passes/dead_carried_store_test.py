@@ -18,7 +18,7 @@ N = dace.symbol('N', dtype=dace.int64)
 
 
 def stores_of(sdfg, name):
-    return sum(1 for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+    return sum(1 for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
                if isinstance(n, nodes.AccessNode) and n.data == name and st.in_degree(n) > 0)
 
 
@@ -80,8 +80,7 @@ def test_s244_parallelizes_through_the_pipeline():
     sdfg = s244.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     maps = [
-        n for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
-        if isinstance(n, nodes.MapEntry)
+        n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)
     ]
     loops = [
         b for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)

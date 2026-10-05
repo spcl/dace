@@ -202,7 +202,7 @@ def nested_connector_subset(nsdfg_node: nodes.NestedSDFG, conn: str, writes: boo
 
 def _multi_element_dims(subset):
     """``(dim_index, (lo, hi, step))`` for each ``Range`` dimension of ``subset`` that spans
-    more than one element. A non-``Range`` subset (``Indices``) or a whole single element
+    more than one element. A non-``Range`` subset or a whole single element
     yields an empty list -- the caller then emits a scalar RMW tasklet, no map."""
     if not isinstance(subset, subsets.Range):
         return []

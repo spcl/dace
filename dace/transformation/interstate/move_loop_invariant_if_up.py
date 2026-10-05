@@ -70,7 +70,7 @@ def _written(region: ControlFlowRegion) -> Set[str]:
     written: Set[str] = set()
     for e in region.all_interstate_edges():
         written |= set(e.data.assignments.keys())
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 written.add(n.data)
@@ -193,7 +193,7 @@ def strippable_prep(loop: LoopRegion, hoisted: list[tuple[str, str]]) -> dict[st
         for lhs, rhs in e.data.assignments.items():
             if defined.setdefault(lhs, rhs) != rhs:
                 conflicting.add(lhs)
-    for st in loop.all_states():
+    for st in loop.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 conflicting.add(n.data)
@@ -357,7 +357,7 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
         # independence criterion only sees data containers, so refuse around anything
         # whose order relative to other side effects is observable.
         if any(
-                isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg) for st in loop.all_states()
+                isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg) for st in loop.states()
                 for n in st.nodes()):
             continue
         # Each per-group clone is re-homed, nested SDFGs included, as ``add_node`` claims it.

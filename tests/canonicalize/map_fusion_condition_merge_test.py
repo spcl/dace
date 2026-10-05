@@ -62,9 +62,7 @@ def two_guarded_loops_idx(a: dace.float64[N], b: dace.float64[N], c: dace.float6
 
 # Helpers
 def _top_maps(sdfg: dace.SDFG):
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def _num_condblocks(sdfg: dace.SDFG) -> int:
@@ -77,7 +75,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
         if not isinstance(cb, ConditionalBlock):
             continue
         for _, branch in cb.branches:
-            for st in branch.all_states():
+            for st in branch.states():
                 if any(isinstance(n, nodes.MapEntry) and st.entry_node(n) is None for n in st.nodes()):
                     return True
     return False
@@ -85,7 +83,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
 
 def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock inside a NestedSDFG that sits under a map scope (guard in-map)."""
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None:
                 if any(isinstance(b, ConditionalBlock) for b in n.sdfg.all_control_flow_regions(recursive=True)):

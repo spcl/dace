@@ -150,7 +150,7 @@ def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet:
     """Containers the host code under ``region`` touches: tasklets outside every map, interstate
     edges, and the conditions of its loops and branches."""
     touched: OrderedSet = OrderedSet()
-    for state in region.all_states():
+    for state in region.states():
         scopes = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet) and scopes[node] is None:
@@ -223,7 +223,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
         if not isinstance(loop, LoopRegion):
             continue
         if is_fallback_loop(loop):
-            for state in loop.all_states():
+            for state in loop.states():
                 top = state.scope_children()[None]
                 if not any(isinstance(n, nodes.LibraryNode) for n in top):
                     pinned |= OrderedSet(n for n in top if isinstance(n, nodes.MapEntry))
@@ -233,7 +233,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
         host = host_code_containers(sdfg, loop)
         candidates: OrderedSet = OrderedSet()
         device_loop = False
-        for state in loop.all_states():
+        for state in loop.states():
             work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
             for node in work:
                 if len(work) != 1 or not isinstance(node, nodes.MapEntry):

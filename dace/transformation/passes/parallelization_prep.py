@@ -287,7 +287,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
 def loop_body_census(loop: LoopRegion) -> Tuple[int, bool]:
     """(tasklets, holds a map) over every state ``loop`` holds, nested SDFGs included; stops at the first map."""
     tasklets = 0
-    states = list(loop.all_states())
+    states = list(loop.states())
     while states:
         for node in states.pop().nodes():
             if isinstance(node, nodes.MapEntry):
@@ -295,7 +295,7 @@ def loop_body_census(loop: LoopRegion) -> Tuple[int, bool]:
             if isinstance(node, nodes.Tasklet):
                 tasklets += 1
             elif isinstance(node, nodes.NestedSDFG):
-                states.extend(node.sdfg.all_states())
+                states.extend(node.sdfg.states())
     return tasklets, False
 
 
@@ -540,7 +540,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 mini.add_symbol(sname, stype)
             # Arrays referenced by the loop body and its interstate edges.
             needed = set()
-            for st in loop.all_states():
+            for st in loop.states():
                 for n in st.data_nodes():
                     needed.add(n.data)
                 for e in st.edges():
@@ -687,7 +687,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         access."""
         reads: Dict[Any, dict] = {}
         writes: Dict[Any, dict] = {}
-        for state in loop.all_states():
+        for state in loop.states():
             if not isinstance(state, SDFGState):
                 continue
             for node in state.data_nodes():
@@ -1505,7 +1505,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if not ranges:
             return
         (ivar, _), = ranges.items()
-        for st in loop.all_states():
+        for st in loop.states():
             for e in st.edges():
                 if e.data is None:
                     continue
@@ -1669,7 +1669,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         the branch rather than aborting)."""
         import sympy
         from dace import subsets
-        for st in sdfg.all_states():
+        for st in sdfg.states():
             ranges = self._enclosing_loop_ranges(st)
             repl: Dict[Any, Any] = {}
             ranges_seen = []

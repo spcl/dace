@@ -460,7 +460,7 @@ def test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor():
         if 'tmp' not in nested.arrays:
             continue
         rank = ranks[nested.name] = len(nested.arrays['tmp'].shape)
-        for state in nested.all_states():
+        for state in nested.states():
             for edge in state.edges():
                 if edge.data.data == 'tmp':
                     assert edge.data.subset.dims() == rank, (nested.name, str(edge.data))

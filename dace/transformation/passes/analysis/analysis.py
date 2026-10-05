@@ -208,7 +208,7 @@ def resolved_at_leaf(leaf: Edge[Memlet]) -> bool:
 
 def accumulates_into(sdfg: SDFG, name: str) -> bool:
     """Whether some write to ``name`` anywhere in ``sdfg`` is conflict-resolved (see :func:`has_wcr_in_edge`)."""
-    return any(node.data == name and has_wcr_in_edge(state, node) for state in sdfg.all_states()
+    return any(node.data == name and has_wcr_in_edge(state, node) for state in sdfg.states()
                for node in state.data_nodes())
 
 
@@ -377,7 +377,7 @@ class FindAccessStates(ppl.Pass):
                 cond_data = cfr.used_symbols(all_symbols=True, with_contents=False) & anames
                 if not cond_data:
                     continue
-                region_states = set(cfr.all_states())
+                region_states = set(cfr.states())
                 for access in cond_data:
                     result[access].update(region_states)
 
@@ -1380,7 +1380,7 @@ def fully_overwritten_arrays(sdfg: SDFG) -> Set[str]:
     if not candidates:
         return candidates  # nothing to disprove -- skip the scan
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data not in candidates:
                 continue

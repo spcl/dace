@@ -322,7 +322,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         At most one constant index ``c`` per array; an array with mixed access modes
         (constant index plus a loop-var-indexed access) is refused.
         """
-        loop_states = list(loop.all_states())
+        loop_states = list(loop.states())
         # Group the constant-index accesses by array name; reject early if a non-constant
         # access to the same array exists in the loop, or if the array appears in any
         # memlet whose primary side is a different array (v1 only handles the simple
@@ -445,7 +445,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         :param slot: The constant point being considered for promotion.
         :returns: ``True`` only when the premise is established.
         """
-        body_states = list(loop.all_states())
+        body_states = list(loop.states())
         if not body_states:
             return True
 
@@ -496,7 +496,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         for cfg in loop.all_control_flow_regions():
             region_reads: Set[str] = set()
             region_writes: Set[str] = set()
-            for state in cfg.all_states():
+            for state in cfg.states():
                 region_reads |= access_sets[state][0]
                 region_writes |= access_sets[state][1]
             access_sets[cfg] = (region_reads, region_writes)
@@ -589,7 +589,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
           granularity already covers every TSVC / cloudsc shape we hit
           and is cheaper to reason about.
         """
-        body_states = list(loop.all_states())
+        body_states = list(loop.states())
         if not body_states:
             return False
 
@@ -779,7 +779,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             ``zvqx[1]`` is written by the species loop and ``zvqx[2..4]`` are read later.
             When ``None``, the legacy whole-array check applies.
         """
-        loop_states = set(loop.all_states())
+        loop_states = set(loop.states())
         cur = loop
         while True:
             parent = cur.parent_graph
@@ -843,7 +843,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if isinstance(block, SDFGState):
             return [block]
         if isinstance(block, ControlFlowRegion):
-            return list(block.all_states())
+            return list(block.states())
         return []
 
     # rewrite
@@ -855,7 +855,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         on one slot) and the slot-precise rewrite (a sibling slot also lives in the
         same loop body, so a wholesale rename would corrupt the other slot).
         """
-        for state in loop.all_states():
+        for state in loop.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet is None or memlet.data != arr_name or memlet.subset is None:
@@ -913,7 +913,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
         single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
 
-        for state in loop.all_states():
+        for state in loop.states():
             if state is prologue:
                 continue
             # Per-state introduced scalar AccessNode (slot-precise path only).

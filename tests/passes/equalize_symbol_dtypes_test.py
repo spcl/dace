@@ -38,7 +38,7 @@ def dtypes_of(sdfg: dace.SDFG) -> Dict[str, Set[dtypes.typeclass]]:
     for nested in sdfg.all_sdfgs_recursive():
         for desc in nested.arrays.values():
             add(s for extent in desc.shape for s in bound_symbols(extent))
-        for state in nested.all_states():
+        for state in nested.states():
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry):
                     add(subset_symbols(node.map.range))
@@ -105,7 +105,7 @@ def test_a_loop_iterator_takes_the_dtype_the_loop_declares():
     sdfg = loop_copy.to_sdfg(simplify=False)
     sdfg.name = 'equalize_loop_iterator'
     iterator_dtype = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             if edge.data.subset is not None and 'i' in {s.name for s in subset_symbols(edge.data.subset)}:
                 iterator_dtype = next(s.dtype for s in subset_symbols(edge.data.subset) if s.name == 'i')

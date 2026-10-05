@@ -70,7 +70,7 @@ def _inner_wcr_edges(sdfg: dace.SDFG) -> int:
     for sd in sdfg.all_sdfgs_recursive():
         if sd.parent is None:
             continue
-        for st in sd.all_states():
+        for st in sd.states():
             for e in st.edges():
                 if e.data is not None and e.data.wcr is not None and isinstance(e.src, nodes.Tasklet):
                     n += 1
@@ -116,7 +116,7 @@ def _toplevel_injective_sdfg() -> dace.SDFG:
 
 
 def _toplevel_wcr_edges(sdfg: dace.SDFG) -> int:
-    return sum(1 for st in sdfg.all_states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
+    return sum(1 for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
 
 
 def test_toplevel_injective_write_still_reverts():

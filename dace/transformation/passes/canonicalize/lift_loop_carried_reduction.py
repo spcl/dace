@@ -244,7 +244,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
 
     def _lift_loop(self, loop: LoopRegion) -> int:
         itervar = loop.loop_variable
-        body_states = list(loop.all_states())
+        body_states = list(loop.states())
         # Candidate reductions: one per (map, accumulator array) with an invariant subset.
         candidates = self._collect_candidates(body_states, itervar)
         if not candidates:

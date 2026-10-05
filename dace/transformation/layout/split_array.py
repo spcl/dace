@@ -395,7 +395,7 @@ class SplitArray(ppl.Pass):
 
     def _replace_memlets(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Rewrite memlets to the new split arrays; data-dependent accesses get a ConditionalBlock per index value."""
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             canonical_access, all_access_exprs = self._has_non_integer_access(sdfg, state, split_map)
 
             if canonical_access is not None:
@@ -522,7 +522,7 @@ class SplitArray(ppl.Pass):
 
     def _replace_access_nodes(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Point access nodes to the new split arrays; duplicates a node when in/out names differ."""
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for dnode in list(state.data_nodes()):
                 if dnode.data not in split_map:
                     continue
@@ -570,7 +570,7 @@ class SplitArray(ppl.Pass):
 
     def _pass_to_nsdfgs(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Propagate split arrays into nested SDFGs. (Not yet implemented.)"""
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, dace.nodes.NestedSDFG):
                     connectors = set(n.in_connectors) | set(n.out_connectors)

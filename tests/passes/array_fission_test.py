@@ -183,9 +183,8 @@ def test_fanout_reads_rename_every_branch():
     nodes". npbench ``channel_flow`` is the shape (``pn`` in the pressure-poisson stencil).
     """
     sdfg = fanout_reads.to_sdfg(simplify=True)
-    fanned = [(state.label, conn) for state in sdfg.all_states() for node in state.nodes()
-              if isinstance(node, nd.MapEntry) for conn in node.out_connectors
-              if len([e for e in state.out_edges(node) if e.src_conn == conn]) > 1]
+    fanned = [(state.label, conn) for state in sdfg.states() for node in state.nodes() if isinstance(node, nd.MapEntry)
+              for conn in node.out_connectors if len([e for e in state.out_edges(node) if e.src_conn == conn]) > 1]
     assert fanned, 'fixture no longer produces a fanned-out map connector'
 
     renamed = PrivatizeArrays().apply_pass(sdfg, {})['ArrayFission']
@@ -460,7 +459,7 @@ def test_wcr_accumulator_is_refused():
     overwrite, and privatizing it would drop the accumulation."""
     sdfg = full_overwrite.to_sdfg(simplify=True)
     accum = copy.deepcopy(sdfg)
-    for state in accum.all_states():
+    for state in accum.states():
         for node in state.data_nodes():
             if node.data != 'tmp':
                 continue
@@ -545,7 +544,7 @@ def tmp_family_reads_and_writes(sdfg: dace.SDFG, base: str):
     """
     family = {n for n in sdfg.arrays if n == base or n.startswith(base + '_')}
     read, written = set(), set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data in family:
                 (written if state.in_degree(node) else read).add(node.data)

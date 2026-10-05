@@ -252,7 +252,7 @@ def walk_body(sdfg_or_region: ControlFlowRegion, arrays: ArrayBindings, mapping:
             body.varying.add(region.loop_variable)
     for edge in sdfg_or_region.all_interstate_edges():
         body.varying.update(edge.data.assignments.keys())
-    for state in sdfg_or_region.all_states():
+    for state in sdfg_or_region.states():
         for edge in state.edges():
             body.accesses.extend(edge_accesses(edge, state, arrays, mapping))
         for node in state.nodes():

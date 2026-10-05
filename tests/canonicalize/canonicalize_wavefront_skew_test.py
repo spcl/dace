@@ -649,7 +649,7 @@ def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
     cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == 'cp')
-    body = next(inner.all_states())
+    body = next(inner.states())
 
     plan = plan_split_snapshots(outer, inner, sdfg)
     assert plan is not None
@@ -735,7 +735,7 @@ def test_wavefront_skew_symbolic_positive_forward_read_value_preserving():
     assert res == 1, "the hand-built forward-symbolic nest must engage the skew"
     # No runtime guard is planted for a declared-positive offset, so the schedule
     # must be correct outright (not merely trap-safe).
-    guards = [s for s in sdfg.all_states() if s.label.startswith('_skew_guard_')]
+    guards = [s for s in sdfg.states() if s.label.startswith('_skew_guard_')]
     assert not guards, f"a declared-positive forward read must not need a runtime guard; got {len(guards)}"
 
     n, s = 16, 1

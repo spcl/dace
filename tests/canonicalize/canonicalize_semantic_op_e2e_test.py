@@ -47,7 +47,7 @@ def _canonicalize_and_check(name):
     types = {}
     for node, _ in sdfg.all_nodes_recursive():
         types[type(node).__name__] = types.get(type(node).__name__, 0) + 1
-    has_wcr = any(e.data is not None and e.data.wcr is not None for st in sdfg.all_states() for e in st.edges())
+    has_wcr = any(e.data is not None and e.data.wcr is not None for st in sdfg.states() for e in st.edges())
     return nloops, types, has_wcr
 
 

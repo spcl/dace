@@ -215,7 +215,7 @@ def test_default_gpu_fuses_a_masked_tile_remainder():
     assert else_pred is None, "expected an if-branch + a bare else"
 
     def _kinds(region):
-        return {type(n).__name__ for st in region.all_states() for n, _ in st.all_nodes_recursive()}
+        return {type(n).__name__ for st in region.states() for n, parent in st.all_nodes_recursive()}
 
     if_kinds, else_kinds = _kinds(if_region), _kinds(else_region)
     tile_ops = {MaskedCopyLibraryNode.__name__, "TileBinop"}
@@ -298,10 +298,10 @@ def test_branched_tail_structure_if_vector_else_scalar():
     (if_cond, if_region), (_, else_region) = cb.branches
 
     def _node_types(region):
-        return [type(n).__name__ for st in region.all_states() for n in st.nodes()]
+        return [type(n).__name__ for st in region.states() for n in st.nodes()]
 
     def _all_nodes_recursive(region):
-        for st in region.all_states():
+        for st in region.states():
             yield from st.all_nodes_recursive()
 
     if_kinds = {type(n).__name__ for n, _ in _all_nodes_recursive(if_region)}
@@ -406,8 +406,8 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
 
     # The tiled TileITE's own operand and output descriptors -- the arrays the two fixes are
     # about -- stay fp16; nothing was widened to make dtype agreement easier.
-    ite_sdfg = next(sd for sd in sdfg.all_sdfgs_recursive() if any(ite in s.nodes() for s in sd.all_states()))
-    ite_state = next(s for s in ite_sdfg.all_states() if ite in s.nodes())
+    ite_sdfg = next(sd for sd in sdfg.all_sdfgs_recursive() if any(ite in s.nodes() for s in sd.states()))
+    ite_state = next(s for s in ite_sdfg.states() if ite in s.nodes())
     e_edge = next(e for e in ite_state.in_edges(ite) if e.dst_conn == "_e")
     o_edge = next(e for e in ite_state.out_edges(ite) if e.src_conn == "_o")
     assert ite_sdfg.arrays[e_edge.data.data].dtype == dace.float16, "TileITE '_e' arm was widened"

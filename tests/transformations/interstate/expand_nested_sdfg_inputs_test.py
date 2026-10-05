@@ -293,8 +293,7 @@ def test_widening_a_strided_window_scales_the_inner_index_by_its_step():
 
     inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     reads = [
-        e.data for s in inner.all_states() for e in s.edges()
-        if e.data.data == 'a' and e.data.subset.num_elements() == 1
+        e.data for s in inner.states() for e in s.edges() if e.data.data == 'a' and e.data.subset.num_elements() == 1
     ]
     assert [str(m.subset) for m in reads] == ['2*k']
     a, b = np.arange(10.0), np.zeros(5)
@@ -372,7 +371,7 @@ def test_a_whole_array_bound_at_lower_rank_is_widened_to_the_outer_rank():
 
     inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
     assert inner.arrays['a'].shape == (N, 1)
-    assert {str(e.data.subset) for s in inner.all_states() for e in s.edges() if e.data.data == 'a'} >= {'i, 0'}
+    assert {str(e.data.subset) for s in inner.states() for e in s.edges() if e.data.data == 'a'} >= {'i, 0'}
     a, b = np.arange(8.0).reshape(8, 1), np.zeros(8)
     sdfg(a=a, b=b, N=8)
     np.testing.assert_array_equal(b, 2 * a[:, 0])

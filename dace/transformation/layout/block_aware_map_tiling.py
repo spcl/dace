@@ -39,7 +39,7 @@ class BlockAwareMapTiling(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             scope = state.scope_dict()
             top_maps = [
                 n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and scope[n] is None

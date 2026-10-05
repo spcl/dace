@@ -1227,7 +1227,7 @@ def test_shifted_gather_with_index_refused():
 def _num_wcr_max_maps(sdfg) -> int:
     """Maps whose exit carries a max-WCR write -- the parallel form the s331 lift emits."""
     count = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, dace.sdfg.nodes.MapExit):
                 continue

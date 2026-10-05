@@ -415,7 +415,7 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
         out_data = oe.dst.data
         # Must be the only writer to that data anywhere in the loop.
         writers = 0
-        for state in loop.all_states():
+        for state in loop.states():
             for nn in state.data_nodes():
                 if nn.data == out_data and state.in_degree(nn) > 0:
                     writers += 1

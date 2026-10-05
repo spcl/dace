@@ -31,7 +31,7 @@ def read_elsewhere(sdfg: SDFG, access_node: nodes.AccessNode) -> bool:
     canonicalize column scattered through uninitialized device memory.
     """
     name = access_node.data
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node is not access_node and node.data == name and state.out_degree(node) > 0:
                 return True

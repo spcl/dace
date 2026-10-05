@@ -21,7 +21,7 @@ M = dace.symbol('M', dtype=dace.int64)
 
 
 def _maps(sdfg):
-    return [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dnodes.MapEntry)]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, dnodes.MapEntry)]
 
 
 def _loops(sdfg):
@@ -77,7 +77,7 @@ def test_a_real_recurrence_is_still_lifted():
     """
     sdfg = prefix_scan.to_sdfg(simplify=False)
     canonicalize(sdfg, target='cpu', validate_all=False)
-    scans = [n for st in sdfg.all_states() for n in st.nodes() if type(n).__name__ == 'Scan']
+    scans = [n for st in sdfg.states() for n in st.nodes() if type(n).__name__ == 'Scan']
     assert scans, 'a genuine prefix scan must still lift to a Scan library node'
 
 

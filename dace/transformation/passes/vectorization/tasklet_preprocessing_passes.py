@@ -315,8 +315,6 @@ def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
     # Whether any component expression of ``subset`` contains a sympy ``Mod``.
     if isinstance(subset, dace.subsets.Range):
         exprs = [x for rng in subset.ranges for x in rng]
-    elif isinstance(subset, dace.subsets.Indices):
-        exprs = list(subset.indices)
     else:
         return False
     return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod) for x in exprs)
@@ -327,8 +325,6 @@ def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
     if isinstance(subset, dace.subsets.Range):
         return dace.subsets.Range([(_subs_py_mod_symbolic(b), _subs_py_mod_symbolic(e), _subs_py_mod_symbolic(s))
                                    for b, e, s in subset.ranges])
-    if isinstance(subset, dace.subsets.Indices):
-        return dace.subsets.Indices([_subs_py_mod_symbolic(i) for i in subset.indices])
     return subset
 
 
@@ -447,7 +443,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
     def _rewrite_memlets_and_ranges(self, g: SDFG) -> int:
         # Rewrite symbolic ``Mod`` in memlet subsets and map ranges of ``g``.
         rewritten = 0
-        for state in g.all_states():
+        for state in g.states():
             for e in state.edges():
                 m = e.data
                 if m is None:

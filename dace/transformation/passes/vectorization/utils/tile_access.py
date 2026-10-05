@@ -890,7 +890,7 @@ def _resolve_gather_index_an(inner_sdfg: SDFG | None, expr: sympy.Expr) -> nodes
     base_name = str(base)
     if base_name not in inner_sdfg.arrays:
         return None
-    for st in inner_sdfg.all_states():
+    for st in inner_sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and n.data == base_name:
                 return n

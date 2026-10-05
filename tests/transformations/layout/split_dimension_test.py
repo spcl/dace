@@ -35,7 +35,7 @@ def tadd_blocked(A: dace.float64[N, N, N], B: dace.float64[N, N, N], C: dace.flo
 def _add_interstate_access(sdfg: dace.SDFG, arr_name: str, arr: dace.data.Array):
     dim_count = len(arr.shape)
     access_str: str = ("2," * dim_count)[:-1]
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     parent_graph = state.parent_graph
     sdfg.add_symbol("X", stype=numpy.float64)
     second_state = parent_graph.add_state_after(state,

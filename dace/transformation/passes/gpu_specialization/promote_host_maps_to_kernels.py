@@ -39,7 +39,7 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
         return gpu_block_implementation(node, state, state.sdfg) is not None
     if isinstance(node, nodes.NestedSDFG):
         return all(
-            device_capable(inner, inner_state, True) for inner_state in node.sdfg.all_states()
+            device_capable(inner, inner_state, True) for inner_state in node.sdfg.states()
             for inner in inner_state.nodes())
     return isinstance(node, (nodes.EntryNode, nodes.ExitNode))
 
@@ -48,8 +48,7 @@ def launches_device_work(node: nodes.Node) -> bool:
     if isinstance(node, (nodes.MapEntry, nodes.LibraryNode)):
         return node.schedule == dtypes.ScheduleType.GPU_Device
     if isinstance(node, nodes.NestedSDFG):
-        return any(
-            launches_device_work(inner) for inner_state in node.sdfg.all_states() for inner in inner_state.nodes())
+        return any(launches_device_work(inner) for inner_state in node.sdfg.states() for inner in inner_state.nodes())
     return False
 
 

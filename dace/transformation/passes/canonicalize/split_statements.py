@@ -259,7 +259,7 @@ def body_stage_index(body: Body, index: StageIndex) -> StageIndex:
     unbuilt: the fallback is only reached from an AccessNode of ``body``.
     """
     if not index:
-        for st in body.all_states():
+        for st in body.states():
             for n in st.data_nodes():
                 index.setdefault(n.data, []).append((st, n))
     return index
@@ -314,7 +314,7 @@ def local_transient_index(sdfg: SDFG) -> LocalTransientIndex:
     """
     state_names: dict[int, dict[str, None]] = {}
     in_states: Counter[str] = Counter()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         names = dict.fromkeys(n.data for n in state.data_nodes())
         state_names[id(state)] = names
         in_states.update(names.keys())
@@ -352,7 +352,7 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: LocalTransientInd
     """
     state_names, in_states, _, cond_names, in_conditions, position, unnamed = index or local_transient_index(sdfg)
     inner: Counter[str] = Counter()
-    for state in loop.all_states():
+    for state in loop.states():
         names = state_names.get(id(state))
         if names is not None:
             inner.update(names.keys())
@@ -394,7 +394,7 @@ def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     """Inner array names that feed ``out_name``, excluding pure shared inputs."""
     deps: dict[str, None] = {}
     stage_index: dict = {}
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = {}
         stack = [(state, w) for w in writers]
@@ -424,7 +424,7 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     """
     reads: dict[str, None] = {}
     stage_index: dict = {}
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = dict.fromkeys((state, w) for w in writers)
         stack = [(s2, e.src) for w in writers
@@ -463,7 +463,7 @@ def rmw_confined(body: Body, in_names: dict[str, None], rmw: list[str], groups: 
         return False
     # ``output_input_reads`` walks a single state at a time, so a producer chain that crosses
     # states is invisible to it -- only a one-state body is fully analyzable.
-    if sum(1 for _ in body.all_states()) != 1:
+    if len(body.states()) != 1:
         return False
     for grp in groups:
         reads: dict[str, None] = {}
@@ -549,7 +549,7 @@ def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -
     """
     found = []
     stage_index: dict = {}
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = dict.fromkeys((state, w) for w in writers)
         stack = [pair for w in writers for pair in staged_producer_edges(sdfg, state, w, input_names, stage_index)]
@@ -584,7 +584,7 @@ def read_cone(body: Body, out_name: str, in_names: dict[str, None], memo: Cone |
 def write_subsets(body: Body, name: str) -> list[subsets.Subset]:
     """Every subset of ``name`` that ``body`` STORES to."""
     out: list[subsets.Subset] = []
-    for state in body.all_states():
+    for state in body.states():
         for node in state.data_nodes():
             if node.data != name:
                 continue
@@ -606,7 +606,7 @@ def suppress_writes(body: SDFG, name: str) -> None:
     :param name: The array whose stores go away.
     """
     from dace.sdfg import utils as sdutil
-    for state in body.all_states():
+    for state in body.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             for e in producer_edges(state, node):
                 sdutil.remove_edge_and_dangling_path(state, e)
@@ -638,10 +638,10 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
         removed = False
         read_for_value = {
             n.data
-            for state in body.all_states()
+            for state in body.states()
             for n in state.data_nodes() if value_edges(state.out_edges(n))
         }
-        for state in body.all_states():
+        for state in body.states():
             for node in [n for n in state.data_nodes() if not value_edges(state.out_edges(n))]:
                 if (value_edges(state.in_edges(node))
                         and not (body.arrays[node.data].transient and node.data not in read_for_value)):
@@ -1004,7 +1004,7 @@ class SplitStatements(ppl.Pass):
         out_conns = list(node.out_connectors)
         if len(out_conns) < 2:
             return None
-        if states_touch_view(node.sdfg.all_states(), node.sdfg.arrays) or neighbours_touch_view(state, node):
+        if states_touch_view(node.sdfg.states(), node.sdfg.arrays) or neighbours_touch_view(state, node):
             return None
         # No WCR on the boundary (it would not be replicable per group).
         for e in state.out_edges(node):
@@ -1069,7 +1069,7 @@ class SplitStatements(ppl.Pass):
                 # ``s211``). Keep exactly what the clone still moves a value through.
                 used = {
                     n.data
-                    for st in clone_sdfg.all_states()
+                    for st in clone_sdfg.states()
                     for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
                 }
                 kept_in = [c for c in kept_in if c in clone_sdfg.arrays and c in used]
@@ -1455,7 +1455,7 @@ class SplitStatements(ppl.Pass):
             # TSVC ``s211``). Keep exactly what the clone still moves a value through.
             used = {
                 n.data
-                for st in clone_sdfg.all_states()
+                for st in clone_sdfg.states()
                 for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
             }
             kept_in = [c for c in node.in_connectors if c in clone_sdfg.arrays and c in used]

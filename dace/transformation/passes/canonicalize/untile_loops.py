@@ -434,7 +434,7 @@ def memlet_bound_texts(memlet: dace.Memlet) -> List[str]:
 def body_bound_texts(inner: LoopRegion) -> List[str]:
     """Every memlet bound in ``inner``'s body, as text: where the audit looks for references to ``i`` / ``ii``."""
     return [
-        text for st in inner.all_states() for e in st.edges() if e.data is not None and not e.data.is_empty()
+        text for st in inner.states() for e in st.edges() if e.data is not None and not e.data.is_empty()
         for text in memlet_bound_texts(e.data)
     ]
 
@@ -522,7 +522,7 @@ def blocked_arrays_of(inner: LoopRegion, outer_var: str, inner_var: str, case: s
     if case == 'B':
         return {} if _audit_combined_access(inner, outer_var, inner_var, case) else None
     blocked: BlockedArrays = {}
-    for st in inner.all_states():
+    for st in inner.states():
         for e in st.edges():
             if e.data is None or e.data.is_empty():
                 continue
@@ -546,7 +546,7 @@ def unblock_is_safe(sdfg: SDFG, blocked_arrays: BlockedArrays) -> bool:
         expected = len(masks) + sum(1 for m in masks if m)
         if arr is None or len(arr.shape) != expected:
             return False
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG) and any(e.data is not None and e.data.data == arr_name
                                                               for e in state.in_edges(node) + state.out_edges(node)):

@@ -28,7 +28,7 @@ def gpu_maps_below(state: SDFGState, scope: nodes.EntryNode | None) -> Iterator[
         elif isinstance(node, nodes.EntryNode):
             yield from gpu_maps_below(state, node)
         elif isinstance(node, nodes.NestedSDFG):
-            for nested_state in node.sdfg.all_states():
+            for nested_state in node.sdfg.states():
                 yield from gpu_maps_below(nested_state, None)
 
 

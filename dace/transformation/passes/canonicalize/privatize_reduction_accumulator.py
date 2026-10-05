@@ -57,7 +57,7 @@ class PrivatizeReductionAccumulator(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         count = 0
-        for state in list(sdfg.all_states()):
+        for state in list(sdfg.states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
                 # WCR writes are on the MapExit's IN-edges (tasklet -> MapExit
                 # IN_<name> connector); the matching OUT-edge then forwards the

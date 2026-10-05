@@ -59,7 +59,7 @@ def test_the_diagonal_scatter_is_admitted_at_one_tile_dim_and_refused_above_it()
     sdfg = diagonal_scatter_store.to_sdfg(simplify=False)
     sdfg.simplify(validate=True, validate_all=True)
     canonicalize(sdfg, validate=True)
-    maps = [(n, st) for st in sdfg.all_states() for n in st.nodes()
+    maps = [(n, st) for st in sdfg.states() for n in st.nodes()
             if isinstance(n, dace.nodes.MapEntry) and is_innermost_map(st, n)]
     assert len(maps) == 1, f'expected the one innermost map; got {[n.map.label for n, _ in maps]}'
     entry, state = maps[0]

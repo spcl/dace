@@ -86,7 +86,7 @@ def _loops(sdfg):
 
 def _written(sdfg, loop):
     """The distinct GLOBAL array names a loop body stores to (its private temps are not outputs)."""
-    stored = dict.fromkeys(n.data for s in loop.all_states() for n in s.data_nodes() if s.in_degree(n) > 0)
+    stored = dict.fromkeys(n.data for s in loop.states() for n in s.data_nodes() if s.in_degree(n) > 0)
     return sorted(nm for nm in stored if not sdfg.arrays[nm].transient)
 
 
@@ -164,7 +164,7 @@ def test_flat_loop_splits_into_two_loops():
     """One loop in, two loops out -- the carry and the parallel statement, each self-contained."""
     sdfg = carry_loop('flat_split')
     assert len(_loops(sdfg)) == 1
-    assert not [n for l in _loops(sdfg) for s in l.all_states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert not [n for l in _loops(sdfg) for s in l.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG)]
 
     assert _split(sdfg) == 1
     loops = _loops(sdfg)
@@ -216,7 +216,7 @@ def test_shared_temp_is_recomputed_in_each_loop():
     assert len(loops) == 2
     # Two loops, two DISTINCT private temps -- neither hands a value to the other.
     temps = [
-        sorted(dict.fromkeys(n.data for s in l.all_states() for n in s.data_nodes() if sdfg.arrays[n.data].transient))
+        sorted(dict.fromkeys(n.data for s in l.states() for n in s.data_nodes() if sdfg.arrays[n.data].transient))
         for l in loops
     ]
     assert all(t for t in temps), temps
@@ -658,7 +658,7 @@ def test_canonicalize_still_parallelizes_the_motivating_kernel():
     sdfg = kern.to_sdfg(simplify=True)
     canonicalize(sdfg)
     assert not _loops(sdfg)
-    assert [n for s in sdfg.all_states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
+    assert [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
     got = {k: v.copy() for k, v in base.items()}
     sdfg.compile()(**got, N=n)
     assert np.allclose(got['a'], ref['a'])

@@ -332,7 +332,7 @@ class RerollUnrolledLoops(ppl.Pass):
         leaves: Dict = {}
         seen_names: Dict[str, None] = {}
         host: Dict[SDFGState, None] = {}
-        for st in sdfg.all_states():
+        for st in sdfg.states():
             if st in body:
                 continue
             for n in st.nodes():

@@ -59,7 +59,7 @@ def simplified(value: SymbolicLike) -> sympy.Expr:
 
 
 def as_range(subset: subsets.Subset | None) -> subsets.Range:
-    """``subset`` as a :class:`~dace.subsets.Range` (an ``Indices`` is one).
+    """``subset`` as a :class:`~dace.subsets.Range`.
 
     :param subset: A memlet subset.
     :returns: The same object.

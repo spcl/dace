@@ -91,7 +91,7 @@ def test_single_edge(input: Tuple[int, str, str, int]):
     sdfgB.name = f"pattern_{input[0]}_demoted"
 
     tasklets = set()
-    for state in sdfgB.all_states():
+    for state in sdfgB.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 tasklets.add((node, state))
@@ -123,7 +123,7 @@ def test_complex_expr_and_connector_names():
     sdfgB.name = f"pattern_type2_demoted"
 
     tasklets = set()
-    for state in sdfgB.all_states():
+    for state in sdfgB.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 tasklets.add((node, state))

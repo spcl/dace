@@ -93,7 +93,7 @@ def _structure(sdfg) -> str:
     did. Built in traversal order, never from a set, so re-running it is not a coin flip.
     """
     lines = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         lines.append(f'STATE {state.label}')
         ids = {n: i for i, n in enumerate(state.nodes())}
         for node in state.nodes():

@@ -277,7 +277,7 @@ def _workless_branches(sdfg: dace.SDFG) -> List[str]:
     """
     return sorted(branch.label for nested in sdfg.all_sdfgs_recursive() for block in nested.all_control_flow_blocks()
                   if isinstance(block, ConditionalBlock) for condition, branch in block.branches
-                  if not any(state.nodes() for state in branch.all_states()))
+                  if not any(state.nodes() for state in branch.states()))
 
 
 def test_spent_conditional_arm_is_spliced_out():

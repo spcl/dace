@@ -88,7 +88,7 @@ class UnzipArrays(ppl.Pass):
             unzipped_inner.add(key)
 
         # Split a map's fused connector into one IN/OUT pair per field, each with its own reservoir edge.
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
                 for conn in [c for c in scope.in_connectors]:
                     out_conn = "OUT_" + conn[len("IN_"):]
@@ -101,7 +101,7 @@ class UnzipArrays(ppl.Pass):
                         self._split_map_scope(sdfg, state, scope, in_conn, conn, fused, fields, axis, is_entry=False)
 
         # Remaining top-level edges/nodes: constant-field indexed accesses.
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data == fused:
                     if edge.data.other_subset is not None:
@@ -186,7 +186,7 @@ class UnzipArrays(ppl.Pass):
     # Nested-SDFG boundary: split the fused connector into F field connectors
     def _nested_boundaries(self, sdfg, fused):
         """Yield ``(state, nsdfg_node, edge, conn, is_input)`` for each whole-array boundary."""
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
                     for ie in state.in_edges(node):
@@ -247,7 +247,7 @@ class UnzipArrays(ppl.Pass):
                                transient=desc.transient,
                                lifetime=desc.lifetime,
                                find_new_name=False)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             # 1. Revert each tasklet's member access, retype the connector, and rename its fused edges to the accessed member.
             for node in [n for n in state.nodes() if isinstance(n, nd.Tasklet)]:
                 conns = {e.dst_conn for e in state.in_edges(node) if e.data is not None and e.data.data == fused}

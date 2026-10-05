@@ -160,7 +160,7 @@ def full_length_reads(sdfg: dace.SDFG) -> list[str]:
     three of its edges still streams ``b`` once.
     """
     passes: list[str] = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry) and state.entry_node(node) is None:
                 if scope_trips(state, node) >= FULL_LENGTH:

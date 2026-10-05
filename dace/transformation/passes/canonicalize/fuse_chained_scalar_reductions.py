@@ -160,7 +160,7 @@ class FuseChainedScalarReductions(ppl.Pass):
             for loop in [n for n in sd.all_control_flow_regions() if isinstance(n, LoopRegion)]:
                 if loop.pinned_sequential or not loop.loop_variable:
                     continue
-                for st in loop.all_states():
+                for st in loop.states():
                     fused += self._fuse_state(sd, st)
         return fused or None
 

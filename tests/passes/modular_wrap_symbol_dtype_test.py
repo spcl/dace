@@ -17,7 +17,7 @@ from dace.transformation.passes.canonicalize import pipeline as canon
 
 
 def structure(sdfg: dace.SDFG) -> tuple:
-    maps = sum(1 for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+    maps = sum(1 for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry))
     loops = sum(1 for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)
                 if isinstance(b, LoopRegion))

@@ -11,7 +11,7 @@ KRED = 5
 
 
 def _wcr_count(sdfg):
-    return sum(1 for st in sdfg.all_states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
+    return sum(1 for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
 
 
 @dace.program

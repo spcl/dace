@@ -164,7 +164,7 @@ def _wcr_edge_sources(sdfg: dace.SDFG):
     """Return the list of upstream node *classes* for every WCR-carrying edge in ``sdfg``."""
     out = []
     for sd in sdfg.all_sdfgs_recursive():
-        for st in sd.all_states():
+        for st in sd.states():
             for e in st.edges():
                 if e.data is not None and e.data.wcr is not None:
                     out.append(type(e.src).__name__)
@@ -248,7 +248,7 @@ def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
 
     # Structural: no NestedSDFG-source WCR edge survives anywhere in the SDFG.
     wcr_sources = [
-        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for state in sd.all_states() for e in state.edges()
+        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for state in sd.states() for e in state.edges()
         if e.data is not None and e.data.wcr is not None
     ]
     assert wcr_sources, 'Expected at least one WCR edge.'
@@ -380,7 +380,7 @@ def _row_reduction_wcr_edge(sdfg: dace.SDFG):
     """The WCR edge the per-row tasklet writes into ``out[i]`` inside the body, with its state: the
     edge whose write the code generator resolves."""
     for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.all_states():
+        for state in nested.states():
             for edge in state.edges():
                 if (isinstance(edge.dst, dace.nodes.MapExit) and edge.dst.map.label == 'reduce_row'
                         and edge.data.wcr is not None):

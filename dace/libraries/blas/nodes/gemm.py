@@ -8,6 +8,7 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
+from dace.libraries.blas import blas_helpers
 from dace.libraries.blas.blas_helpers import (to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype,
                                               matrix_view)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts, _matrix_operand,

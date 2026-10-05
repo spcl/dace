@@ -215,7 +215,7 @@ class NormalizeWCRSource(ppl.Pass):
 
         Membership-only: the answer is an order-independent OR over the subtree.
         """
-        for ist in sd.all_states():
+        for ist in sd.states():
             for e in ist.edges():
                 if e.data is None or e.data.is_empty():
                     continue
@@ -341,7 +341,7 @@ class NormalizeWCRSource(ppl.Pass):
         as ``B[...]`` (``e.data.data == 'B'``) yet still plain-initializes ``acc``. Computed
         once per SDFG (not per accumulator)."""
         out: Set[str] = set()
-        for st in sd.all_states():
+        for st in sd.states():
             for e in st.edges():
                 if (e.data is not None and e.data.wcr is None and not e.data.is_empty()
                         and isinstance(e.dst, nodes.AccessNode)):
@@ -499,7 +499,7 @@ class NormalizeWCRSource(ppl.Pass):
         # traversal, then seeded afterwards so inserting seed states does not perturb iteration.
         seed_reqs: Dict[int, Tuple[SDFG, Dict[str, list]]] = {}
         for sd in sdfg.all_sdfgs_recursive():
-            for state in list(sd.all_states()):
+            for state in list(sd.states()):
                 n, reqs = self._rewrite_state(sd, state)
                 total += n
                 if reqs:

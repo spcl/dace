@@ -174,7 +174,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
         n = dace.symbolic.int_floor(end - start, step) + 1
         repldict = {str(var): f"(({start}) + ({step}) * {var})"}
-        if tasklets_assign((node for st in loop.all_states() for node in st.nodes()), repldict):
+        if tasklets_assign((node for st in loop.states() for node in st.nodes()), repldict):
             return False
         # Rewrite the body (memlets/tasklets/interstate/nested); the loop's own
         # header is not a node within itself, so reset it explicitly after.
@@ -237,7 +237,7 @@ class NormalizeLoopBounds(NormalizeLoopsAndMaps):
         if start == 0:
             return False  # already 0-based (any stride) -> idempotent no-op
         repldict = {str(var): f"(({start}) + {var})"}
-        if tasklets_assign((node for st in loop.all_states() for node in st.nodes()), repldict):
+        if tasklets_assign((node for st in loop.states() for node in st.nodes()), repldict):
             return False
         self._repl_recursive(loop, repldict)
         new_end = dace.symbolic.simplify(end - start)

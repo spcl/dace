@@ -79,7 +79,7 @@ def strip_casts(expr):
 
 def single_element_reads(sdfg: dace.SDFG, array_name: str) -> List[Tuple["dace.SDFGState", object]]:
     """``(state, edge)`` for every edge reading exactly one element of ``array_name``."""
-    return [(state, e) for state in sdfg.all_states() for e in state.edges() if e.data is not None
+    return [(state, e) for state in sdfg.states() for e in state.edges() if e.data is not None
             and not e.data.is_empty() and e.data.data == array_name and e.data.subset.num_elements() == 1]
 
 
@@ -123,7 +123,7 @@ def resolve_zero_input_tasklet(sdfg: dace.SDFG, data_name: str):
     argument or symbol goes through before it can appear in a subset. Raises if no such tasklet
     exists, rather than silently returning a wrong value for a shape this was not written for.
     """
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if isinstance(n, nodes.AccessNode) and n.data == data_name:
                 for e in state.in_edges(n):
@@ -293,7 +293,7 @@ def check_s318_closed(sdfg: dace.SDFG) -> None:
     plain ``inc``.
     """
     from dace.libraries.standard.nodes import ArgReduce
-    edges = [(state, e) for state in sdfg.all_states() for n in state.nodes() if isinstance(n, ArgReduce)
+    edges = [(state, e) for state in sdfg.states() for n in state.nodes() if isinstance(n, ArgReduce)
              for e in state.in_edges(n) if e.dst_conn == "_in"]
     assert len(edges) == 1, f"s318: expected exactly one ArgReduce _in edge, got {len(edges)}"
     _, edge = edges[0]
@@ -308,7 +308,7 @@ def check_s318_closed(sdfg: dace.SDFG) -> None:
 
 def check_s453_closed(sdfg: dace.SDFG) -> None:
     candidates = [
-        n for state in sdfg.all_states() for n in state.nodes()
+        n for state in sdfg.states() for n in state.nodes()
         if isinstance(n, nodes.Tasklet) and "__in1" in n.in_connectors and "__in2" in n.in_connectors
     ]
     assert len(candidates) == 1, f"s453: expected one fused mult tasklet, got {len(candidates)}"

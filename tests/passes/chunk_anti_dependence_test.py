@@ -54,7 +54,7 @@ def _canonical(prog):
 
 def _copies_into(sdfg, suffix):
     return [
-        e.data for st in sdfg.all_states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
+        e.data for st in sdfg.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
         and e.dst.data.endswith(suffix) and e.data is not None and not e.data.is_empty()
     ]
 
@@ -83,7 +83,7 @@ def _chunk_maps(sdfg):
 def _chunk_bodies(sdfg):
     """Per chunk map, what its scope holds: the ``LoopRegion`` labels, and the inner map params."""
     bodies = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not (isinstance(node, nodes.MapEntry) and node.map.params[0].startswith('antidep_chunk')):
                 continue
@@ -195,7 +195,7 @@ def test_seam_reads_are_chunk_indexed():
     buf, = [n for n in sdfg.arrays if n.endswith('_antidep_seam')]
 
     reads = {}
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in st.edges():
             if e.data is not None and e.data.data == buf and isinstance(e.dst, nodes.AccessNode):
                 reads[st.label] = e.data.subset

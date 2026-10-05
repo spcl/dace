@@ -171,7 +171,7 @@ def _gemm_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N]):
 
 
 def _symm_nodes(sdfg):
-    return [n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes() if isinstance(n, Symm)]
+    return [n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes() if isinstance(n, Symm)]
 
 
 def _reference(A_tri, B, C, alpha, beta):
@@ -292,7 +292,7 @@ def test_slice_nest_lifted_with_the_prescale_left_alone():
     symms = _symm_nodes(sdfg)
     assert len(symms) == 1
     node = symms[0]
-    state = next(st for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() if node in st.nodes())
+    state = next(st for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if node in st.nodes())
     assert node.side == "L" and node.uplo == "L"
     assert node.alpha_input and not node.beta_input and node.beta == 1
     assert "_beta" not in node.in_connectors
@@ -328,7 +328,7 @@ def test_lifted_slice_nest_survives_vectorization():
     # library node's business, so a Multicore scope storing to C means the hand-rolled
     # accumulation came back.
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             scopes = state.scope_dict()
             for dn in state.data_nodes():
                 if dn.data != "C" or state.in_degree(dn) == 0:
@@ -344,7 +344,7 @@ def test_lifted_slice_nest_survives_vectorization():
     # holds whatever the suite exports. Every multicore scope is pinned, so a regression that
     # brings the accumulation back is racing on the run below rather than quietly serialised.
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for entry in state.nodes():
                 if isinstance(entry, nodes.MapEntry) and entry.map.schedule in dtypes.CPU_SCHEDULES:
                     entry.map.omp_num_threads = 4

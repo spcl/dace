@@ -103,7 +103,7 @@ def test_symbolic_stride_specializes_if_par_else_seq():
     assert _sequential_loops(seq_region), 'the else branch must keep the original sequential loop'
     # The fallback loop is pinned so no later parallelizer lifts it back to a Map.
     assert all(l.pinned_sequential for l in _sequential_loops(seq_region))
-    assert all(e.data.wcr is None for s in par_region.all_states() for e in s.edges()), \
+    assert all(e.data.wcr is None for s in par_region.states() for e in s.edges()), \
         'the parallel-branch Map must carry no WCR'
 
 
@@ -150,7 +150,7 @@ def test_symbolic_stride_store_specializes_if_par_else_seq():
     assert _has_map(par_region), 'the S != 0 branch must lift the store to a Map'
     assert _sequential_loops(seq_region), 'the else branch must keep the original sequential loop'
     assert all(l.pinned_sequential for l in _sequential_loops(seq_region))
-    assert all(e.data.wcr is None for s in par_region.all_states() for e in s.edges()), \
+    assert all(e.data.wcr is None for s in par_region.states() for e in s.edges()), \
         'the parallel-branch Map must carry no WCR'
 
 

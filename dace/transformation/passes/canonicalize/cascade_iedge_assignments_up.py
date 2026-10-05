@@ -143,7 +143,7 @@ def _region_writes(region: ControlFlowRegion) -> Tuple[Dict[str, None], Dict[str
     wdata: Dict[str, None] = {}
     for e in region.all_interstate_edges():
         asyms.update(dict.fromkeys(e.data.assignments.keys()))
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 wdata[n.data] = None
@@ -162,7 +162,7 @@ def build_region_index(region: ControlFlowRegion) -> Tuple[Dict[str, List[str]],
     for e in region.all_interstate_edges():
         for lhs, rhs_value in e.data.assignments.items():
             by_key.setdefault(lhs, []).append(str(rhs_value))
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 written[n.data] = None
@@ -250,7 +250,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Dict[str, None]]:
             return None
         return syms
     if isinstance(block, ControlFlowRegion):
-        for st in block.all_states():
+        for st in block.states():
             try:
                 syms.update(dict.fromkeys(str(s) for s in st.free_symbols))
             except Exception:

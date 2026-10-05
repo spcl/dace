@@ -168,7 +168,7 @@ def test_s118_matches_its_oracle_after_canonicalization():
     # The reassociation this test tolerates has exactly one source: the inner accumulation
     # became a reduction map. Assert that, so a drift arriving any other way is still a failure.
     reduction_maps = [
-        st.label for st in sdfg.all_states() for e in st.edges()
+        st.label for st in sdfg.states() for e in st.edges()
         if e.data is not None and e.data.wcr is not None and isinstance(e.dst, nodes.MapExit)
     ]
     assert reduction_maps, 'the inner accumulation is expected to be lifted to a reduction (WCR) map'

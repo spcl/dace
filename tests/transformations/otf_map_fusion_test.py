@@ -957,7 +957,7 @@ def test_a_producer_another_state_reads_is_kept():
     uninitialized device memory on the GPU canonicalize column."""
     sdfg = producer_read_by_a_later_state()
     assert sdfg.apply_transformations_repeated(OTFMapFusion) >= 1
-    writers = [n for s in sdfg.all_states() for n in s.data_nodes() if n.data == 'T' and s.in_degree(n) > 0]
+    writers = [n for s in sdfg.states() for n in s.data_nodes() if n.data == 'T' and s.in_degree(n) > 0]
     assert writers, 'the producer of T is gone although the later state reads T'
     sdfg.validate()
     a = np.random.rand(16)

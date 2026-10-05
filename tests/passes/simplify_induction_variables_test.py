@@ -52,7 +52,7 @@ def test_folds_memlet_subset_and_removes_dead_assignment():
     assert all('j' not in e.data.assignments for e in loop.all_interstate_edges())
 
     # A's memlet subset should now reference i, not j.
-    use_state = next(s for s in loop.all_states() if s.label == 'use')
+    use_state = next(s for s in loop.states() if s.label == 'use')
     a_reads = [e for e in use_state.edges() if e.data.data == 'A']
     assert len(a_reads) == 1
     subset_syms = {str(s) for s in a_reads[0].data.subset.free_symbols}
@@ -91,7 +91,7 @@ def test_keeps_assignment_when_iv_live_outside_loop():
     p.apply_pass(sdfg, {})
 
     # Inside-loop substitution still happens.
-    use_state = next(s for s in loop.all_states() if s.label == 'use')
+    use_state = next(s for s in loop.states() if s.label == 'use')
     a_reads = [e for e in use_state.edges() if e.data.data == 'A']
     assert 'j' not in {str(s) for s in a_reads[0].data.subset.free_symbols}
     # But the defining assignment is kept.
@@ -147,7 +147,7 @@ def test_does_not_touch_basic_iv():
     p = SimplifyInductionVariables()
     p.apply_pass(sdfg, {})
 
-    use_state = next(s for s in loop.all_states() if s.label == 'use')
+    use_state = next(s for s in loop.states() if s.label == 'use')
     # B[i] memlet should still use i — the basic IV is not folded.
     b_writes = [e for e in use_state.edges() if e.data.data == 'B']
     assert len(b_writes) == 1
@@ -202,7 +202,7 @@ def test_llmr_interaction_unlocks_derived_iv_pattern():
 
     # The compute state's read should now reference only i.
     folded_loop = next(n for n in folded.nodes() if isinstance(n, LoopRegion))
-    folded_compute = next(s for s in folded_loop.all_states() if s.label == 'compute')
+    folded_compute = next(s for s in folded_loop.states() if s.label == 'compute')
     reads = [e for e in folded_compute.edges() if e.data.data == 'a' and e.data.subset is not None]
     # At least one read should now have i in its subset instead of j.
     found_i_only = False

@@ -68,7 +68,7 @@ def process_memlets_in_edges(state: dace.SDFGState, edges: Iterable, repldict: D
 
 def repl_memlets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
     """Substitute ``repldict`` into every memlet of ``cfg``, descending into nested SDFGs."""
-    for state in cfg.all_states():
+    for state in cfg.states():
         process_memlets_in_edges(state, state.edges(), repldict)
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
@@ -80,7 +80,7 @@ def repl_interstate_edges_recursive(cfg: ControlFlowRegion, repldict: Dict[str, 
     for edge in [] if isinstance(cfg, dace.SDFGState) else cfg.all_interstate_edges():
         edge.data.replace_dict(repldict)
 
-    for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+    for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 repl_interstate_edges_recursive(node.sdfg, repldict)
@@ -115,7 +115,7 @@ def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: D
 
 def repl_tasklets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
     """Substitute ``repldict`` into every tasklet of ``cfg``, descending into nested SDFGs."""
-    for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+    for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.states():
         repl_tasklets_on_node_list(state.nodes(), repldict)
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
@@ -136,7 +136,7 @@ def repl_for_regions_recursive(root: ControlFlowRegion, cfg: ControlFlowRegion, 
             if node.update_statement is not None:
                 node.update_statement = replace_in_code(node.update_statement, repldict)
 
-    for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+    for state in [] if isinstance(cfg, dace.SDFGState) else cfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 repl_for_regions_recursive(root, node.sdfg, repldict)
@@ -150,7 +150,7 @@ def repl_if_blocks_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -
                 if cond is not None:
                     node.branches[i] = (replace_in_code(cond, repldict), body)
 
-    for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+    for state in [] if isinstance(cfg, dace.SDFGState) else cfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 repl_if_blocks_recursive(node.sdfg, repldict)

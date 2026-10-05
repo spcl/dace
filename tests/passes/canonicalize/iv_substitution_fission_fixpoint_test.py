@@ -34,14 +34,14 @@ def structure(sdfg: dace.SDFG) -> str:
 
 def test_settling_early_reaches_the_graph_of_the_full_simplify_fixpoint():
     sdfg = constant_dead_branch.to_sdfg(simplify=False)
-    states_before = len(list(sdfg.all_states()))
+    states_before = len(list(sdfg.states()))
     reference = copy.deepcopy(sdfg)
 
     reference_changed = SimplifyPass().apply_pass(reference, {}) is not None
     changed = IvSubstitutionFissionFixpoint.simplify_until_settled(SimplifyPass(), sdfg)
 
     assert changed is True and reference_changed is True
-    assert len(list(sdfg.all_states())) < states_before
+    assert len(list(sdfg.states())) < states_before
     assert structure(sdfg) == structure(reference)
 
 

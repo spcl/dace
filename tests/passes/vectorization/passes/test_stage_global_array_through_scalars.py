@@ -79,7 +79,7 @@ def _global_write_edges(sdfg: dace.SDFG, array_name: str):
     """
     writes = []
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
@@ -108,7 +108,7 @@ def _has_global_to_tasklet_edge(sdfg: dace.SDFG, array_name: str) -> bool:
     :returns: ``True`` iff a ``A(global) -> Tasklet`` edge survives.
     """
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue

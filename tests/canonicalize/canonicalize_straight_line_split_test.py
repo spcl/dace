@@ -193,7 +193,7 @@ def test_shared_scalar_temp_is_recomputed_per_clone():
     b_clone = next(c for c in _nsdfgs(body) if tuple(c.out_connectors) == ('b', ))
     # Recomputed, not materialized: the clone still derives the temp from ``x`` itself.
     assert 'x' in b_clone.in_connectors
-    assert any(n.data == 's1' for s in b_clone.sdfg.all_states() for n in s.data_nodes())
+    assert any(n.data == 's1' for s in b_clone.sdfg.states() for n in s.data_nodes())
     sdfg.validate()
 
 

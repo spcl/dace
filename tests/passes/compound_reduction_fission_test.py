@@ -32,7 +32,7 @@ def _stats(sdfg: dace.SDFG):
         sum(1 for c in sdfg.all_control_flow_regions() if isinstance(c, LoopRegion)),
         sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)),
         sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)),
-        sum(1 for st in sdfg.all_states() for e in st.edges() if e.data is not None and e.data.wcr is not None),
+        sum(1 for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None),
     )
 
 

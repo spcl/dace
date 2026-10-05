@@ -19,7 +19,7 @@ class CarrierIndex:
 
     def __init__(self, sdfg: SDFG) -> None:
         self.node_states: Dict[str, List[SDFGState]] = defaultdict(list)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.data_nodes():
                 self.node_states[node.data].append(state)
         self.edge_sources: Dict[str, List[ControlFlowBlock]] = defaultdict(list)
@@ -228,7 +228,7 @@ class ScalarFission(ppl.Pass):
         Collect such names so the caller leaves them for the carry handling.
         """
         carried: Set[str] = set()
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for n in state.nodes():
                 if not isinstance(n, nd.NestedSDFG):
                     continue

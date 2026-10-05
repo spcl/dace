@@ -80,7 +80,7 @@ def test_a_canonicalized_graph_spells_each_name_once():
             for expr in list(desc.shape) + list(desc.strides):
                 for sym in getattr(expr, 'free_symbols', ()):
                     seen.setdefault(str(sym), set()).add(str(sym.dtype))
-        for state in g.all_states():
+        for state in g.states():
             for edge in state.edges():
                 if edge.data is None or edge.data.subset is None:
                     continue

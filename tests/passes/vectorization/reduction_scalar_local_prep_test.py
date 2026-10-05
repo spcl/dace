@@ -84,7 +84,7 @@ def scan_recurrence(a: dace.float64[N]):
 def _wcr_targets(sdfg: dace.SDFG):
     """(#WCR edges into a multi-element Array, #WCR edges into a Scalar) across all states."""
     arr_elem, scalar = 0, 0
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in st.edges():
             if e.data is None or e.data.wcr is None:
                 continue
@@ -121,7 +121,7 @@ def test_array_slot_wcr_becomes_scalar():
     sdfg = dot_into_slot.to_sdfg(simplify=True)
     arr_before, scalar_before = _wcr_targets(sdfg)
     assert arr_before == 1 and scalar_before == 0, "fixture must start with one array-slot WCR"
-    n_states_before = len(list(sdfg.all_states()))
+    n_states_before = len(list(sdfg.states()))
 
     count = PrepareReductionForWidening().apply_pass(sdfg, {})
     sdfg.validate()
@@ -132,7 +132,7 @@ def test_array_slot_wcr_becomes_scalar():
     priv = [k for k, v in sdfg.arrays.items() if k.startswith("_priv_") and isinstance(v, data.Scalar) and v.transient]
     assert len(priv) == 1, priv
     # Cross-state form: an init state (seed from the slot) + a writeback state were added.
-    assert len(list(sdfg.all_states())) == n_states_before + 2
+    assert len(list(sdfg.states())) == n_states_before + 2
 
 
 @pytest.mark.parametrize("prog", [min_rmw_slot, sum_into_slot, dot_into_slot, prod_into_slot])

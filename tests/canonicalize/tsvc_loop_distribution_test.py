@@ -84,7 +84,7 @@ def reaches(state, src, dst):
 
 def map_writing(sdfg, name):
     """``(state, entry)`` of the one top-level map storing to ``name``."""
-    found = [(state, entry) for state in sdfg.all_states() for entry in state.nodes() if isinstance(entry, nd.MapEntry)
+    found = [(state, entry) for state in sdfg.states() for entry in state.nodes() if isinstance(entry, nd.MapEntry)
              and state.entry_node(entry) is None and name in written_arrays_of_scope(state, entry)]
     assert len(found) == 1, f'expected exactly one top-level map writing {name}, got {len(found)}'
     return found[0]
@@ -115,7 +115,7 @@ def written_arrays(loop):
     ``s243`` holds such an edge on ``d`` and would otherwise report ``d`` among its outputs.
     """
     out = set()
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.data_nodes():
             stores = [e for e in state.in_edges(node) if e.data is not None and not e.data.is_empty()]
             if stores and not state.sdfg.arrays[node.data].transient:

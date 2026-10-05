@@ -165,7 +165,7 @@ class FuseConsecutiveLoops(ppl.Pass):
     def _build_scratch_index(self, sd: ControlFlowRegion) -> ScratchIndex:
         """Map every AccessNode data name in ``sd`` to the states referencing it."""
         index: ScratchIndex = {}
-        for st in sd.all_states():
+        for st in sd.states():
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode):
                     index.setdefault(n.data, OrderedSet()).add(st)

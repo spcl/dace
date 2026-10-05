@@ -369,7 +369,7 @@ def nested_write_is_accumulation(nsdfg_node: nodes.NestedSDFG, out_conn: str) ->
     :returns: True iff ``out_conn`` is written at least once and every such write is a WCR.
     """
     writes = [
-        e.data for st in nsdfg_node.sdfg.all_states() for dn in st.data_nodes() if dn.data == out_conn
+        e.data for st in nsdfg_node.sdfg.states() for dn in st.data_nodes() if dn.data == out_conn
         for e in st.in_edges(dn) if e.data is not None and not e.data.is_empty()
     ]
     return bool(writes) and all(not indirect_write_needs_injectivity(m) for m in writes)
@@ -419,7 +419,7 @@ def _scatter_idx_targets_for_loop(region: LoopRegion,
     bindings = _collect_indirect_bindings(region, sdfg)
     loop_arrays: Dict[str, Set[str]] = {}
     dim_nodes_by_arr: Dict[str, List[ast.AST]] = {}
-    for state in region.all_states():
+    for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
                 continue
@@ -732,7 +732,7 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[Li
     bindings = _collect_indirect_bindings(region, sdfg)
     varying = region_assigned_symbols(region) - set(bindings)
     writes: List[JointScatterWrite] = []
-    for state in region.all_states():
+    for state in region.states():
         for node in state.data_nodes():
             desc = sdfg.arrays.get(node.data)
             if not isinstance(desc, data.Array) or len(desc.shape) < 2:
@@ -769,7 +769,7 @@ def replicate_read(sdfg: SDFG, region: LoopRegion, state: SDFGState, name: str) 
     node = state.add_read(name)
     if not isinstance(sdfg.arrays[name], data.View):
         return node
-    for body_state in region.all_states():
+    for body_state in region.states():
         for candidate in body_state.data_nodes():
             if candidate.data != name:
                 continue
@@ -972,7 +972,7 @@ def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> Op
     if not isinstance(desc, data.Scalar):
         return None
     loop_var = region.loop_variable
-    for state in region.all_states():
+    for state in region.states():
         for node in state.data_nodes():
             if node.data != tree.id:
                 continue
@@ -1171,7 +1171,7 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
     """
     in_conns = set(nsdfg_node.in_connectors.keys())
     idx_conns: Set[str] = set()
-    for st in nsdfg_node.sdfg.all_states():
+    for st in nsdfg_node.sdfg.states():
         for dn in st.data_nodes():
             if dn.data != out_conn:
                 continue
@@ -1195,8 +1195,8 @@ def privatize_clone_local_transients(owner_sdfg: SDFG, loop: LoopRegion, clone: 
     :param loop: The loop about to be lifted to a map.
     :param clone: The deep copy of ``loop``, already placed in the dispatcher.
     """
-    loop_states = set(loop.all_states())
-    clone_states = set(clone.all_states())
+    loop_states = set(loop.states())
+    clone_states = set(clone.states())
     loop_names = {n.data for st in loop_states for n in st.data_nodes() if owner_sdfg.arrays[n.data].transient}
     outside_names = {
         n.data

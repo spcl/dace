@@ -34,7 +34,7 @@ def build_cast_sdfg(src_ty, dst_ty, body):
 
 
 def only_tasklet(sdfg):
-    tasklets = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.Tasklet)]
+    tasklets = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet)]
     assert len(tasklets) == 1
     return tasklets[0]
 
@@ -104,7 +104,7 @@ def genuine_astype_prog(a: dace.float32[8], b: dace.float64[8]):
 
 def cast_tasklet_bodies(sdfg):
     return [
-        n.code.as_string for st in sdfg.all_states() for n in st.nodes()
+        n.code.as_string for st in sdfg.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and 'float' in n.code.as_string
     ]
 
@@ -144,7 +144,7 @@ def test_collapsed_noop_then_eliminated():
     sdfg, _, _ = build_cast_sdfg(dace.float64, dace.float64, 'out = dace.float64(inp)')
     assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
     assert sdfg.apply_transformations_repeated(TrivialTaskletElimination) == 1
-    assert not any(isinstance(n, nodes.Tasklet) for st in sdfg.all_states() for n in st.nodes())
+    assert not any(isinstance(n, nodes.Tasklet) for st in sdfg.states() for n in st.nodes())
 
 
 def test_genuine_cast_survives_both_passes():

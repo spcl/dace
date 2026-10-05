@@ -336,7 +336,7 @@ def test_slice_view_fold_preserves_anti_dependence_on_output():
     # store into it.
 
     checked = False
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         writes = [
             n for n in state.data_nodes() if n.data == 'out' and state.in_degree(n) > 0 and state.out_degree(n) == 0
         ]
@@ -384,7 +384,7 @@ def test_slice_view_fold_still_removes_a_safe_view():
 
     views = {
         n.data
-        for state in sdfg.all_states()
+        for state in sdfg.states()
         for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
     }
     assert not views & {'block', 'inp_0'}, (f'ArrayElimination stopped removing safe slice views: {sorted(views)} -- '
@@ -428,8 +428,8 @@ def test_folding_a_dead_view_chain_does_not_leave_its_source_isolated():
     }
     ArrayElimination().apply_pass(sdfg, results)
 
-    assert all(state.degree(node) > 0 for state in sdfg.all_states() for node in state.nodes()), [
-        (state.label, str(node)) for state in sdfg.all_states() for node in state.nodes() if state.degree(node) == 0
+    assert all(state.degree(node) > 0 for state in sdfg.states() for node in state.nodes()), [
+        (state.label, str(node)) for state in sdfg.states() for node in state.nodes() if state.degree(node) == 0
     ]
     sdfg.validate()
     out = np.zeros(4, dtype=np.int64)

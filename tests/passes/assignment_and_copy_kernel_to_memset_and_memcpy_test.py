@@ -223,7 +223,7 @@ def set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg: dace.SDFG, expansion_type: 
     for arr_name, arr in sdfg.arrays.items():
         if not isinstance(arr, dace.data.Scalar):
             arr.storage = dace.dtypes.StorageType.GPU_Global
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 set_dtype_to_gpu_if_expansion_type_is_cuda(node.sdfg, expansion_type)

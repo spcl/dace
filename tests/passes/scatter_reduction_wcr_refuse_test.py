@@ -100,7 +100,7 @@ def nnr_out_arrays(sdfg: dace.SDFG):
 def scatter_nsdfgs(sdfg: dace.SDFG):
     """Yield ``(state, nsdfg, oc)`` for every map-body NestedSDFG output connector."""
     for sd in sdfg.all_sdfgs_recursive():
-        for st in sd.all_states():
+        for st in sd.states():
             for n in st.nodes():
                 if isinstance(n, nodes.NestedSDFG) and isinstance(st.entry_node(n), nodes.MapEntry):
                     for oc in n.out_connectors:

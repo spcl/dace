@@ -30,7 +30,7 @@ N = dace.symbol('N')
 def _negative_step_ranges(sdfg):
     """Map ranges / loop strides in ``sdfg`` that are provably negative."""
     bad = []
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry):
                 for (_, _, s) in n.map.range:
@@ -66,7 +66,7 @@ def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
         b_, e_, s_ = (int(dace.symbolic.evaluate(x, subs)) for x in (b, e, s))
         return (e_ - b_) // s_ + 1
 
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for me in st.nodes():
             if isinstance(me, nodes.MapEntry):
                 for (b, e, s) in me.map.range:

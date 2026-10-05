@@ -58,7 +58,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for tasklet in list(state.nodes()):
                 if not isinstance(tasklet, nd.Tasklet):
                     continue
@@ -81,7 +81,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         """
         assigned = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for tasklet in list(state.nodes()):
                 if not isinstance(tasklet, nd.Tasklet) or tasklet.code.language != dace.dtypes.Language.Python:
                     continue
@@ -256,7 +256,7 @@ class NormalizeTernaryTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for tasklet in list(state.nodes()):
                 if not isinstance(tasklet, nd.Tasklet):
                     continue

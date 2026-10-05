@@ -64,7 +64,7 @@ def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG)
     return outer
 
 
-def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     """Whether every write to ``conn``'s array INSIDE ``nsdfg_node`` is indexed by the (mapped)
     iteration variable.
 
@@ -98,7 +98,7 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 if e.data is None or e.data.wcr is not None:
                     return False
                 if isinstance(e.src, nodes.NestedSDFG):
-                    if not _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step):
+                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step):
                         return False
                     found = True
                     continue
@@ -112,21 +112,29 @@ def _nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return found
 
 
-def _nested_reads_match_writes(nsdfg_node: nodes.NestedSDFG, conn: str, itersym: symbolic.symbol, a: IndexExpr,
-                               b: IndexExpr, step: IndexExpr) -> bool:
-    """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
-    loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
+def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+    """Whether every read of ``conn``'s array INSIDE ``nsdfg_node`` matches the SAME ``a*i+b``
+    pattern as the writes, or is loop-invariant.
+
+    Companion of :func:`nested_writes_iter_indexed`, which only proves write UNIQUENESS. A
+    loop-carried READ at a DIFFERENT iter-indexed position (``a[i] = ... + a[i+1] * ...``) still
+    races: iteration ``i`` reads ``a[i+1]`` while ``i+1`` writes it. Conservative: each inner read
+    must match ``a*i+b`` OR be loop-invariant (no outer ``itersym``). Nested NestedSDFGs recurse.
+
+    :returns: True if no carried-read pattern found; False if any inner read hits the carrier
+              array outside the write's affine form.
+    """
     for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
                 continue
             for e in state.out_edges(dn):
-                # Empty memlets are ordering edges, not reads; see _nested_writes_iter_indexed.
+                # Empty memlets are ordering edges, not reads; see nested_writes_iter_indexed.
                 if e.data is None or e.data.is_empty():
                     continue
                 if isinstance(e.dst, nodes.NestedSDFG):
                     # The read enters another nested SDFG; descend.
-                    if not _nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step):
+                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step):
                         return False
                     continue
                 src_subset = e.data.get_src_subset(e, state)
@@ -471,12 +479,12 @@ def write_refusal(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.Mult
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
-            ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
+            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
             # NSDFG descent only proves WRITE uniqueness. A carried READ at a
             # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
             # forward/backward dependence that races. Require every inner read
             # of ``conn`` to match the writes' ``a*i+b`` (or be loop-invariant).
-            if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
+            if ok and not nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
@@ -1258,8 +1266,8 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
-        loop_states = set(self.loop.states())
-        all_loop_blocks = set(self.loop.all_control_flow_blocks())
+        # Block order, not address order: companion passes act on the FIRST refusal reason.
+        loop_states = OrderedSet(self.loop.states())
 
         # Cannot have StructView in loop body. ``any``, not a list build, and skipped entirely when
         # the SDFG holds no StructureView descriptor at all -- then no loop state can hold one.
@@ -1784,7 +1792,7 @@ class LoopToMap(xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        states = set(self.loop.states())
+        states = OrderedSet(self.loop.states())
         # Find read/write sets
         read_set, write_set = set(), set()
         for state in self.loop.states():
@@ -2201,7 +2209,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if lift_ctx is None or not lift_ctx.invariants.nested_references_current:
             pending = [sdfg]
             while pending:
-                for state in pending.pop().all_states():
+                for state in pending.pop().states():
                     for n in state.nodes():
                         if isinstance(n, nodes.NestedSDFG):
                             n.sdfg.parent = state

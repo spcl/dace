@@ -29,7 +29,7 @@ def test_the_chain_matcher_finds_exactly_the_vf2_matches():
     for expr in MapFusionVertical.expressions():
         pattern = collapse_multigraph_to_nx(expr)
         assert pm.chain_order(pattern) is not None
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             graph = collapse_multigraph_to_nx(state)
             vf2 = match_keys(pm._subgraph_isomorphism_matcher(graph, pattern, type_match, None))
             chain = match_keys(pm._chain_matcher(graph, pattern, type_match, None))
@@ -45,7 +45,7 @@ def test_the_chain_matcher_yields_in_graph_order():
     sdfg.simplify()
     pattern = collapse_multigraph_to_nx(MapFusionVertical.expressions()[0])
     start = pm.chain_order(pattern)[0]
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         graph = collapse_multigraph_to_nx(state)
         starts = [
             next(n for n, p in match.items() if p == start)

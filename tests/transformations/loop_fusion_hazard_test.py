@@ -63,7 +63,7 @@ from .map_fusion_vertical_test import unique_name
 
 def map_entries(sdfg: dace.SDFG) -> list:
     """Every MapEntry anywhere in `sdfg`, in no particular order."""
-    return [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
 
 
 def loop_regions(sdfg: dace.SDFG) -> list:

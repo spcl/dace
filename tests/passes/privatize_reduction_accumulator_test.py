@@ -38,7 +38,7 @@ def _build_wcr_map(prog) -> dace.SDFG:
 def _count_wcr_edges(sdfg: dace.SDFG):
     wcr_arr_elem = 0
     wcr_scalar = 0
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in st.edges():
             if e.data is None or e.data.wcr is None:
                 continue
@@ -211,7 +211,7 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     target_state = None
     target_map_exit = None
     target_edge = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if not isinstance(n, nodes.MapExit):
                 continue
@@ -261,7 +261,7 @@ def test_targeted_helper_refuses_non_wcr_edge():
     target_state = None
     target_map_exit = None
     non_wcr_edge = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if not isinstance(n, nodes.MapExit):
                 continue

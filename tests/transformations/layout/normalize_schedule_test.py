@@ -24,7 +24,7 @@ def ew2d(A: dace.float64[N, N], C: dace.float64[N, N]):
 
 
 def _num_maps(sdfg):
-    return sum(1 for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry))
+    return sum(1 for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry))
 
 
 def test_normalize_tiles_by_block_width_bitexact():

@@ -57,7 +57,7 @@ def _written(region: ControlFlowRegion) -> set:
     w = set()
     for e in region.all_interstate_edges():
         w |= set(e.data.assignments.keys())
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 w.add(n.data)
@@ -258,7 +258,7 @@ def body_may_overwrite(region: ControlFlowRegion, loop: LoopRegion, read: Memlet
         return True
     params = [str(loop.loop_variable)]
     rng = subsets.Range([(start, end, stride)])
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if not isinstance(n, nodes.AccessNode) or n.data != read.data:
                 continue

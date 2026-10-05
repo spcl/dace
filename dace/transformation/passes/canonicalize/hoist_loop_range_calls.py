@@ -71,7 +71,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         # ``scope_dict`` per call, and a call-bearing step is looked up once per candidate map.
         resolver = scopes.ScopedSymbolResolver()
         bound = 0
-        for cfg in list(sdfg.all_states()):
+        for cfg in list(sdfg.states()):
             for node in list(cfg.nodes()):
                 if not isinstance(node, nodes.MapEntry):
                     continue

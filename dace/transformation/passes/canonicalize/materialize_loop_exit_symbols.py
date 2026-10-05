@@ -285,7 +285,7 @@ def _is_read_in(name: str, blocks: Dict[ControlFlowBlock, None], parent: Control
     substring one, not an identifier one. Both lookups are memoised in the caller's dicts.
     """
     for block in blocks:
-        for s in (block.all_states() if isinstance(block, ControlFlowRegion) else [block]):
+        for s in (block.states() if isinstance(block, ControlFlowRegion) else [block]):
             if not isinstance(s, SDFGState):
                 continue
             if s not in state_reads:
@@ -353,7 +353,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         table of a body state answers first; a body IV symbol is declared by the SDFG or bound by its
         update edge.
         """
-        body = next(iter(loop.all_states()), None)
+        body = next(iter(loop.states()), None)
         if body is not None:
             scoped = resolver.tabulate(body)[None].get(sym_name)
             if scoped is not None:

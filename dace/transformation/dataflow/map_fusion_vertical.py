@@ -487,7 +487,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if inner_sdfg is None:
             return False
         reading_states, writing_states = OrderedSet(), OrderedSet()
-        for state in inner_sdfg.all_states():
+        for state in inner_sdfg.states():
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode) or n.data != name:
                     continue
@@ -539,7 +539,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 new_desc = copy.deepcopy(inner_sdfg.arrays[orig])
                 inner_sdfg._arrays[new_name] = new_desc
                 # 2. Rename inner read-side accesses + their out-edge memlets.
-                for st in inner_sdfg.all_states():
+                for st in inner_sdfg.states():
                     for n in list(st.nodes()):
                         if not isinstance(n, nodes.AccessNode) or n.data != orig:
                             continue
@@ -870,7 +870,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 # `compute_reduced_intermediate()` sizes the new intermediate from this subset
                 #  and `compute_offset_subset()` walks it dimension by dimension, so a subset
-                #  that is not a `Range` (an `Indices` is one) has neither `size()` nor
+                #  that is not a `Range` has neither `size()` nor
                 #  `min_element()` to offer and would raise instead of refusing.
                 if not isinstance(producer_edge.data.dst_subset, subsets.Range):
                     return None
@@ -2354,8 +2354,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         claimed = producer_leaf_edge.data.dst_subset
         if claimed is None:
             return False
-        if isinstance(claimed, subsets.Indices):
-            claimed = subsets.Range.from_indices(claimed)
         full_range = subsets.Range.from_array(intermediate_desc)
 
         # Only whole-array claims are handled here; partial claims use the regular machinery.
@@ -2404,8 +2402,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         #  anything about coverage, so this edge is simply not evidence.
                         continue
                     write_subset = copy.deepcopy(write_subset)
-                    if isinstance(write_subset, subsets.Indices):
-                        write_subset = subsets.Range.from_indices(write_subset)
                     symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
                     if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
                         return False
@@ -2421,7 +2417,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         `ValueError` instance, and that instance is truthy -- so `if a.covers(b)` silently
         reads a rank mismatch as "covered". `SubsetUnion.covers()` folds such instances
         through `any()`, turning them into a real `True`. This wrapper reports covering only
-        for two plain `Range`s (`Indices` is a `Range`) of equal rank whose `covers()`
+        for two plain `Range`s of equal rank whose `covers()`
         returned the literal `True`; everything else, undecidable or merely unusual, is
         reported as "does not cover".
 

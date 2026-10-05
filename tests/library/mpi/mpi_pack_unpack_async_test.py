@@ -73,7 +73,7 @@ def _packed_arrays(sdfg):
 
 
 def _unpack_state(sdfg):
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         if any(isinstance(nd, dace.nodes.MapEntry) and nd.label.startswith("unpack_") for nd in st.nodes()):
             return st
     return None

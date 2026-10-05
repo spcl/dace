@@ -71,7 +71,7 @@ def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> 
             if str(inner) in params or any(s in params for s in outer_symbols):
                 return True
         # Every binding is the identity, so the same names carry through -- keep checking down.
-        if rebinds_params([n for state in node.sdfg.all_states() for n in state.nodes()], params):
+        if rebinds_params([n for state in node.sdfg.states() for n in state.nodes()], params):
             return True
     return False
 
@@ -90,7 +90,7 @@ def shift_map_ranges(node_list: Iterable[nodes.Node], repldict: Dict[str, str]) 
         if isinstance(node, nodes.MapEntry):
             node.map.range.replace(symrepl)
         elif isinstance(node, nodes.NestedSDFG):
-            shift_map_ranges([n for state in node.sdfg.all_states() for n in state.nodes()], repldict)
+            shift_map_ranges([n for state in node.sdfg.states() for n in state.nodes()], repldict)
 
 
 @properties.make_properties
@@ -244,7 +244,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
             return 0
 
         repldict = {str(var): f"({var} + ({symstr(start)}))"}
-        body_nodes = [n for state in loop.all_states() for n in state.nodes()]
+        body_nodes = [n for state in loop.states() for n in state.nodes()]
         if rebinds_params(body_nodes, dict.fromkeys([str(var)])) or tasklets_assign(body_nodes, [str(var)]):
             return 0  # refuse before touching anything
 

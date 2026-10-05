@@ -939,7 +939,7 @@ def test_gather_evaluated_before_its_destination_is_cleared():
     expected = src[idx]
 
     sdfg = indexing_test.to_sdfg(simplify=True)
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         producers = [
             state.entry_node(edge.src) or edge.src for node in state.data_nodes()
             if node.data == 'out' and state.entry_node(node) is None for edge in state.in_edges(node)

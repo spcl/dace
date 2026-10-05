@@ -90,7 +90,7 @@ class LowerITEToFpFactor(ppl.Pass):
         :returns: number of tasklets rewritten, or None if none changed.
         """
         rewritten = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.Tasklet):
                     continue

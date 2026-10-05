@@ -19,7 +19,7 @@ from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 
 def _wcr_source_classes(sdfg: dace.SDFG):
     return [
-        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
 
@@ -118,7 +118,7 @@ def test_pass_handles_every_associative_wcr(wcr_str, binop, init, domain):
     n = 32
     sdfg = _build_nsdfg_wcr_sum(n)
     # Swap the WCR on every WCR-bearing edge before normalisation.
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in st.edges():
             if e.data is not None and e.data.wcr is not None:
                 e.data.wcr = wcr_str
@@ -289,7 +289,7 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
 
 
 def _seed_states(sdfg: dace.SDFG):
-    return [st.label for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() if '_wcr_seed' in st.label]
+    return [st.label for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if '_wcr_seed' in st.label]
 
 
 def test_seed_fresh_write_once_accumulator():

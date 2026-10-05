@@ -45,7 +45,7 @@ def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, read
         if e.src_conn and e.data is not None and e.data.data is not None:
             outer_data[e.src_conn] = e.data.data
     subs = {symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg.symbol_mapping.items()}
-    for state in nsdfg.sdfg.all_states():
+    for state in nsdfg.sdfg.states():
         for node in state.data_nodes():
             name = outer_data.get(node.data)
             if name is None:
@@ -131,7 +131,7 @@ def single_map_body(loop: LoopRegion) -> SDFGState | None:
 def lane_maps(loop: LoopRegion) -> list[tuple[SDFGState, nodes.MapEntry]]:
     """Every top-level map of every state in ``loop``'s body, nested control flow included, nested SDFGs not."""
     found = []
-    for state in loop.all_states():
+    for state in loop.states():
         scope = state.scope_dict()
         found.extend(
             (state, node) for node in state.nodes() if isinstance(node, nodes.MapEntry) and scope[node] is None)
@@ -239,7 +239,7 @@ def nested_accesses(state: SDFGState, nsdfg: nodes.NestedSDFG, outer_name, subs:
             outer[conn] = outer_name(end.data)
     inner_subs = {symbol(k): symbolic.pystr_to_symbolic(v).subs(subs) for k, v in nsdfg.symbol_mapping.items()}
     found = []
-    for inner in nsdfg.sdfg.all_states():
+    for inner in nsdfg.sdfg.states():
         for node in inner.data_nodes():
             name = outer.get(node.data)
             if name is None:
@@ -422,8 +422,8 @@ def wide_fill_refusal(loop: LoopRegion, sdfg: sd.SDFG, node: nodes.LibraryNode, 
             return f'{node.label} fills {data}[{edge.data.subset}], neither the lanes nor whole dimensions'
     if data in control_flow_reads_outside(loop, sdfg):
         return f'{data}, filled beyond the lanes, is read by control flow outside the loop'
-    inside = OrderedSet(loop.all_states())
-    for state in sdfg.all_states():
+    inside = OrderedSet(loop.states())
+    for state in sdfg.states():
         if state in inside:
             continue
         for access in state.data_nodes():
@@ -499,7 +499,7 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | Non
         rename = dict(zip(entry.map.params, lanes))
         for data, subset, write in map_accesses(state, entry):
             accesses.setdefault(data, []).append((write, lane_signature(subset, rename, lanes, invariant)))
-    for state in loop.all_states():
+    for state in loop.states():
         scope = state.scope_dict()
         for node in state.nodes():
             if scope[node] is not None or isinstance(node, (nodes.MapEntry, nodes.MapExit)):

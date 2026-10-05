@@ -836,7 +836,7 @@ def array_is_used_in_sdfg_states(sdfg: dace.SDFG,
                                  states_to_skip: Set[dace.SDFGState],
                                  arr_name: str,
                                  read_only: bool = False):
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         if st in states_to_skip:
             continue
 
@@ -884,7 +884,7 @@ def _array_is_used_in_the_sdfg(sdfg: dace.SDFG, arr_name: str) -> bool:
     ``sdfg``. Conservative: a substring-over-tokens check is used for
     expressions, so false positives are possible but false negatives are
     not."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.AccessNode) and node.data == arr_name:
                 return True
@@ -986,7 +986,7 @@ def prune_unused_nsdfg_connectors_recursive(sdfg: dace.SDFG) -> int:
     the SDFG hierarchy, bottom-up so that outer nested SDFGs see already
     cleaned inner ones."""
     total = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in list(state.nodes()):
             if isinstance(node, dace.nodes.NestedSDFG):
                 total += prune_unused_nsdfg_connectors_recursive(node.sdfg)

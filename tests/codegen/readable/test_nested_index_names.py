@@ -28,12 +28,6 @@ N = dace.symbol("N")
 HELPER_DEF = re.compile(r"static\s+DACE_HDFI\s+constexpr\s+\w+\s+(?P<name>\w+_idx)\s*"
                         r"\((?P<params>[^)]*)\)\s*\{\s*return\s+(?P<body>[^;]+);\s*\}")
 
-def _nested_view_sdfg(inner_shape, inner_strides, inner_name="A"):
-    """Parent A[N,N] element-wise map, plus a no_inline nested SDFG with its own local ``inner_name`` of the given
-    (shape, strides). No-View nested SDFGs give a connector the parent's descriptor, so the name collision the pass
-    resolves is a nest-local array named like a parent array. Returns the top SDFG."""
-    sdfg = dace.SDFG("nested_view")
-    sdfg.add_array("A", [N, N], dace.float64)
 
 def _helper_bodies(code):
     """name -> list of full definition strings for every ``<name>_idx`` helper in ``code``."""
@@ -52,7 +46,8 @@ def _nested_sdfg(name, offset):
     """A standalone nested SDFG over ``name[N, N]`` indexed from ``offset``, reading+writing a 2x2 corner
     element-wise (so codegen registers a ``<name>_idx`` helper built from the offset)."""
     nsdfg = dace.SDFG("inner")
-    nsdfg.add_array(inner_name, inner_shape, dace.float64, strides=inner_strides, transient=True)
+    nsdfg.add_array(name, [N, N], dace.float64)
+    nsdfg.arrays[name].offset = list(offset)
     ns = nsdfg.add_state("n")
     an = ns.add_access(name)
     me, mx = ns.add_map("im", dict(i=f"{-offset[0]}:{-offset[0]} + 2", j=f"{-offset[1]}:{-offset[1]} + 2"))
@@ -76,10 +71,14 @@ def _nested_view_sdfg(inner_offset, inner_name="A", outer_name="A"):
     pr, pw = st.add_access(outer_name), st.add_access(outer_name)
     pme, pmx = st.add_map("pm", dict(i="0:N", j="0:N"))
     ptk = st.add_tasklet("pt", {"x"}, {"o"}, "o = x * 2.0")
-    st.add_memlet_path(pr, pme, ptk, dst_conn="x", memlet=dace.Memlet("A[i,j]"))
-    st.add_memlet_path(ptk, pmx, pw, src_conn="o", memlet=dace.Memlet("A[i,j]"))
-    nn = st.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping={"N": N})
+    st.add_memlet_path(pr, pme, ptk, dst_conn="x", memlet=dace.Memlet(f"{outer_name}[i,j]"))
+    st.add_memlet_path(ptk, pmx, pw, src_conn="o", memlet=dace.Memlet(f"{outer_name}[i,j]"))
+    # nested SDFG bound to a 2x2 sub-block of the parent array
+    ar, aw = st.add_access(outer_name), st.add_access(outer_name)
+    nn = st.add_nested_sdfg(nsdfg, {inner_name}, {inner_name}, symbol_mapping={"N": N})
     nn.no_inline = True
+    st.add_edge(ar, None, nn, inner_name, dace.Memlet(f"{outer_name}[0:N, 0:N]"))
+    st.add_edge(nn, inner_name, aw, None, dace.Memlet(f"{outer_name}[0:N, 0:N]"))
     sdfg.validate()
     return sdfg
 

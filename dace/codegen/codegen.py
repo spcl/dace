@@ -369,8 +369,82 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
-    # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
+    # Wrap top-level map-nests/loops into no_inline nested SDFGs (own .cpp each, via the do_split path
+    # in _generate_NestedSDFG; and, for GPU nests, own standalone SDFG + .cu via the do_external path).
+    # Must run before inline_host_nested_sdfgs below (which would otherwise inline them straight back)
+    # and after expand_library_nodes.
+    if (config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units')
+            or config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'external_translation_units')):
+        from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
+        outline_top_level_nests(sdfg)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    # Experimental readable generator: flatten nested SDFGs, promote literal-only transients to constants, and
+    # inline tasklet connectors. Runs after library expansion so post-expansion tasklets are seen too.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
+        from dace.transformation.passes.gpu_shared_memory import PrivatizeKernelSharedMemory
+        # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
+        inline_host_nested_sdfgs(sdfg, validate=False)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Normalize single-value transients to Scalar (default is transient-only, so the signature
+        # is untouched); must run before explicit_copy so copy lowering sees the final form. GPU
+        # kernel outputs are widened back to length-1 arrays because a by-value Scalar cannot live
+        # in device memory.
+        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+        from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+            InferDefaultSchedulesAndStorages)
+        from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+        ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
+        promote_gpu_scalars = PromoteScalarOutputsToArrays()
+        promote_gpu_scalars.gpu = True
+        Pipeline([InferDefaultSchedulesAndStorages(), promote_gpu_scalars]).apply_pass(sdfg, {})
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND. Runs
+        # inside this branch so the readable pipeline's order is unchanged: the scalar normalization
+        # above must precede it, the readability rewrites below must follow it. Unconditional here:
+        # the new generators require the lowering; the ``explicit_copy`` knob governs only the
+        # classic path.
+        lower_implicit_copies(sdfg)
+        # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization
+        # pass and belongs in the caller's pipeline, before WCR memlets exist: by codegen time an
+        # accumulator chain has been rewritten to WCR, and fissioning a read-modify-write into a
+        # fresh SSA version drops the running value (this silently miscompiled CloudSC full_cpu).
+        # A caller who wants more const-markable versions runs it in their own pipeline instead.
+        # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
+        if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
+            PromoteConstantTransients().apply_pass(sdfg, {})
+        # Renames shared containers, so it must precede the inlining that writes data names into tasklet code.
+        PrivatizeKernelSharedMemory().apply_pass(sdfg, {})
+        InlineTaskletConnectors().apply_pass(sdfg, {})
+        # A nested SDFG surviving inlining (e.g. a library expansion) must not share a data name with a
+        # differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
+        if validate:
+            sdfg.validate()
+
+        # Device code reaching the constexpr _idx/_size helpers needs nvcc's --expt-relaxed-constexpr;
+        # ensure it's set (idempotent) so GPU builds don't need a manual config edit.
+        cuda_args = config.Config.get('compiler', 'cuda', 'args')
+        if '--expt-relaxed-constexpr' not in cuda_args:
+            config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
+
+    elif (config.Config.get('compiler', 'cuda', 'implementation') == 'experimental' and not copies_lifted
+          and sdfg_uses_gpu(sdfg)):
+        # The experimental CUDA generator REQUIRES the lowering, the way the readable CPU one does,
+        # whichever CPU generator it is paired with -- so it is unconditional here rather than left
+        # to the knob, and runs only when the site above has not already lifted.
+        lower_implicit_copies(sdfg)
+
+    # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in
+    # simplify) so SymPy's power laws can still fold Pow expressions beforehand.
     RelaxIntegerPowers().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)

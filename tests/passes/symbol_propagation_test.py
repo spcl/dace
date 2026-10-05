@@ -831,7 +831,7 @@ def test_propagation_keeps_a_uint32_symbol_at_one_dtype_in_every_memlet():
     assert bounds, 'simplify no longer promotes the scalars, so this test asserts nothing'
     seen = 0
     for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.all_states():
+        for state in nested.states():
             for edge in state.edges():
                 if edge.data.subset is None:
                     continue

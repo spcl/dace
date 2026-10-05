@@ -217,7 +217,7 @@ def test_a_blend_over_an_element_the_body_already_updated_stays_a_blend():
 
     blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == 'blend')
     assert 'ITE(' in blend.code.as_string, blend.code.as_string
-    state = next(s for s in sdfg.all_states() if blend in s.nodes())
+    state = next(s for s in sdfg.states() if blend in s.nodes())
     assert [e.dst_conn for e in state.in_edges(blend) if e.dst_conn == '_e'] == ['_e']
 
 

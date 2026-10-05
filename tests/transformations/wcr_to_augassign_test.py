@@ -74,7 +74,7 @@ def test_noncommutative_operand_order():
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
     assert applied == 1
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges())
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges())
 
     a = a0.copy()
     sdfg(a=a, v=v0.copy())
@@ -106,7 +106,7 @@ def test_scalar_source_multidim_target_subset():
     applied = sdfg.apply_transformations(WCRToAugAssign)
     assert applied == 1
     sdfg.validate()  # regression: previously raised the dimension mismatch here
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), "WCR must be gone after revert"
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), "WCR must be gone after revert"
 
     rng = np.random.default_rng(0)
     aa0 = rng.random((4, 4))
@@ -136,7 +136,7 @@ def test_slice_source_offset_wcr():
     applied = sdfg.apply_transformations(WCRToAugAssign)
     assert applied == 1, 'the slice WCR (matching extent, shifted source) must revert'
     sdfg.validate()
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), 'WCR must be gone after revert'
 
     rng = np.random.default_rng(1)
     A0 = rng.random(n)
@@ -220,7 +220,7 @@ def test_mapexit_wcr_injective_reverts():
     applied = sdfg.apply_transformations(WCRToAugAssign)
     assert applied == 1, 'the injective map-exit WCR must revert'
     sdfg.validate()
-    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), 'WCR must be gone after revert'
 
     rng = np.random.default_rng(3)
     A0 = rng.random(N)
@@ -256,7 +256,7 @@ def test_mapexit_wcr_reduction_kept():
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
     assert applied == 0, 'a constant-target (reduction) map-exit WCR must NOT revert'
-    assert any(e.data.wcr is not None for s in sdfg.all_states() for e in s.edges()), 'reduction WCR must be kept'
+    assert any(e.data.wcr is not None for s in sdfg.states() for e in s.edges()), 'reduction WCR must be kept'
 
 
 def _nested_rmw_sdfg(n: int, extra_fold: bool) -> dace.SDFG:

@@ -87,7 +87,7 @@ def tasklets_writing(sdfg: dace.SDFG, data: str) -> typing.List[typing.Tuple[nd.
     """
     found: typing.List[typing.Tuple[nd.Tasklet, SDFGState]] = []
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.nodes():
                 if not isinstance(node, nd.Tasklet):
                     continue

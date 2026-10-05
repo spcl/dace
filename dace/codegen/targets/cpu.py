@@ -26,7 +26,10 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
+from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, Union
+
+import re
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cuda import CUDACodeGen
@@ -2229,51 +2232,60 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise TypeError("Unsupported connector type {}".format(def_type))
 
-        if isinstance(memlet.subset, subsets.Range):
+        if isinstance(memlet.subset, subsets.Indices):
+            offset = cpp.cpp_array_expr(sdfg, memlet, False, codegen=self)
 
-            dims = len(memlet.subset.ranges)
-            offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
-            if offset == "0":
-                memlet_params.append(memlet_expr)
-            else:
-                if def_type != DefinedType.Pointer:
-                    raise cgx.CodegenError("Cannot offset address of connector {} of type {}".format(
-                        memlet_name, def_type))
-                memlet_params.append(memlet_expr + " + " + offset)
-
-            # Dimensions to remove from view (due to having one value)
-            indexdims = []
-            strides = sdfg.arrays[memlet.data].strides
-
-            # Figure out dimensions for scalar version
-            dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
-            for dim, (rb, re, rs) in enumerate(memlet.subset.ranges):
-                try:
-                    # Check for number of elements in contiguous dimension
-                    # (with respect to vector length)
-                    if strides[dim] == 1 and (re - rb) == dimlen - 1:
-                        indexdims.append(dim)
-                    elif (re - rb) == 0:  # Elements in other dimensions
-                        indexdims.append(dim)
-                except TypeError:
-                    # Cannot determine truth value of Relational
-                    pass
-
-            # Remove index (one scalar) dimensions
-            dims -= len(indexdims)
-
-            if dims > 0:
-                strides = memlet.subset.absolute_strides(strides)
-                # Filter out index dims
-                strides = [s for i, s in enumerate(strides) if i not in indexdims]
-                # Use vector length to adapt strides
-                for i in range(len(strides) - 1):
-                    strides[i] /= dimlen
-                memlet_params.extend(sym2cpp(strides))
-                dims = memlet.subset.data_dims()
+            # Compute address
+            memlet_params.append(memlet_expr + " + " + offset)
+            dims = 0
 
         else:
-            raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
+
+            if isinstance(memlet.subset, subsets.Range):
+
+                dims = len(memlet.subset.ranges)
+                offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
+                if offset == "0":
+                    memlet_params.append(memlet_expr)
+                else:
+                    if def_type != DefinedType.Pointer:
+                        raise cgx.CodegenError("Cannot offset address of connector {} of type {}".format(
+                            memlet_name, def_type))
+                    memlet_params.append(memlet_expr + " + " + offset)
+
+                # Dimensions to remove from view (due to having one value)
+                indexdims = []
+                strides = sdfg.arrays[memlet.data].strides
+
+                # Figure out dimensions for scalar version
+                dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
+                for dim, (rb, re, rs) in enumerate(memlet.subset.ranges):
+                    try:
+                        # Check for number of elements in contiguous dimension
+                        # (with respect to vector length)
+                        if strides[dim] == 1 and (re - rb) == dimlen - 1:
+                            indexdims.append(dim)
+                        elif (re - rb) == 0:  # Elements in other dimensions
+                            indexdims.append(dim)
+                    except TypeError:
+                        # Cannot determine truth value of Relational
+                        pass
+
+                # Remove index (one scalar) dimensions
+                dims -= len(indexdims)
+
+                if dims > 0:
+                    strides = memlet.subset.absolute_strides(strides)
+                    # Filter out index dims
+                    strides = [s for i, s in enumerate(strides) if i not in indexdims]
+                    # Use vector length to adapt strides
+                    for i in range(len(strides) - 1):
+                        strides[i] /= dimlen
+                    memlet_params.extend(sym2cpp(strides))
+                    dims = memlet.subset.data_dims()
+
+            else:
+                raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
 
         # If there is a type mismatch, cast pointer (used in vector
         # packing/unpacking)

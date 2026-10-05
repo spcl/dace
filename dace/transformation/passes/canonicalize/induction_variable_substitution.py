@@ -1267,7 +1267,7 @@ def _read_after_loop(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, co
     for blk in sdutil.dfs_conditional(sdfg, sources=[loop]):
         if blk is loop:
             continue
-        for st in ([blk] if isinstance(blk, SDFGState) else list(blk.all_states())):
+        for st in ([blk] if isinstance(blk, SDFGState) else list(blk.states())):
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data == container and value_edges(st.out_edges(n)):
                     return True

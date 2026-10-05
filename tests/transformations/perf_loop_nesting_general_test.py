@@ -94,9 +94,7 @@ def _toplevel_map_entries(sdfg: dace.SDFG):
     :param sdfg: The SDFG to scan.
     :return: The list of outermost map entries.
     """
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def test_inlined_two_independent_maps_are_split():

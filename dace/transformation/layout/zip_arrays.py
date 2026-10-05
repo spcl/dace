@@ -39,7 +39,7 @@ class ZipArrays(ppl.Pass):
         return False
 
     def _check_nested(self, sdfg: dace.SDFG, fields: List[str]):
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nd.NestedSDFG):
                     conns = set(n.in_connectors) | set(n.out_connectors)
@@ -79,7 +79,7 @@ class ZipArrays(ppl.Pass):
                        transient=transient,
                        lifetime=descs[0].lifetime,
                        find_new_name=False)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data in field_index:
                     k = field_index[edge.data.data]
@@ -109,7 +109,7 @@ class ZipArrays(ppl.Pass):
                        lifetime=descs[0].lifetime,
                        find_new_name=False)
         field_set = set(fields)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             # 1. Rewrite tasklet code (conn -> conn.field) before the edge rename erases the field data name.
             for node in state.nodes():
                 if not isinstance(node, nd.Tasklet):

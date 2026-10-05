@@ -260,7 +260,7 @@ class NormalizeMapBody(ppl.Pass):
             # connector (e.g. symm's ``reset_tmp`` writes a connector ``tmp``; a tail array
             # ``tmp`` merged in unchecked would collide with it).
             reserved = dict.fromkeys([*base.arrays.keys(), *base.symbols.keys(), *base.constants_prop.keys()])
-            for bstate in base.all_states():
+            for bstate in base.states():
                 for bnode in bstate.nodes():
                     reserved.update(dict.fromkeys([*bnode.in_connectors.keys(), *bnode.out_connectors.keys()]))
             drepl = _uniquify_data_against(tail, reserved)

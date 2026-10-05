@@ -2,6 +2,7 @@
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import ast
+import types
 import abc
 import collections.abc
 import copy

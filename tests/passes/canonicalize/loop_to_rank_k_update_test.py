@@ -38,7 +38,7 @@ def corpus_kernel(name):
 
 def lifted(sdfg, cls):
     """``(state, node)`` for every ``cls`` library node in ``sdfg``."""
-    return [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+    return [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
             if isinstance(n, cls)]
 
 

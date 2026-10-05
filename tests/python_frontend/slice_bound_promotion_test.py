@@ -44,7 +44,7 @@ def test_expression_bound_leaves_the_extent_readable():
     exception, so this keeps failing informatively if the shape check ever moves."""
     sdfg = pad_copy.to_sdfg(simplify=False)
     writes = [
-        e.data.dst_subset or e.data.subset for st in sdfg.all_states() for n in st.data_nodes() if n.data == 'buf'
+        e.data.dst_subset or e.data.subset for st in sdfg.states() for n in st.data_nodes() if n.data == 'buf'
         for e in st.in_edges(n) if e.data is not None and not e.data.is_empty()
     ]
     assert writes, 'no write to buf was parsed'

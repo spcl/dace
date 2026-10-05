@@ -270,7 +270,7 @@ class SplitDimensions(ppl.Pass):
 
     def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
         self._replace_array(sdfg, arr_name, new_dimensions)
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
@@ -282,7 +282,7 @@ class SplitDimensions(ppl.Pass):
 
     def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         # rewrites memlets/subsets for arr_name after its shape was split
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data == arr_name:
                     new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
@@ -338,7 +338,7 @@ class SplitDimensions(ppl.Pass):
 
                 edge.data.assignments = new_assignments
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}

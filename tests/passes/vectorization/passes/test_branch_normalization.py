@@ -415,6 +415,6 @@ def test_hoist_ahead_of_a_refused_lowering_is_reported_as_a_change():
     result = BranchNormalization().apply_pass(sdfg, {})
 
     assert result == 1
-    assert [s.label for s in sdfg.all_states()] == ["init", "body"]
+    assert [s.label for s in sdfg.states()] == ["init", "body"]
     assert [e.data.assignments for e in sdfg.out_edges(sdfg.start_block)] == [{"__sym_z1": "z1"}]
     assert sum(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks()) == 1

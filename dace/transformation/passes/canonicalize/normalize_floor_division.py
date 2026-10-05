@@ -27,7 +27,7 @@ import sympy
 
 from dace import SDFG, data as dt, symbolic
 from dace.sdfg import nodes
-from dace.subsets import Indices, Range, Subset
+from dace.subsets import Range, Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.sdfg.narrowing import as_expr
@@ -56,11 +56,6 @@ def normalize_subset(subset: Optional[Subset]) -> bool:
             if rewritten != tuple(dim):
                 subset.ranges[i] = rewritten
                 changed = True
-    elif isinstance(subset, Indices):
-        rewritten = [normalize(index) for index in subset.indices]
-        if rewritten != list(subset.indices):
-            subset.indices = rewritten
-            changed = True
     return changed
 
 

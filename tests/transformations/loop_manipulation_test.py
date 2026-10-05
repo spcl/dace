@@ -129,7 +129,7 @@ def test_peeling_end_no_loop_symbol_leak():
 
     def _iter_states(block):
         if isinstance(block, dace.sdfg.state.ControlFlowRegion):
-            yield from block.all_states()
+            yield from block.states()
         elif isinstance(block, dace.sdfg.state.SDFGState):
             yield block
 
@@ -248,7 +248,7 @@ def test_peeling_preserves_map_entry_exit_identity():
     sdfg.simplify()
     sdfg.apply_transformations(LoopPeeling, dict(count=2))
 
-    split = [(state.label, exit_node.map.label) for state in sdfg.all_states() for exit_node in state.nodes()
+    split = [(state.label, exit_node.map.label) for state in sdfg.states() for exit_node in state.nodes()
              if isinstance(exit_node, dace.sdfg.nodes.MapExit) and state.entry_node(exit_node).map is not exit_node.map]
     assert not split, f'MapEntry.map is not MapExit.map in {split}'
 

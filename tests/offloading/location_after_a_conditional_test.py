@@ -64,13 +64,13 @@ def offloaded() -> dace.SDFG:
 def test_the_blocks_after_a_conditional_know_where_its_later_arm_left_the_data():
     sdfg = offloaded()
     undeclared = {(state.label, node.data)
-                  for state in sdfg.all_states()
+                  for state in sdfg.states()
                   for node in state.data_nodes() if node.data not in sdfg.arrays}
     assert not undeclared, undeclared
-    read = next(state for state in sdfg.all_states() if state.label == 'read_T')
+    read = next(state for state in sdfg.states() if state.label == 'read_T')
     (read_T, ) = [node for node in read.data_nodes() if node.data.startswith('T')]
     assert sdfg.arrays[read_T.data].storage != dace.StorageType.GPU_Global
-    copies = [(src.data, dst.data) for state in sdfg.all_states() for src in state.data_nodes()
+    copies = [(src.data, dst.data) for state in sdfg.states() for src in state.data_nodes()
               for dst in state.successors(src) if isinstance(dst, dace.nodes.AccessNode)]
     assert ('T', read_T.data) in copies, copies
 

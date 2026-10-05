@@ -134,7 +134,7 @@ class PythonEmitter:
         """
         counts: Dict[str, int] = collections.Counter()
         for sub_sdfg in self.root.all_sdfgs_recursive():
-            for state in sub_sdfg.all_states():
+            for state in sub_sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nd.Tasklet):
                         kind = _classify_tasklet(node)
@@ -149,7 +149,7 @@ class PythonEmitter:
         sdfg = self.root
         n_arrays = len(sdfg.arrays)
         n_symbols = len(sdfg.symbols)
-        n_states = sum(1 for _ in sdfg.all_states())
+        n_states = len(sdfg.states())
         return (f'"""Reconstructed SDFG ``{sdfg.name}`` (auto-generated).\n\n'
                 f"This file was emitted by ``dace.sdfg.to_python.sdfg_to_python``.\n"
                 f"Calling :func:`build_sdfg` constructs an SDFG equivalent to the\n"

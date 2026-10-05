@@ -49,7 +49,7 @@ def loop_sdfg(bodies):
 
 def relayout_states_inside(loop):
     """Labels of states inside the loop region whose name marks an inserted relayout boundary."""
-    return [s.label for s in loop.all_states() if s.label.startswith("relayout_")]
+    return [s.label for s in loop.states() if s.label.startswith("relayout_")]
 
 
 def test_loop_relayout_bit_exact():

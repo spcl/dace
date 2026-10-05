@@ -161,7 +161,7 @@ def count(sdfg) -> List[int]:
     # LibraryNodes too and already have their own columns, so they are excluded here.
     libnodes = sum(1 for n, _ in sdfg.all_nodes_recursive()
                    if isinstance(n, nd.LibraryNode) and not isinstance(n, (Reduce, Scan)))
-    all_states = [st for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states()]
+    all_states = [st for sd in sdfg.all_sdfgs_recursive() for st in sd.states()]
     guards = sum(1 for st in all_states if is_assumption_guard_block(st))
     return [loops, inmap, maps, reduces, scans, libnodes, len(all_states), guards]
 

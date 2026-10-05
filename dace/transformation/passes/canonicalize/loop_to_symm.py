@@ -181,7 +181,7 @@ def resolve_producer(state: SDFGState, sdfg: SDFG, name: str, depth: int = 0) ->
 
 def find_producer(inner: SDFG, name: str, depth: int = 0) -> Optional[Sink]:
     """``resolve_producer`` searched over every state of ``inner``."""
-    for st in inner.all_states():
+    for st in inner.states():
         result = resolve_producer(st, inner, name, depth)
         if result is not None:
             return result
@@ -192,7 +192,7 @@ def wcr_sum_write_state(inner: SDFG, name: str) -> Optional[SDFGState]:
     """The state where ``name`` is written by a single Sum-WCR edge from inside a Map
     scope, ignoring any unrelated plain write to the same transient (e.g. a
     zero-initialisation elsewhere)."""
-    for st in inner.all_states():
+    for st in inner.states():
         edges = [
             e for dn in st.data_nodes() if dn.data == name for e in st.in_edges(dn)
             if e.data is not None and e.data.wcr is not None and st.entry_node(e.src) is not None
@@ -203,7 +203,7 @@ def wcr_sum_write_state(inner: SDFG, name: str) -> Optional[SDFGState]:
 
 
 def has_plain_read(inner: SDFG, name: str) -> bool:
-    for st in inner.all_states():
+    for st in inner.states():
         for dn in st.data_nodes():
             if dn.data == name:
                 for e in st.out_edges(dn):
@@ -541,7 +541,7 @@ def _reaches_map_scope(inner: SDFG, conn: str) -> bool:
     (alpha multiplies the per-``k`` product; beta only the outer finalize). Follows
     the connector's data node directly, or through one passthrough AccessNode, to a
     MapEntry."""
-    for st in inner.all_states():
+    for st in inner.states():
         for dn in st.data_nodes():
             if dn.data != conn:
                 continue
@@ -797,8 +797,8 @@ def transient_dead_outside(loop: LoopRegion, root: SDFG, name: str) -> bool:
     desc = root.arrays.get(name)
     if desc is None or not desc.transient:
         return False
-    inside = dict.fromkeys(id(state) for state in loop.all_states())
-    for state in root.all_states():
+    inside = dict.fromkeys(id(state) for state in loop.states())
+    for state in root.states():
         if id(state) in inside:
             continue
         if any(dn.data == name and state.out_degree(dn) > 0 for dn in state.data_nodes()):
@@ -845,7 +845,7 @@ def match_slice_form(parent: ControlFlowRegion, loop: LoopRegion) -> Optional[Sy
         return None
     if not loop_invariant(loop, (a, b, alpha)):
         return None
-    written = dict.fromkeys(name for state in loop.all_states() for name in written_arrays(state))
+    written = dict.fromkeys(name for state in loop.states() for name in written_arrays(state))
     written.pop(c, None)
     if any(not transient_dead_outside(loop, root, name) for name in written):
         return None

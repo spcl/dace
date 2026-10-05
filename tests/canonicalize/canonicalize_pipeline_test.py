@@ -40,7 +40,7 @@ def structure(sdfg: dace.SDFG) -> str:
     a node appearing, a memlet widening or a map range moving all show up as a diff.
     """
     lines: list[str] = []
-    for index, state in enumerate(sdfg.all_states()):
+    for index, state in enumerate(sdfg.states()):
         lines.append(f'STATE {index}')
         ids = {n: i for i, n in enumerate(state.nodes())}
         for node in state.nodes():

@@ -280,9 +280,19 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         nsdfg.arrays['_in'].transient = False
         nsdfg.arrays['_out'].transient = False
 
-        nsdfg.add_transient('acc', [1], input_data.dtype, dtypes.StorageType.Register)
+        # The accumulator is the OUTPUT element type, as in ``dace::reduce``: an int8 mask summed into an int64
+        # total must not wrap at 127
+        nsdfg.add_transient('acc', [1], output_data.dtype, dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
+
+        # The memlets carry the outer subsets verbatim, so the nested map parameters must not shadow a symbol they
+        # use (an enclosing map's ``_o0``, for one)
+        taken = {str(s) for s in inedge.data.subset.free_symbols | outedge.data.subset.free_symbols}
+        taken |= {str(sym) for sym in state.symbols_defined_at(node).keys()}
+        prefix = '_'
+        while any(name.startswith((prefix + 'i', prefix + 'o')) for name in taken):
+            prefix += '_'
 
         # Interleave input and output axes to match input memlet
         def absolute(subset: subsets.Range, dim: int, param: str) -> str:
@@ -294,10 +304,10 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         input_subset = []
         for i in range(len(input_size)):
             if i in axes:
-                input_subset.append(absolute(inedge.data.subset, i, f'_i{ictr}'))
+                input_subset.append(absolute(inedge.data.subset, i, f'{prefix}i{ictr}'))
                 ictr += 1
             elif input_size[i] != 1:
-                input_subset.append(absolute(inedge.data.subset, i, f'_o{octr}'))
+                input_subset.append(absolute(inedge.data.subset, i, f'{prefix}o{octr}'))
                 octr += 1
             else:
                 input_subset.append(symstr(inedge.data.subset[i][0]))
@@ -306,14 +316,14 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         output_ranges = {}
         for i, size in enumerate(outedge.data.subset.size()):
             if size != 1:
-                param = f'_o{len(output_ranges)}'
+                param = f'{prefix}o{len(output_ranges)}'
                 output_subset.append(absolute(outedge.data.subset, i, param))
                 output_ranges[param] = f'0:{symstr(size)}'
             else:
                 output_subset.append(symstr(outedge.data.subset[i][0]))
 
         # A single output element still gets the map that scopes the accumulator reset
-        ome, omx = nstate.add_map('reduce_output', output_ranges or {'_o0': '0:1'})
+        ome, omx = nstate.add_map('reduce_output', output_ranges or {f'{prefix}o0': '0:1'})
         outm = dace.Memlet.simple('_out', ','.join(output_subset))
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
@@ -327,7 +337,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
         ime, imx = nstate.add_map('reduce_values', {
-            iname(i): '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            f'{prefix}i{i}': '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
             for i, axis in enumerate(sorted(axes))
         },
                                   schedule=dtypes.ScheduleType.Sequential)
@@ -1225,16 +1235,21 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         return ExpandReduceCUDABlockStrided.expansion(node, state, sdfg)
 
 
-def storage_behind_views(state: SDFGState, node: dace.nodes.Node, declared: dtypes.StorageType) -> dtypes.StorageType:
-    """
-    Returns the storage of the container ``node`` ultimately views, or ``declared`` if it is not a view.
+def storage_behind_views(state: SDFGState, node, declared: dtypes.StorageType) -> dtypes.StorageType:
+    """Where a reduce operand's bytes live, asked of the container rather than of an alias.
 
-    A view owns no storage, so its descriptor only declares whatever it was built with, which need not match the
-    container it aliases.
+    A view owns no storage, so what its descriptor declares is whatever it was built with and is
+    right only where some other pass has since matched it to the container it aliases. Reading it
+    directly makes this expansion decide on that second-hand answer: a view of a ``GPU_Global``
+    array still declaring ``Default`` sends a reduction that belongs on the device down the Pure
+    fallback, and the nested operands are then built for the wrong side.
     """
-    if not isinstance(node, dace.nodes.AccessNode):
+    from dace.sdfg import nodes as nd  # Avoid import loop
+    from dace.sdfg.utils import get_last_view_node
+
+    if not isinstance(node, nd.AccessNode):
         return declared
-    viewed = sdutil.get_last_view_node(state, node)
+    viewed = get_last_view_node(state, node)
     if viewed is None:
         return declared
     return state.sdfg.arrays[viewed.data].storage
@@ -1276,6 +1291,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
         in_type = raw_input_data.dtype
 
+        # Through the alias rather than off it -- see ``storage_behind_views``.
         in_storage = storage_behind_views(state, inedge.src, raw_input_data.storage)
         out_storage = storage_behind_views(state, outedge.dst, raw_output_data.storage)
 
@@ -1351,9 +1367,37 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        # Built rather than cloned: a clone would carry an ArrayView's class into the nested SDFG, and keep its
-        # offset at the rank of the original shape.
+        # Built rather than cloned. A clone carries the caller's descriptor CLASS, so a reduce reading
+        # an ``ArrayView`` -- lenet's second one reads a view of the maxpool input -- gives the nested
+        # SDFG a ``_in`` that is a view of nothing: inside, it is a plain buffer reached through a
+        # connector and read by several edges, which validation refuses ("Ambiguous or invalid edge
+        # to/from a View access node"). Building it also keeps ``offset`` at the rank of the shape,
+        # which a cloned-then-reshaped descriptor loses.
         nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=in_storage)
+
+        # The reduction body writes ``_out`` from GPU device maps, so ``_out`` must be device-writable.
+        # If the real output already lives in device memory, ``_out`` IS that output (written directly).
+        # If it lives on the host (Register / CPU_Heap / Default / ...), ``_out`` is built as a
+        # GPU_Global scratch here and, once the reduction body is complete, renamed to a transient and
+        # copied to the real host output by :func:`route_gpu_reduce_result_to_host_output` -- so the GPU
+        # kernels never write host memory (and no slow pure fallback is taken). Asked of ``out_storage``
+        # rather than of the descriptor: an output reached through a view declares whatever the view was
+        # built with, and deciding on that answer writes device memory through a host copy, or the
+        # reverse.
+        output_on_device = out_storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
+
+        # ``_out``'s declared strides must match the memory it is written into. The planner derives
+        # ``out_strides`` from the INPUT array, which is only a valid layout for the reconciled host
+        # scratch. When ``_out`` IS the real device output (written directly) and that output is a
+        # strided View (e.g. ``output[:, i, j, :]``), those input-derived strides send the writes to
+        # the wrong offsets, so use the real output's strides for the written (squeezed) region. Those
+        # stay the VIEW's own strides, unlike the storage above: the nested SDFG is handed the view's
+        # pointer, so it must index the way the view does.
+        out_strides = schedule.out_strides
+        if output_on_device:
+            osqdim = dcpy(outedge.data.subset).squeeze()
+            if len(osqdim) == len(schedule.out_shape):
+                out_strides = [raw_output_data.strides[i] for i in osqdim]
         nsdfg.add_array('_out',
                         schedule.out_shape,
                         raw_output_data.dtype,

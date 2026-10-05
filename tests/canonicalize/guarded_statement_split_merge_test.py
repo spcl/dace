@@ -72,9 +72,7 @@ def guarded_forward_read_war(cond: dace.int32, a: dace.float64[N], d: dace.float
 # Structural helpers
 def _top_map_entries(sdfg: dace.SDFG):
     """Top-level (non-nested) MapEntry nodes across every state."""
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def _conditional_blocks(sdfg: dace.SDFG):
@@ -85,7 +83,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock whose branch body contains a top-level map (guard hoisted out)."""
     for cb in _conditional_blocks(sdfg):
         for _, branch in cb.branches:
-            for st in branch.all_states():
+            for st in branch.states():
                 if any(isinstance(n, nodes.MapEntry) and st.entry_node(n) is None for n in st.nodes()):
                     return True
     return False
@@ -93,7 +91,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
 
 def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock inside a NestedSDFG that sits under a map scope (guard in-map)."""
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None:
                 if any(isinstance(b, ConditionalBlock) for b in n.sdfg.all_control_flow_regions(recursive=True)):

@@ -77,13 +77,12 @@ def _loops(sdfg: dace.SDFG):
 
 def _maps_over(sdfg: dace.SDFG, itervar: str):
     return [
-        n for state in sdfg.all_states() for n in state.nodes()
-        if isinstance(n, nodes.MapEntry) and itervar in n.map.params
+        n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.MapEntry) and itervar in n.map.params
     ]
 
 
 def _wcr_memlets(sdfg: dace.SDFG):
-    return [e.data for state in sdfg.all_states() for e in state.edges() if e.data is not None and e.data.wcr]
+    return [e.data for state in sdfg.states() for e in state.edges() if e.data is not None and e.data.wcr]
 
 
 def test_loop_to_map_refuses_a_wcr_carried_scan_end_to_end():

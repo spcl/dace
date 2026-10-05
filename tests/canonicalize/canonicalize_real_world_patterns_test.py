@@ -518,9 +518,8 @@ def test_zqtmst_invariant_scalar_shape_structure():
     assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
     # Whoever reads ``ptsphy`` is the reciprocal, whatever the division is spelled like. A
     # per-iteration recompute puts that reader under a MapEntry; the hoisted one sits at top level.
-    readers = [(state, node) for state in sdfg.all_states() for node in state.nodes()
-               if isinstance(node, nodes.Tasklet) for e in state.in_edges(node)
-               if e.data is not None and e.data.data == 'ptsphy']
+    readers = [(state, node) for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.Tasklet)
+               for e in state.in_edges(node) if e.data is not None and e.data.data == 'ptsphy']
     assert readers, 'no tasklet reads ptsphy at all -- the reciprocal vanished'
     for state, tasklet in readers:
         assert state.entry_node(tasklet) is None, \

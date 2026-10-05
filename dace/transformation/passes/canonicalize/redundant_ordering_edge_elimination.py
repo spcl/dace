@@ -207,6 +207,6 @@ class RedundantOrderingEdgeElimination(ppl.Pass):
         """
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
-            for state in nested.all_states():
+            for state in nested.states():
                 count += reduce_state(state)
         return count or None

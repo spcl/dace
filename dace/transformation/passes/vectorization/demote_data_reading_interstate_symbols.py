@@ -61,7 +61,7 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
             found.regions[region] = None
             if isinstance(region, LoopRegion) and region.loop_variable:
                 found.names.add(str(region.loop_variable))
-    for state in sd.all_states():
+    for state in sd.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry) and node not in found.map_entries:
                 found.map_entries[node] = None

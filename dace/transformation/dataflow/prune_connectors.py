@@ -15,7 +15,7 @@ def connectors_used_by_dataflow(nsdfg: nodes.NestedSDFG) -> bool:
     outputs = nsdfg.out_connectors
     read: OrderedSet[str] = OrderedSet()
     written: OrderedSet[str] = OrderedSet()
-    for inner_state in nsdfg.sdfg.all_states():
+    for inner_state in nsdfg.sdfg.states():
         for node in inner_state.data_nodes():
             name = node.data
             if (name in inputs and name not in read

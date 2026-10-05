@@ -60,8 +60,7 @@ def _axpy_sdfg():
 
 def _trap_tasklets(sdfg):
     return [
-        n for st in sdfg.all_states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string
+        n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string
     ]
 
 

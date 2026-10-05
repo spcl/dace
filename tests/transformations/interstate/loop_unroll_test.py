@@ -411,7 +411,7 @@ def test_unroll_strided_loop_keeps_every_iteration(start: int, stop: int, step: 
     assert not [n for n in unrolled.all_control_flow_regions() if isinstance(n, LoopRegion)]
 
     # One body per iteration -- catches a drop even where two iterations write the same slot.
-    emitted = [n for state in unrolled.all_states() for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    emitted = [n for state in unrolled.states() for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
     assert len(emitted) == len(expected_iterates), (len(emitted), expected_iterates)
 
     got = np.zeros(N_STRIDED)

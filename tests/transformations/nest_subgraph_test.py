@@ -367,7 +367,7 @@ def test_symbol_needing_an_incoming_value_stays_an_argument():
     assert 'N' in sdfg.free_symbols
     assert 'N' in sdfg.symbols
     assert 'N' in sdfg.arglist()
-    nested = next(n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
+    nested = next(n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
     assert 'N' in nested.symbol_mapping
     sdfg.validate()
 

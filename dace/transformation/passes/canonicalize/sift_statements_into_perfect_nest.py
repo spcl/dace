@@ -141,7 +141,7 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     carries and stay clear of this check.
     """
     iv = str(outer.loop_variable)
-    states: List[SDFGState] = list(pre) + list(post) + list(inner.all_states())
+    states: List[SDFGState] = list(pre) + list(post) + list(inner.states())
 
     written: Dict[str, None] = {}
     for st in states:
@@ -163,7 +163,7 @@ def _body_written_names(inner: LoopRegion) -> Dict[str, None]:
     names: Dict[str, None] = {}
     for e in inner.all_interstate_edges(recursive=True):
         names.update(dict.fromkeys(e.data.assignments.keys()))
-    for st in inner.all_states():
+    for st in inner.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
                 names[n.data] = None

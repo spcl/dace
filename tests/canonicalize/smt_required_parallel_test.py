@@ -192,7 +192,7 @@ def guard_check_nodes(sdfg: dace.SDFG) -> list:
     """Every ``ScatterConflictCheck`` libnode in the tree -- the guard's compute half."""
     from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+        n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
         if isinstance(n, ScatterConflictCheck)
     ]
 
@@ -203,7 +203,7 @@ def guard_trap_tasklets(sdfg: dace.SDFG) -> list:
     Matched on the count symbol rather than on ``std::abort``, which the unrelated
     nonnegative-symbol assumption tasklet also emits."""
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+        n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and '__scatter_guard_check_' in n.code.as_string
     ]
 

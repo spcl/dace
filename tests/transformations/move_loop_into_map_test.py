@@ -454,7 +454,7 @@ def test_a_loop_moved_into_its_lanes_computes_what_the_loop_did():
 
 def test_a_map_body_behind_a_nested_sdfg_moves_per_lane():
     sdfg, loop = lane_loop(nested_column)
-    assert any(isinstance(n, dace.nodes.NestedSDFG) for s in loop.all_states() for n in s.nodes())
+    assert any(isinstance(n, dace.nodes.NestedSDFG) for s in loop.states() for n in s.nodes())
     args = branching_inputs()
     del args['w']
     want, got = copy.deepcopy(args), copy.deepcopy(args)

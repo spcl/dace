@@ -97,7 +97,7 @@ def _map_entries(sdfg: dace.SDFG):
 def _outermost_map_entries(sdfg: dace.SDFG):
     """MapEntries not enclosed by another Map -- the ones codegen emits a pragma for."""
     found = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         scope = state.scope_dict()
         found += [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope[n] is None]
     return found

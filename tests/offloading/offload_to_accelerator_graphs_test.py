@@ -961,10 +961,10 @@ def empty_states_offloading_adds(sdfg: dace.SDFG) -> list:
     """Offload ``sdfg`` and name the empty states left behind that raising its control flow alone does not leave."""
     raised = deepcopy(sdfg)
     ControlFlowRaising().apply_pass(raised, {})
-    empty_after_raising = [state.label for state in raised.all_states() if state.number_of_nodes() == 0]
+    empty_after_raising = [state.label for state in raised.states() if state.number_of_nodes() == 0]
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     return [
-        state.label for state in sdfg.all_states()
+        state.label for state in sdfg.states()
         if state.number_of_nodes() == 0 and state.label not in empty_after_raising
     ]
 
@@ -976,8 +976,8 @@ def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: 
     sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding)
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
-    labels = [state.label for state in sdfg.all_states()]
-    arms = [state for state in sdfg.all_states() if state.label in ("big", "small")]
+    labels = [state.label for state in sdfg.states()]
+    arms = [state for state in sdfg.states() if state.label in ("big", "small")]
     assert len(arms) == 2 and all(holds_device_map(arm) for arm in arms), f"an arm was not offloaded: {labels}"
     branch = next(block for block in sdfg.nodes() if isinstance(block, ConditionalBlock))
     stale_exits = exits_not_writing_after(sdfg, branch, "A")

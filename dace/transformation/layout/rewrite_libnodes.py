@@ -105,7 +105,7 @@ class FoldTransposeIntoMatMul(ppl.Pass):
         from dace.libraries.linalg.nodes.transpose import Transpose
 
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for tnode in [n for n in state.nodes() if type(n) is Transpose]:
                 count += self._fold(state, tnode, (Gemm, MatMul))
         return count
@@ -155,7 +155,7 @@ class GemmToTensorDot(ppl.Pass):
         from dace.libraries.linalg import TensorDot
 
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in [n for n in state.nodes() if type(n) is Gemm]:
                 if not self._is_eligible(node):
                     continue
@@ -204,7 +204,7 @@ class SyrkToTensorDot(ppl.Pass):
         from dace.libraries.linalg import TensorDot
 
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in [n for n in state.nodes() if type(n) is Syrk]:
                 if self._is_eligible(node):
                     count += self._rewrite(state, node, TensorDot)
@@ -269,7 +269,7 @@ class RewriteCopyForLayout(ppl.Pass):
         from dace.libraries.linalg import TensorTranspose
 
         count = 0
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in [n for n in state.nodes() if type(n) is CopyLibraryNode]:
                 count += self._rewrite(state, node, CopyLibraryNode, TensorTranspose)
         return count

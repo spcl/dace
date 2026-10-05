@@ -19,7 +19,7 @@ def _tasklet_access_has_int_floor(sdfg, arr):
     """int_floor on the innermost COMPUTE access (tasklet edge). The full-array map-boundary
     memlet legitimately over-approximates with int_floor; only the compute access must be clean
     for a perfect block match."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for e in state.edges():
             if e.data is None or e.data.data != arr or e.data.subset is None:
                 continue

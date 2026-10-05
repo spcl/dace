@@ -103,7 +103,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
     # Outside-read set (rule 2). Only a read that can see a value from before its own state counts: a copy of an
     # arm elsewhere that recomputes a temporary before reading it cannot observe this arm's write.
     outside_reads: set[str] = set()
-    for state in local_sdfg.all_states():
+    for state in local_sdfg.states():
         if state in inside_states:
             continue
         outside_reads.update(upward_exposed_reads(state))
@@ -197,7 +197,7 @@ class BranchNormalization(ppl.Pass):
         rewritten = rewrite_blocks_to_fixpoint(sdfg, lambda block: self._try_rewrite(sdfg, block))
 
         # Audit touched states.
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             assert_connector_role_matches_edges(state)
 
         return rewritten or None
@@ -337,8 +337,7 @@ class BranchNormalization(ppl.Pass):
                     and 0 <= i.value < int(d) for i, d in zip(index, shape)):
                 return False
         read = names & set(sdfg.arrays)
-        return not any(n.data in read and state.in_degree(n) > 0 for state in sdfg.all_states()
-                       for n in state.data_nodes())
+        return not any(n.data in read and state.in_degree(n) > 0 for state in sdfg.states() for n in state.data_nodes())
 
     @staticmethod
     def _symbol_read_outside_arm(sym: str, arm_body: ControlFlowRegion) -> bool:
@@ -346,7 +345,7 @@ class BranchNormalization(ppl.Pass):
         sdfg = arm_body.sdfg
         only = {sym}
         inside_regions = set(arm_body.all_control_flow_regions(recursive=True))
-        inside_states = set(arm_body.all_states())
+        inside_states = set(arm_body.states())
         for cfg in sdfg.all_control_flow_regions(recursive=True):
             if cfg in inside_regions:
                 continue
@@ -367,7 +366,7 @@ class BranchNormalization(ppl.Pass):
                     if code is not None and symbolic.symbols_in_code(
                             code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only):
                         return True
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             if state in inside_states:
                 continue
             for n in state.nodes():

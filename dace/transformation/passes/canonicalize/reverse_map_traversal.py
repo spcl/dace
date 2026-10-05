@@ -87,7 +87,7 @@ def reverse_descending_maps(sdfg: SDFG) -> Optional[int]:
     """
     flipped = 0
     for g in sdfg.all_sdfgs_recursive():
-        for state in g.all_states():
+        for state in g.states():
             for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
                 for dim, param in enumerate(entry.map.params):
                     begin, end, step = entry.map.range[dim]

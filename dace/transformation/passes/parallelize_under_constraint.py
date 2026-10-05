@@ -170,11 +170,11 @@ class ParallelizeUnderConstraint(ppl.Pass):
             facts = ScopeFacts(sdfg)
         loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
         # (array, subset-string) pairs read from / written to non-transient arrays.
-        # Resolve descriptors against each state's OWN SDFG -- ``loop.all_states()``
+        # Resolve descriptors against each state's OWN SDFG -- ``loop.states()``
         # may descend into nested SDFGs whose data names are absent from ``sdfg``.
         reads: Set = set()
         writes: dict = {}
-        for state in loop.all_states():
+        for state in loop.states():
             arrays = state.sdfg.arrays
             for e in state.edges():
                 if e.data is None or e.data.is_empty() or e.data.subset is None:

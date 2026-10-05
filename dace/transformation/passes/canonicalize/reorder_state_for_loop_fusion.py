@@ -174,7 +174,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         memlet safety, and aliasing THROUGH an SDFG-scope boundary needs data-flow this pass does not
         have -- any ``NestedSDFG`` here refuses the whole candidate rather than guessing.
         """
-        states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+        states = [block] if isinstance(block, SDFGState) else list(block.states())
         return any(isinstance(n, nd.NestedSDFG) for s in states for n in s.nodes())
 
     @staticmethod
@@ -182,7 +182,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         """Item 11: whether ``block`` (a plain state, or a region such as ``second``) holds a code node
         whose effects are not described by its memlets. Such a node is invisible to the name-level
         RAW/WAR/WAW checks, so it has to disqualify the candidate from whichever side it sits on."""
-        states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+        states = [block] if isinstance(block, SDFGState) else list(block.states())
         return any(isinstance(n, nd.CodeNode) and n.has_side_effects(sdfg) for s in states for n in s.nodes())
 
     @staticmethod

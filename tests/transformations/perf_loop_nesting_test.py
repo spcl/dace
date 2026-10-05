@@ -27,7 +27,7 @@ N = dace.symbol("N")
 
 
 def _outer_state(sdfg: dace.SDFG) -> SDFGState:
-    for s in sdfg.all_states():
+    for s in sdfg.states():
         if any(isinstance(n, nodes.MapEntry) and s.entry_node(n) is None for n in s.nodes()):
             return s
     return sdfg.start_state
@@ -450,7 +450,7 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     parent = None
     owning_sdfg = None
     for owner in wrapper.all_sdfgs_recursive():
-        for st in owner.all_states():
+        for st in owner.states():
             for n in st.nodes():
                 if isinstance(n, nodes.MapEntry) and "_for_it_35" in n.map.params:
                     parent, owning_sdfg = n, owner

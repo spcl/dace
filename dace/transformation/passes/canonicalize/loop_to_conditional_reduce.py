@@ -233,7 +233,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if len(sink_ans) != 1 or sink_ans[0].data != acc_name:
             return None
         # The hoist makes every write unconditional: all but the accumulator must be scratch nothing else sees.
-        seen_elsewhere = [dn.data for st in sdfg.all_states() if st is not true_state for dn in st.data_nodes()]
+        seen_elsewhere = [dn.data for st in sdfg.states() if st is not true_state for dn in st.data_nodes()]
         seen_elsewhere += [s for e in sdfg.all_interstate_edges(recursive=True) for s in e.data.free_symbols]
         seen_elsewhere += [
             s for r in sdfg.all_control_flow_regions(recursive=True) for c in r.get_meta_codeblocks()

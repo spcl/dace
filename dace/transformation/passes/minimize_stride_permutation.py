@@ -183,7 +183,7 @@ class MinimizeStridePermutation(ppl.Pass):
                  states that changed, or ``None`` if nothing was modified.
         """
         result: Dict[int, int] = {}
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             applied = self._process_state(state, state.sdfg)
             if applied:
                 result[state.block_id] = applied

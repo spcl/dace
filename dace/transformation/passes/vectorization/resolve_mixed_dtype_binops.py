@@ -192,7 +192,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         # ``ConvertTaskletsToTileOps`` both recurse, so a top-level-only sweep here leaves a mixed
         # binop (``int32`` ``mid`` vs ``int64`` map-param compare) to trip the conversion guard.
         for nested in sdfg.all_sdfgs_recursive():
-            for state in nested.all_states():
+            for state in nested.states():
                 for tasklet in list(state.nodes()):
                     if not isinstance(tasklet, nodes.Tasklet):
                         continue
@@ -453,7 +453,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
-            for state in nested.all_states():
+            for state in nested.states():
                 for tasklet in list(state.nodes()):
                     if not isinstance(tasklet, nodes.Tasklet):
                         continue

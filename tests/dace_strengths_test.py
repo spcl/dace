@@ -220,7 +220,7 @@ def test_wcr_explicit_no_reduction_pattern_match_needed():
 
     sdfg = reduce_sum.to_sdfg(simplify=True)
     wcr_edges = [
-        e for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
     assert wcr_edges, 'expected at least one explicit WCR edge'

@@ -60,7 +60,7 @@ def plant_write_only_scratch(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapE
 
 def two_param_map_entry(sdfg: SDFG) -> Tuple[SDFGState, nodes.MapEntry]:
     """The single two-parameter map of a freshly parsed kernel, with its state."""
-    found = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+    found = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
              if isinstance(n, nodes.MapEntry) and len(n.map.params) == 2]
     assert len(found) == 1, f"expected one two-parameter map, got {len(found)}"
     return found[0]

@@ -44,7 +44,7 @@ def _top_level_conditional_blocks(sdfg: dace.SDFG) -> int:
 def _conditional_inside_map_scope(sdfg: dace.SDFG) -> bool:
     """Whether some ``ConditionalBlock`` lives inside a NestedSDFG that is
     itself inside a map scope (i.e. the guard was pushed into a map body)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, NestedSDFG):
                 continue
@@ -59,7 +59,7 @@ def _conditional_inside_map_scope(sdfg: dace.SDFG) -> bool:
 def _map_params(sdfg: dace.SDFG):
     """Set of all map parameter names across every state of ``sdfg``."""
     params = set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, MapEntry):
                 params.update(str(p) for p in node.map.params)

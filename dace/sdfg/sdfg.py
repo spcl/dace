@@ -1696,7 +1696,7 @@ class SDFG(ControlFlowRegion):
                 # _loop_it_0``) is allocated where that parameter is defined, so its extent is no
                 # argument; the block analysis already dropped it and this must not put it back.
                 scope_syms = set()
-                for state in self.all_states():
+                for state in self.states():
                     for node in state.nodes():
                         if isinstance(node, nd.EntryNode):
                             scope_syms |= node.new_symbol_names(self, state)

@@ -191,7 +191,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     def _check_reuse(self, sdfg: dace.SDFG, orig_state: dace.SDFGState, diff_set: Set[str]):
         for graph in sdfg.all_control_flow_regions():
-            if (not isinstance(graph, dace.SDFGState)) and orig_state in graph.all_states():
+            if (not isinstance(graph, dace.SDFGState)) and orig_state in graph.states():
                 continue
             if graph == orig_state:
                 continue
@@ -221,7 +221,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                         return True
 
         # Memlets
-        for state in cfg.all_states():
+        for state in cfg.states():
             for edge in state.edges():
                 if edge.data.data is not None:
                     for (b, e, s) in as_range(edge.data.subset):
@@ -248,7 +248,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     return True
 
         # Maps
-        for state in cfg.all_states():
+        for state in cfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry):
                     for (b, e, s) in node.map.range:
@@ -260,7 +260,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                             return True
 
         # Takslets
-        for state in cfg.all_states():
+        for state in cfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
                     if symbol_name in dace.symbolic.symbols_in_code(node.code.as_string):
@@ -287,7 +287,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 found.update(wanted.intersection(free_symbol_names(x)))
             return found == wanted
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.data is not None:
                     for (b, e, s) in as_range(edge.data.subset):
@@ -325,7 +325,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         def _in(*exprs) -> bool:
             return any(symbol_name in free_symbol_names(x) for x in exprs)
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.data is not None and any(_in(b, e, s) for (b, e, s) in as_range(edge.data.subset)):
                     return True
@@ -608,7 +608,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # Remove all nodes from the target state in the copy
         labels = {(s.label, s.parent_graph.label, s.sdfg.label) for s in states}
-        for st in copy_sdfg.all_states():
+        for st in copy_sdfg.states():
             label_tuple = (st.label, st.parent_graph.label, st.sdfg.label)
             if label_tuple in labels:
                 for n in list(st.nodes()):
@@ -646,10 +646,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         checked_at_least_one_tasklet = False
 
         # Having something other than a state is a problem
-        if set(graph.all_states()) != set(graph.nodes()):
+        if set(graph.states()) != set(graph.nodes()):
             return False
 
-        for state in graph.all_states():
+        for state in graph.states():
             # The function to get parent map and loop scopes is expensive so lets try map-libnodes first entry first
             for node in state.nodes():
                 if isinstance(node, (dace.nodes.MapEntry, dace.nodes.LibraryNode)):
@@ -667,7 +667,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         return checked_at_least_one_tasklet
 
     def has_no_top_level_tasklets(self, graph: ControlFlowRegion):
-        for state in graph.all_states():
+        for state in graph.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
                     parent_maps = get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg, node=node, parent_state=state)

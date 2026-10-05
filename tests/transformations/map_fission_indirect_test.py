@@ -30,7 +30,7 @@ M = dace.symbol('M')
 
 
 def _nmaps(sdfg):
-    return len([n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
+    return len([n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
 
 
 @dace.program

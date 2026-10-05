@@ -83,7 +83,7 @@ def _has_final_copy_in(state, t_name: str) -> bool:
 
 
 def _find_final_copy_state(sdfg, t_name: str):
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if _has_final_copy_in(state, t_name):
             return state
     return None
@@ -92,7 +92,7 @@ def _find_final_copy_state(sdfg, t_name: str):
 def _warn_unhandled_full_extent_ops(sdfg, t_name: str, init_state, final_state) -> None:
     """Warns on any top-level full-extent write/read of t_name that isn't the init copy, final copy, or body Map."""
     arr = sdfg.arrays[t_name]
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if state is init_state or state is final_state:
             continue
         sdict = state.scope_dict()
@@ -144,7 +144,7 @@ def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState
     full_volume = 1
     for s in desc.shape:
         full_volume = full_volume * s
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for an in state.data_nodes():
             if an.data != name:
                 continue
@@ -392,7 +392,7 @@ class PermuteDimensions(ppl.Pass):
                                               new_name=old_name)
 
         # shapes/maps added above; memlets not yet permuted. recurse into nested SDFGs first
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     new_permute_map = dict()
@@ -409,7 +409,7 @@ class PermuteDimensions(ppl.Pass):
 
                     self._permute_index(root=root, sdfg=node.sdfg, permute_map=new_permute_map, add_permute_maps=False)
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             if sdfg == root and (state in permute_states_to_skip):
                 continue
             permuted_copy_sides = rewrite_state_for_permute(state, name_map, permute_map, self._note_copy_side)

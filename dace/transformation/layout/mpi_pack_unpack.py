@@ -178,7 +178,7 @@ class MpiPackUnpack(ppl.Pass):
 
     def _find_wait(self, sdfg, req: str):
         from dace.libraries.mpi.nodes import Wait, Waitall
-        for st in sdfg.all_states():
+        for st in sdfg.states():
             for n in st.nodes():
                 if isinstance(n, (Wait, Waitall)):
                     for e in st.in_edges(n):

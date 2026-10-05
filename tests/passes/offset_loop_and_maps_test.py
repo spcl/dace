@@ -224,7 +224,7 @@ def test_symbol_use_in_tasklet():
                        normalize_loops=False).apply_pass(copy_sdfg, {})
     # 1 taskelt should be left
     num_tasklets = 0
-    for state in copy_sdfg.all_states():
+    for state in copy_sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 num_tasklets += 1
@@ -254,7 +254,7 @@ def test_simple_element_wise():
                        normalize_loops=False).apply_pass(copy_sdfg, {})
     # 1 taskelt should be left
     num_tasklets = 0
-    for state in copy_sdfg.all_states():
+    for state in copy_sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 num_tasklets += 1

@@ -533,9 +533,9 @@ def test_parallel_branch_keeps_loop_scratch_transients_private_to_each_iteration
     sdfg.validate()
     cb = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock))
     par_body = cb.branches[1][1]
-    par_names = {dn.data for st in par_body.all_states() for dn in st.data_nodes()}
+    par_names = {dn.data for st in par_body.states() for dn in st.data_nodes()}
     assert par_names == {'a', 'b', 'c', 'd', 'ip'}
-    seq_names = {dn.data for st in cb.branches[0][1].all_states() for dn in st.data_nodes()}
+    seq_names = {dn.data for st in cb.branches[0][1].states() for dn in st.data_nodes()}
     assert 'a_slice' not in seq_names and 'a_slice_seq' in seq_names
     sdfg(a=a, b=b, c=c, d=d, ip=ip, N=n)
     assert np.allclose(a, expected)
@@ -587,8 +587,8 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
 
     has_check = _count_guard_nodes(sdfg) >= 1
     has_trap = any(
-        isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string for st in sdfg.all_states() for n in st.nodes())
-    maps = sum(1 for st in sdfg.all_states() for n in st.nodes()
+        isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string for st in sdfg.states() for n in st.nodes())
+    maps = sum(1 for st in sdfg.states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
     assert maps >= 1, 'the scatter must parallelize into a Map'
     assert has_check and has_trap, ('the no-conflict guard (ScatterConflictCheck + trap) must survive full '

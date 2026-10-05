@@ -267,7 +267,7 @@ def test_simple_guard_reads_the_current_version():
     sdfg = s3113_max_abs.to_sdfg(simplify=False)
     cond, branch = next((c.as_string, br) for blk, _ in sdfg.all_nodes_recursive() if isinstance(blk, ConditionalBlock)
                         for c, br in blk.branches if c is not None)
-    updated = {e.dst.data for st in branch.all_states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)}
+    updated = {e.dst.data for st in branch.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)}
     assert updated <= dace.symbolic.free_symbols_and_functions(cond), \
         f"guard {cond} does not name the accumulator {sorted(updated)} its body updates"
 

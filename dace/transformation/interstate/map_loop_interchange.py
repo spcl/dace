@@ -25,7 +25,7 @@ def carried_across_iterations(loop: cf.LoopRegion, body: sd.SDFG) -> Optional[st
             if free_names(rhs) & assigned:
                 return f'symbol {name} is carried across iterations'
     for name, desc in body.arrays.items():
-        states = [s for s in loop.all_states() if any(n.data == name for n in s.data_nodes())]
+        states = [s for s in loop.states() if any(n.data == name for n in s.data_nodes())]
         if desc.transient and states and (len(states) > 1 or name in move_if_into_loop.upward_exposed_reads(states[0])):
             return f'transient {name} is carried across iterations'
     return None

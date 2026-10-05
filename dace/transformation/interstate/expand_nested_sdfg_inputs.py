@@ -274,7 +274,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG,
                 memlet_access_idx += 1
         return new_range_list, inner_is_full_rank
 
-    for state in inner_sdfg.all_states():
+    for state in inner_sdfg.states():
         for edge in state.edges():
             memlet = edge.data
             if memlet is None or memlet.is_empty():
@@ -542,10 +542,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         def _uncollapse_subset_refs(sub) -> None:
             if isinstance(sub, subsets.Range):
                 sub.ranges = [(_rw_index_expr(b), _rw_index_expr(e), _rw_index_expr(s)) for (b, e, s) in sub.ranges]
-            elif isinstance(sub, subsets.Indices):
-                sub.indices = [_rw_index_expr(i) for i in sub.indices]
 
-        for st in inner_sdfg.all_states():
+        for st in inner_sdfg.states():
             for edge in st.edges():
                 memlet = edge.data
                 # Own-array memlets already handled by ``_rewrite_memlets_with_offset``; here
@@ -772,8 +770,6 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         def _subset_arrays(sub) -> Set[str]:
             if isinstance(sub, subsets.Range):
                 exprs = [x for r in sub.ranges for x in r]
-            elif isinstance(sub, subsets.Indices):
-                exprs = list(sub.indices)
             else:
                 return set()
             names: Set[str] = set()
@@ -784,7 +780,7 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             return names
 
         referenced: Set[str] = set()
-        for st in inner_sdfg.all_states():
+        for st in inner_sdfg.states():
             for edge in st.edges():
                 if edge.data is None:
                     continue

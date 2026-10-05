@@ -4,7 +4,6 @@ from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
 from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
-from dace.ordered import OrderedSet
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
@@ -404,7 +403,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         read_locations = []
         write_locations = []
-        for st in loop.all_states():
+        for st in loop.states():
             for an in st.data_nodes():
                 if an.data != array_name:
                     continue

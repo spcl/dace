@@ -439,7 +439,7 @@ def write_moves_with(state: SDFGState, edge, varying: Set[str], depth: int = 0) 
         origins = symbol_origins(definitions)
 
         verdicts = []
-        for nested_state in edge.src.sdfg.all_states():
+        for nested_state in edge.src.sdfg.states():
             for access in nested_state.data_nodes():
                 if access.data != conn:
                     continue

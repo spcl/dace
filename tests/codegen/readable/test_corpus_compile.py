@@ -40,13 +40,39 @@ from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_output
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
 SYMBOL_SIZE = 13
 
-#: Kernels where the uniform SYMBOL_SIZE is too large. scattering_self is an 8-deep nest, so 13 per
-#: axis is ~8e8 iterations and took the CI worker down; two per axis still exercises the shape.
-SYMBOL_OVERRIDES = {"scattering_self": {s: 2 for s in ("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb")}}
+#: Per-kernel overrides where the uniform SYMBOL_SIZE is invalid. stockham_fft sizes its arrays as
+#: ``R**K`` (radix-R, K-stage FFT), so 13**13 (~2 PiB) is unallocatable; bind small powers (N=2**6=64).
+#: scattering_self is an 8-deep nest (Nkz, NE, Nqz, Nw, N3D, N3D, NA, NB) of Norb-square complex
+#: matmuls, so a uniform 13 is 13**8 ~= 8.2e8 iterations -- it ran for ~2h and took the CI job down
+#: with it. Two per axis keeps the shape exercised at 2**8 = 256 iterations.
+SYMBOL_OVERRIDES = {
+    "stockham_fft": {
+        "R": 2,
+        "K": 6
+    },
+    "scattering_self": {
+        "Nkz": 2,
+        "NE": 2,
+        "Nqz": 2,
+        "Nw": 2,
+        "N3D": 2,
+        "NA": 2,
+        "NB": 2,
+        "Norb": 2
+    },
+}
 
-#: Integer inputs that index an axis, as ``{kernel: {input: bounding symbol}}``; the generic integer
-#: range would read out of bounds once the axis is smaller.
+#: Integer inputs that are INDEX arrays, as ``{kernel: {input: bounding symbol}}``. ``make_inputs``
+#: cannot tell what an integer input indexes, so it draws the generic small range; an index array
+#: whose bound is smaller reads out of bounds, and out-of-bounds reads are undefined behaviour whose
+#: garbage differs from run to run -- ONE generator run twice already disagrees, so the comparison
+#: says nothing about either code generator. ``scattering_self``'s ``neigh_idx`` is a neighbour table
+#: indexing ``G``'s ``NA`` axis, which the bounds above pin at 2.
 INDEX_INPUTS = {"scattering_self": {"neigh_idx": "NA"}}
+
+#: Range the generic integer inputs are drawn from (small and nonzero: they are counts/values, and a
+#: kernel dividing by one must not divide by zero).
+INTEGER_RANGE = (1, 5)
 
 #: npbench corpus subpackages under ``tests/npbench`` this sweep covers: ``polybench`` (npbench's
 #: polybench set) and ``misc`` (the non-polybench npbench kernels). The heavier deep-learning /
@@ -132,8 +158,8 @@ def make_inputs(sdfg, symbols, index_bounds=None, seed=0):
         elif npdt.kind == "c":
             inputs[name] = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(npdt)
         else:
-            bound = (index_bounds or {}).get(name)
-            low, high = (0, symbols[bound]) if bound else (1, 5)
+            bound = index_bounds.get(name)
+            low, high = (0, symbols[bound]) if bound else INTEGER_RANGE
             inputs[name] = rng.integers(low, high, shape).astype(npdt)
     return inputs
 
@@ -156,8 +182,8 @@ def build_and_run(family, name, implementation, target):
         with use_implementation(implementation), without_fma_contraction():
             sdfg = load_program(family, name).to_sdfg(simplify=True)
             sdfg.name = f"{sdfg.name}_{implementation}_{target}"
-            overrides = SYMBOL_OVERRIDES.get(name, {})
-            symbols = {symbol: overrides.get(symbol, SYMBOL_SIZE) for symbol in map(str, sdfg.free_symbols)}
+            symbols = {symbol: SYMBOL_SIZE for symbol in map(str, sdfg.free_symbols)}
+            symbols.update({s: v for s, v in SYMBOL_OVERRIDES.get(name, {}).items() if s in symbols})
             if target == "gpu":
                 sdfg.apply_gpu_transformations()
             inputs = make_inputs(sdfg, symbols, INDEX_INPUTS.get(name))

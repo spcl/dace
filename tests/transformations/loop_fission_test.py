@@ -409,7 +409,7 @@ def test_loop_fission_tsvc_s222_correct_split():
     # Partition check: exactly one loop's body is the ``e`` recurrence; the
     # remaining loops touch only a/b/c.
     def touched(loop):
-        return {nd.data for st in loop.all_states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)}
+        return {nd.data for st in loop.states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)}
 
     e_loops = [L for L in loops if 'e' in touched(L)]
     a_loops = [L for L in loops if 'a' in touched(L)]
@@ -703,7 +703,7 @@ def test_loop_fission_eight_independent_writes_max_fission():
     sibling_writes = []
     for loop in loops:
         wset = set()
-        for st in loop.all_states():
+        for st in loop.states():
             for nd in st.nodes():
                 if isinstance(nd, nodes.AccessNode) and st.in_degree(nd) > 0:
                     wset.add(nd.data)
@@ -829,8 +829,8 @@ def test_unfissionable_loop_is_left_untouched():
     sdfg = unfissionable_per_iter_bridge.to_sdfg(simplify=True)
 
     def shape(sd):
-        return (len(list(sd.all_states())), sum(len(st.nodes()) for st in sd.all_states()),
-                sum(len(st.edges()) for st in sd.all_states()))
+        return (len(list(sd.states())), sum(len(st.nodes())
+                                            for st in sd.states()), sum(len(st.edges()) for st in sd.states()))
 
     before = shape(sdfg)
     applied = LoopFission().apply_pass(sdfg, {})

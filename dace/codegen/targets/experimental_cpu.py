@@ -846,30 +846,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def fused_heap_declarator(self, sdfg, name: str, nodedesc: dt.Data, arrsize, declared: bool, declaration_stream,
                               allocation_stream) -> Optional[str]:
-        """Declarator fusing ``T *p;`` + ``p = new T[...];`` into one ``T* __restrict__ p = new
-        T[...];`` definition, or None to keep the classic split pair.
-
-        DaCe deliberately routes the declaration and the allocation to two streams so a transient's
-        DECLARATION can be hoisted to an outer scope while its ALLOCATION stays in an inner one.
-        Fusing is a purely textual merge of two writes, so it is sound only when both land in the
-        same scope with nothing in between. Both of these must hold:
-
-        * ``not declared`` -- otherwise ``declare_array`` already emitted ``T *p = nullptr;`` in an
-          enclosing scope (a transient whose size depends on a non-free symbol) and registered it in
-          ``declared_arrays``; a fused definition would declare a SECOND, inner ``p`` that shadows it,
-          so every access outside this scope would see the still-null outer pointer.
-        * ``declaration_stream is allocation_stream`` -- the dispatcher (``dispatch_allocate``) hands
-          out two different streams for the Persistent and External lifetimes, where the pointer
-          really lives in the state struct: the declaration goes to a throwaway stream and the
-          allocation to ``__dace_init``. Fusing there would emit a local definition into
-          ``__dace_init`` that shadows the state-struct member, so the program would read an
-          unallocated member. For every other lifetime the dispatcher passes ONE stream for both
-          (``declaration_stream = callsite_stream``) and the base writes the declaration immediately
-          before the allocation, so merging them changes nothing but the text.
-
-        Registration is untouched: the caller still runs ``define_var(...)`` after this, so
-        ``defined_vars`` (and ``declared_arrays``, which only ``declare_array`` populates) resolve
-        later accesses exactly as before.
+        """Declarator fusing ``T *p;`` and ``p = new T[...];`` into ``T* __restrict__ p = new T[...];``, or
+        None to keep the split pair. Sound only when both land in one scope: the pointer was not already
+        declared in an enclosing scope (``declared``), and the declaration and allocation share a stream
+        (Persistent and External lifetimes allocate into ``__dace_init``, where a local would shadow the
+        state-struct member).
         """
         if declared or declaration_stream is not allocation_stream:
             return None
@@ -899,7 +880,18 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
+        if cpf_lowering.standalone_c():
+            return c_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
+        placement = ''
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
+            placement = ' (std::align_val_t(%d))' % aligned_new_value(nodedesc)
+        return '%s = new%s %s[%s];\n' % (alloc_name, placement, ctype, count)
+
+    def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[dt.Data] = None) -> str:
+        """The matching free: ``free`` for both allocation shapes in C."""
+        if cpf_lowering.standalone_c():
+            return 'free(%s);\n' % alloc_name
+        return super().heap_free_stmt(alloc_name, is_array, nodedesc)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered helper once per output file, since many streams feed one unit. Host code

@@ -34,7 +34,7 @@ def contiguous_scan(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 def scans_of(sdfg):
     return [
-        n for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+        n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
         if isinstance(n, nodes.LibraryNode) and type(n).__name__ == 'Scan'
     ]
 

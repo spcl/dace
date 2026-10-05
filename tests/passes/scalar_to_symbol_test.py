@@ -861,7 +861,7 @@ def test_promotion_rejects_orphan_condition_scalar():
 
     sdfg = cond_scalar.to_sdfg(simplify=False)
     # Orphan ``t``: delete its writer subgraph, leaving only the condition reference.
-    for st in list(sdfg.all_states()):
+    for st in list(sdfg.states()):
         for an in list(st.data_nodes()):
             if an.data == 't' and st.in_degree(an) > 0:
                 srcs = [e.src for e in st.in_edges(an)]
@@ -869,7 +869,7 @@ def test_promotion_rejects_orphan_condition_scalar():
                 for s in srcs:
                     if isinstance(s, dace.nodes.Tasklet) and s in st.nodes() and st.degree(s) == 0:
                         st.remove_node(s)
-    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0 for st in sdfg.all_states()
+    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0 for st in sdfg.states()
                                           for an in st.data_nodes())
 
     with pytest.raises(ValueError, match='undefined symbol'):

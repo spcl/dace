@@ -47,14 +47,14 @@ def _write_only_scalar_wcr_conns(sdfg: dace.SDFG):
     """Every write-only nsdfg output connector still fed by an in-body scalar WCR."""
     out = []
     for sd in sdfg.all_sdfgs_recursive():
-        for st in sd.all_states():
+        for st in sd.states():
             for n in st.nodes():
                 if not isinstance(n, nodes.NestedSDFG):
                     continue
                 for oc in n.out_connectors:
                     if oc in n.in_connectors:
                         continue
-                    for ist in n.sdfg.all_states():
+                    for ist in n.sdfg.states():
                         for e in ist.edges():
                             if (e.data is not None and e.data.wcr is not None and e.data.data == oc
                                     and e.data.subset is not None and e.data.subset.num_elements() == 1):
@@ -66,7 +66,7 @@ def _wcr_edges(sdfg: dace.SDFG, single: bool):
     """WCR edges whose subset is single-element (``single=True``) or multi-element."""
     out = []
     for sd in sdfg.all_sdfgs_recursive():
-        for st in sd.all_states():
+        for st in sd.states():
             for e in st.edges():
                 if e.data is not None and e.data.wcr is not None and e.data.subset is not None:
                     if (e.data.subset.num_elements() == 1) == single:
@@ -221,7 +221,7 @@ def test_azimint_naive_structure_after_normalize():
     assert not _write_only_scalar_wcr_conns(sdfg), 'no write-only in-nsdfg scalar WCR should remain'
 
     tmp_exit_wcr = [
-        e.data.wcr for st in sdfg.all_states() for e in st.edges()
+        e.data.wcr for st in sdfg.states() for e in st.edges()
         if e.data is not None and e.data.data == 'tmp' and isinstance(e.dst, nodes.MapExit)
     ]
     assert tmp_exit_wcr, 'the map-exit edge feeding tmp should exist'
@@ -445,7 +445,7 @@ def _build_readwrite_redundant_interior_wcr() -> dace.SDFG:
 def _body_wcr_edges(sdfg):
     """Self-contained WCR edges INSIDE a body NestedSDFG (what the tiler forbids)."""
     return [(ist.label, e) for _n, _p in sdfg.all_nodes_recursive() if isinstance(_n, nodes.NestedSDFG)
-            for ist in _n.sdfg.all_states() for e in ist.edges() if e.data is not None and e.data.wcr is not None]
+            for ist in _n.sdfg.states() for e in ist.edges() if e.data is not None and e.data.wcr is not None]
 
 
 def test_readwrite_redundant_interior_wcr_is_cleared():

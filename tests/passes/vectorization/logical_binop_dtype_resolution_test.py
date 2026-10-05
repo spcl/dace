@@ -64,7 +64,7 @@ def test_mixed_int_and_bool_operands_get_a_cast():
     sdfg = logical_and_sdfg(dace.int32)
     assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is not None, 'the mixed conjunction was not resolved'
 
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     conj = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'conj')
     operand_dtypes = {sdfg.arrays[e.data.data].dtype for e in state.in_edges(conj) if e.data and e.data.data}
     # BOOL specifically, not merely "the same": numpy promotion answers ``int`` for int + bool, and
@@ -125,7 +125,7 @@ def test_an_int_ite_condition_is_cast_to_bool():
     sdfg = int_condition_ite_sdfg()
     assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is not None
 
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     blend = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'blend')
     cond_edge = next(e for e in state.in_edges(blend) if e.dst_conn == '_c')
     assert sdfg.arrays[cond_edge.data.data].dtype == dace.bool_, 'the int condition was left un-cast'
@@ -184,7 +184,7 @@ def logical_tasklets(sdfg: dace.SDFG):
     """Every tasklet whose body is an ``and`` / ``or``, paired with its owning state."""
     found = []
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for n in state.nodes():
                 if isinstance(n, nodes.Tasklet) and _is_logical(n):
                     found.append((sd, state, n))
@@ -271,7 +271,7 @@ def test_an_int_operand_of_a_literal_conjunction_is_cast_to_bool():
     sdfg = literal_operand_conjunction_sdfg(dace.int32)
     assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is not None, 'the int operand was left un-cast'
 
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     conj = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'conj_lit')
     operand_dtypes = {sdfg.arrays[e.data.data].dtype for e in state.in_edges(conj) if e.data and e.data.data}
     assert operand_dtypes == {dace.bool_}, f'logical operands must unify at bool, got {operand_dtypes}'

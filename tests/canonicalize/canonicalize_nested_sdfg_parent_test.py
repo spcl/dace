@@ -74,7 +74,7 @@ def loop_with_nested_sdfgs() -> tuple[dace.SDFG, LoopRegion]:
 
 def nested_sdfg_nodes(sdfg: dace.SDFG) -> list[nodes.NestedSDFG]:
     """Every nested SDFG node in ``sdfg``'s own namespace, in traversal order."""
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
 
 
 def test_add_node_rehomes_nested_sdfgs_of_a_detached_region():

@@ -62,7 +62,7 @@ def _count_wcr_scalar_targets(sdfg: dace.SDFG, expected_wcr: str) -> int:
     from dace import data
     from dace.sdfg import nodes as _nodes
     n = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for e in state.edges():
             if e.data is None or e.data.wcr != expected_wcr:
                 continue
@@ -1307,7 +1307,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     RetargetWCRAccumulator().apply_pass(sdfg, {})
     sdfg.validate()
     bad_wcr = [
-        e for st in sdfg.all_states() for e in st.edges()
+        e for st in sdfg.states() for e in st.edges()
         if e.data is not None and e.data.wcr is not None and e.data.data == 'b'
     ]
     assert not bad_wcr, (f'LoopToReduce(wcr-scalar) wrongly placed a WCR write on the recurrence '
@@ -2236,7 +2236,7 @@ def test_augassign_traversal_matches_old_generic_driver(build):
     old_count = sum(len(v) for v in old_applied.values()) if old_applied else 0
 
     new_xform = AugAssignToWCR()
-    new_count = sum(augassign_to_wcr_in_state(new_xform, new_sdfg, state) for state in list(new_sdfg.all_states()))
+    new_count = sum(augassign_to_wcr_in_state(new_xform, new_sdfg, state) for state in list(new_sdfg.states()))
 
     assert old_count > 0, f'{build.__name__}: fixture did not exercise the old driver'
     assert new_count == old_count, f'{build.__name__}: applied count diverged (old={old_count}, new={new_count})'

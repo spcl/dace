@@ -87,7 +87,7 @@ class UnblockDimensions(ppl.Pass):
     def _nested_targets(self, sdfg: dace.SDFG, arr_name: str):
         """Yield ``(nested_sdfg, inner_name)`` per nested SDFG ``arr_name`` flows into, deduped (a read-write array shares its in/out inner name)."""
         seen = set()
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
@@ -107,7 +107,7 @@ class UnblockDimensions(ppl.Pass):
             self._replace_array_recursive(nsdfg, inner, new_shape)
 
     def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data == arr_name:
                     if edge.data.other_subset is not None:

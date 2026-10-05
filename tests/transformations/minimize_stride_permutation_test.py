@@ -102,7 +102,7 @@ def _nest_param_order(sdfg: dace.SDFG):
     :param sdfg: The SDFG to inspect.
     :return: The list of parameter names from outer to inner.
     """
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         children = state.scope_children()
         for node in children[None]:
             if not isinstance(node, nodes.MapEntry) or state.entry_node(node) is not None:

@@ -60,7 +60,7 @@ def indirect_accesses(sdfg: SDFG) -> List[IndirectAccess]:
             bindings = index_bindings(region, sd)
             if not bindings:
                 continue
-            for state in region.all_states():
+            for state in region.states():
                 for node in state.data_nodes():
                     if node.data not in sd.arrays:
                         continue

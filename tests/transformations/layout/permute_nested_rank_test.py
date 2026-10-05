@@ -114,7 +114,7 @@ def test_prepare_for_layout_widens_nested_inputs_so_the_pass_never_refuses(permu
     sdfg = _cube_calling((N, N), f"0, 0:{N}, 0:{N}", f"0, 0:{N}, 0:{N}")
     prepare_for_layout(sdfg, validate=False)
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 for e in state.in_edges(node):

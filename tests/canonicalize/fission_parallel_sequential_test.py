@@ -43,7 +43,7 @@ def _program(name: str):
 
 
 def _top_maps(sdfg: dace.SDFG) -> int:
-    return sum(1 for st in sdfg.all_states() for n in st.nodes()
+    return sum(1 for st in sdfg.states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
 
 
@@ -137,7 +137,7 @@ def _loop_writes(sdfg):
         out.append(
             sorted({
                 node.data
-                for state in region.all_states()
+                for state in region.states()
                 for node in state.data_nodes()
                 if not state.sdfg.arrays[node.data].transient and any(e.data is not None and not e.data.is_empty()
                                                                       for e in state.in_edges(node))

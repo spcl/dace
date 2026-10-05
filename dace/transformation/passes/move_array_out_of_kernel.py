@@ -284,10 +284,10 @@ class MoveArrayOutOfKernel(ppl.Pass):
 
     def plan_lift(self, name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | None:
         """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
-        accesses = [(node, state) for state in owner.all_states() for node in state.data_nodes() if node.data == name]
+        accesses = [(node, state) for state in owner.states() for node in state.data_nodes() if node.data == name]
         levels = self.slice_levels(name, accesses)
-        prefixes = [(edge, lift_prefix(levels, state, edge.src)) for state in owner.all_states()
-                    for edge in state.edges() if edge.data.data == name or any(
+        prefixes = [(edge, lift_prefix(levels, state, edge.src)) for state in owner.states() for edge in state.edges()
+                    if edge.data.data == name or any(
                         isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))]
         desc = owner.arrays[name]
         shape_info = self.get_new_shape_info(desc, [entry for entry, _ in reversed(levels)])
@@ -311,7 +311,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         for edge, prefix in plan.prefixes:
             self.prefix_memlet(edge, name, prefix)
         # A tasklet with inlined connectors names the array in its body and gains the same leading index.
-        for state in plan.owner.all_states():
+        for state in plan.owner.states():
             for node in state.nodes():
                 if isinstance(node, nodes.Tasklet) and name in node.code.as_string:
                     self.prefix_tasklet(node, state, name, plan.levels)
@@ -339,7 +339,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
 
         :raises NotImplementedError: A nest sees more than one slice, so its accesses have no single index.
         """
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.NestedSDFG):
                     continue
@@ -368,7 +368,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 for conn in sorted(conns):
                     inner.arrays[conn] = copy.deepcopy(desc)
                     inner.arrays[conn].transient = False
-                    for inner_state in inner.all_states():
+                    for inner_state in inner.states():
                         for edge in inner_state.edges():
                             self.prefix_memlet(edge, conn, prefix)
                         for tasklet in (n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet)):

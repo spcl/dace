@@ -65,7 +65,7 @@ def reads_outside(sdfg: SDFG, name: str, inner: Set[nodes.Node]) -> bool:
     """Whether any node of ``sdfg`` outside ``inner`` reads ``name``."""
     return any(
         isinstance(node, nodes.AccessNode) and node.data == name and node not in inner and state.out_degree(node) > 0
-        for state in sdfg.all_states() for node in state.nodes())
+        for state in sdfg.states() for node in state.nodes())
 
 
 def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
@@ -123,7 +123,7 @@ def single_lane_nodes(state: SDFGState, kernel: nodes.MapEntry,
             if node in skipped:
                 continue
             if isinstance(node, nodes.NestedSDFG):
-                for inner in node.sdfg.all_states():
+                for inner in node.sdfg.states():
                     if accumulates_outside(inner, inner.edges(), skipped):
                         return None
                     pending.append((inner, inner.nodes()))

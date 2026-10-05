@@ -71,7 +71,7 @@ def _written_regions(state, node):
     regions = set()
     if isinstance(node, nd.NestedSDFG):
         for nested in node.sdfg.all_sdfgs_recursive():
-            for nstate in nested.all_states():
+            for nstate in nested.states():
                 for edge in nstate.edges():
                     if edge.data.is_empty() or not isinstance(edge.dst, nd.AccessNode):
                         continue
@@ -105,7 +105,7 @@ def _ordering_target(state, node):
 def _boundary_units(sdfg):
     """``(state, column writers, lid writers)`` for the one state holding both."""
     for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.all_states():
+        for state in nested.states():
             columns, lids = [], []
             for node in state.nodes():
                 regions = _written_regions(state, node)
@@ -211,7 +211,7 @@ def test_a_folded_write_hands_its_ordering_to_the_node_that_absorbed_it():
 
     stranded = []
     for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.all_states():
+        for state in nested.states():
             for node in state.nodes():
                 if not isinstance(node, nd.AccessNode):
                     continue

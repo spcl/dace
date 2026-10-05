@@ -64,7 +64,7 @@ def _global_write_edges(sdfg: dace.SDFG, array_name: str) -> list:
     """
     writes = []
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
@@ -85,7 +85,7 @@ def _global_to_tasklet_edges(sdfg: dace.SDFG, array_name: str) -> int:
     """
     count = 0
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue

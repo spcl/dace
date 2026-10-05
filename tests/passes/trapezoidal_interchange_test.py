@@ -22,7 +22,7 @@ V = dace.symbol('V', dtype=dace.int64)
 
 def nest(sdfg: dace.SDFG):
     """``(outer_entry, inner_entry)`` of the single two-level map nest."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         scope = state.scope_dict()
         for outer in [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope.get(n) is None]:
             inners = [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope.get(n) is outer]
@@ -46,7 +46,7 @@ def test_the_contiguous_parameter_ends_up_innermost():
     assert outer is not None, 'the nest did not survive canonicalization'
     # The inner parameter must be the one indexing the LAST (contiguous) axis.
     subsets = [
-        e.data.subset for state in sdfg.all_states() for e in state.edges()
+        e.data.subset for state in sdfg.states() for e in state.edges()
         if e.data is not None and e.data.data == 'aa' and e.data.subset is not None and len(e.data.subset) == 2
     ]
     contiguous = {str(s) for sub in subsets for s in sub.ranges[1][0].free_symbols}

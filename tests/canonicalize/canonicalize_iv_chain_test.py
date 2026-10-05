@@ -136,7 +136,7 @@ def test_s126_two_level_counter_leaves_no_k_and_an_affine_subset():
         leftovers = ({'k'} & set(sd.symbols)) | ({'k'} & set(sd.arrays)) | ({'k'} & {str(s) for s in sd.free_symbols})
         assert not leftovers, f"the counter survived canonicalization in {sd.label} as {leftovers}"
 
-    reads = [(state, e) for state in sdfg.all_states() for e in state.edges() if e.data is not None
+    reads = [(state, e) for state in sdfg.states() for e in state.edges() if e.data is not None
              and not e.data.is_empty() and e.data.data == 'flat_2d_array' and e.data.subset.num_elements() == 1]
     assert len(reads) == 1, f"expected one single-element flat_2d_array read, got {len(reads)}"
     state, edge = reads[0]

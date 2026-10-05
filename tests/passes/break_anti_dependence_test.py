@@ -119,7 +119,7 @@ def test_break_anti_dependence_symbolic_positive_offset():
     # The pass must have planted a guard tasklet whose code asserts ``inc > 0``
     # (CPP language, no connectors -- pure side effect on a free symbol).
     guards = []
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if (isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_guard')):
                 guards.append(n)
@@ -279,7 +279,7 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     # The pass must have planted an ARRAY guard tasklet over ``idx`` (CPP,
     # one input connector for ``idx``, no outputs, body asserts each slot > 0).
     array_guards = [
-        n for st in sdfg.all_states() for n in st.nodes()
+        n for st in sdfg.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
     ]
     assert len(array_guards) == 1, [g.label for g in array_guards]
@@ -429,7 +429,7 @@ def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
     assert any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
     # A per-element array guard over ``idx`` must be planted (idx[i] > 0 soundness).
     guards = [
-        n for st in sdfg.all_states() for n in st.nodes()
+        n for st in sdfg.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
     ]
     assert len(guards) == 1 and 'idx' in guards[0].code.as_string
@@ -611,7 +611,7 @@ def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
     sdfg = sym_mixed.to_sdfg(simplify=True)
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
     guards = [
-        n.code.as_string for st in sdfg.all_states() for n in st.nodes()
+        n.code.as_string for st in sdfg.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and n.name.startswith('_break_antidep_guard_')
     ]
     assert guards, 'a symbolic offset must carry a runtime guard'
@@ -628,7 +628,7 @@ NB = dace.symbol('NB')
 def _snapshot_copies(sdfg):
     """Every ``name -> snap`` copy memlet the pass planted, in state order."""
     return [
-        e.data for st in sdfg.all_states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
+        e.data for st in sdfg.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
         and '_snap' in e.dst.data and e.data is not None and not e.data.is_empty()
     ]
 

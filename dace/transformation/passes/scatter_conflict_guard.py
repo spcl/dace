@@ -145,8 +145,7 @@ def scatter_index_is_provably_injective(sdfg: SDFG, idx_name: str) -> bool:
     if not desc.transient:
         return False
 
-    writers = [(st, n) for st in sdfg.all_states() for n in st.data_nodes()
-               if n.data == idx_name and st.in_degree(n) > 0]
+    writers = [(st, n) for st in sdfg.states() for n in st.data_nodes() if n.data == idx_name and st.in_degree(n) > 0]
     if len(writers) != 1:  # multiple / partial / no writers -> cannot prove full-domain coverage
         return False
     state, node = writers[0]
@@ -291,7 +290,7 @@ def insert_scatter_guard(sdfg: SDFG,
 
     # Capture the original CFG entry + definer states BEFORE adding the guard states, whose
     # new states would otherwise pollute the source-node set both queries depend on.
-    def_states = _find_definition_states(sdfg, idx_name) & set(region.all_states())
+    def_states = _find_definition_states(sdfg, idx_name) & set(region.states())
     original_start = region.start_block
 
     check_state, trap_state, count_name, trap_sym = build_guard_states(sdfg,
@@ -308,7 +307,7 @@ def _find_definition_states(sdfg: SDFG, idx_name: str) -> Set[SDFGState]:
     return {
         st
         for sd in sdfg.all_sdfgs_recursive()
-        for st in sd.all_states() if any(n.data == idx_name and st.in_degree(n) > 0 for n in st.data_nodes())
+        for st in sd.states() if any(n.data == idx_name and st.in_degree(n) > 0 for n in st.data_nodes())
     }
 
 

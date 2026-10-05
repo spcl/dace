@@ -80,9 +80,7 @@ def transients(sdfg):
 
 
 def top_level_maps(sdfg):
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def assert_ungated_fusion_applies(prog):
@@ -148,7 +146,7 @@ def test_consumers_in_separate_states_stay_materialized():
     sdfg.validate()
     assert intermediate[0] in sdfg.arrays
 
-    writers = [(st, n) for st in sdfg.all_states() for n in st.nodes()
+    writers = [(st, n) for st in sdfg.states() for n in st.nodes()
                if isinstance(n, nodes.AccessNode) and n.data == intermediate[0] and st.in_degree(n) > 0]
     assert writers, 'the intermediate is read but nothing writes it'
 

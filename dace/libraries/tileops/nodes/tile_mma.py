@@ -44,6 +44,7 @@ from dace.sdfg import nodes
 from dace.libraries.tileops.expansions import ExpandTilePure
 from dace.libraries.tileops.operands import edge_ctype, output_edge
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.optionals import required
 
 
 @library.expansion
@@ -107,17 +108,17 @@ class TileMMA(TileOp):
         and the dtypes of ``_a``, ``_b``, ``_cin`` / ``_c`` are uniform."""
         in_e = {e.dst_conn: e for e in state.in_edges(self)}
         out_e = {e.src_conn: e for e in state.out_edges(self)}
-        for required in ("_a", "_b"):
-            if required not in in_e:
-                raise ValueError(f"{self.label}: missing required input connector {required!r}")
+        for connector in ("_a", "_b"):
+            if connector not in in_e:
+                raise ValueError(f"{self.label}: missing required input connector {connector!r}")
         if "_c" not in out_e:
             raise ValueError(f"{self.label}: missing required output connector '_c'")
         if self.beta != 0 and "_cin" not in in_e:
             raise ValueError(f"{self.label}: beta={self.beta!r} != 0 requires '_cin' input connector")
         M, K_inner, N = self.widths
-        a_desc = sdfg.arrays[in_e["_a"].data.data]
-        b_desc = sdfg.arrays[in_e["_b"].data.data]
-        c_desc = sdfg.arrays[out_e["_c"].data.data]
+        a_desc = sdfg.arrays[required(in_e["_a"].data.data)]
+        b_desc = sdfg.arrays[required(in_e["_b"].data.data)]
+        c_desc = sdfg.arrays[required(out_e["_c"].data.data)]
         if a_desc.dtype != b_desc.dtype or a_desc.dtype != c_desc.dtype:
             raise NotImplementedError(f"{self.label}: requires uniform dtype across _a, _b, _c; "
                                       f"got a={a_desc.dtype}, b={b_desc.dtype}, c={c_desc.dtype}")

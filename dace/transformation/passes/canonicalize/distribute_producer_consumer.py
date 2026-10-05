@@ -77,7 +77,7 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: Optional[str]) -> Tuple[Dict[
     """
     writes: Dict[str, bool] = {}
     reads: Dict[str, bool] = {}
-    states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+    states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
             if not isinstance(n, nodes.AccessNode):

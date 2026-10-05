@@ -136,7 +136,7 @@ def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None
     referenced: Dict[str, None] = {}
     written: Dict[str, None] = {}
     counts: Dict[str, int] = {}
-    for state in loop.all_states():
+    for state in loop.states():
         seen: Dict[str, None] = {}
         for dn in state.data_nodes():
             referenced[dn.data] = None
@@ -154,7 +154,7 @@ def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None
 def _data_state_counts(cfg: ControlFlowRegion) -> Dict[str, int]:
     """Array name -> number of states in ``cfg`` holding an AccessNode for it."""
     counts: Dict[str, int] = {}
-    for state in cfg.all_states():
+    for state in cfg.states():
         for name in dict.fromkeys(dn.data for dn in state.data_nodes()):
             counts[name] = counts.get(name, 0) + 1
     return counts
@@ -210,7 +210,7 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
         for block in region.all_control_flow_regions(recursive=True):
             if block is not loop and isinstance(block, LoopRegion) and block.loop_variable:
                 n_dims += 1
-        for state in region.all_states():
+        for state in region.states():
             for n in state.nodes():
                 if isinstance(n, nodes.MapEntry):
                     n_dims += len(n.map.params)

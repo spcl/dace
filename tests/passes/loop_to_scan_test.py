@@ -1492,7 +1492,7 @@ def test_scalar_carry_acc_not_used_post_loop_no_writeback():
     assert res == 1
     # Inspect: the rewrite added the scan state, plus whichever staging states its buffers
     # needed. The writeback state name suffix is ``_scan_acc_post`` -- absent here.
-    state_labels = {s.label for s in sdfg.all_states()}
+    state_labels = {s.label for s in sdfg.states()}
     assert not any('_scan_acc_post' in lbl for lbl in state_labels)
 
 
@@ -1530,7 +1530,7 @@ def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
     # when both staging buffers are needed, and a contiguous 1-D delta/output elides the copy
     # states around the libnode, which would leave a name-based lookup asserting on a state
     # the rewrite is entitled not to emit.
-    chain = [s for s in sdfg.all_states() if s.label.startswith(loop_label)]
+    chain = [s for s in sdfg.states() if s.label.startswith(loop_label)]
     assert chain, f'the rewrite should have left states named after {loop_label}'
     heads = [s for s in chain if any(e.src not in chain for e in sdfg.in_edges(s))]
     assert len(heads) == 1, f'expected exactly one entry into the scan chain, got {[s.label for s in heads]}'
@@ -1934,7 +1934,7 @@ def _carried_writes_in_loops(sdfg, name):
     for loop in sdfg.all_control_flow_regions():
         if not (isinstance(loop, LoopRegion) and loop.loop_variable):
             continue
-        for st in loop.all_states():
+        for st in loop.states():
             total += sum(1 for n in st.data_nodes() if n.data == name and st.in_degree(n) > 0)
     return total
 
@@ -2496,7 +2496,7 @@ def test_an_affine_operand_that_is_already_a_slice_is_not_copied():
     scan = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
     wired = {
         edge.dst_conn: edge.data.data
-        for state in sdfg.all_states() if scan in state.nodes() for edge in state.in_edges(scan)
+        for state in sdfg.states() if scan in state.nodes() for edge in state.in_edges(scan)
     }
     assert wired.get('_scan_in') == 'x' and wired.get('_scan_coef') == 'c', wired
 

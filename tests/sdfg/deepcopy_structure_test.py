@@ -70,7 +70,7 @@ def test_a_deep_copy_keeps_every_node_edge_and_adjacency_order():
 def test_removing_one_of_two_parallel_edges_from_a_copy_updates_both_adjacency_directions():
     sdfg, _ = build_sdfg()
     clone = copy.deepcopy(sdfg)
-    body = next(state for state in clone.all_states() if state.label == 'body')
+    body = next(state for state in clone.states() if state.label == 'body')
     tasklet = next(node for node in body.nodes() if isinstance(node, dace.nodes.Tasklet))
     read = next(node for node in body.nodes() if isinstance(node, dace.nodes.AccessNode) and node.data == 'A')
 
@@ -86,7 +86,7 @@ def test_a_deep_copy_shares_no_node_edge_or_memlet_with_the_original():
 
     clone = copy.deepcopy(sdfg)
 
-    cloned_body = next(state for state in clone.all_states() if state.label == 'body')
+    cloned_body = next(state for state in clone.states() if state.label == 'body')
     originals = {id(obj) for obj in (*body.nodes(), *body.edges(), *(e.data for e in body.edges()))}
     copies = {id(obj) for obj in (*cloned_body.nodes(), *cloned_body.edges(), *(e.data for e in cloned_body.edges()))}
     assert originals.isdisjoint(copies)

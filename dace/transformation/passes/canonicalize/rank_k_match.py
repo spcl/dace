@@ -352,14 +352,14 @@ def internal_writes_contained(loop: LoopRegion, root: SDFG, c_array: str) -> boo
     or a transient read later) means the loop does more than the rank-k update and the
     lift would silently drop it. Mirrors ``LoopToEinsum._live_outside``.
     """
-    inside = dict.fromkeys(id(state) for state in loop.all_states())
-    written = dict.fromkeys(name for state in loop.all_states() for name in written_arrays(state))
+    inside = dict.fromkeys(id(state) for state in loop.states())
+    written = dict.fromkeys(name for state in loop.states() for name in written_arrays(state))
     written.pop(c_array, None)
     if not written:
         return True
     if any(not is_transient(root, name) for name in written):
         return False
-    for state in root.all_states():
+    for state in root.states():
         if id(state) in inside:
             continue
         if any(dn.data in written for dn in state.data_nodes()):
@@ -516,7 +516,7 @@ def loop_invariant(loop: LoopRegion, names: Iterable[str]) -> bool:
     say) would be classified as an operand while its producer -- the nest -- is spliced
     away, leaving the node reading uninitialised memory.
     """
-    written = dict.fromkeys(name for state in loop.all_states() for name in written_arrays(state))
+    written = dict.fromkeys(name for state in loop.states() for name in written_arrays(state))
     return not any(n in written for n in names)
 
 

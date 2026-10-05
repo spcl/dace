@@ -139,7 +139,7 @@ class LiftInv(ppl.Pass):
 
         candidates: List[Tuple[dace.SDFG, SDFGState, nodes.LibraryNode]] = []
         for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.all_states():
+            for state in sd.states():
                 for node in state.nodes():
                     if isinstance(node, Solve):
                         candidates.append((sd, state, node))
@@ -205,7 +205,7 @@ class LiftInv(ppl.Pass):
         b_out = value_edges(state.out_edges(b_node))
         if len(b_out) != 1 or b_out[0] is not bin_edge:
             return False
-        refs = sum(1 for st in sdfg.all_states() for nd in st.nodes()
+        refs = sum(1 for st in sdfg.states() for nd in st.nodes()
                    if isinstance(nd, nodes.AccessNode) and nd.data == b_name)
         if refs != 1:
             return False

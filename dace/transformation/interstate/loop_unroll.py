@@ -26,13 +26,13 @@ def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:
     :param sdfg: The SDFG holding ``loop``.
     :returns: The view names safe to uniquify per unrolled copy.
     """
-    body = set(loop.all_states())
+    body = set(loop.states())
     names = OrderedSet()
     for state in body:
         for node in state.data_nodes():
             if isinstance(sdfg.arrays[node.data], data.View):
                 names.add(node.data)
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         if state in body:
             continue
         for node in state.data_nodes():

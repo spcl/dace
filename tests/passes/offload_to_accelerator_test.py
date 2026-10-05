@@ -176,8 +176,8 @@ def test_simplify_is_honoured_by_the_offloading():
     def size(sdfg):
         """States, dataflow nodes, dataflow edges. Asserting on any single count would pin the
         incidental shape simplify happens to reach rather than the contract that it shrinks."""
-        return (sum(1 for _ in sdfg.all_states()), sum(len(s.nodes()) for s in sdfg.all_states()),
-                sum(len(s.edges()) for s in sdfg.all_states()))
+        return (len(sdfg.states()), sum(len(s.nodes())
+                                        for s in sdfg.states()), sum(len(s.edges()) for s in sdfg.states()))
 
     before, after = size(plain), size(simplified)
     assert all(a <= b for a, b in zip(after, before)), (f'simplify=True grew the graph: {before} -> {after}')
@@ -905,9 +905,7 @@ def test_a_scatter_fallback_keeps_its_row_map_on_the_host():
         b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion) and b.pinned_sequential
     ]
     assert fallback, 'the scatter no longer canonicalizes to a guarded fallback loop'
-    maps = [
-        n for loop in fallback for st in loop.all_states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry)
-    ]
+    maps = [n for loop in fallback for st in loop.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry)]
     assert maps and all(n.map.schedule not in dtypes.GPU_SCHEDULES for n in maps), [n.map.schedule for n in maps]
 
 
@@ -1140,7 +1138,7 @@ def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
     sdfg = indirect_read_only_sdfg()
     # `total` is touched by the host loop alone: no map, no library node, nothing on the device.
     sdfg.add_array('total', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
-    step = next(state for state in sdfg.all_states() if state.label == 'step')
+    step = next(state for state in sdfg.states() if state.label == 'step')
     accumulate = step.add_tasklet('accumulate', {}, {'t': None}, 't = 1.0')
     step.add_edge(accumulate, 't', step.add_write('total'), None, dace.Memlet('total[k]'))
 
@@ -1167,11 +1165,11 @@ def test_the_sequential_arm_of_a_guarded_loop_keeps_its_host_copies():
     conditionals = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
     assert conditionals, 'the kernel lost its guard, so this test would pass without checking one'
 
-    arms = {state.label: in_sequential_specialization_arm(state) for state in sdfg.all_states()}
+    arms = {state.label: in_sequential_specialization_arm(state) for state in sdfg.states()}
     sequential = [label for label, inside in arms.items() if inside]
     assert sequential, 'no state was recognised as the sequential arm'
     for label in sequential:
-        state = next(s for s in sdfg.all_states() if s.label == label)
+        state = next(s for s in sdfg.states() if s.label == label)
         loops = []
         current = state.parent_graph
         while current is not None:

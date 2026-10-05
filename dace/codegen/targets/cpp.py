@@ -13,6 +13,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
+from ordered_set import OrderedSet
 from typing import IO, TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
@@ -599,7 +600,7 @@ def cpp_array_expr(sdfg,
                    referenced_array=None,
                    codegen: Optional['TargetCodeGenerator'] = None,
                    framecode: Optional['DaCeCodeGenerator'] = None):
-    """ Converts a Range object to a C++ array access string. """
+    """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
@@ -804,7 +805,7 @@ def nested_write_target(inner_sdfg: SDFG, nsdfg: nodes.NestedSDFG, name: str, in
     for region in inner_sdfg.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.loop_variable in free:
             return None
-    for state in inner_sdfg.all_states():
+    for state in inner_sdfg.states():
         for node in state.data_nodes():
             if node.data != name:
                 continue
@@ -1216,6 +1217,15 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
             defined_symbols.update({connector: conntype})
+
+    if cpf_lowering.standalone():
+        # A symbol an interstate edge binds ahead of this tasklet is in no scoped table, but framecode
+        # declared it with its type (gromacs' ``rsq_0``), and the C dialect types every call it feeds.
+        defined_vars = codegen._frame.dispatcher.defined_vars
+        read = sorted({name.id for stmt in body for name in ast.walk(stmt) if isinstance(name, ast.Name)})
+        for name in read:
+            if name not in defined_symbols and defined_vars.has(name):
+                defined_symbols[name] = defined_vars.get(name)[1]
 
     callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     # Struct initializers only apply to calls of the SDFG's struct types or explicitly marked ones

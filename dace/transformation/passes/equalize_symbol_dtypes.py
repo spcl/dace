@@ -89,7 +89,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
                 if isinstance(region, LoopRegion):
                     self.declare(region.new_symbols(base))
             rewritten += self.retype_descriptors(owner, base)
-            for state in owner.all_states():
+            for state in owner.states():
                 rewritten += self.retype_state(owner, state, base)
         return rewritten or None
 

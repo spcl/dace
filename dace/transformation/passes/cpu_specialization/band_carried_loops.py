@@ -121,14 +121,8 @@ def axis_symbol(position: int):
 
 
 def index_expressions(subset) -> List[Any]:
-    """The per-dimension index expression of ``subset``, one entry per dimension.
-
-    A :class:`~dace.subsets.Range` carries ``(begin, end, step)`` triples and a
-    :class:`~dace.subsets.Indices` bare expressions; the band test reads where a dimension starts
-    in either.
-    """
-    if isinstance(subset, subsets.Indices):
-        return list(subset.indices)
+    """The per-dimension index expression of ``subset``, one entry per dimension: where each ``Range`` dimension
+    starts."""
     if isinstance(subset, subsets.Range):
         return [begin for begin, _, _ in subset.ranges]
     return []
@@ -558,7 +552,7 @@ def new_team_map(region, before, recursive: bool = False):
     :param recursive: descend into nested SDFGs as well.
     :returns: ``(map_entry, state)``, or ``(None, None)``.
     """
-    blocks = (region.all_states() if recursive else [b for b in region.nodes() if isinstance(b, SDFGState)])
+    blocks = (region.states() if recursive else [b for b in region.nodes() if isinstance(b, SDFGState)])
     for block in blocks:
         for node in block.nodes():
             if (isinstance(node, nodes.MapEntry) and id(node) not in before

@@ -956,10 +956,6 @@ def _is_iteration_private(
     """
     if first_subset is None or second_subset is None:
         return False
-    if isinstance(first_subset, subsets.Indices):
-        first_subset = subsets.Range.from_indices(first_subset)
-    if isinstance(second_subset, subsets.Indices):
-        second_subset = subsets.Range.from_indices(second_subset)
     if not isinstance(first_subset, subsets.Range) or not isinstance(second_subset, subsets.Range):
         return False
     if first_subset.dims() != second_subset.dims():

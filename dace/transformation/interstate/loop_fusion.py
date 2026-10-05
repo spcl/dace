@@ -174,7 +174,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         """
         reads: Dict[str, List] = {}
         writes: Dict[str, List] = {}
-        states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+        states = [block] if isinstance(block, SDFGState) else list(block.states())
         for state in states:
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode):
@@ -419,7 +419,7 @@ class LoopFusion(transformation.MultiStateTransformation):
                 continue
             # Exclusive: any access outside the fused loop's body means the buffer outlives one iteration.
             if any(
-                    isinstance(n, nodes.AccessNode) and n.data == arr for s in sdfg.all_states() if s not in body_set
+                    isinstance(n, nodes.AccessNode) and n.data == arr for s in sdfg.states() if s not in body_set
                     for n in s.nodes()):
                 continue
             point = self._localized_point(arr, body_states, ivar)

@@ -889,7 +889,7 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # Body may write only the carriers we matched. Any other non-transient write
     # would need ``lastprivate``-style preservation that the rewrite doesn't model.
     carrier_set = {s.out_name for s in matched}
-    for st in loop.all_states():
+    for st in loop.states():
         for node in st.data_nodes():
             if st.in_degree(node) == 0:
                 continue
@@ -921,8 +921,8 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     if parent is not None and not seed_captured:
         sibling_blocks = [b for b in parent.nodes() if b is not loop]
         for sb in sibling_blocks:
-            sb_blocks: Sequence[ControlFlowBlock] = list(sb.all_states()) if isinstance(
-                sb, (ControlFlowRegion, LoopRegion)) else [sb]
+            sb_blocks: Sequence[ControlFlowBlock] = list(sb.states()) if isinstance(sb, (ControlFlowRegion,
+                                                                                         LoopRegion)) else [sb]
             for sb_block in sb_blocks:
                 if not isinstance(sb_block, SDFGState):
                     continue
@@ -970,7 +970,7 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # ``_assign_*`` tasklets, whose memlets are already written from the carrier's side, and the
     # AccessNode -> AccessNode form the later cleanup leaves behind is what flips the side.
     carrier_reads: Dict[str, set] = {name: set() for name in carrier_set}
-    for st in loop.all_states():
+    for st in loop.states():
         for n in st.data_nodes():
             if n.data not in carrier_set:
                 continue
@@ -1068,7 +1068,7 @@ def _sibling_branches_hold_the_carry(info: '_Scan', loop: LoopRegion) -> bool:
     if cond is None:
         return True
     for _cond_expr, branch in cond.branches:
-        for state in branch.all_states():
+        for state in branch.states():
             if state is info.body_state:
                 continue
             write_an = _find_carried_write_an(state, info.out_name)
@@ -1603,7 +1603,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> Optional[_CompositeBo
     #       'accumulate'  if the chain has a binop tasklet whose carry input
     #       resolves to carrier at offset 0
     write_sites: Dict[str, list] = {}
-    for state in loop.all_states():
+    for state in loop.states():
         # Walk backward from each non-transient AccessNode of any array that
         # has in-edges in this state. The first non-identity tasklet upstream
         # is the "primary" tasklet whose shape determines the kind.
@@ -2341,7 +2341,7 @@ def _acc_used_outside_body(sdfg: SDFG, acc_name: str, body_state: SDFGState) -> 
     writeback.
     """
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             if state is body_state:
                 continue
             for n in state.data_nodes():
@@ -3771,7 +3771,7 @@ def _mutate_sibling_branches_to_zero_delta(info: _Scan, sdfg: SDFG):
     if cond is None:
         return
     for _cond_expr, branch in cond.branches:
-        for state in branch.all_states():
+        for state in branch.states():
             if state is info.body_state:
                 continue
             write_an = _find_carried_write_an(state, info.out_name)

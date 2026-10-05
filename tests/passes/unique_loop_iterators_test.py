@@ -32,7 +32,7 @@ def test_nested_sdfg_symbol_mapping():
     assert loops_before[0].loop_variable == 'i'
 
     found_i_in_mapping = False
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 if 'i' in node.symbol_mapping:
@@ -44,7 +44,7 @@ def test_nested_sdfg_symbol_mapping():
     sdfg.validate()
 
     # After: the nested SDFG symbol_mapping should have _loop_it_0, not i
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 assert 'i' not in node.symbol_mapping, \
@@ -89,7 +89,7 @@ def test_loop_var_reconstruction():
     sdfg.validate()
 
     # Check that a reconstruction state was added
-    reconstruction_states = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    reconstruction_states = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     assert len(reconstruction_states) == 1, f"Expected 1 reconstruction state, found {len(reconstruction_states)}"
 
     # Check that assignment is correct
@@ -167,7 +167,7 @@ def test_loop_var_in_tasklet_body():
 
     # The tasklet's code must now reference _loop_it_0, not i.
     found = False
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
@@ -258,7 +258,7 @@ def test_loop_bound_with_indirect_array():
     sdfg.validate()
 
     # The inner-loop reconstruction state must use Python subscript form.
-    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    recon = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     rhs_strings = []
     for s in recon:
         for e in s.parent_graph.in_edges(s):
@@ -291,7 +291,7 @@ def test_while_loop_no_induction_var():
     pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
 
-    recon = [s for s in sdfg.all_states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    recon = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 

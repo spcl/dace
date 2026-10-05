@@ -91,8 +91,7 @@ def two_sibling_regions_sdfg() -> tuple[dace.SDFG, LoopRegion, LoopRegion]:
 
 
 def tasklet_labels(sdfg: dace.SDFG) -> list[str]:
-    return sorted(node.label for state in sdfg.all_states() for node in state.nodes()
-                  if isinstance(node, nodes.Tasklet))
+    return sorted(node.label for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.Tasklet))
 
 
 def test_a_chain_of_staged_scratch_states_collapses_within_one_fusion_call() -> None:
@@ -101,7 +100,7 @@ def test_a_chain_of_staged_scratch_states_collapses_within_one_fusion_call() -> 
     fused = parallelization_prep._local_state_fusion(sdfg, sdfg)
 
     assert fused == 4
-    assert len(list(sdfg.all_states())) == 1
+    assert len(list(sdfg.states())) == 1
     assert tasklet_labels(sdfg) == CHAIN_TASKLETS
     sdfg.validate()
 
@@ -117,7 +116,7 @@ def test_fusing_one_region_leaves_its_sibling_regions_states_alone() -> None:
     fused = parallelization_prep._local_state_fusion(sdfg, first)
 
     assert fused == 2
-    assert len(list(first.all_states())) == 1
-    assert len(list(second.all_states())) == 3
+    assert len(list(first.states())) == 1
+    assert len(list(second.states())) == 3
     assert tasklet_labels(sdfg) == ['t00', 't01', 't02', 't10', 't11', 't12']
     sdfg.validate()

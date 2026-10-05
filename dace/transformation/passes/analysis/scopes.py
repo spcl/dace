@@ -208,7 +208,7 @@ def scoped_names(sdfg: SDFG) -> dict[str, None]:
     for region in sdfg.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.loop_variable:
             names[region.loop_variable] = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
                 names.update(dict.fromkeys(node.map.params))

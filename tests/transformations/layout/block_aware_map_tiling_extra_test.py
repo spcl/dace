@@ -56,7 +56,7 @@ def vadd64(A: dace.float64[64], B: dace.float64[64]):
 
 
 def collect_map_entries(sdfg):
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]
 
 
 def collect_tasklet_subsets(sdfg, arr):
@@ -66,7 +66,7 @@ def collect_tasklet_subsets(sdfg, arr):
     ``int_floor``; only the compute access decides whether a block match was perfect, so we
     restrict to Tasklet-incident edges -- mirroring the existing test's helper."""
     out = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for e in state.edges():
             data = e.data
             if data is None or data.data != arr or data.subset is None:

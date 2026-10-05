@@ -182,7 +182,7 @@ class BufferExpansion(ppl.Pass):
             ix = self._loop_index(loop)
             if ix is None:
                 continue
-            loop_states = set(loop.all_states())
+            loop_states = set(loop.states())
             if not self._has_candidate_buffer(loop_states, write_index, access_states, interstate_syms):
                 continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
             if self._loop_mappable(sdfg, loop):
@@ -220,7 +220,7 @@ class BufferExpansion(ppl.Pass):
         index: Dict[str, Set[SDFGState]] = {}
         if not reindexable:
             return index
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data in reindexable and state.in_edges(n):
                     index.setdefault(n.data, set()).add(state)
@@ -254,7 +254,7 @@ class BufferExpansion(ppl.Pass):
         ``all_states x nodes`` rescan for every (loop, array) pair.
         """
         index: Dict[str, Set[SDFGState]] = {}
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nodes.AccessNode):
                     index.setdefault(n.data, set()).add(state)
@@ -312,7 +312,7 @@ class BufferExpansion(ppl.Pass):
         write-conflict (reduction) edge, and is *defined before read* on every iteration --
         i.e. never carries a value across iterations. ``access_states`` / ``interstate_syms``
         are the per-SDFG indices from :meth:`_access_state_index` / :meth:`_interstate_symbols`
-        and ``loop_states`` is ``set(loop.all_states())``; each is built here when not supplied
+        and ``loop_states`` is ``set(loop.states())``; each is built here when not supplied
         (so the helper is usable standalone).
         """
         if access_states is None:
@@ -320,7 +320,7 @@ class BufferExpansion(ppl.Pass):
         if interstate_syms is None:
             interstate_syms = self._interstate_symbols(sdfg)
         if loop_states is None:
-            loop_states = set(loop.all_states())
+            loop_states = set(loop.states())
         # The loop is not mutated while its buffers are judged, so one dominator table serves all of them.
         dominators = LoopDominators(loop)
         candidates: List[str] = []
@@ -408,7 +408,7 @@ class BufferExpansion(ppl.Pass):
         # (reading_block, read_subset, node_local_write_subsets) triples needing a dominator.
         exposed_reads: List[Tuple[Any, Any, List[Any]]] = []
         write_blocks: Dict[Any, List[Any]] = {}  # unconditional state -> covering write subsets
-        for state in loop.all_states():
+        for state in loop.states():
             block = BufferExpansion._top_block(loop, state)
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode) or node.data != name:
@@ -576,7 +576,7 @@ class BufferExpansion(ppl.Pass):
 
         edits: List[Tuple[Any, str, Any]] = []
         seen: Set[int] = set()
-        for state in loop.all_states():
+        for state in loop.states():
             for edge in state.edges():
                 if id(edge) in seen or edge.data is None:
                     continue

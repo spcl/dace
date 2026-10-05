@@ -19,17 +19,6 @@ def test_find_dims_to_pop2_is_ascending() -> None:
     assert find_dims_to_pop2([1, 3, 1, 4, 1], [3, 4]) == [0, 2, 4]
 
 
-def test_pop_dims_on_indices() -> None:
-    """``pop_dims()`` must also handle ``subsets.Indices`` and report the removed dimensions."""
-    subset = subsets.Indices([7, 8, 9, 10])
-    new_subset, popped = pop_dims(subset, [2, 0])
-
-    assert isinstance(new_subset, subsets.Indices)
-    assert new_subset.indices == [8, 10]
-    assert [rb for (rb, _, _), _ in popped] == [9, 7]
-    assert subset.indices == [7, 8, 9, 10], "`pop_dims()` must not modify its argument."
-
-
 def test_pop_dims_indexes_the_original_subset() -> None:
     """``dims`` indexes the subset as it is passed in, so the order they come in is irrelevant."""
     subset = subsets.Range([(0, 0, 1), (0, 4, 1), (0, 0, 1)])
@@ -79,7 +68,6 @@ def test_redundant_second_array_pops_non_adjacent_dims() -> None:
 if __name__ == "__main__":
     test_find_dims_to_pop_is_descending()
     test_find_dims_to_pop2_is_ascending()
-    test_pop_dims_on_indices()
     test_pop_dims_indexes_the_original_subset()
     test_compose_and_push_back_inverts_pop_dims()
     test_redundant_second_array_pops_non_adjacent_dims()

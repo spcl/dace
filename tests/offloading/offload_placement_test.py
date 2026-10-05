@@ -431,7 +431,7 @@ def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
     sdfg = indirect_read_only_sdfg()
     # `total` is touched by the host loop alone: no map, no library node, nothing on the device.
     sdfg.add_array('total', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
-    step = next(state for state in sdfg.all_states() if state.label == 'step')
+    step = next(state for state in sdfg.states() if state.label == 'step')
     accumulate = step.add_tasklet('accumulate', {}, {'t': None}, 't = 1.0')
     step.add_edge(accumulate, 't', step.add_write('total'), None, dace.Memlet('total[k]'))
 

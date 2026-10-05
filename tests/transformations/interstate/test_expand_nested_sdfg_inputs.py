@@ -639,7 +639,7 @@ def test_threads_scalar_connector_scatter_index():
     assert _index_reached_a_body(sdfg, "idx"), "scatter index 'idx' was not threaded into a body NSDFG"
     # The index must never survive as a BARE (loop-invariant) subset in a body.
     for nsdfg, _ in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]:
-        for st in nsdfg.sdfg.all_states():
+        for st in nsdfg.sdfg.states():
             for e in st.edges():
                 if e.data is not None and e.data.subset is not None:
                     assert str(e.data.subset).strip() != "idx", "scatter index collapsed to a bare loop-invariant 'idx'"

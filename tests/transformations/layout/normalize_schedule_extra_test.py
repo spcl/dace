@@ -43,12 +43,12 @@ def chain2(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
 
 def count_maps(sdfg):
-    return sum(1 for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry))
+    return sum(1 for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry))
 
 
 def first_top_map(sdfg):
     """Return the (state, MapEntry) of the first top-level (scope==None) map, or (None, None)."""
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         scope = st.scope_dict()
         for n in st.nodes():
             if isinstance(n, dace.nodes.MapEntry) and scope[n] is None:

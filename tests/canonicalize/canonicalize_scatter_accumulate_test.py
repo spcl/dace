@@ -121,7 +121,7 @@ def test_accumulate_lifts_to_a_wcr_map_without_a_guard():
     assert not [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     wcr_writes = [
-        e.data.wcr for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        e.data.wcr for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
         if e.data is not None and e.data.data == 'bins' and e.data.wcr is not None
     ]
     assert wcr_writes, 'the indirect accumulate must reach codegen as a WCR write'
@@ -159,7 +159,7 @@ def _alias_the_store_subscript(sdfg: dace.SDFG) -> str:
                 continue
             for iedge in region.edges():
                 for sym, rhs in list(iedge.data.assignments.items()):
-                    for state in region.all_states():
+                    for state in region.states():
                         for edge in state.edges():
                             if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != 'bins':
                                 continue
@@ -193,7 +193,7 @@ def test_two_names_for_one_address_still_becomes_a_wcr():
     canonicalize(sdfg, target='cpu')
     assert not _guard_descriptors(sdfg)
     assert [
-        e for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
+        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
         if e.data is not None and e.data.data == 'bins' and e.data.wcr is not None
     ], 'the accumulate lost its WCR to the aliased address'
 

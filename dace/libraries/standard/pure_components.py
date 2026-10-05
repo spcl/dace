@@ -9,7 +9,7 @@ import copy
 from typing import Dict, Iterable, Optional
 
 import dace
-from dace import subsets, symbolic
+from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.graph import MultiConnectorEdge
@@ -27,8 +27,7 @@ def operand_array(nsdfg: dace.SDFG, name: str, edge: MultiConnectorEdge, outer: 
     :returns: The declared descriptor; a single element is a one-element array.
     """
     desc = outer.arrays[edge.data.data]
-    subset = subsets.Range.from_indices(edge.data.subset) if isinstance(edge.data.subset,
-                                                                        subsets.Indices) else edge.data.subset
+    subset = edge.data.subset
     kept = [dim for dim, (begin, end, step) in enumerate(subset.ranges) if begin != end]
     shape = [subset.size()[dim] for dim in kept] or [1]
     strides = [desc.strides[dim] * subset.ranges[dim][2] for dim in kept] or [1]

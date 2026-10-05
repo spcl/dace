@@ -91,7 +91,7 @@ def _writes(loop: LoopRegion) -> set:
     """Array names ``loop`` stores to."""
     return {
         n.data
-        for st in loop.all_states()
+        for st in loop.states()
         for n in st.data_nodes() if any(e.data is not None and not e.data.is_empty() for e in st.in_edges(n))
     }
 

@@ -57,7 +57,7 @@ class PrepareReductionForWidening(ppl.Pass):
         :returns: The number of reductions rewritten, or ``None`` if none.
         """
         count = 0
-        for state in list(sdfg.all_states()):
+        for state in list(sdfg.states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
                 if not self._map_is_widening_candidate(state, map_exit):
                     continue

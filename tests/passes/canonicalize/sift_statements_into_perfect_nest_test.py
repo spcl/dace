@@ -53,7 +53,7 @@ def _cond_string(cb: ConditionalBlock) -> str:
 
 def _region_writes(region, name: str) -> bool:
     """True iff ``name`` is written by any state inside ``region`` (a ConditionalBlock branch)."""
-    for st in region.all_states():
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and n.data == name and st.in_degree(n) > 0:
                 return True

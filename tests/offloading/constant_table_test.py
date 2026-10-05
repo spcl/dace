@@ -74,7 +74,7 @@ def offloaded(**options) -> dace.SDFG:
 
 def table_copies(sdfg: dace.SDFG) -> list:
     return [
-        (edge.src.data, edge.dst.data) for state in sdfg.all_states() for edge in state.edges()
+        (edge.src.data, edge.dst.data) for state in sdfg.states() for edge in state.edges()
         if isinstance(edge.src, dace.nodes.AccessNode) and isinstance(edge.dst, dace.nodes.AccessNode) and 'table' in (
             edge.src.data + edge.dst.data)
     ]
@@ -85,7 +85,7 @@ def test_a_literal_table_is_a_constant_and_never_copied(host_read):
     sdfg = offloaded(host_read=host_read)
     assert list(sdfg.constants['table']) == list(TABLE)
     assert not table_copies(sdfg), table_copies(sdfg)
-    fill = next(state for state in sdfg.all_states() if state.label == 'fill')
+    fill = next(state for state in sdfg.states() if state.label == 'fill')
     assert not [node for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)], 'the fill still runs'
 
 

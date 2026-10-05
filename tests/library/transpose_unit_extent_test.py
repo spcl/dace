@@ -130,7 +130,7 @@ def test_a_strided_operand_transposes_correctly(implementation):
 def expansion_maps(sdfg):
     """Every map the expansion built, including the ones inside the nested SDFG it returns."""
     return [
-        node.map for nested in sdfg.all_sdfgs_recursive() for state in nested.all_states() for node in state.nodes()
+        node.map for nested in sdfg.all_sdfgs_recursive() for state in nested.states() for node in state.nodes()
         if isinstance(node, dace.nodes.MapEntry)
     ]
 

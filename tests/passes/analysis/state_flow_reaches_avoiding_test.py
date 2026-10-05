@@ -54,7 +54,7 @@ def search_per_query(flow: StateFlow, src, dst, kill) -> bool:
 def test_answers_match_a_search_per_query():
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
-    states = list(sdfg.all_states())
+    states = list(sdfg.states())
     answers = {
         (s.label, d.label, k.label): flow.reaches_avoiding(s, d, k)
         for s, d, k in itertools.product(states, repeat=3)
@@ -105,7 +105,7 @@ def loops_with_jumps_sdfg() -> dace.SDFG:
 def test_answers_match_a_search_per_query_across_breaks_and_sibling_loops():
     sdfg = loops_with_jumps_sdfg()
     flow = StateFlow(sdfg)
-    states = list(sdfg.all_states())
+    states = list(sdfg.states())
     for s, d, k in itertools.product(states, repeat=3):
         assert flow.reaches_avoiding(s, d, k) == search_per_query(flow, s, d, k), (s.label, d.label, k.label)
     labels = {s.label: s for s in states}
@@ -118,7 +118,7 @@ def test_a_foreign_state_reaches_nothing():
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
     other = dace.SDFG('other_a_foreign_state_reaches_nothing').add_state('alone', is_start_block=True)
-    states = list(sdfg.all_states())
+    states = list(sdfg.states())
     assert not flow.reaches_avoiding(other, states[0], states[1])
     assert not flow.reaches_avoiding(states[0], other, states[1])
     assert flow.reaches_avoiding(states[0], states[-1], other)
@@ -127,7 +127,7 @@ def test_a_foreign_state_reaches_nothing():
 def test_every_kill_for_one_source_shares_one_dominator_tree():
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
-    states = {s.label: s for s in sdfg.all_states()}
+    states = {s.label: s for s in sdfg.states()}
     with mock.patch.object(StateFlow, 'dominator_tree', autospec=True, side_effect=StateFlow.dominator_tree) as spy:
         for dst, kill in itertools.product(states.values(), repeat=2):
             flow.reaches_avoiding(states['head'], dst, kill)

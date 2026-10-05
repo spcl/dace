@@ -40,7 +40,7 @@ def two_level(outer_schedule=dtypes.ScheduleType.Default, inner_schedule=dtypes.
 
 
 def tile_map(sdfg):
-    return next(n for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+    return next(n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
                 if isinstance(n, nodes.MapEntry) and n.map.label == 'tile')
 
 
@@ -77,7 +77,7 @@ def test_the_full_offload_redeems_the_tag_itself():
     sdfg = two_level()
     finalize.offload_to_gpu(sdfg)
     assert tile_map(sdfg).map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-    kernel = next(n for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+    kernel = next(n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
                   if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device)
     assert kernel.map.gpu_block_size is None, 'the thread-block map is the block spec; nothing may declare another'
 
@@ -183,7 +183,7 @@ def stepped_two_level(tag=True, tile=128):
 
 def barrier_tasklets(sdfg):
     return [
-        n for g in sdfg.all_sdfgs_recursive() for st in g.all_states() for n in st.nodes()
+        n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
         if isinstance(n, nodes.Tasklet) and '__syncthreads' in n.code.as_string
     ]
 

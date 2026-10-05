@@ -67,7 +67,7 @@ def loop_body_states(sdfg: SDFG) -> 'OrderedDict[SDFGState, List[str]]':
     for region in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(region, LoopRegion) or not region.loop_variable:
             continue
-        for state in region.all_states():
+        for state in region.states():
             found.setdefault(state, []).append(region.loop_variable)
     return found
 

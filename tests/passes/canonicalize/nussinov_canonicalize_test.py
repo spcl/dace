@@ -115,7 +115,7 @@ def test_trivial_loop_elimination_deletes_zero_trip_loop():
     assert applied == 1, "TrivialLoopElimination must delete a provably zero-trip loop"
 
     assert not [b for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)]
-    memlets = [e.data for state in sdfg.all_states() for e in state.edges() if e.data.data == "table"]
+    memlets = [e.data for state in sdfg.states() for e in state.edges() if e.data.data == "table"]
     assert not memlets, f"zero-trip body survived: table[{memlets[0].subset if memlets else ''}]"
     sdfg.validate()
 

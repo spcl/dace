@@ -84,7 +84,7 @@ def _conds(sdfg):
 
 
 def _maps(sdfg):
-    return [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
 
 
 def _nonelse_conditions(sdfg):

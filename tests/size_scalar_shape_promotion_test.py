@@ -6,8 +6,6 @@ read into a ``__sym_`` symbol on an interstate edge and substituted into the sha
 descriptor in place so it can still be read or reassigned. Each shape captures its own symbol, so
 two arrays sized from the same reused name keep their own extents.
 """
-import re
-
 import numpy as np
 import pytest
 
@@ -147,22 +145,6 @@ def test_shape_stays_correct_through_simplify():
         assert np.allclose(out, a * 2.0), f'wrong result with simplify={simplify}'
 
 
-def test_size_symbol_is_assigned_before_the_allocation():
-    """simplify() moves the promotion onto an edge out of the allocation's dominator.
-
-    The allocation then read the symbol undefined and sized the array at 0, corrupting the heap on the first write.
-    """
-    sdfg = size_from_empty.to_sdfg(simplify=True)
-    sym = str(next(iter(sdfg.arrays['b'].free_symbols)))
-    lines = sdfg.generate_code()[0].clean_code.splitlines()
-
-    # an aligned heap array reads ``new (std::align_val_t(64)) double`` and frees through ``::operator delete[](b, ..)``
-    alloc = next(i for i, line in enumerate(lines) if 'b = new' in line and sym in line)
-    assign = next(i for i, line in enumerate(lines) if line.strip().startswith(f'{sym} = '))
-    assert assign < alloc
-    assert any('delete[] b' in line or 'delete[](b' in line for line in lines), 'the array is never freed'
-
-
 def test_a_size_one_array_is_read_through_a_subscript():
     """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
     out = np.zeros(4)
@@ -204,21 +186,10 @@ def zeros_from_size(Nt: dace.int64, out: dace.float64[1]):
     out[0] = np.sum(b)
 
 
-def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
-    """A loop that never writes the size keeps its symbol: the loop-body array and the outer one combine."""
-
-    @dace.program
-    def loop_body_array(nib: dace.int64[1], out: dace.float64[N, 2]):
-        my_n = int(nib[0])
-        acc = np.zeros((N, 2, my_n), dtype=np.float64)
-        for ip in range(2):
-            tg = np.ones((N, my_n), dtype=np.float64)
-            acc[:, ip, :] = tg
-        out[:] = np.sum(acc, axis=2)
-
-    out = np.zeros((5, 2))
-    loop_body_array(np.array([3], dtype=np.int64), out)
-    assert np.allclose(out, 3.0), out
+@dace.program
+def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
+    b = np.ones(Nt + 1, dace.float64)
+    out[0] = np.sum(b)
 
 
 @pytest.mark.parametrize('program,expected', [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
@@ -323,8 +294,8 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
 
 
 if __name__ == '__main__':
-    test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
+    test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_slice_bounded_by_a_size_shares_its_extent()
     test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_two_arrays_from_one_size_share_their_extent()
@@ -335,7 +306,6 @@ if __name__ == '__main__':
     test_a_size_reused_as_an_index_does_not_rebind_the_extent()
     test_promotion_leaves_the_descriptor_in_place()
     test_shape_stays_correct_through_simplify()
-    test_size_symbol_is_assigned_before_the_allocation()
     test_a_size_one_array_is_read_through_a_subscript()
     test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)

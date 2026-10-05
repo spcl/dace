@@ -659,7 +659,7 @@ def write_scopes(sdfg: dace.SDFG):
 
 
 def state_named(sdfg: dace.SDFG, label: str):
-    return next(s for s in sdfg.all_states() if s.label == label)
+    return next(s for s in sdfg.states() if s.label == label)
 
 
 def test_loop_region_write_dominates_read_after_loop():

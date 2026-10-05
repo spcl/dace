@@ -56,7 +56,7 @@ class EliminateBranches(ppl.Pass):
                     newly_added_scalar_names = t.apply(graph=node.parent_graph, sdfg=node.sdfg)
                     added_scalar_names = added_scalar_names.union(newly_added_scalar_names)
                     num_applied += 1
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     new_num_applied, newly_added_scalar_names = self._run_transformation(root, node.sdfg, state)
@@ -106,7 +106,7 @@ class EliminateBranches(ppl.Pass):
                             t.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
                                 second_conditional.parent_graph)
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     self._run_clean(root, node.sdfg, state, lift_multi_state)
@@ -168,7 +168,7 @@ class EliminateBranches(ppl.Pass):
         ret_val = RemoveUnusedSymbols().apply_pass(sdfg, _={})
         changed = ret_val is not None
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     changed |= self._apply_symbol_removal(node.sdfg)

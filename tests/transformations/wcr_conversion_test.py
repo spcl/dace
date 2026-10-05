@@ -315,7 +315,7 @@ def test_aug_assign_copy_wrapped_rmw_match():
     assert applied == 1
     sdfg.validate()
 
-    body = next(s for s in sdfg.all_states() if s.label == 'body')
+    body = next(s for s in sdfg.states() if s.label == 'body')
     wcr_writes = [
         e for e in body.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'A' and e.data.wcr is not None
     ]

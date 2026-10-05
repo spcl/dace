@@ -84,10 +84,10 @@ def test_the_blocks_after_a_specialization_know_where_its_data_lives():
     and what the parallel arm wrote on the device goes back to the caller's ``C``."""
     sdfg = offloaded()
     undeclared = {(state.label, node.data)
-                  for state in sdfg.all_states()
+                  for state in sdfg.states()
                   for node in state.data_nodes() if node.data not in sdfg.arrays}
     assert not undeclared, undeclared
-    read_state = next(state for state in sdfg.all_states() if state.label == 'read_B')
+    read_state = next(state for state in sdfg.states() if state.label == 'read_B')
     (read_B, ) = [node for node in read_state.data_nodes() if node.data.startswith('B')]
     assert sdfg.arrays[read_B.data].storage != dace.StorageType.GPU_Global
     copies = top_level_copies(sdfg)

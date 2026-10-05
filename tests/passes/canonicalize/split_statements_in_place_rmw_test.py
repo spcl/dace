@@ -122,8 +122,8 @@ def _shape(sdfg):
     that the GRAPH stops moving: no further clone, no further global.
     """
     return (sorted(type(n).__name__ for n, _ in sdfg.all_nodes_recursive()),
-            sorted(k for s in sdfg.all_sdfgs_recursive() for k, v in s.arrays.items() if not v.transient),
-            sum(len(s.edges()) for s in sdfg.all_states()), sum(1 for _ in sdfg.all_states()))
+            sorted(k for s in sdfg.all_sdfgs_recursive() for k, v in s.arrays.items()
+                   if not v.transient), sum(len(s.edges()) for s in sdfg.states()), len(sdfg.states()))
 
 
 def test_canonicalize_reaches_a_fixed_point():

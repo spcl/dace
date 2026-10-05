@@ -48,7 +48,7 @@ def build(cross_state: bool) -> dace.SDFG:
 
 
 def _access_names(sdfg: dace.SDFG):
-    return {n.data for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.AccessNode)}
+    return {n.data for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.AccessNode)}
 
 
 def run(sdfg: dace.SDFG) -> np.ndarray:

@@ -219,13 +219,13 @@ def test_horizontal_refuses_subset_union_producer(recwarn):
     assert_clean_refusal(make_subset_union_producer_sdfg(), MapFusionHorizontal, recwarn)
 
 
-def test_indices_subsets_are_still_fused(recwarn):
-    """``Indices`` IS a ``Range``; the non-``Range`` guard must not refuse it."""
-    sdfg, state, built = serial_maps_sdfg('indices_subsets')
+def test_single_element_subsets_are_fused(recwarn):
+    """A single-element ``Range`` passes the non-``Range`` guard."""
+    sdfg, state, built = serial_maps_sdfg('single_element_subsets')
     for edge in state.in_edges(built['exit1']):
-        edge.data.subset = subsets.Indices([dace.symbolic.pystr_to_symbolic('i')])
+        edge.data.subset = subsets.Range.from_indices([dace.symbolic.pystr_to_symbolic('i')])
     for edge in state.out_edges(built['entry2']):
-        edge.data.subset = subsets.Indices([dace.symbolic.pystr_to_symbolic('j')])
+        edge.data.subset = subsets.Range.from_indices([dace.symbolic.pystr_to_symbolic('j')])
     sdfg.validate()
     applied, swallowed = apply_and_collect(sdfg, MapFusionVertical, recwarn)
     assert applied == 1

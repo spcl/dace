@@ -399,10 +399,10 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
     snap_names = dict.fromkeys(snap_src)
 
     iters = (outer.loop_variable, inner.loop_variable)
-    inner_states = dict.fromkeys(inner.all_states())
+    inner_states = dict.fromkeys(inner.states())
     copy_set = dict.fromkeys(copy_states)
     snap_reads: List[SnapRead] = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data not in snap_names:
                 continue
@@ -929,12 +929,12 @@ def collect_carrier(inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
     snap_src = snap_src or {}
     # Only 2-D dataflow accesses are modelled below; refuse anything else that can carry a value across iterations.
     loops = [inner for inner, _, _ in inners]
-    nest = {st for lp in loops for st in lp.all_states()}
+    nest = {st for lp in loops for st in lp.states()}
     written = {n.data for st in nest for n in st.data_nodes() if st.in_degree(n) > 0}
     others = {w for w in written if len(sdfg.arrays[w].shape) != 2}
     cf_reads = set().union(*(control_flow_reads(lp) for lp in loops))
     assigns = any(e.data.assignments for lp in loops for e in lp.all_interstate_edges())
-    outside = {n.data for st in sdfg.all_states() if st not in nest for n in st.data_nodes()}
+    outside = {n.data for st in sdfg.states() if st not in nest for n in st.data_nodes()}
     if written & cf_reads or assigns or others & outside or any(not sdfg.arrays[w].transient for w in others):
         return None
     if any(carried_local_transients(lp, others) for lp in loops):
@@ -943,7 +943,7 @@ def collect_carrier(inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
     reads: Dict[str, List[ReadRecord]] = {}
     for inner, v_local, sibling_guard in inners:
         sibling_cons = [canonical_iterators(g, (u, v)) for g in sibling_guard]
-        for state in inner.all_states():
+        for state in inner.states():
             if not scan_state_accesses(state, inner, sdfg, u, v, v_local, snap_src, sibling_cons, writes, reads):
                 return None
 
@@ -1775,7 +1775,7 @@ def privatize_body_reductions(loop: LoopRegion) -> int:
     if len(loop.nodes()) == 1 and isinstance(loop.start_block, SDFGState):
         return 0
     count = 0
-    for state in list(loop.all_states()):
+    for state in list(loop.states()):
         for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
             for edge in list(state.in_edges(map_exit)):
                 count += privatize_reduction_accumulator(state, map_exit, edge)

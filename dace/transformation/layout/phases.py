@@ -25,7 +25,7 @@ class Phase:
         if isinstance(self.block, SDFGState):
             return [self.block]
         assert isinstance(self.block, AbstractControlFlowRegion), "a phase is a state or a control-flow region"
-        return list(self.block.all_states())
+        return list(self.block.states())
 
 
 def program_phases(sdfg: SDFG) -> List[Phase]:

@@ -78,7 +78,7 @@ def test_elementwise_all_stages_ok():
     sdfg = elementwise.to_sdfg(simplify=True)
     # Structural fingerprint before the harness runs.
     n_nodes_before = len(list(sdfg.all_nodes_recursive()))
-    n_states_before = len(list(sdfg.all_states()))
+    n_states_before = len(list(sdfg.states()))
     results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
     assert results, 'expected at least one stage'
     for r in results:
@@ -86,7 +86,7 @@ def test_elementwise_all_stages_ok():
     # The input SDFG must NOT have been mutated by the harness (it
     # canonicalizes an internal copy).
     assert len(list(sdfg.all_nodes_recursive())) == n_nodes_before
-    assert len(list(sdfg.all_states())) == n_states_before
+    assert len(list(sdfg.states())) == n_states_before
 
 
 def test_per_row_reduction_all_stages_ok():

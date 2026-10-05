@@ -29,7 +29,7 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
     :returns: Number of reduction WCR edges resolved.
     """
     rewritten = 0
-    for state in inner_sdfg.all_states():
+    for state in inner_sdfg.states():
         for edge in list(state.edges()):
             memlet = edge.data
             if memlet is None or memlet.wcr is None:

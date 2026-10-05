@@ -52,8 +52,7 @@ def _loops(sdfg):
 
 def _maps_over(sdfg, itervar):
     return [
-        n for state in sdfg.all_states() for n in state.nodes()
-        if isinstance(n, nodes.MapEntry) and itervar in n.map.params
+        n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.MapEntry) and itervar in n.map.params
     ]
 
 

@@ -132,7 +132,7 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
         :param an_slice: The matched scalar AccessNode (the only use that folds away).
         :returns: ``True`` if the scalar is read or written elsewhere.
         """
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for dn in state.data_nodes():
                 if dn.data == scalar_name and dn is not an_slice:
                     return True
@@ -209,7 +209,7 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
         :returns: Number of patterns folded.
         """
         folded = 0
-        for state in list(sdfg.all_states()):
+        for state in list(sdfg.states()):
             pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
                 if node not in state.nodes():
