@@ -555,6 +555,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
+        # A connector of a code node may not share a name with data either (see validation), and the code nodes of
+        # the nested state join the parent too.
+        taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
+        for block in (*sdfg.states(), nstate):
+            for node in block.nodes():
+                if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+                    taken.update(node.in_connectors, node.out_connectors)
         # Mapping from nested transient name to top-level name
         transients: Dict[str, str] = {}
         # One connector walk for every name minted below: until the nested nodes move out, this adds
@@ -565,7 +572,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
                     new_name = node.data
-                    if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                    if new_name in taken:
                         new_name = f'{nsdfg.label}_{node.data}'
 
                     # Connector-aware: a nested name like a copy expansion's `_cpy_in` lifted into a
@@ -581,7 +588,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[edge.data.data]
                     if edge.data.data not in transients and datadesc.transient:
                         new_name = edge.data.data
-                        if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                        if new_name in taken:
                             new_name = f'{nsdfg.label}_{edge.data.data}'
 
                         new_name = data.find_new_name(new_name.replace('.', '_'), used_names)
