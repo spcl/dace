@@ -17,10 +17,20 @@ Variables that hold tensors or symbolic integers are block inputs. Other live va
 objects) are bound to the continuation as default arguments and specialize the block: a block start is traced once
 per distinct set of such values and input metadata, up to :data:`MAX_SPECIALIZATIONS`, after which the capture falls
 back to Dynamo's graph break.
+
+For loops over ranges and tensors are captured as loops instead of being unrolled. Their state (the sequence and the
+number of items taken) are variables of the graph, and a placeholder takes the iterator's place on the stack, so that
+blocks can start inside loop bodies. ``FOR_ITER`` is a branch on whether another item exists; its taken edge enters
+the same instruction again, which then pushes the item. At loop headers, integers the loop assigns are *widened* to
+unbacked symbols, so that the body is traced once for all iterations; branches on such symbols (e.g., the loop
+condition) are captured like branches on tensor data. A for loop is captured from its ``GET_ITER`` when its trip count
+is symbolic (``range(x.shape[0])``, a tensor) or, after a restart of the analysis, when its body has data-dependent
+control flow.
 """
 import dataclasses
 import dis
 import functools
+import operator
 import sys
 import threading
 import types
@@ -31,10 +41,13 @@ from torch._dynamo import bytecode_transformation as bt
 from torch._dynamo import exc
 from torch._dynamo import symbolic_convert as sc
 from torch._dynamo.exc import RestartAnalysis
-from torch._dynamo.variables import ConstantVariable, SymNodeVariable, TensorVariable, TupleVariable
+from torch._dynamo.variables import (BuiltinVariable, ConstantVariable, RangeVariable, SymNodeVariable, TensorVariable,
+                                     TupleVariable)
 from torch._dynamo.variables.builder import wrap_fx_proxy
 from torch._dynamo.variables.functions import NestedUserFunctionVariable
 from torch._dynamo.variables.higher_order_ops import speculate_subgraph
+from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
+from torch.utils._sympy.numbers import int_oo
 
 from ..backend import CAPTURE_CONFIG, DaceBackend
 from . import transport
@@ -56,6 +69,7 @@ class _Exit:
     names: List[str]  #: CFG variables passed on as graph outputs (after the predicate for a branch)
     return_count: Optional[int] = None  #: Number of tensors returned (``None``: a single tensor, not a tuple)
     side: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Other live values passed on (not graph outputs)
+    extra: Dict[Any, Dict[str, Any]] = dataclasses.field(default_factory=dict)  #: Side values for one edge label
 
 
 @dataclasses.dataclass
@@ -71,16 +85,21 @@ class _Active:
 class Region:
     """The capture of one frame region, from its entry jump to every return reachable from it."""
 
-    def __init__(self, tx, info: CodeInfo, entry_jump: int):
+    def __init__(self, tx, info: CodeInfo, entry_targets: Dict[Any, int]):
+        """
+        :param entry_targets: The instructions control enters the region at: by truth value of the entry predicate
+                              (a branch), or under ``None`` (a goto, e.g., into a loop).
+        """
         self.tx = tx
         self.info = info
-        branches = info.branch_successors(entry_jump)
-        self.entry_targets: Dict[bool, int] = dict(branches)
-        self.leaders = info.leaders(list(branches.values()))
-        region = info.region(list(branches.values()))
+        self.entry_targets: Dict[Any, int] = dict(entry_targets)
+        self.leaders = info.leaders(list(entry_targets.values()))
+        region = info.region(list(entry_targets.values()))
         depths = info.stack_depths()
-        if any(depths.get(leader, -1) != 0 for leader in self.leaders):
-            raise CaptureFallback('a block would start with values on the stack (e.g., inside a for loop)')
+        for leader in self.leaders:
+            # Only iterators of for loops may be on the stack; blocks start with placeholders for them
+            if depths.get(leader, -1) != info.iterators(leader):
+                raise CaptureFallback('a block would start with values on the stack')
         if info.has_exception_handlers(region):
             raise CaptureFallback('the control flow is inside a try or with block')
         self.active: Optional[_Active] = None
@@ -91,12 +110,14 @@ class Region:
         self._outer_syms: List[Any] = []  #: Outer proxies of the operator's SymInt inputs
         self.return_examples: Optional[List[Any]] = None
         self.return_count: Optional[int] = None
+        self._widened: Dict[Tuple[int, str], SymNodeVariable] = {}
+        self.entry_constants: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------------------------------ operator inputs
     def bind_outer(self, proxy) -> Binding:
         """The operator input for an outer (frame-level) proxy, added if new."""
         example = proxy.node.meta.get('example_value')
-        is_sym = isinstance(example, torch.SymInt)
+        is_sym = isinstance(example, (torch.SymInt, torch.SymBool))
         values = self._outer_syms if is_sym else self._outer_tensors
         for index, existing in enumerate(values):
             if existing.node is proxy.node:
@@ -105,9 +126,49 @@ class Region:
         return Binding('sym' if is_sym else 'tensor', len(values) - 1)
 
     # ------------------------------------------------------------------------------------------ blocks
+    def live(self, start: int, available: Dict[str, Any]) -> List[str]:
+        """The variables live at ``start``: user variables, and the state of the loops ``start`` is in."""
+        loops = self.info.loops_containing(start)
+        names = set(self.info.livevars(start))
+        for loop in loops:
+            names.update((_seq_name(loop), _index_name(loop)))
+        if start in loops:
+            names.add(_take_name(start))
+        return sorted(name for name in names if name in available)
+
+    def widen(self, start: int, incoming: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        At a loop header, integers the loop assigns become unbacked symbols: the loop body is traced once for all
+        iterations instead of once per value.
+        """
+        if not self.info.is_loop_header(start):
+            return incoming
+        carried = self.info.stored_names(self.info.loop_body(start)) | {_index_name(start)}
+        result = dict(incoming)
+        for name, value in incoming.items():
+            if name in carried and (_is_int_constant(value) or _is_symint(value)):
+                result[name] = self._widened_symbol(start, name)
+        return result
+
+    def _widened_symbol(self, start: int, name: str) -> SymNodeVariable:
+        key = (start, name)
+        if key not in self._widened:
+            shape_env = self.tx.output.shape_env
+            with shape_env.ignore_fresh_unbacked_symbols():
+                symbol = shape_env.create_unbacked_symint()
+            if name.startswith(_INDEX_PREFIX):  # Loop counters count up from 0
+                shape_env.constrain_symbol_range(symbol.node.expr, compiler_min=0, compiler_max=int_oo)
+            # Only the example value of a block input's node is used (the CFG binds the input along its edges)
+            graph = torch.fx.Graph()
+            node = graph.placeholder(f'widened_{start}_{name.strip("_")}')
+            node.meta['example_value'] = symbol
+            self._widened[key] = SymNodeVariable(torch.fx.Proxy(node), symbol)
+        return self._widened[key]
+
     def block_for(self, start: int, incoming: Dict[str, Any]) -> Tuple[int, bool]:
         """The block id for ``start`` given the incoming variable values; ``True`` if it still has to be traced."""
-        live = sorted(name for name in self.info.livevars(start) if name in incoming)
+        live = self.live(start, incoming)
+        incoming = self.widen(start, {name: _block_input(incoming[name]) for name in live})
         key = (start, tuple((name, _signature(incoming[name])) for name in live))
         if key in self._keys:
             return self._keys[key], False
@@ -123,11 +184,9 @@ class Region:
         self._incoming[block_id] = {name: incoming[name] for name in live}
         return block_id, True
 
-    def trace(self) -> CfgRecord:
+    def trace(self, entry_values: Dict[str, Any]) -> CfgRecord:
         """Traces all blocks reachable from the entry and registers the control-flow graph."""
-        tx = self.tx
         self._incoming: Dict[int, Dict[str, Any]] = {}
-        entry_values = {name: tx.symbolic_locals[name].realize() for name in tx.symbolic_locals}
         work = []
         entry_successors = {}
         for label, target in self.entry_targets.items():
@@ -145,7 +204,10 @@ class Region:
         entry_bindings = {}
         for block_id in set(entry_successors.values()):
             for name in self.blocks[block_id].input_names:
-                entry_bindings[name] = self.bind_outer(entry_values[name].as_proxy())
+                if _is_graph_value(entry_values[name]):
+                    entry_bindings[name] = self.bind_outer(entry_values[name].as_proxy())
+                else:  # A Python integer for a symbolic input
+                    self.entry_constants[name] = entry_values[name].as_python_constant()
         if self.return_examples is None:
             raise CaptureFallback('no path returns from the frame')
         self.entry_bindings = entry_bindings
@@ -157,7 +219,8 @@ class Region:
         block = self.blocks[block_id]
         incoming = self._incoming[block_id]
         others = [name for name in incoming if name not in block.input_names]
-        code, prefix = _continuation(self.info, block.start, block.input_names + others)
+        markers = self.info.iterators(block.start)
+        code, prefix = _continuation(self.info, block.start, block.input_names + others, markers)
         function = NestedUserFunctionVariable(ConstantVariable.create(code.co_name), ConstantVariable.create(code),
                                               tx.f_globals,
                                               TupleVariable([incoming[name] for name in others]) if others else None,
@@ -200,9 +263,13 @@ class Region:
         values = outputs[1:] if block_exit.kind == BRANCH else outputs
         passed = dict(zip(block_exit.names, values))
         passed.update(block_exit.side)
+        block.output_constants = {
+            name: vt.as_python_constant()
+            for name, vt in block_exit.side.items() if _is_int_constant(vt)
+        }
         successors = {}
         for label, target in block_exit.targets.items():
-            successors[label] = self.block_for(target, passed)
+            successors[label] = self.block_for(target, {**passed, **block_exit.extra.get(label, {})})
         block.successors = (successors[None][0] if block_exit.kind == GOTO else {
             label: successor
             for label, (successor, _) in successors.items()
@@ -210,8 +277,18 @@ class Region:
         return successors
 
     # ------------------------------------------------------------------------------------------ exits
-    def end_block(self, translator, kind: str, targets: Dict[Any, int], predicate=None, value=None) -> None:
-        """Ends the block being traced by returning the values its successors need from the continuation."""
+    def end_block(self,
+                  translator,
+                  kind: str,
+                  targets: Dict[Any, int],
+                  predicate=None,
+                  value=None,
+                  extra: Optional[Dict[Any, Dict[str, Any]]] = None) -> None:
+        """
+        Ends the block being traced by returning the values its successors need from the continuation.
+
+        :param extra: Python values passed on one edge only, by edge label (e.g., the "take" flag of a loop).
+        """
         if kind == RETURN:
             if isinstance(value, TensorVariable):
                 items, count = [value], None
@@ -222,15 +299,11 @@ class Region:
             self.active.exit = _Exit(RETURN, {}, [], count)
             _return_from(translator, TupleVariable(items))
             return
-        live = sorted({
-            name
-            for target in targets.values()
-            for name in self.info.livevars(target) if name in translator.symbolic_locals
-        })
+        live = sorted({name for target in targets.values() for name in self.live(target, translator.symbolic_locals)})
         values = {name: translator.symbolic_locals[name].realize() for name in live}
         names = [name for name in live if _is_graph_value(values[name])]
         side = {name: vt for name, vt in values.items() if name not in names}
-        self.active.exit = _Exit(kind, dict(targets), names, side=side)
+        self.active.exit = _Exit(kind, dict(targets), names, side=side, extra=dict(extra or {}))
         _return_from(translator, TupleVariable(([predicate] if kind == BRANCH else []) + [values[n] for n in names]))
 
     def is_block_translator(self, translator) -> bool:
@@ -245,24 +318,56 @@ class Region:
         tx = self.tx
         predicate_binding = self._predicate_binding
         record = transport.register(
-            lambda cfg_id: CfgRecord(cfg_id, self.blocks, predicate_binding.index, self.entry_successors, self.
-                                     entry_bindings, self.return_examples, tx.f_code.co_name))
+            lambda cfg_id: CfgRecord(cfg_id, self.blocks, predicate_binding, self.entry_successors, self.entry_bindings,
+                                     self.return_examples, tx.f_code.co_name, self.entry_constants))
         proxy = tx.output.create_proxy('call_function', torch.ops.dace.cfg.default,
                                        (record.id, list(self._outer_tensors), list(self._outer_syms)), {})
         result = wrap_fx_proxy(tx, proxy, example_value=list(self.return_examples))
         items = list(result.unpack_var_sequence(tx)) if hasattr(result, 'unpack_var_sequence') else list(result.items)
         return items[0] if self.return_count is None else TupleVariable(items)
 
-    def capture(self, predicate) -> Any:
-        """Traces the region and returns the frame's return value (the result of the ``dace::cfg`` call)."""
-        self._predicate_binding = self.bind_outer(predicate.as_proxy())
-        self.trace()
+    def capture(self, predicate, entry_values: Dict[str, Any]) -> Any:
+        """
+        Traces the region and returns the frame's return value (the result of the ``dace::cfg`` call).
+
+        :param predicate: The entry branch's predicate, or ``None`` for a goto.
+        :param entry_values: The variables at the entry.
+        """
+        self._predicate_binding = self.bind_outer(predicate.as_proxy()) if predicate is not None else None
+        self.trace(entry_values)
         return self.emit()
 
 
 # ---------------------------------------------------------------------------------------------- helpers
+#: Prefixes of the variables that hold the state of a captured for loop (suffixed with the loop's FOR_ITER index)
+_SEQUENCE_PREFIX, _INDEX_PREFIX, _TAKE_PREFIX = '__dace_seq_', '__dace_index_', '__dace_take_'
+
+
+def _seq_name(loop: int) -> str:
+    """The iterated sequence (a tensor, or a range)."""
+    return f'{_SEQUENCE_PREFIX}{loop}'
+
+
+def _index_name(loop: int) -> str:
+    """The number of items taken so far."""
+    return f'{_INDEX_PREFIX}{loop}'
+
+
+def _take_name(loop: int) -> str:
+    """Set on the edge into the loop body: the FOR_ITER then takes the next item instead of testing for one."""
+    return f'{_TAKE_PREFIX}{loop}'
+
+
 def _is_graph_value(vt) -> bool:
     return isinstance(vt, (TensorVariable, SymNodeVariable))
+
+
+def _is_int_constant(vt) -> bool:
+    return isinstance(vt, ConstantVariable) and type(vt.as_python_constant()) is int
+
+
+def _is_symint(vt) -> bool:
+    return isinstance(vt, SymNodeVariable) and isinstance(vt.sym_num, torch.SymInt)
 
 
 def _example(vt) -> Any:
@@ -282,6 +387,8 @@ def _signature(vt) -> Tuple:
     """What a block specialization depends on for one incoming variable."""
     if isinstance(vt, (TensorVariable, SymNodeVariable)):
         return _metadata(_example(vt))
+    if isinstance(vt, RangeVariable):  # The sequence of a captured loop
+        return ('range', tuple(_signature(item) for item in vt.items))
     if vt.is_python_constant():
         value = vt.as_python_constant()
         try:
@@ -290,6 +397,80 @@ def _signature(vt) -> Tuple:
         except TypeError:
             return ('constant', type(value).__name__, repr(value))
     return ('object', type(vt).__name__, vt.source.name if vt.source is not None else id(vt))
+
+
+def _block_input(vt):
+    """
+    ``vt`` as the input of a block. A tensor whose storage offset depends on a loop counter (e.g., ``row = x[i]``)
+    gets an example without it: the block copies its inputs into containers of its own, and the counter is not a
+    variable of the block (Dynamo could not lift it into the block's graph).
+    """
+    if not isinstance(vt, TensorVariable):
+        return vt
+    example = vt.as_proxy().node.meta['example_value']
+    if not free_unbacked_symbols(example.storage_offset()):
+        return vt
+    if free_unbacked_symbols(example.size()) or free_unbacked_symbols(example.stride()):
+        raise CaptureFallback('a tensor whose shape depends on a loop counter flows between blocks')
+    with example.fake_mode:
+        clean = torch.empty_strided(example.size(), example.stride(), dtype=example.dtype, device=example.device)
+    graph = torch.fx.Graph()
+    node = graph.placeholder('block_input')
+    node.meta['example_value'] = clean
+    return vt.clone(proxy=torch.fx.Proxy(node), source=None, mutation_type=None)
+
+
+def _is_marker(vt) -> bool:
+    """The placeholder for a for loop's iterator on the stack."""
+    return isinstance(vt, ConstantVariable) and vt.as_python_constant() is None
+
+
+def _is_data_dependent_bool(vt) -> bool:
+    """A symbolic boolean over data-dependent symbols (loop counters, ``.item()``), which Dynamo cannot guard on."""
+    return isinstance(vt, SymNodeVariable) and bool(free_unbacked_symbols(vt.sym_num))
+
+
+def _loop_header(info: CodeInfo, get_iter: int) -> Optional[int]:
+    following = get_iter + 1
+    if following < len(info.instructions) and info.instructions[following].opname == 'FOR_ITER':
+        return following
+    return None
+
+
+def _iterable(vt) -> bool:
+    """Whether a for loop over ``vt`` can be captured: a range with a positive constant step, or a tensor."""
+    if isinstance(vt, RangeVariable):
+        step = vt.items[2]
+        return step.is_python_constant() and step.as_python_constant() > 0
+    return isinstance(vt, TensorVariable) and vt.as_proxy().node.meta['example_value'].dim() > 0
+
+
+def _symbolic_iteration(vt) -> bool:
+    """Whether Dynamo would have to specialize the trip count of a loop over ``vt``."""
+    if isinstance(vt, RangeVariable):
+        return any(not item.is_python_constant() for item in vt.items)
+    if isinstance(vt, TensorVariable):
+        return not isinstance(vt.as_proxy().node.meta['example_value'].shape[0], int)
+    return False
+
+
+def _binary(tx, op: Callable, a, b):
+    return BuiltinVariable(op).call_function(tx, [a, b], {})
+
+
+def _loop_condition(tx, sequence, index):
+    """Whether the loop has another item: ``start + index * step < stop``, or ``index < len(tensor)``."""
+    if isinstance(sequence, RangeVariable):
+        start, stop, step = sequence.items
+        return _binary(tx, operator.lt, _binary(tx, operator.add, start, _binary(tx, operator.mul, index, step)), stop)
+    return _binary(tx, operator.lt, index, sequence.call_method(tx, 'size', [ConstantVariable.create(0)], {}))
+
+
+def _loop_item(tx, sequence, index):
+    if isinstance(sequence, RangeVariable):
+        start, _, step = sequence.items
+        return _binary(tx, operator.add, start, _binary(tx, operator.mul, index, step))
+    return _binary(tx, operator.getitem, sequence, index)
 
 
 def _return_from(translator, value) -> None:
@@ -301,10 +482,11 @@ def _return_from(translator, value) -> None:
 _CONTINUATIONS: Dict[types.CodeType, Tuple[types.CodeType, int]] = {}
 
 
-def _continuation(info: CodeInfo, start: int, argnames: List[str]) -> Tuple[types.CodeType, int]:
+def _continuation(info: CodeInfo, start: int, argnames: List[str], markers: int = 0) -> Tuple[types.CodeType, int]:
     """
     A code object that runs ``info.code`` from instruction ``start`` with the locals ``argnames`` as positional
-    parameters. A prefix (``RESUME`` on 3.11+, then a jump) is prepended; returns the code and the prefix length.
+    parameters. A prefix (``RESUME`` on 3.11+, ``markers`` placeholders for the iterators of the enclosing for loops,
+    then a jump) is prepended; returns the code and the prefix length.
     """
     if info.code.co_freevars or info.code.co_cellvars:
         raise CaptureFallback('frames with cell or free variables are not supported yet')
@@ -313,6 +495,7 @@ def _continuation(info: CodeInfo, start: int, argnames: List[str]) -> Tuple[type
     def transform(instructions: List[bt.Instruction], code_options: Dict[str, Any]) -> None:
         nonlocal prefix_len
         prefix = [bt.create_instruction('RESUME', arg=0)] if sys.version_info >= (3, 11) else []
+        prefix.extend(bt.create_load_const(None) for _ in range(markers))
         prefix.append(bt.create_jump_absolute(instructions[start]))
         prefix_len = len(prefix)
         instructions[:0] = prefix
@@ -394,6 +577,12 @@ def _make_jump_handler(original: Callable) -> Callable:
         if backend is None or not self.stack:
             return original(self, inst)
         value = self.stack[-1].realize()
+        if _is_data_dependent_bool(value) and region is not None and region.is_block_translator(self):
+            # A comparison of loop counters or data-dependent scalars (e.g., ``.item()``) in a captured block
+            successors = region.info.branch_successors(self.indexof[inst] - region.active.prefix)
+            self.pop()
+            region.end_block(self, BRANCH, successors, predicate=value)
+            return None
         if not isinstance(value, TensorVariable):
             return original(self, inst)
         following = self.indexof[inst] + 1
@@ -413,19 +602,50 @@ def _make_jump_handler(original: Callable) -> Callable:
     return handler
 
 
-def _capture_region(backend: 'ControlFlowBackend', tx, inst, value, original: Callable):
+def _capture_region(backend: 'ControlFlowBackend', tx, inst, value, original: Callable, loop: bool = False):
+    """
+    Captures the rest of the frame from a conditional jump on ``value`` or, with ``loop``, from the ``GET_ITER`` of a
+    for loop over ``value`` (a symbolic range or a tensor).
+    """
     key = _position_key(tx, inst)
-    if key in backend.blacklist or len(tx.stack) != 1 or tx.block_stack:
+    if key in backend.blacklist or tx.block_stack:
+        return original(tx, inst)
+    info = CodeInfo(tx.f_code)
+    index = tx.indexof[inst]
+    if not loop and len(tx.stack) > 1:
+        # Inside loops Dynamo unrolls (their iterators are on the stack): capture the outermost one from its GET_ITER
+        loops = info.loops_containing(index)
+        if len(tx.stack) - 1 == info.iterators(index) == len(loops):
+            get_iter = min(loops) - 1
+            request = _position_key(tx, info.instructions[get_iter])
+            if request not in backend.loop_requests:
+                backend.loop_requests.add(request)
+                backend.log('restart', tx.f_code.co_name, f'capture the loop at instruction {get_iter}')
+                # The next pass takes a different path from the GET_ITER on: do not replay this pass's speculation
+                tx.speculation_log.clear()
+                raise RestartAnalysis(restart_reason='dace control-flow capture of an enclosing loop')
+        return original(tx, inst)
+    if len(tx.stack) != 1:
         return original(tx, inst)
     try:
-        region = Region(tx, CodeInfo(tx.f_code), tx.indexof[inst])
+        if loop:
+            header = _loop_header(info, index)
+            if header is None:
+                raise CaptureFallback('GET_ITER is not followed by a FOR_ITER')
+            region = Region(tx, info, {None: header})
+        else:
+            region = Region(tx, info, info.branch_successors(index))
     except CaptureFallback as ex:
         backend.log('fallback', tx.f_code.co_name, str(ex))
         return original(tx, inst)
+    entry_values = {name: tx.symbolic_locals[name].realize() for name in tx.symbolic_locals}
+    if loop:
+        entry_values[_seq_name(header)] = value
+        entry_values[_index_name(header)] = ConstantVariable.create(0)
     backend.regions.append(region)
     try:
         with torch._dynamo.config.patch(**CAPTURE_CONFIG):  # Blocks keep .item() (e.g., of float attributes)
-            result = region.capture(value)
+            result = region.capture(None if loop else value, entry_values)
     except Exception as ex:  # noqa: BLE001 - also Unsupported raised by nested speculation
         if isinstance(ex, _PASSTHROUGH_EXCEPTIONS) and not isinstance(ex, _SPECULATION_ERRORS):
             raise  # Dynamo control flow (returns, restarts, exceptions raised by the program)
@@ -434,6 +654,7 @@ def _capture_region(backend: 'ControlFlowBackend', tx, inst, value, original: Ca
         backend.blacklist.add(key)
         message = (str(ex).splitlines() or [''])[0][:200]
         backend.log('error', tx.f_code.co_name, f'{type(ex).__name__}: {message}')
+        tx.speculation_log.clear()  # The next pass may diverge before this point (e.g., at a captured GET_ITER)
         raise RestartAnalysis(restart_reason=f'dace control-flow capture failed: {message}') from ex
     finally:
         backend.regions.pop()
@@ -446,6 +667,87 @@ def _capture_region(backend: 'ControlFlowBackend', tx, inst, value, original: Ca
         tx.symbolic_locals = {k: v for k, v in tx.symbolic_locals.items() if k in cells}
     _return_from(tx, result)
     return None
+
+
+def _make_get_iter_handler(original: Callable) -> Callable:
+
+    @functools.wraps(original)
+    def handler(self, inst):
+        backend, region = _region_of(self)
+        if backend is None or not self.stack:
+            return original(self, inst)
+        iterable = self.stack[-1].realize()
+        if not _iterable(iterable):
+            return original(self, inst)
+        if region is not None and region.is_block_translator(self):
+            # A for loop in a captured block: its state becomes CFG variables, a placeholder takes the iterator's place
+            header = _loop_header(region.info, self.indexof[inst] - region.active.prefix)
+            if header is None:
+                return original(self, inst)
+            self.pop()
+            self.symbolic_locals[_seq_name(header)] = iterable
+            self.symbolic_locals[_index_name(header)] = ConstantVariable.create(0)
+            self.push(ConstantVariable.create(None))
+            return None
+        if region is None and (_symbolic_iteration(iterable) or _position_key(self, inst) in backend.loop_requests):
+            # Dynamo would specialize the trip count and unroll the loop (or its body has data-dependent control
+            # flow): capture it as a loop instead
+            return _capture_region(backend, self, inst, iterable, original, loop=True)
+        return original(self, inst)
+
+    return handler
+
+
+def _make_for_iter_handler(original: Callable) -> Callable:
+
+    @functools.wraps(original)
+    def handler(self, inst):
+        backend, region = _region_of(self)
+        if region is None or not region.is_block_translator(self):
+            return original(self, inst)
+        header = self.indexof[inst] - region.active.prefix
+        sequence = self.symbolic_locals.get(_seq_name(header))
+        if sequence is None:
+            return original(self, inst)  # A loop Dynamo unrolls (e.g., over a list of modules)
+        index = self.symbolic_locals[_index_name(header)]
+        take = self.symbolic_locals.get(_take_name(header))
+        if take is not None and take.as_python_constant():
+            # On the edge into the body: take the next item
+            del self.symbolic_locals[_take_name(header)]
+            self.push(_loop_item(self, sequence, index))
+            self.symbolic_locals[_index_name(header)] = _binary(self, operator.add, index, ConstantVariable.create(1))
+            return None
+        predicate = _loop_condition(self, sequence, index)
+        if not _is_data_dependent_bool(predicate):
+            raise CaptureFallback(f'the condition of the loop at instruction {header} is not symbolic ({predicate})')
+        region.end_block(self,
+                         BRANCH, {
+                             True: header,
+                             False: region.info.for_iter_exit(header)
+                         },
+                         predicate=predicate,
+                         extra={True: {
+                             _take_name(header): ConstantVariable.create(True)
+                         }})
+        return None
+
+    return handler
+
+
+def _make_call_range(original: Callable) -> Callable:
+
+    @functools.wraps(original)
+    def call_range(self, tx, *args, **kwargs):
+        # Dynamo specializes symbolic bounds when it builds the range (``__index__``); keep them symbolic, so that a
+        # loop over the range can be captured with a symbolic trip count (``GET_ITER``)
+        backend, _ = _region_of(tx)
+        if backend is not None and not kwargs and 1 <= len(args) <= 3 and any(
+                _is_symint(a.realize())
+                for a in args) and all(_is_symint(a.realize()) or _is_int_constant(a.realize()) for a in args):
+            return RangeVariable([a.realize() for a in args])
+        return original(self, tx, *args, **kwargs)
+
+    return call_range
 
 
 def _make_return_handler(original: Callable) -> Callable:
@@ -474,7 +776,8 @@ def _make_step(original: Callable) -> Callable:
                 if index == region.active.start and not region.active.entered:
                     region.active.entered = True
                 else:
-                    if self.stack:
+                    markers = region.info.iterators(index)
+                    if len(self.stack) != markers or not all(_is_marker(v) for v in self.stack):
                         raise CaptureFallback(f'values on the stack at block boundary {index}')
                     try:
                         region.end_block(self, GOTO, {None: index})
@@ -484,6 +787,13 @@ def _make_step(original: Callable) -> Callable:
         return original(self)
 
     return step
+
+
+def _forget_range_handlers() -> None:
+    """Drops Dynamo's cached handlers of ``range(...)`` calls, which hold the (un)patched ``call_range``."""
+    cache = BuiltinVariable.call_function_handler_cache
+    for key in [k for k in cache if k and k[0] is range]:
+        del cache[key]
 
 
 class _Patches:
@@ -512,9 +822,16 @@ class _Patches:
                     if op is not None:
                         cls._saved.append((table, op, table[op]))
                         table[op] = _make_return_handler(table[op])
+                for name, make in (('GET_ITER', _make_get_iter_handler), ('FOR_ITER', _make_for_iter_handler)):
+                    op = dis.opmap[name]
+                    cls._saved.append((table, op, table[op]))
+                    table[op] = make(table[op])
             base = sc.InstructionTranslatorBase
             cls._saved.append((base, 'step', base.step))
             base.step = _make_step(base.step)
+            cls._saved.append((BuiltinVariable, 'call_range', BuiltinVariable.call_range))
+            BuiltinVariable.call_range = _make_call_range(BuiltinVariable.call_range)
+            _forget_range_handlers()
 
     @classmethod
     def uninstall(cls) -> None:
@@ -528,6 +845,7 @@ class _Patches:
                 else:
                     setattr(container, key, original)
             cls._saved.clear()
+            _forget_range_handlers()
 
 
 class ControlFlowBackend(DaceBackend):
@@ -540,6 +858,7 @@ class ControlFlowBackend(DaceBackend):
         super().__init__(**options)
         self.regions: List[Region] = []
         self.blacklist: set = set()
+        self.loop_requests: set = set()  #: GET_ITERs whose loops are captured because their bodies need it
         self.events: List[Tuple[str, str, str]] = []  #: (kind, function name, detail)
         _Patches.install()
 

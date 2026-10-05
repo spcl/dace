@@ -165,8 +165,11 @@ def test_module_forward():
 
 
 @pytest.mark.torch
-def test_fallback_keeps_semantics():
-    """A data-dependent branch inside a for loop is not captured yet; Dynamo's graph break keeps the result."""
+def test_branch_in_constant_loop():
+    """
+    A data-dependent branch inside a loop Dynamo would unroll: the analysis restarts and captures the loop from its
+    GET_ITER, with a symbolic counter.
+    """
 
     def f(x):
         y = x
@@ -177,8 +180,7 @@ def test_fallback_keeps_semantics():
                 y = y + 2
         return y
 
-    backend = _check(f, [torch.rand(4), -torch.rand(4)], expect_capture=False)
-    assert 'cfg' not in backend.kinds()
+    _check(f, [torch.rand(4), -torch.rand(4)])
 
 
 @pytest.mark.torch
@@ -277,12 +279,8 @@ def test_match_with_tensor_guard():
 
 
 @pytest.mark.torch
-def test_for_else_falls_back():
-    """
-    Data-dependent control flow inside a for loop is not captured yet (the iterator is on the value stack); with
-    FOR_ITER capture (phase 2e) the else clause becomes the exhaustion edge. Until then the graph break keeps the
-    semantics.
-    """
+def test_for_else():
+    """The else clause of a for loop is the edge taken when the loop runs out of items."""
 
     def f(x):
         y = x
@@ -294,8 +292,86 @@ def test_for_else_falls_back():
             y = y - 100
         return y
 
-    backend = _check(f, [torch.rand(3), torch.full((2, ), 20.0)], expect_capture=False)
-    assert 'cfg' not in backend.kinds()
+    _check(f, [torch.rand(3), torch.full((2, ), 20.0)])
+
+
+@pytest.mark.torch
+def test_symbolic_range():
+    """``range`` over a symbolic size is a loop with a symbolic trip count (one compilation for all sizes)."""
+
+    def f(x):
+        y = x[0] * 0
+        for i in range(x.shape[0]):
+            y = y + x[i] * i
+        return y
+
+    _check(f, [torch.randn(4, 3), torch.randn(7, 3), torch.randn(2, 3)])
+
+
+@pytest.mark.torch
+def test_iterate_tensor():
+
+    def f(x):
+        y = x[0] * 0
+        for row in x:
+            y = y * 0.5 + row
+        return y
+
+    _check(f, [torch.randn(4, 3), torch.randn(6, 3)])
+
+
+@pytest.mark.torch
+def test_symbolic_range_with_break_continue_else():
+
+    def f(x):
+        y = x[0]
+        for i in range(1, x.shape[0]):
+            if y.sum() > 20:
+                break
+            if x[i].sum() < 0:
+                continue
+            y = y * 2 + x[i]
+        else:
+            y = y - 100
+        return y
+
+    _check(f, [torch.rand(5, 2), torch.rand(3, 2) * 0.1, torch.full((4, 2), 30.0), -torch.rand(6, 2)])
+
+
+@pytest.mark.torch
+def test_nested_loops_with_while():
+
+    def f(x):
+        y = x[0] * 0
+        for row in x:
+            for j in range(row.shape[0]):
+                y = y + row[j]
+            while y.abs().sum() > 100:
+                y = y * 0.5
+        return y
+
+    _check(f, [torch.randn(3, 4) * 10, torch.randn(5, 4)])
+
+
+class _Stack(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.layers = nn.ModuleList([nn.Linear(4, 4) for _ in range(3)])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+            if x.sum() > 0:
+                x = -x
+        return x
+
+
+@pytest.mark.torch
+def test_loop_over_modules_falls_back():
+    """A loop over a list of modules cannot have a symbolic counter: Dynamo's graph break keeps the semantics."""
+    torch.manual_seed(0)
+    _check(_Stack().eval(), [torch.randn(2, 4), torch.randn(3, 4)], expect_capture=False)
 
 
 @pytest.mark.torch
@@ -324,12 +400,17 @@ if __name__ == '__main__':
     test_nested_loops_and_early_return()
     test_sequential_ifs_are_linear()
     test_module_forward()
-    test_fallback_keeps_semantics()
+    test_branch_in_constant_loop()
     test_python_and_symbolic_locals()
     test_conditional_expression_and_multiple_returns()
     test_while_true_break()
     test_stock_backend_unaffected()
     test_match_on_python_value()
     test_match_with_tensor_guard()
-    test_for_else_falls_back()
+    test_for_else()
+    test_symbolic_range()
+    test_iterate_tensor()
+    test_symbolic_range_with_break_continue_else()
+    test_nested_loops_with_while()
+    test_loop_over_modules_falls_back()
     test_match_on_bool_of_tensor_falls_back()

@@ -6,7 +6,7 @@ the DaCe importer looks the graph up by id and lowers it to schedule-tree contro
 """
 import dataclasses
 import itertools
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -35,18 +35,24 @@ class BlockRecord:
     successors: Any = None
     #: Names of the CFG variables the block outputs (after the predicate for ``branch``)
     output_names: List[str] = dataclasses.field(default_factory=list)
+    #: Python integers the block passes on for symbolic inputs of its successors (e.g., a loop counter's start)
+    output_constants: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
 class CfgRecord:
-    """A captured control-flow graph: an entry branch into traced blocks, returning flat tensors."""
+    """
+    A captured control-flow graph: an entry (a branch, or a goto into a loop) into traced blocks, returning flat
+    tensors.
+    """
     id: int
     blocks: List[BlockRecord]
-    entry_predicate: int  #: Operator tensor input holding the entry predicate
-    entry_successors: Dict[bool, int]  #: Entry block ids by predicate value
+    entry_predicate: Optional[Binding]  #: Operator input holding the entry predicate (``None``: goto)
+    entry_successors: Dict[Any, int]  #: Entry block ids by predicate value (``None`` for a goto)
     entry_bindings: Dict[str, Binding]  #: Operator inputs of the CFG variables live at the entry
     output_examples: List[Any]  #: Example (fake) values of the flat outputs
     code_name: str = ''
+    entry_constants: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Python integers for symbolic inputs
 
     def block(self, block_id: int) -> BlockRecord:
         return self.blocks[block_id]
