@@ -15,8 +15,6 @@ import os
 import re
 from typing import List, Tuple
 
-import pytest
-
 from dace.config import Config
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -44,9 +42,9 @@ def test_cache_defaults_to_the_name_policy():
     assert Config.get_default('cache') == 'name'
 
 
-@pytest.mark.skipif(not os.path.isdir(WORKFLOW_DIR), reason='no .github/workflows in this checkout')
 def test_ci_workflows_never_opt_into_the_hash_cache_policy():
     """Every workflow that sets ``DACE_cache`` must pick a policy other than ``hash``."""
+    assert os.path.isdir(WORKFLOW_DIR), 'no .github/workflows in this checkout'
     assignments = cache_assignments()
     assert assignments, 'no DACE_cache assignments found in the workflows -- the extractor is broken'
 

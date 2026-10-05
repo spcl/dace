@@ -12,10 +12,7 @@ import pytest
 
 from dace.codegen import compiler
 
-_UNSUPPORTED = not hasattr(signal, 'pthread_sigmask') or not hasattr(signal, 'SIGCHLD')
 
-
-@pytest.mark.skipif(_UNSUPPORTED, reason='pthread_sigmask/SIGCHLD unavailable on this platform')
 def test_sigmask_unblocks_sigchld_when_blocked_and_restores():
     original = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:
@@ -33,7 +30,6 @@ def test_sigmask_unblocks_sigchld_when_blocked_and_restores():
         signal.pthread_sigmask(signal.SIG_SETMASK, original)
 
 
-@pytest.mark.skipif(_UNSUPPORTED, reason='pthread_sigmask/SIGCHLD unavailable on this platform')
 def test_sigmask_is_noop_when_sigchld_already_deliverable():
     original = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:

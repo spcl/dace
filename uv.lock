@@ -954,6 +954,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "rustworkx" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1007,6 +1008,7 @@ testing = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "rustworkx" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1066,6 +1068,7 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.0" },
     { name = "pytest-xdist", specifier = ">=3.0" },
     { name = "ruff", specifier = "==0.15.5" },
+    { name = "rustworkx" },
     { name = "scipy" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-rtd-theme", specifier = ">=0.5.1" },
@@ -1110,6 +1113,7 @@ testing = [
     { name = "pytest-cov", specifier = ">=4.0" },
     { name = "pytest-timeout", specifier = ">=2.0" },
     { name = "pytest-xdist", specifier = ">=3.0" },
+    { name = "rustworkx" },
     { name = "scipy" },
 ]
 

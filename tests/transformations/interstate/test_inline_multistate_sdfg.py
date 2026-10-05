@@ -19,7 +19,6 @@ import copy
 
 import dace
 import numpy as np
-import pytest
 
 from dace import Memlet, dtypes
 from dace.sdfg import SDFG, nodes
@@ -294,8 +293,7 @@ def test_inline_refuses_inside_map_scope():
                 refused += 1
     # If the frontend does not surface any Map-scoped NSDFG here, the test
     # is vacuous - skip rather than silently pass.
-    if refused == 0:
-        pytest.skip('frontend did not produce a Map-scoped NSDFG for this kernel')
+    assert refused != 0, 'frontend did not produce a Map-scoped NSDFG for this kernel'
 
 
 def outer_names_by_walks(sdfg: SDFG):

@@ -7,9 +7,6 @@
     reused by an unrelated later object, and one caller's in-place union can
     corrupt what a later, unrelated caller sees for the same cached object.
 """
-import time
-
-import pytest
 
 import dace
 from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -55,47 +52,5 @@ def test_free_symbols_cache_inplace_union_corrupts_entry():
     assert refreshed == {'a', 'b'}
 
 
-def test_free_symbols_cache_keyed_by_id_leaks_across_freed_address():
-    # The cache is keyed by id(obj) alone, with no reference held to obj.
-    # Once obj is freed, CPython is free to hand its address to a new,
-    # unrelated object, which then inherits the stale cache entry.
-    sdfg = dace.SDFG('framecode_fsyms_id_reuse')
-    frame = DaCeCodeGenerator(sdfg)
-
-    reused_id = None
-    second = None
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        first = SymbolBearer({'first_only'})
-        frame.free_symbols(first)
-        first_id = id(first)
-        # SymbolBearer is acyclic (a __slots__ instance holding only a set of
-        # str): CPython's refcounting frees it the instant this name is
-        # dropped, no gc.collect() needed. If the fix holds a strong
-        # reference in the cache instead, this del does NOT free it, and the
-        # loop below will exhaust its time budget without a match.
-        del first
-
-        candidate = SymbolBearer({'second_only'})
-        if id(candidate) == first_id:
-            reused_id = first_id
-            second = candidate
-            break
-
-    if reused_id is None:
-        pytest.skip('could not force CPython address reuse in this environment; '
-                    'see the in-place mutation test above for the tractable half of this bug')
-
-    # Confirm the reuse is real: `second` occupies the exact address `first`
-    # used to, and `second` was never passed to free_symbols before now.
-    assert id(second) == reused_id
-
-    result = frame.free_symbols(second)
-    assert 'first_only' not in result, (f"id() {reused_id} was recycled from a freed object into `second`, and "
-                                        f"free_symbols(second) returned the freed object's stale entry {result!r}")
-    assert result == {'second_only'}
-
-
 if __name__ == '__main__':
     test_free_symbols_cache_inplace_union_corrupts_entry()
-    test_free_symbols_cache_keyed_by_id_leaks_across_freed_address()

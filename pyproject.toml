@@ -31,6 +31,8 @@ testing = [
     "pytest-cov>=4.0",
     "pytest-timeout>=2.0",
     "pytest-xdist>=3.0",
+    # The graph-library differential tests compare both backends in every lane.
+    "rustworkx",
     "flake8",
     "scipy",
     "absl-py",

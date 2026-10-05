@@ -11,8 +11,6 @@ import os
 import re
 from typing import List, Tuple
 
-import pytest
-
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 WORKFLOW_DIR = os.path.join(REPO_ROOT, '.github', 'workflows')
 
@@ -46,9 +44,9 @@ def referenced_paths() -> List[Tuple[str, int, str]]:
     return found
 
 
-@pytest.mark.skipif(not os.path.isdir(WORKFLOW_DIR), reason='no .github/workflows in this checkout')
 def test_ci_workflows_reference_existing_test_paths():
     """A workflow naming a moved or deleted test file is a broken workflow."""
+    assert os.path.isdir(WORKFLOW_DIR), 'no .github/workflows in this checkout'
     referenced = referenced_paths()
     assert referenced, 'no pytest test paths found in the workflows -- the extractor is broken'
 

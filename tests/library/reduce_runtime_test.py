@@ -203,8 +203,7 @@ def test_reduction_header_compiles_warning_free(cxx, tmp_path):
     Only diagnostics pointing INTO ``reduction.h`` count -- the surrounding DaCe headers have
     their own ``-Wconversion`` noise, which this test neither owns nor hides.
     """
-    if _cxx(cxx) is None:
-        pytest.skip(f'{cxx} not installed')
+    assert _cxx(cxx) is not None, f'{cxx} not installed'
     ordered = [
         'float', 'double', 'int', 'long', 'short', 'signed char', 'unsigned int', 'bool', 'dace::float16',
         'dace::bfloat16'
@@ -245,8 +244,7 @@ def test_reduction_header_compiles_warning_free(cxx, tmp_path):
 @pytest.mark.parametrize('threads', [1, 4, 16])
 def test_reduce_entry_points_match_numpy(threads, tmp_path):
     """Each op x {contiguous, stride 3} x {parallel, sequential} against numpy."""
-    if _cxx('g++') is None:
-        pytest.skip('g++ not installed')
+    assert _cxx('g++') is not None, 'g++ not installed'
     reals, ints, real_path, int_path = _make_data(tmp_path)
     got = _run_driver(_build_driver('g++', tmp_path), real_path, int_path, threads)
 
@@ -271,8 +269,7 @@ def test_reduce_entry_points_match_numpy(threads, tmp_path):
 @pytest.mark.parametrize('threads', [1, 4, 16])
 def test_reduce_min_max_nan_and_empty_semantics(threads, tmp_path):
     """The NaN and empty-range behaviour ``dace::reduce`` documents, pinned at every team size."""
-    if _cxx('g++') is None:
-        pytest.skip('g++ not installed')
+    assert _cxx('g++') is not None, 'g++ not installed'
     reals, _ints, real_path, int_path = _make_data(tmp_path)
     got = _run_driver(_build_driver('g++', tmp_path), real_path, int_path, threads)
 
@@ -297,8 +294,7 @@ def test_the_sequential_sum_associates_pairwise(tmp_path):
     the first element. The assertion is on the ERROR, not on a bit pattern -- any association that
     keeps the partials comparable in size passes, a running total cannot.
     """
-    if _cxx('g++') is None:
-        pytest.skip('g++ not installed')
+    assert _cxx('g++') is not None, 'g++ not installed'
     _reals, _ints, real_path, int_path = _make_data(tmp_path)
     got = _run_driver(_build_driver('g++', tmp_path), real_path, int_path, 1)
 

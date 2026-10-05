@@ -49,8 +49,7 @@ def _openmp_runtime_loadable():
 
 def test_some_blas_environment_detected_when_a_blas_is_present():
     """If the machine has a BLAS at all, at least one DaCe BLAS environment must detect it."""
-    if not _system_has_a_blas():
-        pytest.skip('no BLAS library installed on this machine')
+    assert _system_has_a_blas(), 'no BLAS library installed on this machine'
     detected = {env.__name__: env.is_installed() for env in ALL_BLAS_ENVIRONMENTS}
     assert any(detected.values()), (f'a BLAS library is loadable but no DaCe BLAS environment detected it: {detected}. '
                                     'DaCe cannot build any BLAS library node in this configuration.')
@@ -58,8 +57,7 @@ def test_some_blas_environment_detected_when_a_blas_is_present():
 
 def test_openblas_single_library_is_detected():
     """The spack/conda single-``libopenblas`` layout must be detected (the reported bug)."""
-    if not ctypes.util.find_library('openblas'):
-        pytest.skip('libopenblas not loadable (run `spack load openblas` / not installed)')
+    assert ctypes.util.find_library('openblas'), 'libopenblas not loadable (run `spack load openblas` / not installed)'
 
     assert OpenBLAS.is_installed(), 'libopenblas is loadable but OpenBLAS.is_installed() is False'
 
@@ -87,12 +85,10 @@ def test_openblas_threading_flavor_is_probed_and_never_fatal():
     machine inside DaCe's OpenMP maps. Detecting that must never break a build: it is a performance
     problem, not a correctness one.
     """
-    if not ctypes.util.find_library('openblas'):
-        pytest.skip('libopenblas not loadable (run `spack load openblas` / not installed)')
+    assert ctypes.util.find_library('openblas'), 'libopenblas not loadable (run `spack load openblas` / not installed)'
 
     code, config, path = openblas_env._openblas_threading_flavor()
-    if code is None:
-        pytest.skip('OpenBLAS too old to export openblas_get_parallel(), or not dlopen-able here')
+    assert code is not None, 'OpenBLAS too old to export openblas_get_parallel(), or not dlopen-able here'
     assert code in openblas_env.OPENBLAS_PARALLEL_NAMES, f'undocumented openblas_get_parallel() code {code}'
     assert config, f'openblas_get_parallel() returned {code} but openblas_get_config() gave {config!r}'
     assert path, 'threading flavor probed but the library path was not reported'
@@ -112,15 +108,14 @@ def test_openblas_threading_flavor_is_probed_and_never_fatal():
         assert flavor_warnings, f'{openblas_env.OPENBLAS_PARALLEL_NAMES[code]} OpenBLAS was not warned about'
 
 
-@pytest.mark.skipif(not OpenBLAS.is_installed(), reason='OpenBLAS not installed on this machine')
 def test_gemm_compiles_and_runs_through_openblas():
     """End-to-end: a GEMM library node compiles and runs via the OpenBLAS implementation
     (finding + including + linking libopenblas) and matches numpy."""
+    assert OpenBLAS.is_installed(), 'OpenBLAS not installed on this machine'
     # Probed here, not in a ``skipif``: that argument runs at COLLECTION, and dlopening an OpenMP
     # runtime there leaves it mapped for every later test in the interpreter.
-    if not _openmp_runtime_loadable():
-        pytest.skip('OpenMP runtime (libomp/libgomp) not loadable -- DaCe-compiled .so cannot be '
-                    'loaded; set up LD_LIBRARY_PATH/rpath for the toolchain first')
+    assert _openmp_runtime_loadable(), ('OpenMP runtime (libomp/libgomp) not loadable -- DaCe-compiled .so cannot be '
+                                        'loaded; set up LD_LIBRARY_PATH/rpath for the toolchain first')
     prev = Gemm.default_implementation
     Gemm.default_implementation = 'OpenBLAS'
     try:

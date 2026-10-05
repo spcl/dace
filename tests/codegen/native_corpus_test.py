@@ -9,7 +9,6 @@ NumPy ground truth is the kernel's own undecorated Python function (``DaceProgra
 oracle DaCe's own corpus tests use (e.g. ``gemm_kernel.f(...)``).
 """
 import copy
-import os
 
 import numpy as np
 import pytest
@@ -114,7 +113,6 @@ def run_case(name: str, to_gpu: bool, cache_dir: str) -> None:
         blas.default_implementation = previous
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 @pytest.mark.parametrize('name', list(KERNELS))
 def test_native_corpus_cpu(name, tmp_path):
     """simplify + LoopToMap + MapFusion, native CPU build, result == NumPy."""

@@ -274,7 +274,6 @@ def test_isomorphism_matches_networkx(backend):
         assert mappings == [{'n1': 0, 'n2': 1}]
 
 
-@pytest.mark.skipif('rustworkx' not in _BACKENDS, reason='rustworkx not installed')
 def test_unhashable_node_rustworkx_only():
     """ DaCe graphs may contain unhashable nodes (e.g. list-backed constructs) -- confirmed
         constraint from dace.sdfg.graph.OrderedDiGraph.has_cycles' own hashability note. This is
@@ -282,6 +281,7 @@ def test_unhashable_node_rustworkx_only():
         itself cannot hold unhashable nodes (add_edge raises TypeError, the same as a raw
         `import networkx as nx` call would -- see the networkx-backend variant of this test,
         which asserts exactly that), so only the rustworkx backend is exercised here. """
+    assert 'rustworkx' in _BACKENDS, 'rustworkx not installed'
 
     class UnhashableNode:
         __hash__ = None
@@ -330,11 +330,11 @@ def test_results_are_lazy_iterators_like_real_networkx(backend):
         assert hasattr(gl.simple_cycles(cyclic), '__next__')
 
 
-@pytest.mark.skipif('rustworkx' not in _BACKENDS, reason='rustworkx not installed')
 def test_real_networkx_graph_is_lowered_to_rustworkx():
     """ No mixed backends: under backend='rustworkx', a call on a REAL, plain networkx.DiGraph
         (e.g. what an SDFG/state's .nx/._nx escape hatch always hands out) must still run
         accelerated -- not silently stay on networkx just because of its Python type. """
+    assert 'rustworkx' in _BACKENDS, 'rustworkx not installed'
     real_g = networkx.DiGraph()
     real_g.add_edge('a', 'b')
     real_g.add_edge('b', 'c')

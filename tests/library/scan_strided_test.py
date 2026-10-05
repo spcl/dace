@@ -253,8 +253,7 @@ def test_parallel_entry_point_called_inside_a_team_is_correct():
         build = subprocess.run(['g++', '-std=c++20', '-O2', '-fopenmp', '-I', include, '-o', exe, cpp],
                                capture_output=True,
                                text=True)
-        if build.returncode != 0:
-            pytest.skip(f'probe did not build: {build.stderr[-300:]}')
+        assert build.returncode == 0, f'probe did not build: {build.stderr[-300:]}'
         run = subprocess.run([exe], capture_output=True, text=True, timeout=120)
     assert run.stdout.strip() == 'OK', f'nested direct call gave wrong values: {run.stdout!r}'
 

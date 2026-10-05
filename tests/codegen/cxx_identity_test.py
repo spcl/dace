@@ -6,7 +6,6 @@ the upper half of every vector. The wrong answer is silent, so codegen names the
 leaving it to be rediscovered from a numerical diff. These pin the probe and the warning's conditions
 with stub compilers, so no particular GCC has to be installed to run them.
 """
-import os
 import stat
 import warnings
 
@@ -32,7 +31,6 @@ def _stub_compiler(tmp_path, name: str, macros: str) -> str:
     return str(path)
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
 def test_detect_version_reads_the_predefined_macros(tmp_path):
     gcc13 = _stub_compiler(tmp_path, 'gcc13', GCC_13)
     clang18 = _stub_compiler(tmp_path, 'clang18', CLANG_18)
@@ -44,13 +42,11 @@ def test_detect_version_reads_the_predefined_macros(tmp_path):
     assert compiler_family.detect_version(clang18) == (18, 1, 3)
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
 def test_detect_version_is_none_when_unidentifiable(tmp_path):
     assert compiler_family.detect_version(_stub_compiler(tmp_path, 'mystery', '#define __SOMETHING__ 1\n')) is None
     assert compiler_family.detect_version(str(tmp_path / 'does-not-exist')) is None
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
 @pytest.mark.parametrize(('name', 'macros', 'expected'), [('wgcc13', GCC_13, True), ('wgcc15', GCC_15, False),
                                                           ('wclang18', CLANG_18, False)])
 def test_warning_fires_only_for_the_miscompiling_gcc(tmp_path, name, macros, expected):
@@ -62,7 +58,6 @@ def test_warning_fires_only_for_the_miscompiling_gcc(tmp_path, name, macros, exp
     assert bool([w for w in caught if 'vectorizer' in str(w.message)]) == expected
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='stub compilers are shell scripts')
 def test_no_warning_for_the_classic_generator(tmp_path):
     """The classic generator keeps the operands in connector locals, so the inlined select -- the
     only shape the bug is known to hit -- is never emitted and the compiler is not the user's
