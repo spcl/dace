@@ -229,6 +229,77 @@ def test_stock_backend_unaffected():
         compiled(torch.rand(3, 4))
 
 
+def test_match_on_python_value():
+    """Patterns on Python values are resolved by Dynamo; the data-dependent branch after the match is captured."""
+
+    def f(x, mode: int):
+        match mode:
+            case 0:
+                y = x * 2
+            case 1:
+                y = x + 1
+            case _:
+                y = x
+        if y.sum() > 0:
+            return y
+        return -y
+
+    # Dynamo specializes on each value of ``mode`` (one compilation per value)
+    _check(f, [(torch.rand(3), 0), (-torch.rand(4), 1), (torch.rand(2), 5)], expected_compiles=3)
+
+
+def test_match_with_tensor_guard():
+
+    def f(x):
+        y = x * 1
+        match 0:
+            case 0 if y.sum() > 0:
+                y = y * 3
+            case _:
+                y = y - 3
+        return y
+
+    _check(f, [torch.rand(3), -torch.rand(4)])
+
+
+def test_for_else_falls_back():
+    """
+    Data-dependent control flow inside a for loop is not captured yet (the iterator is on the value stack); with
+    FOR_ITER capture (phase 2e) the else clause becomes the exhaustion edge. Until then the graph break keeps the
+    semantics.
+    """
+
+    def f(x):
+        y = x
+        for _ in range(3):
+            y = y * 2
+            if y.sum() > 50:
+                break
+        else:
+            y = y - 100
+        return y
+
+    backend = _check(f, [torch.rand(3), torch.full((2, ), 20.0)], expect_capture=False)
+    assert 'cfg' not in backend.kinds()
+
+
+def test_match_on_bool_of_tensor_falls_back():
+    """
+    ``bool(tensor)`` is a call, not a conditional jump, so Dynamo graph-breaks at it. Capturing it (as the predicate
+    of the jumps that test its result) is planned as a special case (phase 2e).
+    """
+
+    def f(x):
+        match bool(x.sum() > 0):
+            case True:
+                return x * 2
+            case False:
+                return x - 1
+
+    backend = _check(f, [torch.rand(3), -torch.rand(3)], expect_capture=False)
+    assert 'cfg' not in backend.kinds()
+
+
 if __name__ == '__main__':
     test_if_else()
     test_if_without_else_and_elif()
@@ -242,3 +313,7 @@ if __name__ == '__main__':
     test_conditional_expression_and_multiple_returns()
     test_while_true_break()
     test_stock_backend_unaffected()
+    test_match_on_python_value()
+    test_match_with_tensor_guard()
+    test_for_else_falls_back()
+    test_match_on_bool_of_tensor_falls_back()
