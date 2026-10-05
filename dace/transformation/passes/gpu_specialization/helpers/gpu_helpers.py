@@ -7,6 +7,7 @@ from ordered_set import OrderedSet
 from dace import dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import is_in_scope
+from dace.transformation.helpers import get_parent_maps
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
 # The legacy ambient-stream symbol, so expanded code is valid under either codegen.
@@ -23,17 +24,13 @@ def is_stream_wiring_applied(sdfg: SDFG) -> bool:
 
 
 def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
-    """Outermost-first chain of the ``schedule`` maps enclosing ``node``; earlier passes may leave the scope cache stale."""
+    """Outermost-first chain of the schedule maps enclosing node in state; earlier passes may leave the
+    scope cache stale."""
     state._clear_scopedict_cache()
-    sdict = state.scope_dict()
-    chain: List[nodes.MapEntry] = []
-    scope = sdict.get(node)
-    while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == schedule:
-            chain.append(scope)
-        scope = sdict.get(scope)
-    chain.reverse()
-    return chain
+    return [
+        entry for entry, entry_state in reversed(get_parent_maps(state, node))
+        if entry_state is state and isinstance(entry, nodes.MapEntry) and entry.map.schedule == schedule
+    ]
 
 
 def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
