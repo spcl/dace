@@ -174,6 +174,33 @@ def test_same_name_symbols_with_different_dtypes_serialize_independently():
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
+def test_symbol_dtype_is_part_of_identity():
+    """SymPy's equality, hashing and constructor caches key on ``_hashable_content``. With the dtype left out of it,
+    an expression built around a default-typed symbol is handed back from the cache for the same-name symbol of
+    another dtype, so the typed expression silently loses its dtype."""
+    default = symbolic.symbol('dtype_alias_sym')
+    typed = symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
+
+    assert default != typed
+    assert hash(default) != hash(typed)
+    assert default == symbolic.symbol('dtype_alias_sym')
+    assert typed == symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
+
+    # Prime SymPy's constructor caches with the default-typed symbol first
+    default_expr = default + 2
+    typed_expr = typed + 2
+    assert default_expr != typed_expr
+    assert [s.dtype for s in typed_expr.free_symbols] == [dace.int64]
+
+    serialized = symbolic.serialize_symbolic(typed_expr)
+    assert serialized == '2 + symbol($dtype_alias_sym, dtype=dace.int64)'
+    restored = symbolic.deserialize_symbolic(serialized)
+    assert [s.dtype for s in restored.free_symbols] == [dace.int64]
+
+    # Substitution remains name-based across dtypes
+    assert typed_expr.subs(default, 3) == 5
+
+
 def test_typed_symbol_deserialization_does_not_strip_dtype():
     # Input may not be in canonical order, but dtype must survive a round-trip
     original = '2*(1 + symbol($M, dtype=dace.int16))*symbol($M, dtype=dace.int16)'
