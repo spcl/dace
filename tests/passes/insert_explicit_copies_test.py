@@ -760,6 +760,27 @@ def test_lift_stage_out_copy():
     _run_and_check(sdfg, lambda A: A + 1.0)
 
 
+def test_a_container_passing_through_a_map_exit_is_not_a_copy():
+    """The array a kernel writes slice by slice is the one its exit hands on; a copy of it onto itself would cover
+    the whole array from one thread's slice."""
+    sdfg = dace.SDFG("same_container_through_exit")
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    written = state.add_access("B")
+    state.add_memlet_path(state.add_access("A"), me, ime, t, dst_conn="_in", memlet=Memlet("A[bi+ti]"))
+    state.add_memlet_path(t, imx, written, src_conn="_out", memlet=Memlet("B[bi+ti]"))
+    state.add_memlet_path(written, mx, state.add_access("B"), memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+
+
 def _view_an_names(sdfg, state):
     return [
         n.data for n in state.nodes()
@@ -1408,6 +1429,7 @@ if __name__ == '__main__':
     test_iec_reinterpret_does_not_lift_view()
     test_lift_stage_in_copy()
     test_lift_stage_out_copy()
+    test_a_container_passing_through_a_map_exit_is_not_a_copy()
     test_lift_stage_in_copy_through_view()
     test_lift_stage_out_copy_through_view()
     test_lift_stage_in_copy_chained_map_entries()

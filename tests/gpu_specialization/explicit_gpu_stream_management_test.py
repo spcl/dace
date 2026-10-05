@@ -296,7 +296,11 @@ def test_three_kernels_dependent_and_independent():
             dace.dtypes.StorageType.CPU_Pinned,
             dace.dtypes.StorageType.CPU_ThreadLocal,
         }
-        copy_nodes = [n for n in kernel_state.nodes() if isinstance(n, CopyLibraryNode)]
+        # The host-level copies are the transfers; an in-kernel copy (an element read into a register) stays on the
+        # device.
+        copy_nodes = [
+            n for n in kernel_state.nodes() if isinstance(n, CopyLibraryNode) and kernel_state.entry_node(n) is None
+        ]
         assert copy_nodes
         for c in copy_nodes:
             src = c.src_storage(kernel_state)

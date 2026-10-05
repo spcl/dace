@@ -55,21 +55,21 @@ class DaCeCodeGenerator(object):
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: Dict[int, bool] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
-        # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
-        self._symbol_resolver = SymbolResolver()
-        self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         self.resolve_symbols_and_constants(sdfg)
 
     def resolve_symbols_and_constants(self, sdfg: SDFG) -> None:
-        """(Re)build the per-``cfg_id`` cache of the symbols and constants each SDFG in the hierarchy sees.
+        """(Re)build the per-``cfg_id`` cache of the symbols and constants each SDFG in the hierarchy sees, and drop
+        the per-state symbol and struct-type caches.
 
         A target that adds nested SDFGs while preprocessing rebuilds it, as their ``cfg_id``s are new.
         """
         self._symbols_and_constants: Dict[int, Set[str]] = {}
+        # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
+        self._symbol_resolver = SymbolResolver()
+        self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         # resolve all symbols and constants
         # first handle root
         sdfg.reset_cfg_list()
@@ -105,10 +105,6 @@ class DaCeCodeGenerator(object):
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
-
-    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> Dict[str, dtypes.typeclass]:
-        """Symbols visible at ``node``, for queries that run while the SDFG is no longer being modified."""
-        return state.symbols_defined_at(node)
 
     def free_symbols(self, obj: Any):
         k = id(obj)

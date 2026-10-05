@@ -7,6 +7,8 @@ import logging
 import numbers
 import re
 import warnings
+from collections.abc import Callable
+from collections import deque
 from dataclasses import dataclass
 
 import sympy
@@ -276,6 +278,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     if edge.data.is_empty() or edge.data.wcr is not None:
                         continue
                     descs = (nsdfg.arrays[edge.src.data], nsdfg.arrays[edge.dst.data])
+                    # An edge into or out of a view aliases its data; it copies nothing.
+                    if any(isinstance(desc, dt.View) for desc in descs):
+                        continue
                     if (all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
                             and any(desc.transient for desc in descs) and
                         (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst))):
@@ -320,6 +325,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     self.prefix_tasklet(node, state, name, plan.levels)
         new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
         plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
+        self.reshape_descendants(plan.owner, name, plan.desc, lambda state, node: lift_prefix(plan.levels, state, node))
 
         if len(plan.hierarchy) == 1:
             self.carry_out_of_kernel(plan, name, kernel, kernel_state)
@@ -333,6 +339,57 @@ class MoveArrayOutOfKernel(ppl.Pass):
         bind_symbols(plan.hierarchy, plan.needed)
         plan.desc.transient = False
         self.lift_array_through_nested_sdfgs(name, kernel, plan.hierarchy)
+
+    def reshape_descendants(self, sdfg: SDFG, name: str, desc: dt.Array, prefix_at: Callable[[SDFGState, nodes.Node],
+                                                                                             Prefix]) -> None:
+        """Give every nest below ``sdfg`` that ``name`` reaches the lifted descriptor and index its accesses by the
+        slice the nest sees: a nested SDFG's data has the shape of the data connected to it (No-View nested SDFGs).
+
+        :raises NotImplementedError: A nest sees more than one slice, so its accesses have no single index.
+        """
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if not isinstance(node, nodes.NestedSDFG):
+                    continue
+                conns = ({e.dst_conn
+                          for e in state.in_edges(node) if e.data.data == name}
+                         | {e.src_conn
+                            for e in state.out_edges(node) if e.data.data == name})
+                if not conns:
+                    continue
+                prefix = prefix_at(state, node)
+                if any(begin != end for begin, end, _ in prefix):
+                    raise NotImplementedError(
+                        f"Nest {node.label} reads '{name}' outside the kernel levels it is lifted by")
+                inner = node.sdfg
+                defined = state.symbols_defined_at(node)
+                needed = {
+                    str(sym)
+                    for expr in (*desc.shape, *(begin for begin, _, _ in prefix))
+                    for sym in symbolic.pystr_to_symbolic(expr).free_symbols
+                }
+                for sym in sorted(needed):
+                    if sym not in inner.symbols:
+                        inner.add_symbol(sym, defined[sym])
+                    node.symbol_mapping[sym] = sym
+                point = [symbolic.symstr(begin) for begin, _, _ in prefix]
+                for conn in sorted(conns):
+                    inner.arrays[conn] = copy.deepcopy(desc)
+                    inner.arrays[conn].transient = False
+                    for inner_state in inner.all_states():
+                        for edge in inner_state.edges():
+                            self.prefix_memlet(edge, conn, prefix)
+                        for tasklet in (n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet)):
+                            code = tasklet.code.as_string
+                            if tasklet.language is not dtypes.Language.Python:
+                                if re.search(rf'\b{re.escape(conn)}\s*\[', code):
+                                    raise NotImplementedError(
+                                        f"Tasklet {tasklet.label} subscripts '{conn}' in {tasklet.language.name}")
+                                continue
+                            tasklet.code = properties.CodeBlock(prepend_subscript_indices(code, conn, point),
+                                                                tasklet.language)
+                    self.prefix_control_flow(inner, conn, point)
+                    self.reshape_descendants(inner, conn, inner.arrays[conn], lambda _state, _node: prefix)
 
     @staticmethod
     def slice_levels(name: str, accesses: list[tuple[nodes.AccessNode, SDFGState]]) -> list[Scope]:
@@ -470,9 +527,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
         :raises RuntimeError: No candidate is connected to ``node``.
         """
         visited = OrderedSet([node])
-        queue = [node]
+        queue = deque([node])
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current in access_nodes:
                 return current
             for neighbor in state.neighbors(current):

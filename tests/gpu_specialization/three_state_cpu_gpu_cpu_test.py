@@ -93,13 +93,14 @@ def _build_failed_validation_shape() -> dace.SDFG:
     # NestedSDFG INSIDE the GPU_Device + GPU_ThreadBlock scope -- this is the structure that
     # the broken pipeline used to splice a sync state into.
     inner = dace.SDFG('per_thread_body')
-    inner.add_array('a_lane', [1], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    inner.add_array('b_lane', [1], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_symbol('threadIdx_x', dace.int64)
+    inner.add_array('a_lane', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_array('b_lane', [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
     inner_st = inner.add_state('s')
     in_t = inner_st.add_tasklet('mul2', {'_a': dace.float32}, {'_b': dace.float32}, '_b = _a * 2.0')
-    inner_st.add_edge(inner_st.add_read('a_lane'), None, in_t, '_a', dace.Memlet('a_lane[0]'))
-    inner_st.add_edge(in_t, '_b', inner_st.add_write('b_lane'), None, dace.Memlet('b_lane[0]'))
-    nsdfg_node = gpu_state.add_nested_sdfg(inner, {'a_lane': None}, {'b_lane': None}, {})
+    inner_st.add_edge(inner_st.add_read('a_lane'), None, in_t, '_a', dace.Memlet('a_lane[threadIdx_x]'))
+    inner_st.add_edge(in_t, '_b', inner_st.add_write('b_lane'), None, dace.Memlet('b_lane[threadIdx_x]'))
+    nsdfg_node = gpu_state.add_nested_sdfg(inner, {'a_lane': None}, {'b_lane': None}, {'threadIdx_x': 'threadIdx_x'})
 
     # Wire the memlet path: A -> Device map -> ThreadBlock map -> NSDFG -> ThreadBlock map -> Device map -> B.
     gpu_state.add_memlet_path(a_read,

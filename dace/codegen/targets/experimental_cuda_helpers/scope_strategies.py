@@ -165,8 +165,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             kernel_block_dims = self._current_kernel_spec.block_dims
 
             state = cfg.state(state_id)
-            index_types = common.gpu_map_index_types(sdfg, state, node,
-                                                     self.codegen._frame.symbols_defined_at(state, node))
+            index_types = common.gpu_map_index_types(sdfg, state, node)
             map_range, symbolic_indices, _sym_coords = emit_dim_index_definitions(scope_map, 'threadIdx', index_types,
                                                                                   callsite_stream, cfg, state_id, node,
                                                                                   self._dispatcher)

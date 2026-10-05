@@ -1283,6 +1283,7 @@ else:
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
     gpuStream_t = opaque('gpuStream_t')
+
 _bool = bool
 
 
