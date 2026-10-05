@@ -260,15 +260,8 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
         insubset = dcpy(inedge.data.subset)
         isqdim = insubset.squeeze()
-        outsubset = dcpy(outedge.data.subset)
-        osqdim = outsubset.squeeze()
-        input_dims = len(insubset)
-        output_dims = len(outsubset)
         input_data = sdfg.arrays[inedge.data.data]
         output_data = sdfg.arrays[outedge.data.data]
-
-        if len(osqdim) == 0:  # Fix for scalars
-            osqdim = [0]
 
         # Standardize and squeeze axes
         axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
@@ -279,67 +272,49 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         assert node.identity is not None
 
-        # Same naming hazard as in ExpandReducePure: a map named after a symbol already defined at this
-        # scope rebinds it, and the boundary memlet naming the outer one then reads the inner map's
-        # value -- silently, with every output element equal to the first.
-        taken = {str(sym) for sym in state.symbols_defined_at(node).keys()}
-        suffix = ''
-        while any('_o%d%s' % (i, suffix) in taken or '_i%d%s' % (i, suffix) in taken
-                  for i in range(max(input_dims, output_dims) + 1)):
-            suffix += '_'
-
-        def oname(i: int) -> str:
-            return '_o%d%s' % (i, suffix)
-
-        def iname(i: int) -> str:
-            return '_i%d%s' % (i, suffix)
-
-        # Create nested SDFG
+        # Create nested SDFG. The connectors are the outer containers themselves and every memlet inside is
+        # absolute, as the nested SDFG contract requires: a dimension that is not iterated keeps its begin.
         nsdfg = SDFG('reduce')
+        nsdfg.add_datadesc('_in', dcpy(input_data))
+        nsdfg.add_datadesc('_out', dcpy(output_data))
+        nsdfg.arrays['_in'].transient = False
+        nsdfg.arrays['_out'].transient = False
 
-        # Kept-dim stride = ARRAY stride × input subset STEP → strided input (a[0:2N:2])
-        # indexes right elements; subset begin folded into _in ptr by caller. Step-1 unchanged.
-        nsdfg.add_array('_in',
-                        insubset.size(),
-                        input_data.dtype,
-                        strides=[input_data.strides[orig] * insubset[j][2] for j, orig in enumerate(isqdim)],
-                        storage=input_data.storage)
-
-        nsdfg.add_array('_out',
-                        outsubset.size(),
-                        output_data.dtype,
-                        strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
-                        storage=output_data.storage)
-
-        # The accumulator is the OUTPUT element type. That is THE CONTRACT -- ``dace::reduce::sum<T, U>``
-        # names ``T`` the seed/output type and ``U`` the input's and casts per element, and
-        # ``reduce_scan_dtype_matrix_test.test_reduce_accumulates_in_the_output_dtype`` pins it. Of the
-        # three host expansions this was the only one that broke it: ``ExpandReduceOpenMP`` goes
-        # through that runtime entry point and ``ExpandReducePure`` writes its WCR straight into
-        # ``_out``, while this one STAGES an accumulator and used to stage it at the INPUT's type. It
-        # is also the one ``ExpandReduceAuto`` dispatches to for every ``Sequential`` reduction that
-        # carries an identity, so an int8 predicate mask summed into an int64 total wrapped at 127.
-        nsdfg.add_transient('acc', [1], nsdfg.arrays['_out'].dtype, dtypes.StorageType.Register)
+        nsdfg.add_transient('acc', [1], input_data.dtype, dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
 
         # Interleave input and output axes to match input memlet
+        def absolute(subset: subsets.Range, dim: int, param: str) -> str:
+            begin, _, step = subset[dim]
+            return f'{symstr(begin)} + ({symstr(step)}) * {param}'
+
+        input_size = inedge.data.subset.size()
         ictr, octr = 0, 0
         input_subset = []
-        for i in isqdim:
+        for i in range(len(input_size)):
             if i in axes:
-                input_subset.append(iname(ictr))
+                input_subset.append(absolute(inedge.data.subset, i, f'_i{ictr}'))
                 ictr += 1
-            else:
-                input_subset.append(oname(octr))
+            elif input_size[i] != 1:
+                input_subset.append(absolute(inedge.data.subset, i, f'_o{octr}'))
                 octr += 1
+            else:
+                input_subset.append(symstr(inedge.data.subset[i][0]))
 
-        ome, omx = nstate.add_map('reduce_output', {
-            oname(i): '0:%s' % symstr(sz)
-            for i, sz in enumerate(outsubset.size())
-        })
-        outm = dace.Memlet.simple('_out', ','.join([oname(i) for i in range(output_dims)]))
-        #wcr_str=node.wcr)
+        output_subset = []
+        output_ranges = {}
+        for i, size in enumerate(outedge.data.subset.size()):
+            if size != 1:
+                param = f'_o{len(output_ranges)}'
+                output_subset.append(absolute(outedge.data.subset, i, param))
+                output_ranges[param] = f'0:{symstr(size)}'
+            else:
+                output_subset.append(symstr(outedge.data.subset[i][0]))
+
+        # A single output element still gets the map that scopes the accumulator reset
+        ome, omx = nstate.add_map('reduce_output', output_ranges or {'_o0': '0:1'})
+        outm = dace.Memlet.simple('_out', ','.join(output_subset))
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
         idt = nstate.add_tasklet('reset', {}, {_OUT}, f'{_OUT} = {node.identity}')

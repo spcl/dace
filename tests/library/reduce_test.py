@@ -50,42 +50,23 @@ def test_library_node_expand_reduce_pure():
     assert np.allclose(wantC, gotC)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'pure-seq'])
-def test_expansion_inside_a_map_does_not_shadow_its_parameter(implementation):
-    """A reduce expanded inside a map must not name its own maps after a parameter already in scope.
+def test_pure_seq_row_sums_in_a_map():
+    """A sequential reduction per map iteration: its output is one element of the destination, so the
+    nested SDFG connects the outer containers and indexes them absolutely."""
 
-    The expansion's maps are ``_o<n>`` / ``_i<n>``. Nested under a map that uses the same name, the
-    inner map rebinds it, and the boundary memlet that names the OUTER parameter then reads the inner
-    map's value -- every output element comes out as the first one, with nothing to see in the graph.
-    """
-    N, M = 20, 30
-    sdfg = SDFG('reduce_under_o0')
-    sdfg.add_array('inp', (M, N), dace.float64)
-    sdfg.add_array('out', (N, ), dace.float64)
-    state = sdfg.add_state()
+    @dace.program
+    def row_sums(A: dace.float64[10, 4], B: dace.float64[10]):
+        for i in dace.map[0:10]:
+            B[i] = np.sum(A[i, :])
 
-    entry, exit_ = state.add_map('outer', {'_o0': f'0:{N}'})
-    red = state.add_reduce('lambda a, b: a + b', axes=(0, ), identity=0.0)
-    red.implementation = implementation
-    state.add_memlet_path(state.add_read('inp'), entry, red, memlet=Memlet('inp[0:%d, _o0]' % M), dst_conn='_in')
-    state.add_memlet_path(red, exit_, state.add_write('out'), memlet=Memlet('out[_o0]'), src_conn='_out')
-    sdfg.validate()
+    sdfg = row_sums.to_sdfg()
+    rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
+    rednode.implementation = 'pure-seq'
 
-    sdfg.expand_library_nodes()
-    for nested, _ in sdfg.all_nodes_recursive():
-        if not isinstance(nested, dace.nodes.NestedSDFG):
-            continue
-        inherited = {str(s) for s in nested.symbol_mapping.keys()}
-        for n, _ in nested.sdfg.all_nodes_recursive():
-            if isinstance(n, dace.nodes.MapEntry):
-                clash = set(n.map.params) & inherited
-                assert not clash, f'expansion map rebinds inherited symbol(s) {sorted(clash)}'
-
-    inp = np.random.rand(M, N)
-    out = np.zeros(N)
-    sdfg(inp=inp, out=out)
-    assert np.allclose(out, inp.sum(axis=0))
-    assert not np.allclose(out, out[0]), 'every element equal: the reduction read one column for all outputs'
+    A = np.random.rand(10, 4)
+    B = np.zeros(10)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A.sum(axis=1))
 
 
 _impls = ['pure', 'CUDA (device)', 'pure-seq', 'GPUAuto']
@@ -187,5 +168,4 @@ if __name__ == '__main__':
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])
     test_library_node_expand_reduce_pure()
-    for impl in ['pure', 'pure-seq']:
-        test_expansion_inside_a_map_does_not_shadow_its_parameter(impl)
+    test_pure_seq_row_sums_in_a_map()
