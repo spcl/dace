@@ -12,17 +12,20 @@ from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 import torch
 from torch._dynamo.backends.common import aot_autograd
+from torch._functorch.aot_autograd import make_boxed_func
 from torch._functorch.partitioners import default_partition
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from dace import data, dtypes
+from dace.autodiff import make_backward_pass
 from dace.config import Config
 
 from .decompositions import build_decomposition_table
 from . import joint as jt
 from .context import UnsupportedOpError
 from .importer import GraphImporter, PhaseInterface
-from .runtime import CompiledGraph
+from .runtime import CompiledGraph, DifferentiableGraph
+from .training import compile_pair
 from .sources import GraphDescription, describe_graph
 
 #: Dynamo settings for tracing programs that DaCe compiles: ``.item()`` stays in the graph as a data-dependent symbol
@@ -105,6 +108,9 @@ class DaceBackend:
         description = describe_graph(gm, self.options.signature, self.options.dynamic_shapes)
         self.last_description = description
         self.last_dynamo_graph = gm
+        if _has_captured_control_flow(gm) and _requires_gradients(example_inputs):
+            # AOTAutograd cannot differentiate captured control flow (an opaque operator): DaCe's autodiff can
+            return self._compile_with_dace_autodiff(gm, example_inputs, description)
         # AOTAutograd may compile the backward graph lazily (on the first backward call), after other graphs.
         # Attention is traced with the math kernel, so that its backward consists of operators the frontend lowers.
         compiler = aot_autograd(fw_compiler=functools.partial(self._compile_forward, description=description),
@@ -185,6 +191,45 @@ class DaceBackend:
         self.last_result = result
         return CompiledGraph(csdfg, result.inputs, result.outputs)
 
+    def _compile_with_dace_autodiff(self, gm: torch.fx.GraphModule, example_inputs: List[Any],
+                                    description: GraphDescription) -> Callable:
+        """
+        Compiles a training graph into a forward and a backward SDFG with DaCe's automatic differentiation (instead of
+        AOTAutograd's backward graph), and returns a function that records them for PyTorch's autograd.
+        """
+        graphs = []
+
+        def record(aten_gm, inputs):
+            graphs.append((aten_gm, inputs))
+            return make_boxed_func(aten_gm.forward)
+
+        # The forward ATen graph (AOTAutograd in inference mode)
+        with torch.no_grad(), sdpa_kernel(SDPBackend.MATH):
+            aot_autograd(fw_compiler=record, decompositions=self.decomposition_table)(gm, example_inputs)
+        aten_gm, aten_inputs = graphs[0]
+        input_names = description.input_names() if len(description.inputs) == len(aten_inputs) else None
+        name = self._graph_name(aten_gm)
+        result = GraphImporter(self.options).import_graph(aten_gm,
+                                                          aten_inputs,
+                                                          name,
+                                                          symbol_names=description.symbol_names,
+                                                          input_names=input_names)
+        self.last_result = result
+        if any(spec.kind != 'tensor' for spec in result.outputs):
+            raise UnsupportedOpError('autodiff', 'the graph returns values other than new tensors')
+        outputs = [spec.name for spec in result.outputs]
+        differentiated = [
+            spec.name for spec in result.inputs if spec.kind == 'tensor'
+            and isinstance(example_inputs[spec.position], torch.Tensor) and example_inputs[spec.position].requires_grad
+        ]
+        self.last_sdfg = result.sdfg
+        # The backward SDFG recomputes the forward pass: the data the captured control flow decides on (e.g., branch
+        # predicates) need not be forwarded between the two SDFGs
+        backward_pass = make_backward_pass(result.sdfg, outputs=outputs, inputs=differentiated, recompute_forward=True)
+        pair = compile_pair(backward_pass, outputs, differentiated)
+        self.compile_count += 2
+        return DifferentiableGraph(pair, result.inputs, result.outputs)
+
     def _compile_sdfg(self, sdfg) -> Any:
         self.last_sdfg = sdfg
         if self.options.save_sdfg:
@@ -196,6 +241,15 @@ class DaceBackend:
         csdfg = sdfg.compile()
         self.compile_count += 1
         return csdfg
+
+
+def _has_captured_control_flow(gm: torch.fx.GraphModule) -> bool:
+    # By name: the operator is only registered once control-flow capture (``cfg``) is imported
+    return any(node.op == 'call_function' and str(node.target) == 'dace.cfg.default' for node in gm.graph.nodes)
+
+
+def _requires_gradients(example_inputs: List[Any]) -> bool:
+    return torch.is_grad_enabled() and any(isinstance(x, torch.Tensor) and x.requires_grad for x in example_inputs)
 
 
 def _phase_arguments(sdfg, interface: PhaseInterface, other: PhaseInterface) -> Dict[str, Any]:

@@ -172,8 +172,8 @@ def training_step(program: DaceProgram) -> TrainingStep:
 
 
 @dataclasses.dataclass
-class _Pair:
-    """The compiled forward and backward SDFGs of a program (see :func:`dace.autodiff.make_backward_pass`)."""
+class SDFGPair:
+    """Compiled forward and backward SDFGs (see :func:`dace.autodiff.make_backward_pass`)."""
     forward: CompiledSDFG
     backward: CompiledSDFG
     backward_pass: BackwardPass
@@ -197,10 +197,10 @@ class DifferentiableProgram(_ProgramCompiler):
         arguments = self._arguments(args, kwargs)
         pair = self._compile(args, kwargs, arguments)
         call, objects = self._call_arguments(pair.forward.sdfg, arguments)
-        outputs = _ProgramFunction.apply(pair, call, *[objects[name] for name in pair.differentiated])
+        outputs = SDFGPairFunction.apply(pair, call, *[objects[name] for name in pair.differentiated])
         return outputs[0] if len(outputs) == 1 else outputs
 
-    def _compile(self, args: Tuple, kwargs: Dict[str, Any], arguments: Dict[str, Any]) -> _Pair:
+    def _compile(self, args: Tuple, kwargs: Dict[str, Any], arguments: Dict[str, Any]) -> SDFGPair:
         key = self._key(arguments)
         if key in self._compiled:
             return self._compiled[key]
@@ -208,19 +208,27 @@ class DifferentiableProgram(_ProgramCompiler):
         outputs = sorted(name for name, desc in sdfg.arrays.items() if name.startswith(_RETURN) and not desc.transient)
         if not outputs:
             raise ValueError(f'{self.program.name} returns nothing to differentiate')
-        backward_pass = make_backward_pass(sdfg, outputs=outputs, inputs=differentiated)
-        pair = _Pair(backward_pass.forward.compile(), backward_pass.backward.compile(), backward_pass, outputs,
-                     differentiated, set(backward_pass.forward.arglist()), set(backward_pass.backward.arglist()))
+        pair = compile_pair(make_backward_pass(sdfg, outputs=outputs, inputs=differentiated), outputs, differentiated)
         self.compile_count += 2
         self._compiled[key] = pair
         return pair
 
 
-class _ProgramFunction(torch.autograd.Function):
-    """Runs the forward SDFG of a program, and its backward SDFG in ``backward``."""
+def compile_pair(backward_pass: BackwardPass, outputs: List[str], differentiated: List[str]) -> SDFGPair:
+    """Compiles the forward and backward SDFGs of ``backward_pass``."""
+    return SDFGPair(backward_pass.forward.compile(), backward_pass.backward.compile(), backward_pass, outputs,
+                    differentiated, set(backward_pass.forward.arglist()), set(backward_pass.backward.arglist()))
+
+
+class SDFGPairFunction(torch.autograd.Function):
+    """
+    Runs a forward SDFG, and its backward SDFG in ``backward``. ``apply(pair, call, *differentiated)`` takes the SDFG
+    arguments by name (tensors detached, and symbols) and the tensors to differentiate, in the order of
+    ``pair.differentiated``; it returns the outputs in the order of ``pair.outputs``.
+    """
 
     @staticmethod
-    def forward(ctx, pair: _Pair, call: Dict[str, Any], *differentiated: torch.Tensor):
+    def forward(ctx, pair: SDFGPair, call: Dict[str, Any], *differentiated: torch.Tensor):
         backward_pass = pair.backward_pass
         sdfg = pair.forward.sdfg
         symbols = {name: value for name, value in call.items() if name in sdfg.symbols}
@@ -260,6 +268,10 @@ class _ProgramFunction(torch.autograd.Function):
             name: value
             for name, value in call.items() if name in pair.backward_arguments and name not in arguments
         })
+        for name in pair.backward_arguments - set(arguments) - set(sdfg.symbols):
+            # Containers the backward SDFG writes but nobody reads (e.g., outputs of a recomputed forward pass)
+            if isinstance(sdfg.arrays.get(name), data.Array):
+                arguments[name] = _allocate(sdfg.arrays[name], symbols)
         pair.backward(**arguments)
         return (None, None, *[gradients.get(name) for name in pair.differentiated])
 

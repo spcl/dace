@@ -453,6 +453,49 @@ def test_branch_on_item():
         _check(f, [torch.randn(6), -torch.rand(5), torch.rand(3)])
 
 
+class _Branching(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(4, 4)
+        self.alt = nn.Linear(4, 4)
+
+    def forward(self, x):
+        h = self.fc(x)
+        if h.sum() > 0:
+            h = torch.tanh(h) * 2
+        else:
+            h = self.alt(h)
+        return h + 1
+
+
+@pytest.mark.torch
+def test_training_through_captured_branch():
+    """
+    AOTAutograd cannot differentiate captured control flow; DaCe's autodiff does (a forward SDFG, and a backward SDFG
+    that recomputes it). Parameters of the branch not taken get zero gradients.
+    """
+    torch.manual_seed(0)
+    model, reference = _Branching(), _Branching()
+    reference.load_state_dict(model.state_dict())
+    backend = ControlFlowBackend()
+    compiled = torch.compile(model, backend=backend, dynamic=True)
+    for x in (torch.randn(3, 4), -torch.rand(5, 4) * 3):
+        x_ref = x.clone().requires_grad_(True)
+        x = x.clone().requires_grad_(True)
+        out, ref = compiled(x), reference(x_ref)
+        torch.testing.assert_close(out, ref, rtol=1e-4, atol=1e-5)
+        out.square().sum().backward()
+        ref.square().sum().backward()
+        torch.testing.assert_close(x.grad, x_ref.grad, rtol=1e-4, atol=1e-5)
+        for (name, p), p_ref in zip(model.named_parameters(), reference.parameters()):
+            expected = p_ref.grad if p_ref.grad is not None else torch.zeros_like(p_ref)
+            torch.testing.assert_close(p.grad, expected, rtol=1e-4, atol=1e-5, msg=name)
+        model.zero_grad()
+        reference.zero_grad()
+    assert 'cfg' in backend.kinds() and backend.compile_count == 2
+
+
 if __name__ == '__main__':
     test_if_else()
     test_if_without_else_and_elif()
@@ -478,4 +521,5 @@ if __name__ == '__main__':
     test_while_counter()
     test_counting_down()
     test_branch_on_item()
+    test_training_through_captured_branch()
     test_match_on_bool_of_tensor_falls_back()

@@ -8,6 +8,8 @@ import torch
 from dace import symbolic
 from dace.codegen.compiled_sdfg import CompiledSDFG
 
+from .training import SDFGPairFunction
+
 
 def _evaluate(expr, symvals: Dict[str, int]) -> int:
     if isinstance(expr, (int, bool)):
@@ -100,3 +102,33 @@ class CompiledGraph:
         for index, buf in scalars:
             results[index] = buf.item()
         return results
+
+
+class DifferentiableGraph:
+    """
+    Callable returned to Dynamo for a training graph differentiated by DaCe (see
+    :meth:`~.backend.DaceBackend._compile_with_dace_autodiff`): it runs the forward SDFG as a PyTorch autograd function
+    whose backward runs the backward SDFG.
+    """
+
+    def __init__(self, pair, inputs: List[Any], outputs: List[Any]):
+        self.pair = pair
+        self.inputs = inputs
+        self.outputs = outputs
+
+    def __call__(self, *args) -> List[Any]:
+        if len(args) == 1 and isinstance(args[0], list):  # Boxed calling convention
+            args = tuple(args[0])
+        call: Dict[str, Any] = {}
+        tensors: Dict[str, torch.Tensor] = {}
+        for spec in self.inputs:
+            if spec.kind == 'sym':
+                call[spec.name] = int(args[spec.position])
+            elif spec.kind == 'tensor':
+                tensor = args[spec.position]
+                tensors[spec.name] = tensor
+                tensor = tensor.detach()
+                call[spec.name] = tensor.reshape(1) if tensor.dim() == 0 else tensor
+        results = SDFGPairFunction.apply(self.pair, call, *[tensors[name] for name in self.pair.differentiated])
+        # Rank-0 tensors are shape-(1,) containers in the SDFG
+        return [r.reshape(()) if len(spec.tshape) == 0 else r for r, spec in zip(results, self.outputs)]
