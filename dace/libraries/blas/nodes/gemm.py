@@ -7,7 +7,8 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype,
+                                              matrix_view)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts, _matrix_operand,
                                               _matrix_subset_size)
 from .. import environments
@@ -38,6 +39,27 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
+def _operand_window(edge, desc, shape, strides):
+    """
+    The inner descriptor of a GEMM operand, and how its matrix view is indexed. An operand squeezed into its
+    matrix view (an ``(NQ, 1, NP)`` reshape) keeps the memlet's whole window, so the connector stays the container
+    it is connected to rather than becoming a view of it.
+
+    :return: The shape and strides of the connector, and a function from a matrix row and column to its index.
+    """
+    window = edge.data.subset.size()
+    if len(window) == 2:
+        return shape, strides, lambda row, col: f'{row}, {col}'
+    _, dims = matrix_view(edge.data.subset)
+
+    def index(row: str, col: str) -> str:
+        idx = ['0'] * len(window)
+        idx[dims[0]], idx[dims[1]] = row, col
+        return ', '.join(idx)
+
+    return window, list(desc.strides), index
+
+
 @dace.library.expansion
 class ExpandGemmPure(ExpandTransformation):
 
@@ -50,7 +72,7 @@ class ExpandGemmPure(ExpandTransformation):
         adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
         edge_a, outer_array_a, shape_a, strides_a = _matrix_operand(adata)
         edge_b, outer_array_b, shape_b, strides_b = _matrix_operand(bdata)
-        _, outer_array_c, _, strides_c = _matrix_operand(cdata)
+        edge_c, outer_array_c, _, strides_c = _matrix_operand(cdata)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -80,9 +102,12 @@ class ExpandGemmPure(ExpandTransformation):
 
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
-        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
+        window_a, strides_a, index_a = _operand_window(edge_a, outer_array_a, shape_a, strides_a)
+        window_b, strides_b, index_b = _operand_window(edge_b, outer_array_b, shape_b, strides_b)
+        window_c, strides_c, index_c = _operand_window(edge_c, outer_array_c, shape_c, strides_c)
+        _, array_a = sdfg.add_array("_a", window_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_b = sdfg.add_array("_b", window_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        _, array_c = sdfg.add_array("_c", window_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
@@ -100,13 +125,12 @@ class ExpandGemmPure(ExpandTransformation):
 
         # Initialization / beta map
         if equal_valued(0, node.beta):
-            init_state.add_mapped_tasklet(
-                'gemm_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(shape_c)
-                }, {},
-                'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-                external_edges=True)
+            init_state.add_mapped_tasklet('gemm_init', {
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(shape_c)
+            }, {},
+                                          'out = 0', {'out': dace.Memlet.simple(mul_out, index_c('_o0', '_o1'))},
+                                          external_edges=True)
         elif equal_valued(1, node.beta):
             # Do nothing for initialization, only update the values
             pass
@@ -116,7 +140,7 @@ class ExpandGemmPure(ExpandTransformation):
 
             # manually broadcasting C to [M, N]
             if list(shape_c) == [M, N]:
-                memlet_idx = '__i0, __i1'
+                memlet_idx = index_c('__i0', '__i1')
             elif list(shape_c) == [1, N]:
                 memlet_idx = '0, __i1'
             elif list(shape_c) == [M, 1]:
@@ -132,21 +156,23 @@ class ExpandGemmPure(ExpandTransformation):
             }, {
                 "__c": dace.Memlet.simple("_c", memlet_idx),
             },
-                                          add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
+                                          add_program, {"__y": dace.Memlet.simple("_c", index_c('__i0', '__i1'))},
                                           external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("gemm", {
-            "__i%d" % i: "0:%s" % s
-            for i, s in enumerate([M, N, K])
-        }, {
-            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-        },
-                                 mul_program,
-                                 {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
-                                 external_edges=True,
-                                 output_nodes=output_nodes)
+        state.add_mapped_tasklet(
+            "gemm", {
+                "__i%d" % i: "0:%s" % s
+                for i, s in enumerate([M, N, K])
+            }, {
+                "__a": dace.Memlet.simple("_a",
+                                          index_a("__i2", "__i0") if node.transA else index_a("__i0", "__i2")),
+                "__b": dace.Memlet.simple("_b",
+                                          index_b("__i1", "__i2") if node.transB else index_b("__i2", "__i1"))
+            },
+            mul_program, {"__out": dace.Memlet.simple(mul_out, index_c("__i0", "__i1"), wcr_str="lambda x, y: x + y")},
+            external_edges=True,
+            output_nodes=output_nodes)
 
         return sdfg
 
