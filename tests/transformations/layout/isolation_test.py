@@ -98,8 +98,7 @@ def test_set_openmp_thread_count_pins_a_runtime_that_already_read_the_environmen
     """
     out = run_isolated(omp_probe)
     assert "error" not in out, out
-    if out["runtime"] is None:
-        pytest.skip("no OpenMP runtime on this machine, so there is no thread count to pin")
+    assert out["runtime"] is not None, "no OpenMP runtime on this machine, so there is no thread count to pin"
     assert out["ignored"] == 4, (f"{out['runtime']}: expected the environment write to be ignored and the "
                                  f"count to stay 4, got {out['ignored']}")
     assert out["pinned"] is True, f"{out['runtime']}: set_openmp_thread_count reported the pin did not take"

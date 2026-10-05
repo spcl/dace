@@ -7,7 +7,6 @@ the separate ``*`` then ``+`` (and a NumPy reference) by up to one ULP, so resul
 with a tolerance, never bit-exact.
 """
 import os
-import shutil
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -27,8 +26,9 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileFMA, TileBinop
+from dace.codegen.common import get_gpu_backend
+from tests.gpu_device_compile import PACKED_HALF_FMA, device_compile
 
-HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 M = dace.symbol("M")
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
@@ -115,8 +115,9 @@ def fma_lowers_and_runs(isa, dt):
     assert _count(sdfg, TileBinop) == 0
     sdfg.expand_library_nodes()
     sdfg.name = f"fma_cpu_{isa}_{dt.to_string()}"
-    A = np.random.rand(16, 64).astype(dt.type)
-    B = np.random.rand(16, 64).astype(dt.type)
+    rng = np.random.default_rng(0)
+    A = rng.random((16, 64)).astype(dt.type)
+    B = rng.random((16, 64)).astype(dt.type)
     C = np.zeros((16, 64), dt.type)
     sdfg(A=A, B=B, C=C, M=16, N=64)
     assert np.allclose(C.astype(np.float64), (A * B + A).astype(np.float64), rtol=1e-4, atol=1e-6)
@@ -148,27 +149,16 @@ def test_cpu_fma_off_by_default():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; PTX check skipped")
-def test_gpu_fma_lowers_to_native_hfma2(tmp_path):
-    """A width-8 fp16 ``tile_fma`` lowers to native ``fma.rn.f16x2`` (four packed half2 FMAs),
-    NOT separate ``mul.f16x2`` + ``add.f16x2`` -- verified in the PTX."""
-    import subprocess
+def test_gpu_fma_lowers_to_native_packed_half_fma(tmp_path):
+    """A width-8 fp16 ``tile_fma`` lowers to the native packed half FMA (four half2 FMAs: ``fma.rn.f16x2`` on CUDA,
+    ``v_pk_fma_f16`` on HIP), NOT a separate packed multiply and add -- verified in the device assembly."""
     src = ("#include \"dace/dace.h\"\n#include \"dace/tile_ops/cuda.h\"\n"
            "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b,\n"
            "                  const dace::float16* c) {\n"
            "  dace::tileops::tile_fma<dace::float16, 8, false, false, false, false>(o, a, b, c, nullptr);\n}\n")
-    inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
-    cu = tmp_path / "fma_f16x2_probe.cu"
-    ptx = tmp_path / "fma_f16x2_probe.ptx"
-    cu.write_text(src)
-    subprocess.run([
-        "nvcc", "-I", inc, "--expt-relaxed-constexpr", "-diag-suppress", "128", "-ptx", "-arch=sm_80",
-        str(cu), "-o",
-        str(ptx)
-    ],
-                   check=True,
-                   capture_output=True)
-    assert "fma.rn.f16x2" in ptx.read_text(), "fp16 tile_fma did not lower to native hfma2 (fma.rn.f16x2)"
+    build = device_compile(src, tmp_path, assembly=True)
+    assert build.result.returncode == 0, build.result.stderr
+    assert PACKED_HALF_FMA[get_gpu_backend()] in build.output.read_text(), "fp16 tile_fma did not lower to a packed FMA"
 
 
 @pytest.mark.gpu
@@ -184,8 +174,9 @@ def test_gpu_fma_runs_fp16():
     assert _count(sdfg, TileFMA) >= 1
     sdfg.name = "fma_gpu_run_f16"
     n = 64
-    A = np.random.rand(16, n).astype(np.float16)
-    B = np.random.rand(16, n).astype(np.float16)
+    rng = np.random.default_rng(0)
+    A = rng.random((16, n)).astype(np.float16)
+    B = rng.random((16, n)).astype(np.float16)
     dA, dB, dC = cupy.asarray(A), cupy.asarray(B), cupy.zeros((16, n), cupy.float16)
     sdfg(A=dA, B=dB, C=dC, M=16, N=n)
     ref = A.astype(np.float32) * B.astype(np.float32) + A.astype(np.float32)

@@ -39,7 +39,6 @@ def pytest_collection_finish(session):
 '''
 
 
-@pytest.mark.skipif(not os.path.exists('/proc/self/maps'), reason='needs a Linux memory map')
 def test_collecting_the_suite_maps_no_openmp_runtime(tmp_path):
     """No collected module may load an OpenMP runtime as an import side effect."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

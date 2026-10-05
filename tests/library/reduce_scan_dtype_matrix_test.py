@@ -218,8 +218,7 @@ def test_reduction_header_instantiates_the_supported_set_warning_free(cxx, tmp_p
     Only diagnostics pointing INTO ``reduction.h`` count -- the surrounding headers have their own
     ``-Wconversion`` noise, which this test neither owns nor hides.
     """
-    if shutil.which(cxx) is None:
-        pytest.skip(f'{cxx} not installed')
+    assert shutil.which(cxx) is not None, f'{cxx} not installed'
     real = ['dace::float16', 'dace::bfloat16', 'dace::float8_e4m3fn', 'dace::float8_e5m2', 'float', 'double']
     cplx = ['dace::complex64', 'dace::complex128']
     lines = ['#include <dace/reduction.h>']
@@ -274,8 +273,7 @@ _REJECTED = [
                          ids=[m.split()[-3] + str(i) for i, (_, m) in enumerate(_REJECTED)])
 def test_reduction_header_names_the_rejected_element_types(source, message, tmp_path):
     """Out-of-policy op/dtype pairs fail to compile with the runtime's OWN diagnostic."""
-    if shutil.which('g++') is None:
-        pytest.skip('g++ not installed')
+    assert shutil.which('g++') is not None, 'g++ not installed'
     src = tmp_path / 'rejected.cpp'
     src.write_text('#include <dace/reduction.h>\n' + source + '\n')
     proc = subprocess.run(['g++', '-std=c++20', '-fopenmp', '-I', _INCLUDE, '-c',
@@ -365,8 +363,7 @@ def test_numeric_limits_of_the_low_precision_types(tmp_path):
     ``libraries/tileops``) then reduces silently into zero instead of failing. This is the guard on
     that: real bounds, correct significand widths, and no infinity for the finite fp8 format.
     """
-    if shutil.which('g++') is None:
-        pytest.skip('g++ not installed')
+    assert shutil.which('g++') is not None, 'g++ not installed'
     src = tmp_path / 'limits.cpp'
     src.write_text(_LIMITS_DRIVER)
     exe = tmp_path / 'limits'

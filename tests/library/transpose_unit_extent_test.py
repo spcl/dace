@@ -73,8 +73,7 @@ def test_transpose_pure_handles_a_unit_extent(shape):
 
 @pytest.mark.parametrize("shape", SHAPES)
 def test_transpose_openblas_handles_a_unit_extent(shape):
-    if not blas_environments.openblas.OpenBLAS.is_installed():
-        pytest.skip("OpenBLAS is not installed")
+    assert blas_environments.openblas.OpenBLAS.is_installed(), "OpenBLAS is not installed"
     run(shape, "OpenBLAS")
 
 
@@ -117,8 +116,8 @@ def test_a_strided_operand_never_reaches_a_blas_call(implementation):
 
 @pytest.mark.parametrize("implementation", ["pure", "OpenBLAS"])
 def test_a_strided_operand_transposes_correctly(implementation):
-    if implementation == "OpenBLAS" and not blas_environments.openblas.OpenBLAS.is_installed():
-        pytest.skip("OpenBLAS is not installed")
+    assert implementation != "OpenBLAS" or blas_environments.openblas.OpenBLAS.is_installed(
+    ), "OpenBLAS is not installed"
     sdfg = build_strided(implementation)
     sdfg.expand_library_nodes()
     sdfg.validate()

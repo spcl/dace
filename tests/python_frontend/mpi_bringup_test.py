@@ -141,12 +141,12 @@ def launcher_free_env() -> dict:
     return {key: value for key, value in os.environ.items() if key not in MPI_RANK_VARS}
 
 
-@pytest.mark.skipif(shutil.which('mpirun') is None, reason='needs an MPI launcher')
+@pytest.mark.mpi
 def test_poisoned_rank_can_still_talk_to_its_communicator():
     """The regression end to end: a real rank with the switch set must reach COMM_WORLD."""
+    assert shutil.which('mpirun') is not None, 'needs an MPI launcher'
     env_probe = subprocess.run([sys.executable, '-c', 'from mpi4py import MPI'], capture_output=True)
-    if env_probe.returncode != 0:
-        pytest.skip('mpi4py cannot reach an MPI runtime here')
+    assert env_probe.returncode == 0, 'mpi4py cannot reach an MPI runtime here'
 
     result = subprocess.run(['mpirun', '-n', '2', sys.executable, '-c', PROBE],
                             capture_output=True,

@@ -362,7 +362,6 @@ def test_unknown_build_mode_raises(tmp_path):
             sdfg.compile()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_native_rejects_hip_backend(tmp_path):
     """Native mode is CUDA-only: a HIP/ROCm backend must raise a clear error, not crash downstream
     on a half-wired code path."""
@@ -380,7 +379,6 @@ def test_native_rejects_hip_backend(tmp_path):
                 sdfg.compile()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_cmake_build_still_works(tmp_path):
     """The default cmake backend (extracted into its own function) still builds + runs -- guards the
     refactor that split configure_and_compile into native/cmake dispatch."""
@@ -403,7 +401,6 @@ def test_cmake_build_still_works(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_native_build_plain_cpu(tmp_path):
     """A plain (no-libnode) program builds + runs under native mode, producing the library and its
     loader stub where the loader expects them."""
@@ -426,7 +423,6 @@ def test_native_build_plain_cpu(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix' or not _blas_buildable(), reason='no BLAS + dev headers available')
 def test_native_build_blas_matmul(tmp_path):
     """A real BLAS library node (matmul) builds + runs correctly under native mode.
 
@@ -435,6 +431,7 @@ def test_native_build_blas_matmul(tmp_path):
     ever resolving or linking a BLAS library -- i.e. providing zero coverage of the very link path
     it exists to protect.
     """
+    assert _blas_buildable(), "no BLAS + dev headers available"
     import dace.libraries.blas as blas
     n = 48
     previous = blas.default_implementation
@@ -445,23 +442,20 @@ def test_native_build_blas_matmul(tmp_path):
         def mm(x: dace.float64[n, n], y: dace.float64[n, n], z: dace.float64[n, n]):
             z[:] = x @ y
 
-        x = np.random.rand(n, n)
-        y = np.random.rand(n, n)
+        rng = np.random.default_rng(0)
+        x = rng.random((n, n))
+        y = rng.random((n, n))
         z = np.zeros((n, n))
         sdfg = mm.to_sdfg()
         sdfg.build_folder = str(tmp_path / 'cache')
         with set_temporary('compiler', 'build_mode', value='native'):
-            try:
-                csdfg = sdfg.compile()
-            except cgx.CompilerConfigurationError as ex:
-                pytest.skip(f'native BLAS resolution unavailable here: {ex}')
+            csdfg = sdfg.compile()
         csdfg(x=x, y=y, z=z)
         assert np.allclose(z, x @ y)
     finally:
         blas.default_implementation = previous
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_native_incremental_rebuild_and_invalidation(tmp_path):
     """The staleness machinery must reuse everything on an identical rebuild and rebuild when an
     input actually changes -- neither half was covered, since every other test builds exactly once.
@@ -552,8 +546,9 @@ def test_native_build_cublas_matmul(tmp_path):
         sdfg = mmg.to_sdfg()
         sdfg.apply_gpu_transformations()
         sdfg.build_folder = str(tmp_path / 'cache')
-        x = np.random.rand(n, n)
-        y = np.random.rand(n, n)
+        rng = np.random.default_rng(0)
+        x = rng.random((n, n))
+        y = rng.random((n, n))
         z = np.zeros((n, n))
         with set_temporary('compiler', 'build_mode', value='native'):
             csdfg = sdfg.compile()
@@ -568,7 +563,6 @@ def _archive_path(lib: str) -> str:
     return os.path.join(os.path.dirname(lib), os.path.basename(lib)[:-len('.so')] + '.a')
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_native_static_archive_emitted_alongside_so(tmp_path):
     """With ``compiler.static_archive`` on, native mode ALSO emits ``lib<name>.a``; the runnable
     ``.so`` is untouched and still runs bit-exact -- the archive is purely additive."""
@@ -594,7 +588,6 @@ def test_native_static_archive_emitted_alongside_so(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
 def test_native_no_static_archive_by_default(tmp_path):
     """Default (``static_archive`` off): native mode emits NO ``.a`` -- no regression for every build
     that does not ask for one."""
@@ -610,7 +603,6 @@ def test_native_no_static_archive_by_default(tmp_path):
     assert not os.path.isfile(_archive_path(str(csdfg._lib._library_filename)))
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='CMake .a target uses a POSIX ``lib*.a`` name here')
 def test_cmake_static_archive_emitted_alongside_so(tmp_path):
     """With ``compiler.static_archive`` on, the cmake backend ALSO emits ``lib<name>.a`` from the same
     objects as the shared library; the ``.so`` is untouched and runs bit-exact -- purely additive,
@@ -636,7 +628,6 @@ def test_cmake_static_archive_emitted_alongside_so(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='CMake .a target uses a POSIX ``lib*.a`` name here')
 def test_cmake_no_static_archive_by_default(tmp_path):
     """Default (``static_archive`` off): the cmake backend emits NO ``.a`` -- no regression."""
 

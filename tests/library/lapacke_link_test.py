@@ -42,15 +42,14 @@ def _openmp_runtime_loadable():
 @pytest.fixture
 def buildable():
     """Skip unless this machine can build and load a LAPACKE kernel."""
-    if not OpenBLAS.is_installed() or not _openmp_runtime_loadable():
-        pytest.skip('needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime')
+    assert OpenBLAS.is_installed() and _openmp_runtime_loadable(
+    ), 'needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime'
 
 
 def test_lapacke_header_and_symbols_available():
     """When OpenBLAS is present, the LAPACKE header and symbols must be reachable -- otherwise
     a Cholesky/Solve kernel cannot compile (needs lapacke.h) or link (needs LAPACKE_*)."""
-    if not OpenBLAS.is_installed():
-        pytest.skip('OpenBLAS (LAPACKE provider) not installed')
+    assert OpenBLAS.is_installed(), 'OpenBLAS (LAPACKE provider) not installed'
 
     # lapacke.h must be reachable: it's in the env's declared headers, and in single-lib
     # (spack/conda) mode it lives off the default include path, so an include dir must resolve.
