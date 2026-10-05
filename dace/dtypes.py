@@ -33,7 +33,19 @@ class StorageType(ExtensibleAttributeEnum):
     """ Available data storage types in the SDFG. """
 
     Default = auto()  #: Scope-default storage location
-    Register = auto()  #: Local data on registers, stack, or equivalent memory
+
+    @dataclass(frozen=True)
+    class Register:
+        """
+        Local data on registers, stack, or equivalent memory.
+
+        ``StorageType.Register`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to allow a symbolically-sized array on the stack, e.g., ``StorageType.Register(dynamic=True)``.
+        """
+        #: Whether a symbolically-sized array is a variable-length array on the stack (``True``). ``False`` and
+        #: ``None`` are the same: the array is allocated on the heap. Constant sizes are unaffected.
+        dynamic: Optional[bool] = None
+
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
@@ -67,6 +79,20 @@ def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
     """
     if storage != StorageType.GPU_Shared:
         raise ValueError(f'Expected a GPU_Shared storage type, got {storage}')
+    if storage._is_template:
+        return None
+    return storage.dynamic
+
+
+def is_dynamic_register(storage: StorageType) -> Optional[bool]:
+    """
+    Returns whether a ``Register`` storage type places a symbolically-sized array on the stack.
+
+    :param storage: A ``Register`` storage type, either the template or an instance of it.
+    :return: The ``dynamic`` attribute of the storage type, or None for the bare template.
+    """
+    if storage != StorageType.Register:
+        raise ValueError(f'Expected a Register storage type, got {storage}')
     if storage._is_template:
         return None
     return storage.dynamic
@@ -151,14 +177,6 @@ class AllocationLifetime(Enum):
     Global = auto()  #: Allocated throughout the entire program (outer SDFG)
     Persistent = auto()  #: Allocated throughout multiple invocations (init/exit)
     External = auto()  #: Allocated and managed outside the generated code
-
-
-class StackAllocation(Enum):
-    """ Whether a register array lives on the stack or on the heap. """
-
-    Auto = auto()  #: Decided by ``ResolveStackAllocation``: small constant sizes on the stack
-    Stack = auto()  #: On the stack; a symbolic size becomes a variable-length array
-    Heap = auto()  #: On the heap
 
 
 @undefined_safe_enum
