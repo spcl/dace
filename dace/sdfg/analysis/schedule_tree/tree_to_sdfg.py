@@ -913,7 +913,8 @@ def from_schedule_tree(
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
-    result.symbols = copy.deepcopy(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        result.symbol_repo.add(name, dtype)
 
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)
