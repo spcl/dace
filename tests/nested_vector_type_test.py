@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 from dace.memlet import Memlet
@@ -78,6 +78,8 @@ state.add_memlet_path(x_in1, nested_sdfg, dst_conn='_x', memlet=Memlet.simple(x_
 state.add_memlet_path(y_in1, nested_sdfg, dst_conn='_y', memlet=Memlet.simple(y_in1, "0:n"))
 
 state.add_memlet_path(nested_sdfg, z_out1, src_conn='_res', memlet=Memlet.simple(z_out1, "0:n"))
+
+nested_sdfg.integrate_into_parent()
 
 
 def test_nested_vectorization():

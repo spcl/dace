@@ -1239,10 +1239,11 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                      replace_in_graph: bool = True,
                      replace_keys: bool = False):
-        symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repl.items()
-        }
+        if symrepl is None:
+            symrepl = {
+                symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repl.items()
+            }
 
         if replace_in_graph:
             # Replace in inter-state edges
@@ -1886,14 +1887,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param outputs: Output connectors of the nested SDFG. Can be a set of connector names
                         (types will be auto-detected) or a dict mapping connector names to data types.
         :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
-                               parent SDFG's scope. If None, symbols are mapped to themselves.
+                               parent SDFG's scope. It is stored on the node as given, and free symbols
+                               of the nested SDFG without an entry are mapped to themselves. Entries that
+                               map a symbol to a parent symbol are folded into the nested SDFG when it is
+                               integrated (see ``dace.sdfg.dealias.fold_symbol_mapping``).
         :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
         :return: The created NestedSDFG node.
-        :raises ValueError: If neither sdfg nor external_path is provided, or if required symbols
-                           are missing from the symbol mapping.
+        :raises ValueError: If neither sdfg nor external_path is provided.
+        :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
+               node. Integration makes the connectors' descriptors those of the parent's containers, as a valid
+               SDFG requires (see ``dace.sdfg.dealias.integrate_nested_sdfg``).
         """
         if name is None:
             name = sdfg.label
@@ -1931,25 +1937,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Add "default" undefined symbols if None are given
-            symbols = sdfg.free_symbols
-            if symbol_mapping is None:
-                symbol_mapping = {s: s for s in symbols}
-                s.symbol_mapping = symbol_mapping
-
-            # Validate missing symbols
-            missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-            if missing_symbols and self.sdfg is not None:
-                # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
-                symbol_mapping.update(parent_mapping)
-                s.symbol_mapping = symbol_mapping
-                missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols:
-                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            # Free symbols without an entry are the parent's symbols of the same name
+            symbol_mapping = dict(symbol_mapping or {})
+            for fs in sdfg.free_symbols:
+                symbol_mapping.setdefault(fs, fs)
+            s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
@@ -2733,6 +2728,15 @@ class SymbolResolver:
                                                                                     region_updates=self._region_updates)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
+    def forget(self, sdfg: 'SDFG') -> None:
+        """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
+
+        :param sdfg: The SDFG that changed. The SDFGs nested in it are resolved separately and kept.
+        """
+        if self._per_sdfg.pop(sdfg, None) is None:
+            return
+        self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+
 
 @make_properties
 class ContinueBlock(ControlFlowBlock):
@@ -2860,6 +2864,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         from dace.sdfg import propagation as sdprop
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3844,6 +3849,7 @@ class LoopRegion(ControlFlowRegion):
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -4122,6 +4128,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
+
+        # Branch conditions are evaluated regardless of which branch is taken.
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+
         has_condition = False
 
         for condition, region in self._branches:

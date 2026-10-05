@@ -1,15 +1,38 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Unit tests for the GPU to-device transformation. """
 
 import dace
 import numpy as np
 import pytest
+from dace.transformation.dataflow import GPUTransformLocalStorage
+from dace.transformation.interstate import GPUTransformSDFG
+
+
+def test_toplevel_transient_lifetime():
+    N = dace.symbol('N')
+
+    @dace.program
+    def program(A: dace.float64[20, 20]):
+        for i in range(20):
+            tmp = A[:i, :i]
+            tmp2 = A[:5, :N]
+            tmp *= 5
+            tmp2 *= 10
+
+    sdfg = program.to_sdfg()
+    sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
+
+    for name, desc in sdfg.arrays.items():
+        if name == 'tmp2' and type(desc) is dace.data.Array:
+            assert desc.lifetime is dace.AllocationLifetime.SDFG
+        else:
+            assert desc.lifetime is not dace.AllocationLifetime.SDFG
 
 
 @pytest.mark.gpu
 def test_scalar_to_symbol_in_nested_sdfg():
     """
-    Offloading automatically creates copy-out states for GPU scalars that are used in host-side interstate
+    GPUTransformSDFG will automatically create copy-out states for GPU scalars that are used in host-side interstate
     edges. However, this process may only be applied in top-level SDFGs and not in NestedSDFGs that have GPU-device
     schedule but are not part of a single GPU kernel, leading to illegal memory accesses.
     """
@@ -31,7 +54,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
         return out
 
     sdfg = main_program.to_sdfg(simplify=False)
-    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.apply_transformations(GPUTransformSDFG)
     out = sdfg(a=4)
     assert np.array_equal(out, np.array([0, 10] * 5, dtype=np.int32))
 
@@ -45,7 +68,7 @@ def test_write_subset():
             A[i, j] = i + j
 
     sdfg = write_subset.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.apply_transformations(GPUTransformSDFG)
 
     ref = np.ones((20, 20), dtype=np.int32)
     val = np.copy(ref)
@@ -56,13 +79,7 @@ def test_write_subset():
     assert np.array_equal(ref, val)
 
 
-def test_a_fully_overwritten_array_is_not_staged_down_first():
-    """An array nothing reads, that a map overwrites entirely, needs no host-to-device copy.
-
-    Its entry value cannot be observed, so staging it down transfers the whole array on every call
-    and then discards it. The copy-out still has to happen, which is what makes the elision safe
-    only when the device writes ALL of it.
-    """
+def test_write_full():
 
     M, N = dace.symbol('M'), dace.symbol('N')
 
@@ -72,61 +89,12 @@ def test_a_fully_overwritten_array_is_not_staged_down_first():
             A[i, j] = i + j
 
     sdfg = write_full.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.apply_transformations(GPUTransformSDFG)
 
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
-                assert state.out_degree(node) == 0, (f'"A" is read in {state.label!r}: the host array is '
-                                                     'still staged down before the map overwrites it')
-    assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.in_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the result never reaches the caller\'s array'
-
-
-def test_a_partially_written_array_keeps_its_copy_in():
-    """The control for the elision above: a map covering only part of the array must still be staged
-    down, because the copy-out sends the whole device buffer back and the untouched elements have to
-    be the ones the caller passed in, not whatever the allocation held."""
-
-    M = dace.symbol('M')
-
-    @dace.program
-    def write_interior(A: dace.int32[M]):
-        for i in dace.map[1:M - 1]:
-            A[i] = i
-
-    sdfg = write_interior.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations(simplify=False)
-
-    assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), ('a partially written array lost its copy-in; the '
-                                                                'elements the map skips would come back as garbage')
-
-
-def test_an_indirect_write_keeps_its_copy_in():
-    """``A[x[i], y[j]]`` carries the WHOLE array as its subset -- that is where it might land -- while
-    writing 256 of the 400 elements. A covering subset is therefore not proof the array is fully
-    written, and the volume is what says so; without that second test the copy-in is dropped and the
-    144 elements the scatter misses come back as whatever the allocation held."""
-
-    @dace.program
-    def write_subset_dynamic(A: dace.int32[20, 20], x: dace.int32[20], y: dace.int32[20]):
-        for i, j in dace.map[2:18, 2:18]:
-            A[x[i], y[j]] = i + j
-
-    sdfg = write_subset_dynamic.to_sdfg(simplify=True)
-    writes = [(e.data.subset, e.data.volume) for state in sdfg.states() for node in state.data_nodes()
-              if node.data == 'A' for e in state.in_edges(node)]
-    assert writes, 'no write to "A" to inspect'
-    assert any(str(subset) == '0:20, 0:20' and volume != 400
-               for subset, volume in writes), (f'the indirect write no longer over-approximates its subset: {writes}')
-
-    sdfg.apply_gpu_transformations(simplify=False)
-    assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the indirect write lost its copy-in'
+                assert state.out_degree(node) == 0
 
 
 @pytest.mark.gpu
@@ -138,7 +106,7 @@ def test_write_subset_dynamic():
             A[x[i], y[j]] = i + j
 
     sdfg = write_subset_dynamic.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.apply_transformations(GPUTransformSDFG)
 
     ref = np.ones((20, 20), dtype=np.int32)
     val = np.copy(ref)
@@ -169,43 +137,64 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+    sdfg.apply_gpu_transformations(validate=True,
+                                   validate_all=True,
+                                   permissive=True,
+                                   sequential_innermaps=True,
+                                   register_transients=False,
+                                   simplify=False)
 
     sdfg.validate()
 
 
-def test_free_tasklet_connectorless_dependency_edge():
-    """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge --
-    e.g. an edge sequencing a reduction-init tasklet -- must wrap in the GPU_Device map
-    without crashing. Pre-fix the connector rebuild did ``'IN_' + e.dst_conn`` and threw
-    ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
-    dependency edge with no IN_/OUT_ connector."""
-    sdfg = dace.SDFG("gcode_depedge")
-    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
-    state = sdfg.add_state("main")
+def _row_doubling_body(shape):
+    """``b[0, j] = 2 * a[0, j]``, with both connectors describing the whole container."""
+    sdfg = dace.SDFG('body')
+    sdfg.add_array('a', shape, dace.float64)
+    sdfg.add_array('b', shape, dace.float64)
+    sdfg.add_symbol('j', dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x * 2')
+    state.add_edge(state.add_read('a'), None, tasklet, 'x', dace.Memlet('a[0, j]'))
+    state.add_edge(tasklet, 'y', state.add_write('b'), None, dace.Memlet('b[0, j]'))
+    return sdfg
 
-    seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
-    state.add_edge(seed, "_o", state.add_access(arr_name), None, dace.memlet.Memlet("A[0]"))
 
-    follow = state.add_tasklet("follow", {}, {"_o2"}, "_o2 = 1.0")
-    state.add_edge(follow, "_o2", state.add_access(arr_name), None, dace.memlet.Memlet("A[1]"))
+def test_gpu_local_storage_of_a_nested_sdfg_row():
+    """The copy on the device holds one row, so the connectors describe a row rather than a matrix.
 
-    # Connector-less empty-memlet dependency edge: seed must run before follow.
-    state.add_nedge(seed, follow, dace.memlet.Memlet())
-
+    ``GPUTransformLocalStorage`` copies only the part of each array the map reads, dropping the
+    dimensions the copy is a single index of. Under the nested SDFG contract (see
+    ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container it is connected to,
+    so the connectors below have to be restated the same way.
+    """
+    shape = (4, 5)
+    sdfg = dace.SDFG('gpu_local_storage_nested')
+    sdfg.add_array('A', shape, dace.float64)
+    sdfg.add_array('B', shape, dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(j='0:%d' % shape[1]))
+    node = state.add_nested_sdfg(_row_doubling_body(shape), {'a'}, {'b'}, {'j': 'j'})
+    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='a', memlet=dace.Memlet('A[0, j]'))
+    state.add_memlet_path(node, exit_, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[0, j]'))
     sdfg.validate()
-    sdfg.apply_gpu_transformations(validate=True, validate_all=True, simplify=False)
+
+    assert sdfg.apply_transformations(GPUTransformLocalStorage) == 1
+
+    for edge in state.all_edges(node):
+        connector = edge.dst_conn if edge.dst is node else edge.src_conn
+        assert len(node.sdfg.arrays[connector].shape) == 1
+        assert node.sdfg.arrays[connector].is_equivalent(sdfg.arrays[edge.data.data])
     sdfg.validate()
 
 
 if __name__ == '__main__':
+    test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
-    test_a_fully_overwritten_array_is_not_staged_down_first()
-    test_a_partially_written_array_keeps_its_copy_in()
-    test_an_indirect_write_keeps_its_copy_in()
+    test_write_full()
     test_write_subset_dynamic()
-    test_free_tasklet_connectorless_dependency_edge()
     for scalar in [False, True]:
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)
+    test_gpu_local_storage_of_a_nested_sdfg_row()

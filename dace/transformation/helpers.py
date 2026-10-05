@@ -9,7 +9,6 @@ from ordered_set import OrderedSet
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
@@ -292,15 +291,13 @@ def nest_sdfg_control_flow(sdfg: SDFG):
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None,
-                        full_data: bool = False) -> nodes.NestedSDFG:
+                        name: Optional[str] = None) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
 
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
-        :param full_data: If True, nests entire input/output data.
         :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
@@ -403,46 +400,26 @@ def nest_state_subgraph(sdfg: SDFG,
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
-    global_subsets: Dict[str, Tuple[str, Subset]] = {}
+    nested_names: Dict[str, str] = {}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
         name = edge.data.data
-        if name not in global_subsets:
+        if name not in nested_names:
             datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
             datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
-            global_subsets[name] = (new_name, edge.data.subset)
-        else:
-            new_name, subset = global_subsets[name]
-            if not full_data:
-                new_subset = union(subset, edge.data.subset)
-                if new_subset is None:
-                    new_subset = Range.from_array(sdfg.arrays[name])
-                global_subsets[name] = (new_name, new_subset)
-                nsdfg.arrays[new_name].shape = new_subset.size()
+            nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+        new_name = nested_names[name]
         input_names[edge] = new_name
     for edge in outputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
         name = edge.data.data
-        if name not in global_subsets:
+        if name not in nested_names:
             datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
             datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
-            global_subsets[name] = (new_name, edge.data.subset)
-        else:
-            new_name, subset = global_subsets[name]
-            if not full_data:
-                new_subset = union(subset, edge.data.subset)
-                if new_subset is None:
-                    new_subset = Range.from_array(sdfg.arrays[name])
-                global_subsets[name] = (new_name, new_subset)
-                nsdfg.arrays[new_name].shape = new_subset.size()
+            nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+        new_name = nested_names[name]
         output_names[edge] = new_name
     ###################
 
@@ -476,25 +453,22 @@ def nest_state_subgraph(sdfg: SDFG,
             node.sdfg.parent_nsdfg_node = node
 
     # Add access nodes and edges as necessary
-    edges_to_offset = []
+    edges_to_rename = []
     for edge, name in input_names.items():
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge, nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge)))
+        edges_to_rename.append(nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge))
     for edge, name in output_names.items():
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge, nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge)))
+        edges_to_rename.append(nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge))
 
-    # Offset memlet paths inside nested SDFG according to subsets
-    for original_edge, new_edge in edges_to_offset:
+    # Rename memlet paths inside nested SDFG to the nested data names
+    for new_edge in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
-            if not full_data:
-                edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
-                edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, dict.fromkeys([*input_names.values(), *input_arrays]),
@@ -513,11 +487,7 @@ def nest_state_subgraph(sdfg: SDFG,
         name = input_names[edge]
         if name in reconnected_in:
             continue
-        if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
         reconnected_in.add(name)
 
@@ -529,11 +499,7 @@ def nest_state_subgraph(sdfg: SDFG,
         name = output_names[edge]
         if name in reconnected_out:
             continue
-        if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
@@ -950,45 +916,62 @@ def isolate_nested_sdfg(
 def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,
                          use_src_subset: bool = False,
-                         use_dst_subset: bool = False) -> subsets.Subset:
-    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
-        return internal_memlet.other_subset
+                         use_dst_subset: bool = False) -> Tuple[subsets.Subset, bool]:
+    """
+    Determines the internal memlet's subset to use based on the external memlet and the flags.
+
+    :param internal_memlet: The internal memlet (inside nested SDFG).
+    :param external_memlet: The external memlet before modification.
+    :param use_src_subset: If both sides of the memlet refer to the same array, prefer source subset.
+    :param use_dst_subset: If both sides of the memlet refer to the same array, prefer destination subset.
+    :return: The internal subset to use and a boolean indicating if the ``other_subset`` field was used.
+    """
     if not use_src_subset and not use_dst_subset:
-        return internal_memlet.subset
+        if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
+            return internal_memlet.other_subset, True
+        return internal_memlet.subset, False
     if use_src_subset and use_dst_subset:
         raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset and internal_memlet.src_subset is not None:
-        return internal_memlet.src_subset
+        return internal_memlet.src_subset, not internal_memlet._is_data_src
     if use_dst_subset and internal_memlet.dst_subset is not None:
-        return internal_memlet.dst_subset
-    return internal_memlet.subset
+        return internal_memlet.dst_subset, internal_memlet._is_data_src
+    return internal_memlet.subset, False
 
 
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
-                     preserve_minima: bool = False,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
-    """ Unsqueezes and offsets a memlet, as per the semantics of nested
-        SDFGs.
+                     external_offset: Tuple[int] = None,
+                     return_dims: bool = False) -> Union[Memlet, List[int]]:
+    """ Unsqueezes and offsets a memlet, as per the semantics of nested SDFGs.
+        Generally, this function is the inverse of the array narrowing rules found in languages such as Python
+        (specifically in frameworks such as NumPy or PyTorch) and FORTRAN.
 
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
-        :param preserve_minima: Do not change the subset's minimum elements.
         :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
-        :return: Offset Memlet to set on the resulting graph.
+        :param return_dims: If ``True``, returns the dimensions that were detected as squeezed.
+        :return: Offset Memlet to set on the resulting graph, or a list of squeezed dimensions if ``return_dims`` is
+                 ``True``.
     """
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    # We always use external_memlet's subset as the base.
+    # We either modify the internal memlet's subset or other_subset. Find out which one to use.
+    internal_subset, used_other_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset,
+                                                              use_dst_subset)
     internal_offset = internal_offset or [0] * len(internal_subset)
     external_offset = external_offset or [0] * len(external_memlet.subset)
     internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
+    if used_other_subset:
+        result.other_subset = result.subset
     result.subset = internal_subset
+    to_unsqueeze = []
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
@@ -1028,32 +1011,15 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
-    if preserve_minima:
-        if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
-                             'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-        original_minima = external_memlet.subset.min_element()
-        for i in set(range(len(original_minima))):
-            rb, re, rs = result.subset.ranges[i]
-            result.subset.ranges[i] = (original_minima[i], re, rs)
-    # TODO: Offset rest of memlet according to other_subset
-    if external_memlet.other_subset is not None:
-        raise NotImplementedError
+    result.data = external_memlet.data
+    if use_src_subset:
+        result._is_data_src = True
+    elif use_dst_subset:
+        result._is_data_src = False
 
-    # Actual result preserves 'other subset' and placement of subsets in memlet
-    actual_result = Memlet.from_memlet(internal_memlet)
-    actual_result.data = external_memlet.data
-    if actual_result.other_subset:
-        if internal_memlet.data == external_memlet.data:
-            actual_result.subset = result.subset
-        else:
-            actual_result.other_subset = actual_result.subset
-            actual_result.subset = result.subset
-            actual_result._is_data_src = not actual_result._is_data_src
-    else:
-        actual_result.subset = result.subset
-
-    return actual_result
+    if return_dims:
+        return to_unsqueeze
+    return result
 
 
 def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> ScopeSubgraphView:
