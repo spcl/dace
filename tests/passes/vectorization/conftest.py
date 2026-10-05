@@ -21,6 +21,7 @@ import zlib
 
 import numpy as np
 import pytest
+from dace.transformation.passes.vectorization.enums import BranchMode
 
 
 @pytest.fixture(autouse=True)
@@ -38,8 +39,8 @@ def _deterministic_global_numpy_seed(request):
     np.random.seed(zlib.crc32(request.node.nodeid.encode()) & 0xFFFFFFFF)
 
 
-@pytest.fixture(params=["fp_factor", "merge"])
-def branch_mode(request) -> str:
+@pytest.fixture(params=[BranchMode.FP_FACTOR, BranchMode.MERGE])
+def branch_mode(request) -> BranchMode:
     """Branch lowering variant the K=1 tile path must support:
 
     - ``"merge"`` — same-write-set if/else -> per-lane ``TileITE`` select.
@@ -130,7 +131,7 @@ def pytest_generate_tests(metafunc):
     if not full_matrix:
         return
     knob_params = {
-        "branch_mode": ["fp_factor", "merge"],
+        "branch_mode": [BranchMode.FP_FACTOR, BranchMode.MERGE],
         "emission_style": ["default"],
         "remainder_strategy": ["scalar", "masked"],
     }

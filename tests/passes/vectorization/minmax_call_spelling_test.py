@@ -19,6 +19,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (_FUNCTION_FORM_BINOPS,
                                                                                    _call_spellings)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA
 
 N = 64
 WIDTHS = (8, )
@@ -37,7 +38,7 @@ def test_every_other_function_form_op_keeps_one_spelling():
         assert _call_spellings(op) == (op, ), f'{op} gained an unexpected alias'
 
 
-@pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
+@pytest.mark.parametrize('isa', [ISA.SCALAR, detect_host_isa()])
 def test_a_clamped_kernel_vectorizes_and_matches_numpy(isa):
     """End-to-end on the shape CloudSC has: a literal operand against a per-lane value."""
 

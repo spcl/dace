@@ -22,6 +22,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import _SUPPORTED_UNOPS
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA
 
 N = 64
 WIDTHS = (8, )
@@ -41,7 +42,7 @@ def test_ops_without_an_isa_character_fall_back_rather_than_raise():
     assert 'sign_numpy_2' in no_char
 
 
-@pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
+@pytest.mark.parametrize('isa', [ISA.SCALAR, detect_host_isa()])
 def test_sign_vectorizes_and_matches_numpy(isa):
     """End-to-end: the kernel really is tiled, and the numbers are numpy's."""
 

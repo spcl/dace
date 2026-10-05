@@ -5,7 +5,7 @@ Threads locked knob config through prep/emit passes, runs ``expand_library_nodes
 lib nodes to ``pure``; tail audit asserts no per-lane scalar leaked. ``device`` knob (CPU/GPU) picks
 reduction-lift form (CPU horizontal SIMD fold vs GPU-placed ``Reduce``) + lifted-libnode finalize
 target. Thin subclasses: :class:`VectorizeCPUMultiDim` (device=CPU), :class:`VectorizeGPUMultiDim`
-(device=GPU, ``target_isa='CUDA'``, K=1 ``remainder_strategy='branched_masked_tail'``, GPU-schedules
+(device=GPU, ``target_isa=ISA.CUDA``, K=1 ``remainder_strategy=BRANCHED_MASKED_TAIL``, GPU-schedules
 first).
 
 Locked knobs (constructor has full semantics):
@@ -13,9 +13,9 @@ Locked knobs (constructor has full semantics):
 * ``target_isa`` in ``{AUTO, AVX512, AVX2, ARM_SVE, ARM_NEON, SCALAR, CUDA}`` (K=1 backend; AUTO
   detects host ISA at expansion).
 * ``widths`` -- innermost-last, len in ``{1,2,3}``, powers of 2.
-* ``remainder_strategy`` -- ``masked_tail`` (base default), ``full_mask``, ``scalar_postamble``, and
-  the GPU-only one-kernel pair ``branched_masked_tail`` (the GPU K=1 default) / ``branched_tail``.
-* ``branch_mode`` -- ``merge`` (default) or ``fp_factor``.
+* ``remainder_strategy`` -- ``MASKED_TAIL`` (base default), ``FULL_MASK``, ``SCALAR_POSTAMBLE``, and
+  the GPU-only one-kernel pair ``BRANCHED_MASKED_TAIL`` (the GPU K=1 default) / ``BRANCHED_TAIL``.
+* ``branch_mode`` -- ``BranchMode.MERGE`` (default) or ``BranchMode.FP_FACTOR``.
 
 Every other combo -> ``NotImplementedError``.
 """
@@ -35,7 +35,7 @@ from dace.dtypes import DeviceType
 from dace.ordered import OrderedSet
 import dataclasses
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, coerce_remainder_strategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
@@ -207,18 +207,11 @@ class _MultiOutputReductionMapFission(MapFission):
         return True
 
 
-#: "AUTO" resolves to the host's best ISA at expansion time
-#: (``dace.libraries.tileops.dispatch.detect_host_isa``); the others pin one.
-VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
-_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail", "branched_masked_tail")
-
 #: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``
 #: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
 #: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
-#: A tuple, not a dict: membership must compare equal for both the enum member and its raw string.
 _BRANCHED_REMAINDER: Tuple[RemainderStrategy,
                            ...] = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
-_VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
 
@@ -618,7 +611,7 @@ def _is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
-def _validate_knobs(widths: tuple[int, ...], target_isa: str, remainder_strategy: str, branch_mode: str,
+def _validate_knobs(widths: tuple[int, ...], target_isa: ISA, remainder_strategy: RemainderStrategy,
                     scalar_remainder_emit: str) -> None:
     # Reject unsupported knob combinations with one ``NotImplementedError``.
     # Checks list is built eagerly, so the AVX-512 ``widths[-1]`` access must be empty-safe:
@@ -629,18 +622,15 @@ def _validate_knobs(widths: tuple[int, ...], target_isa: str, remainder_strategy
     checks = [
         (scalar_remainder_emit in _VALID_SCALAR_REMAINDER,
          f"scalar_remainder_emit {scalar_remainder_emit!r} not in {_VALID_SCALAR_REMAINDER}"),
-        (scalar_remainder_emit != "tile_k1" or remainder_strategy == "scalar_postamble",
-         f"scalar_remainder_emit='tile_k1' requires remainder_strategy='scalar_postamble'; "
-         f"got remainder_strategy={remainder_strategy!r}"),
+        (scalar_remainder_emit != "tile_k1" or remainder_strategy is RemainderStrategy.SCALAR_POSTAMBLE,
+         f"scalar_remainder_emit='tile_k1' requires remainder_strategy=SCALAR_POSTAMBLE; "
+         f"got remainder_strategy={remainder_strategy.name}"),
         (1 <= len(widths) <= 3, f"K={len(widths)} not in {{1, 2, 3}}; got widths={widths!r}"),
-        (target_isa in VALID_ISAS, f"target_isa {target_isa!r} not in {VALID_ISAS}"),
         (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
-        (target_isa != "AVX512" or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
-        (target_isa != "CUDA"
+        (target_isa is not ISA.AVX512
+         or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
+        (target_isa is not ISA.CUDA
          or last_w % 2 == 0, f"CUDA (half2 FP16x2) requires widths[-1] % 2 == 0; got widths[-1]={last_w}"),
-        (remainder_strategy
-         in _VALID_REMAINDER, f"remainder_strategy {remainder_strategy!r} not in {_VALID_REMAINDER}"),
-        (branch_mode in _VALID_BRANCH, f"branch_mode {branch_mode!r} not in {_VALID_BRANCH}"),
     ]
     for ok, msg in checks:
         if not ok:
@@ -767,7 +757,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
     The ``device`` knob selects CPU vs. GPU reduction/finalize behavior;
     :class:`VectorizeCPUMultiDim` / :class:`VectorizeGPUMultiDim` are the thin
-    device-fixed entry points. ``target_isa='CUDA'`` implies ``device=GPU``.
+    device-fixed entry points. ``target_isa=ISA.CUDA`` implies ``device=GPU``.
 
     **Input contract: the SDFG must already be canonical.** Run
     :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize` (or, where it suffices,
@@ -804,16 +794,16 @@ class VectorizeMultiDim(ppl.Pipeline):
         assume_even = config.assume_even
         fuse_multiply_add = config.fuse_multiply_add
         device = config.device
-        _validate_knobs(widths, target_isa, remainder_strategy, branch_mode, scalar_remainder_emit)
+        _validate_knobs(widths, target_isa, remainder_strategy, scalar_remainder_emit)
         # K-dependent knob support: K=1 and K>=2 both support every (branch, remainder)
         # combo -- the iter_mask only gates stores, and fp_factor lowering reduces to
         # single-op tile binops (after ``SplitTasklets``) classified the same for any K.
 
         widths_t = tuple(widths)
-        # ``target_isa='CUDA'`` implies the GPU device (mirrors ``self._device`` below);
+        # ``target_isa=ISA.CUDA`` implies the GPU device (mirrors ``self._device`` below);
         # compute now so ``MarkTileDims`` tiles only GPU-resident innermost maps (half2
         # __device__ intrinsics need a GPU kernel).
-        is_gpu_device = device == DeviceType.GPU or target_isa == "CUDA"
+        is_gpu_device = device == DeviceType.GPU or target_isa is ISA.CUDA
         # Front passes (target-agnostic normalization):
         #   * ConvertLengthOneArraysToScalars -- length-1 arrays -> true Scalars so the per-tile
         #     classifier sees CONSTANT-only sources as the Scalar operand kind (6.2).
@@ -828,7 +818,7 @@ class VectorizeMultiDim(ppl.Pipeline):
             # The tile path must see NO inner-NSDFG WCR (design 3.5).
             AssertNoNestedSDFGWCR(),
         ]
-        if branch_mode == "fp_factor":
+        if branch_mode is BranchMode.FP_FACTOR:
             # FP-factor lowering: same-write-set conditionals -> ITE -> ``c*t + (1-c)*e``, split later into
             # single-op binops. ``EliminateBranches`` runs last as a safety net and non-permissive, so a direct
             # map-param guard (``i < N``) is left for the full-mask pass instead of fabricating OOB reads.
@@ -881,19 +871,19 @@ class VectorizeMultiDim(ppl.Pipeline):
         elif remainder_strategy in _BRANCHED_REMAINDER:
             # GPU-only branched remainder: split into a ``__tile_main`` interior plus a masked or scalar tail, then
             # a post pass fuses both into one kernel with an if/else body. Refused on CPU.
-            name = coerce_remainder_strategy(remainder_strategy).value
+            name = remainder_strategy.name
             if not is_gpu_device:
-                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name!r} is GPU-only "
-                                          "(needs device=GPU / target_isa='CUDA').")
+                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name} is GPU-only "
+                                          "(needs device=GPU / target_isa=ISA.CUDA).")
             if len(widths_t) != 1:
-                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name!r} supports K=1 "
+                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name} supports K=1 "
                                           f"(one tiled dim); got widths={widths_t!r}.")
-            tail_mode = "masked_branch" if remainder_strategy == RemainderStrategy.BRANCHED_MASKED_TAIL else "scalar"
+            tail_mode = "masked_branch" if remainder_strategy is RemainderStrategy.BRANCHED_MASKED_TAIL else "scalar"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
-        elif remainder_strategy in ("masked_tail", "scalar_postamble"):
+        elif remainder_strategy in (RemainderStrategy.MASKED_TAIL, RemainderStrategy.SCALAR_POSTAMBLE):
             # Split each tile map into a divisible ``__tile_main`` interior (mask-free) plus boundary regions,
             # before MarkTileDims so the replicated boundary maps are tagged too.
-            if remainder_strategy == "scalar_postamble":
+            if remainder_strategy is RemainderStrategy.SCALAR_POSTAMBLE:
                 tail_mode = "tile_k1" if scalar_remainder_emit == "tile_k1" else "scalar"
             else:
                 tail_mode = "masked"
@@ -973,9 +963,9 @@ class VectorizeMultiDim(ppl.Pipeline):
         super().__init__(passes)
         self._widths = widths_t
         self._target_isa = target_isa
-        # ``target_isa='CUDA'`` (GPU tile backend) implies device=GPU; an explicit
+        # ``target_isa=ISA.CUDA`` (GPU tile backend) implies device=GPU; an explicit
         # ``device=GPU`` also selects it. Everything else is CPU.
-        self._device = DeviceType.GPU if (device == DeviceType.GPU or target_isa == "CUDA") else DeviceType.CPU
+        self._device = DeviceType.GPU if (device == DeviceType.GPU or target_isa is ISA.CUDA) else DeviceType.CPU
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
         self._expand_tile_nodes = expand_tile_nodes
@@ -1200,7 +1190,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         from dace.libraries.tileops.dispatch import CPU_SIMD_ISAS
         from dace.sdfg.scope import is_devicelevel_gpu
 
-        host_isa = self._target_isa in CPU_SIMD_ISAS | {'SCALAR'}
+        host_isa = self._target_isa in CPU_SIMD_ISAS | {ISA.SCALAR}
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
@@ -1277,12 +1267,12 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
 
     * ``device = DeviceType.GPU`` -- CPU horizontal folds are replaced by GPU-placed
       ``Reduce`` nodes; lifted library nodes finalize for the GPU.
-    * ``target_isa = "CUDA"`` -- the innermost tile op lowers to ``dace/tile_ops/cuda.h``
+    * ``target_isa = ISA.CUDA`` -- the innermost tile op lowers to ``dace/tile_ops/cuda.h``
       (native ``__hadd2`` / ``__hmul2`` / ... half2 intrinsics, 2 fp16 lanes per instruction).
     * ``widths = (2,)`` default -- half2 processes two fp16 lanes per instruction; a wider
       even width (4, 8) uses the SAME half2 fast path, looping ``i += 2`` (``#pragma unroll``)
       to emit ``width / 2`` consecutive half2 instructions per tile.
-    * ``remainder_strategy = "branched_masked_tail"`` at K=1 -- a GPU kernel emits NO scalar
+    * ``remainder_strategy = BRANCHED_MASKED_TAIL`` at K=1 -- a GPU kernel emits NO scalar
       remainder loop and no second kernel: ONE ``lb:ub:W`` strided map whose body branches on
       ``i + W - 1 <= ub`` into the mask-free (widened) tile body or the masked tile body. A
       second masked map would otherwise become a second GPU_Device kernel of a different
@@ -1330,11 +1320,11 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         # ``branched_tail`` (scalar else-arm) remains reachable by naming it.
         resolved = config
         if (len(config.widths) == 1 and not config.assume_even
-                and coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.MASKED_TAIL):
+                and config.remainder_strategy is RemainderStrategy.MASKED_TAIL):
             resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_MASKED_TAIL)
         # A branched strategy handles the non-divisible extent itself, so it must NOT run under
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
-        branched = coerce_remainder_strategy(resolved.remainder_strategy) in _BRANCHED_REMAINDER
+        branched = resolved.remainder_strategy in _BRANCHED_REMAINDER
         super().__init__(
             dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched))

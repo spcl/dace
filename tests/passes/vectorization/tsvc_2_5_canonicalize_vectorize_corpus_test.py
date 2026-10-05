@@ -88,10 +88,10 @@ UNTILED_KERNELS = frozenset({
 # ``dace.libraries.tileops.dispatch.host_supported_isas``).
 HOST_ISA = detect_host_isa()
 MULTIDIM_KNOBS = [
-    dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa=HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, branch_mode=BranchMode.MERGE),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.FULL_MASK, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.FP_FACTOR),
 ]
 
 

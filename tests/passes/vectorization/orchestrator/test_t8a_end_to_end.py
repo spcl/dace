@@ -128,7 +128,7 @@ def test_k2_axpy_aligned_trip_matches_numpy():
 
 @pytest.mark.parametrize("m,n", [(16, 32), (17, 20), (20, 17), (9, 9)])
 def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
-    """K=2 axpy under ``remainder_strategy='scalar_postamble'`` matches numpy
+    """K=2 axpy under ``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE`` matches numpy
     across aligned + unaligned ``M x N`` trips. scalar_postamble is no longer
     K=1-only: ``SplitMapForTileRemainder`` splits a per-dim divisible interior
     (W-strided tiles) off from step-1 scalar boundary slabs, so a non-divisible

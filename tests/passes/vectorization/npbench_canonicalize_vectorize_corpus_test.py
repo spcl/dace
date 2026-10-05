@@ -32,6 +32,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.npbench import npbench
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
 CORPUS = {c["name"]: c for c in npbench.collect()}
 KERNELS = sorted(CORPUS)
@@ -62,10 +63,10 @@ def _cases():
 # would SIGILL at runtime (see ``dace.libraries.tileops.dispatch.host_supported_isas``).
 HOST_ISA = detect_host_isa()
 MULTIDIM_KNOBS = [
-    dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa=HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, branch_mode=BranchMode.MERGE),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.FULL_MASK, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.FP_FACTOR),
 ]
 
 BASE: dict = {}

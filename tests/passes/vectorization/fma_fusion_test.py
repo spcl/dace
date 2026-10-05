@@ -28,6 +28,7 @@ from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileFMA, TileBinop
 from dace.codegen.common import get_gpu_backend
 from tests.gpu_device_compile import PACKED_HALF_FMA, device_compile
+from dace.transformation.passes.vectorization.enums import ISA
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -114,7 +115,7 @@ def fma_lowers_and_runs(isa, dt):
     assert _count(sdfg, TileFMA) >= 1
     assert _count(sdfg, TileBinop) == 0
     sdfg.expand_library_nodes()
-    sdfg.name = f"fma_cpu_{isa}_{dt.to_string()}"
+    sdfg.name = f"fma_cpu_{isa.name}_{dt.to_string()}"
     rng = np.random.default_rng(0)
     A = rng.random((16, 64)).astype(dt.type)
     B = rng.random((16, 64)).astype(dt.type)
@@ -127,7 +128,7 @@ def fma_lowers_and_runs(isa, dt):
 def test_cpu_fma_lowers_and_runs(dt):
     """The portable contract, pinned to the SCALAR backend so the assertions do not depend on
     which SIMD unit this host happens to have."""
-    fma_lowers_and_runs("SCALAR", dt)
+    fma_lowers_and_runs(ISA.SCALAR, dt)
 
 
 @pytest.mark.host_isa

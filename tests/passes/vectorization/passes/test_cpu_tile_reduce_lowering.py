@@ -19,8 +19,9 @@ from dace.libraries.tileops.nodes.tile_reduce import (
     ExpandTileReduceScalar,
     TileReduce,
 )
+from dace.transformation.passes.vectorization.enums import ISA
 
-CPU_ISAS = ["SCALAR", "AVX512", "AVX2", "ARM_NEON", "ARM_SVE"]
+CPU_ISAS = [ISA.SCALAR, ISA.AVX512, ISA.AVX2, ISA.ARM_NEON, ISA.ARM_SVE]
 
 
 @pytest.mark.parametrize("isa", CPU_ISAS)
@@ -35,7 +36,7 @@ def test_reduce_selects_isa_for_full_k1(isa: str) -> None:
     n.target_isa = isa
     impl = dispatch.ISA_TO_IMPL[isa]
     assert impl in n.implementations
-    if isa != "SCALAR" and isa not in dispatch.host_supported_isas():
+    if isa is not ISA.SCALAR and isa not in dispatch.host_supported_isas():
         with pytest.raises(ValueError, match="not executable on this host"):
             dispatch.select_tile_implementation(n, st)
         return
@@ -48,7 +49,7 @@ def test_reduce_kge2_falls_back_to_pure_on_cpu():
     n = TileReduce("t", op="+", widths=(4, 8))
     st = dace.SDFG("cpu_selection_reduce").add_state()
     st.add_node(n)
-    n.target_isa = "AVX512"
+    n.target_isa = ISA.AVX512
     assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
@@ -91,7 +92,7 @@ def test_reduce_cpu_selects_pure_for_masked_and_axis():
     # The tile_reduce intrinsic takes no mask and only does a full reduction, so a
     # masked reduce or a single-axis reduce lowers to the pure per-lane loop.
     for sdfg, st, n in (_reduce_sdfg(dace.float64, 8, "+", mask=True), _reduce_sdfg(dace.float64, 8, "+", axis=1)):
-        n.target_isa = "SCALAR"
+        n.target_isa = ISA.SCALAR
         assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
@@ -103,7 +104,7 @@ def _build_host_reduce_sdfg(W, op, dtype=dace.float64, target_isa=None):
     with ``host_supported_isas`` -- else ``select_tile_implementation`` refuses it."""
     op_tag = {"+": "add", "*": "mul", "min": "min", "max": "max"}[op]
     isa = target_isa if target_isa is not None else dispatch.detect_host_isa()
-    sdfg = dace.SDFG(f"tile_reduce_hostisa_{W}_{op_tag}_{isa.lower()}")
+    sdfg = dace.SDFG(f"tile_reduce_hostisa_{W}_{op_tag}_{isa.name.lower()}")
     sdfg.add_array("SRC", (W, ), dtype, transient=False)
     sdfg.add_array("DST", (1, ), dtype, transient=False)
     state = sdfg.add_state("main")
@@ -138,14 +139,14 @@ def test_reduce_cpu_end_to_end_numeric(op, ref, W):
     np.testing.assert_allclose(DST[0], ref(SRC), rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.skipif("AVX2" not in dispatch.host_supported_isas(), reason="host cannot execute AVX2")
+@pytest.mark.skipif(ISA.AVX2 not in dispatch.host_supported_isas(), reason="host cannot execute AVX2")
 @pytest.mark.parametrize("op,ref", [("+", np.sum), ("max", np.max)])
 @pytest.mark.parametrize("W", [8, 16, 17])
 def test_reduce_avx2_end_to_end_numeric(op, ref, W):
     # Pin the AVX2 tile_reduce backend and run it. host_supported_isas is superset-closed, so
     # an AVX-512 dev box runs this too (test_reduce_cpu_end_to_end_numeric only exercises the
     # host's WIDEST ISA via detect_host_isa -- AVX2 goes unrun there on an AVX-512 host).
-    sdfg = _build_host_reduce_sdfg(W, op, target_isa="AVX2")
+    sdfg = _build_host_reduce_sdfg(W, op, target_isa=ISA.AVX2)
     rng = np.random.default_rng(seed=W * 11 + ord(op[0]))
     SRC = (rng.random(W) + 0.5)
     DST = np.zeros(1)

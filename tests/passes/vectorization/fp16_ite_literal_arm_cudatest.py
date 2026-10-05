@@ -32,6 +32,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 #: Every test here is about float16, so the whole module carries the marker the fp16 CI leg
 #: selects on.
@@ -51,7 +52,7 @@ def _vectorized(name: str = None) -> dace.SDFG:
     sdfg = _where16.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg

@@ -25,6 +25,7 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
 N = dace.symbol("N", dtype=dace.int64)
 SIZE = 16
@@ -167,14 +168,16 @@ def test_map_to_for_loop_keeps_folded_boundary_write_ordering():
     _assert_lid_ordered_after_columns(sdfg, "after MapToForLoop")
 
 
-@pytest.mark.parametrize("target_isa", ["SCALAR", detect_host_isa()])
+@pytest.mark.parametrize("target_isa", [ISA.SCALAR, detect_host_isa()])
 def test_boundary_corners_survive_canonicalize_vectorize(target_isa):
     """End to end: the corners the lid overwrites must stay 1.0 after canonicalize + vectorize."""
     sdfg = _canonical()
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=target_isa, remainder_strategy="masked_tail",
-                        branch_mode="merge")).apply_pass(sdfg, {})
-    sdfg.name = f"{sdfg.name}_{target_isa.lower()}"
+        VectorizeConfig(widths=(8, ),
+                        target_isa=target_isa,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+    sdfg.name = f"{sdfg.name}_{target_isa.name.lower()}"
     sdfg.validate()
 
     _assert_lid_ordered_after_columns(sdfg, f"canon_vec[{target_isa}]")
@@ -201,8 +204,10 @@ def test_a_folded_write_hands_its_ordering_to_the_node_that_absorbed_it():
     """
     sdfg = _canonical()
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa="SCALAR", remainder_strategy="masked_tail",
-                        branch_mode="merge")).apply_pass(sdfg, {})
+        VectorizeConfig(widths=(8, ),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
 
     stranded = []
     for nested in sdfg.all_sdfgs_recursive():

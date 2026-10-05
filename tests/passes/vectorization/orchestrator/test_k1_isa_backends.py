@@ -14,7 +14,7 @@ import numpy as np
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 from tests.corpus.tsvc import tsvc
@@ -36,8 +36,8 @@ def _host_flags():
 FLAGS = _host_flags()
 # (target_isa, required cpuinfo flag, expected backend header).
 ISA_CASES = [
-    ("AVX512", "avx512f", "dace/tile_ops/avx512.h"),
-    ("AVX2", "avx2", "dace/tile_ops/avx2.h"),
+    (ISA.AVX512, "avx512f", "dace/tile_ops/avx512.h"),
+    (ISA.AVX2, "avx2", "dace/tile_ops/avx2.h"),
 ]
 
 
@@ -68,7 +68,7 @@ def test_k1_axpy_isa_backend(isa, flag, header):
     """K=1 axpy under ``target_isa=<ISA>`` includes the ISA header and matches numpy."""
     if flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
-    sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_{isa.lower()}")
+    sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_{isa.name.lower()}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa)).apply_pass(sdfg, {})
     sdfg.validate()
     csdfg = sdfg.compile()
@@ -89,7 +89,7 @@ def test_k1_axpy_isa_backend(isa, flag, header):
 
 # (target_isa, required cpuinfo flag (None = always available), backend header).
 # SCALAR is always exercised; the SIMD cases skip when the host lacks the flag.
-MASKGEN_CASES = [("SCALAR", None, "dace/tile_ops/scalar.h")] + ISA_CASES
+MASKGEN_CASES = [(ISA.SCALAR, None, "dace/tile_ops/scalar.h")] + ISA_CASES
 
 
 @pytest.mark.parametrize("isa,flag,header", MASKGEN_CASES)
@@ -101,7 +101,7 @@ def test_k1_mask_gen_isa_backend(isa, flag, header):
     divisible (masked-remainder) sizes."""
     if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
-    sdfg = _k1_axpy_sdfg(f"e2e_k1_maskgen_{isa.lower()}")
+    sdfg = _k1_axpy_sdfg(f"e2e_k1_maskgen_{isa.name.lower()}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
                                          remainder_strategy=RemainderStrategy.MASKED_TAIL)).apply_pass(sdfg, {})
     sdfg.validate()
@@ -151,7 +151,7 @@ def test_k1_masked_ite_isa_backend(isa, flag, header):
     bit-exact against numpy over aligned + non-divisible (masked-remainder) sizes."""
     if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
-    sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.lower()}")
+    sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.name.lower()}")
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(8, ),
                         target_isa=isa,

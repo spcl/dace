@@ -21,6 +21,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 #: Even, so every lane is a full tile and the remainder arm plays no part.
 N = 256
@@ -37,7 +38,7 @@ def vectorized(program, **symbols) -> dace.SDFG:
         sdfg.specialize(symbols)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy='branched_tail')).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 

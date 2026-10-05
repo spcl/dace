@@ -17,6 +17,7 @@ from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import (TILE_NODES, RestoreUntiledMapStride)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
+from dace.transformation.passes.vectorization.enums import ISA
 
 WIDTH = 8
 N = dace.symbol('N', dtype=dace.int64)
@@ -99,7 +100,7 @@ def test_the_vectorizer_leaves_no_strided_map_without_a_tile_op():
             b[i] = a[i] * 2.0 + 1.0
 
     sdfg = scale.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(WIDTH, ), target_isa='SCALAR', validate=True)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(WIDTH, ), target_isa=ISA.SCALAR, validate=True)).apply_pass(sdfg, {})
 
     assert tile_node_count(sdfg) > 0, 'nothing was tiled -- the invariant below would hold vacuously'
     for node, graph in sdfg.all_nodes_recursive():

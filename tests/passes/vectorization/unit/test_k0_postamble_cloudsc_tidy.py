@@ -4,7 +4,7 @@
 
 This pins the exact orchestrator knob combo the user reported (a 2D
 ``widths=(8, 8)`` main loop with a ``scalar_postamble`` + ``tile_k1``
-remainder, ``branch_mode='merge'`` body,
+remainder, ``branch_mode=BranchMode.MERGE`` body,
 ``insert_copies=True``) so the K=0 postamble path stays exercised on
 the cloudsc-characteristic guarded multi-statement RMW chain.
 

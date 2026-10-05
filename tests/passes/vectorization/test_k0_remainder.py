@@ -2,7 +2,7 @@
 """K=0 scalar-postamble tile-op remainder coverage.
 
 When ``VectorizeCPUMultiDim`` is invoked with
-``remainder_strategy="scalar_postamble"`` AND
+``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE`` AND
 ``scalar_remainder_emit="tile_k1"``, the postamble runs through the
 tile-op pipeline at ``widths=(1,)`` — single-lane tile ops per element
 — rather than the legacy plain scalar loop. This file pins numerical
@@ -30,6 +30,7 @@ import numpy as np
 
 from tests.corpus.tsvc import tsvc
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
+from dace.transformation.passes.vectorization.enums import BranchMode
 
 G1D = tsvc.collect(regime="1d")
 G2D = tsvc.collect(regime="2d")
@@ -91,7 +92,7 @@ def test_k0_remainder_tsvc(kernel_name: str):
         },
         vector_width=8,
         sdfg_name=f"k0_remainder_{kernel_name}",
-        branch_mode="merge",
+        branch_mode=BranchMode.MERGE,
         remainder_strategy="scalar",
         emission_style="default",
         insert_copies=False,

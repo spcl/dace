@@ -31,7 +31,7 @@ from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 
-from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 
 from tests.passes.vectorization.tile_assertions import tile_library_nodes
 
@@ -191,7 +191,7 @@ def _outer_tiled_dim_fits(sdfg: dace.SDFG, outer_tile_width: int) -> bool:
     return True
 
 
-def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strategy: str, emission_style: str,
+def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: BranchMode, remainder_strategy: str, emission_style: str,
                             loop_to_map_permissive: bool):
     """Return a non-empty skip reason for the ``tile_nodes`` arm when
     the test's knob combination is outside the v2 locked-knob shape.
@@ -224,7 +224,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            from_sdfg=False,
                            no_inline=False,
                            exact=None,
-                           branch_mode: str = "merge",
+                           branch_mode: BranchMode = BranchMode.MERGE,
                            remainder_strategy: str = "scalar",
                            param_tag: str = None,
                            loop_to_map_permissive: bool = False,
@@ -265,10 +265,10 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # caller did not explicitly pass (i.e. the value is at its default).
         # Identify "explicit" vs "default" via the function default: if the
         # caller passes None or matches the default, treat as default.
-        default_branch_mode = "merge"
+        default_branch_mode = BranchMode.MERGE
         default_remainder = "scalar"
         default_emission = "default"
-        if branch_mode == default_branch_mode and "branch_mode" in request.fixturenames:
+        if branch_mode is default_branch_mode and "branch_mode" in request.fixturenames:
             try:
                 branch_mode = request.getfixturevalue("branch_mode")
             except Exception:
@@ -317,7 +317,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # discriminates build dirs, so two callers that differ ONLY in it still get their own
     # ``.dacecache/<name>/`` and cannot race CMake mid-configure under xdist.
     tile_tag = f"_c{int(insert_copies)}"
-    sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
+    sdfg_name = f"{sdfg_name}_{branch_mode.name.lower()}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
     if param_tag is not None:
         sdfg_name = f"{sdfg_name}_{param_tag}"
 
@@ -434,9 +434,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # default is ``masked_tail``); it is covered directly by the
         # tile-reduce lib-node tests rather than through this harness mapping.
         if remainder_strategy == "masked":
-            tile_remainder = "masked_tail"
+            tile_remainder = RemainderStrategy.MASKED_TAIL
         else:  # remainder == "scalar"
-            tile_remainder = "scalar_postamble"
+            tile_remainder = RemainderStrategy.SCALAR_POSTAMBLE
         if not tile_nodes_noop:
             VectorizeCPUMultiDim(
                 VectorizeConfig(widths=widths,

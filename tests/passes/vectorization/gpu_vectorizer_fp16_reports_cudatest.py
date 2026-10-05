@@ -25,6 +25,7 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 #: Both programs are about float16, so the module carries the marker the dedicated fp16 CI leg
 #: selects on, next to the ``gpu`` marker the GPU legs select on.
@@ -128,7 +129,7 @@ def vectorized_where(n: int) -> dace.SDFG:
     sdfg.specialize({'N': n})
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy='branched_tail')).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -146,7 +147,7 @@ def vectorized_vadv(extents: dict) -> dace.SDFG:
     sdfg.simplify()
     sdfg.apply_gpu_transformations(simplify=False)
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy='branched_tail')).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 

@@ -30,6 +30,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import asser
 from dace.transformation.passes.vectorization.utils.reductions import recognize_map_reduction
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 N = 16
 SINK = 'zanew_0'
@@ -272,7 +273,7 @@ def test_a_map_body_ending_in_a_scratch_scalar_computes_every_element() -> None:
     """End to end: the map the nesting pass skips must not come out strided over a scalar body."""
     sdfg = elementwise_scaled_sdfg_with_surviving_sink()
     with pytest.warns(UserWarning, match='tiled nothing'):
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa='SCALAR', validate=True)).apply_pass(sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, validate=True)).apply_pass(sdfg, {})
 
     a = np.arange(1.0, 21.0)
     b = np.full(20, -7.0)

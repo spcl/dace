@@ -2,7 +2,7 @@
 """Stable entry point for the CUDA half2 (FP16x2) vectorizer.
 
 :class:`VectorizeGPUMultiDim` is a thin ``device=GPU`` wrapper on
-:class:`VectorizeMultiDim` (fixed ``target_isa='CUDA'``, ``widths=(2,)``,
+:class:`VectorizeMultiDim` (fixed ``target_isa=ISA.CUDA``, ``widths=(2,)``,
 ``assume_even=True``). It vectorizes the resident ``GPU_Device`` maps of an
 already-offloaded SDFG; it never offloads/schedules the SDFG itself.
 """

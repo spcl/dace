@@ -35,11 +35,11 @@ from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 #: Vectorize configs = the cross product of {host-native ISA, SCALAR} x {merge, fp_factor} branch
-#: mode, all ``remainder_strategy="scalar_postamble"`` per the corpus spec ("merge" = per-lane
+#: mode, all ``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE`` per the corpus spec ("merge" = per-lane
 #: ``TileITE`` select; "fp_factor" = ``c*x + (1-c)*y`` arithmetic). The SIMD ISA is the HOST's
 #: (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512:
 #: vectorization enforces arch-native (a forced non-host ISA would SIGILL at runtime -- see
@@ -55,8 +55,8 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 HOST_ISA = detect_host_isa()
 CONFIGS: Dict[str, dict] = {
     f"{label}_{short}": dict(target_isa=isa, branch_mode=mode)
-    for label, isa in (("hostsimd", HOST_ISA), ("scalar", "SCALAR"))
-    for short, mode in (("merge", "merge"), ("fpfac", "fp_factor"))
+    for label, isa in (("hostsimd", HOST_ISA), ("scalar", ISA.SCALAR))
+    for short, mode in (("merge", BranchMode.MERGE), ("fpfac", BranchMode.FP_FACTOR))
 }
 
 #: Parametrized phases: the base (no-vectorize) numerical check plus one per
@@ -172,7 +172,7 @@ def make_pass(widths: Tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
     """Build the :class:`VectorizeCPUMultiDim` for one named config in
     :data:`CONFIGS`, at the given ``widths``.
 
-    All configs pin ``remainder_strategy="scalar_postamble"`` and
+    All configs pin ``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE`` and
     ``validate_all=True`` (the corpus spec); the config name selects the ISA
     and branch mode.
     """

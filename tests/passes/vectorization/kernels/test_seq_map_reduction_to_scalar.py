@@ -47,7 +47,7 @@ def dot_1d(a: dace.float64[N], b: dace.float64[N], s: dace.float64[1]):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_sum_1d_reduction(branch_mode, remainder_strategy):
     """1-D reduction into a scalar -> per-lane partial sums + one horizontal TileReduce."""
     n = 60  # not a multiple of 8 -> remainder tile
@@ -66,7 +66,7 @@ def test_sum_1d_reduction(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_sum_2d_reduction_into_scalar(branch_mode, remainder_strategy):
     """Multi-dim (2-D) reduction into ONE scalar -- the seq-map-privatized-accumulator shape."""
     yv, xv = 8, 60
@@ -126,7 +126,7 @@ def test_sum_2d_reduction_2d_tiling():
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_dot_1d_reduction(branch_mode, remainder_strategy):
     """Dot product ``s += a[i] * b[i]`` -- reduce a per-lane product, not a bare load."""
     n = 60

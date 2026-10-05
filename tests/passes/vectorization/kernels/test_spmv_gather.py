@@ -61,7 +61,7 @@ def _spmv_numpy(A, x, col):
 # vectorizes over ``k`` (gather ``x[col[k]]``); the ``Reduce`` folds it to
 # ``y[i]``. When ``NNZ`` is not a multiple of the tile width the divisible
 # interior is tiled and the tail is a step-1 **scalar remainder loop**
-# (``remainder_strategy="scalar_postamble"``) -- masking the tail of a gather
+# (``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE``) -- masking the tail of a gather
 # would read out-of-range ``col`` indices, so the tail must be scalar.
 @pytest.mark.parametrize("n,nnz", [(16, 16), (16, 24), (24, 16), (17, 16), (16, 17), (17, 23)])
 @pytest.mark.parametrize("widths", [(8, ), (4, )])

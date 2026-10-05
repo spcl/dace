@@ -29,7 +29,7 @@ import dace
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol('N')
@@ -79,7 +79,7 @@ def _run(prog, kwargs, ref, isa):
     assert np.allclose(work['res'][0], ref, rtol=1e-9, atol=1e-12), f"{prog.name}/{isa}: {work['res'][0]} != {ref}"
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
 def test_scalar_reduce_via_map(isa):
     """Unmasked WCR sum over a ``dace.map`` -> lifted to Reduce, vectorized."""
     rng = np.random.default_rng(0)
@@ -88,7 +88,7 @@ def test_scalar_reduce_via_map(isa):
     _run(scalar_reduce, dict(data=data, res=np.zeros(1), N=n), data.sum(), isa)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
 def test_masked_reduce_via_map(isa):
     """Masked WCR sum + count (``azimint_naive`` shape): conditional accumulation
     inside a ``dace.map``.

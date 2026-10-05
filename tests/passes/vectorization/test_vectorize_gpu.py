@@ -23,6 +23,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TIL
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
@@ -120,7 +121,7 @@ def test_deferred_tile_nodes_are_cuda_stamped():
     tiles = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
     assert tiles, "expected tile lib nodes to remain (deferred expansion)"
     for n in tiles:
-        assert n.target_isa == "CUDA"
+        assert n.target_isa is ISA.CUDA
         assert n.implementation == "cuda"
 
 
@@ -149,7 +150,7 @@ def test_a_narrow_float_outside_numpy_s_hierarchy_still_vectorizes():
     including the ``-> bool`` a comparison's result IS. ``np.where(x > 0, ...)`` on a bfloat16
     array therefore died in validation, on the same path fp16 takes without complaint."""
     sdfg = _prep(where_bf16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     assert [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)], \
         "the bfloat16 comparison did not reach the tile path at all"
     sdfg.expand_library_nodes()

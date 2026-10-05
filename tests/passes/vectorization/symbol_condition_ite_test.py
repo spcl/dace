@@ -27,6 +27,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import assert_tiled
+from dace.transformation.passes.vectorization.enums import ISA
 
 N = 64
 WIDTHS = (8, )
@@ -52,7 +53,7 @@ def test_a_connector_condition_still_reports_as_one():
     assert detected.cond_is_symbol is False, 'a connector condition was reported as a symbol'
 
 
-@pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
+@pytest.mark.parametrize('isa', [ISA.SCALAR, detect_host_isa()])
 def test_a_uniform_flag_select_vectorizes_and_matches_numpy(isa):
     """End-to-end on CloudSC's shape: a loop-invariant flag choosing between two per-lane values."""
 
@@ -112,10 +113,10 @@ def test_symbol_mask_ite_expands_through_isa_backend_without_stopiteration():
     assert 'flag_sym' in code, 'the inline symbol expression is missing from the splat'
 
 
-@pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
+@pytest.mark.parametrize('isa', [ISA.SCALAR, detect_host_isa()])
 def test_symbol_mask_ite_selects_every_lane_from_the_splat(isa):
     """The splatted predicate must pick the same arm on every lane, not just lane 0."""
-    sdfg, state, ite = build_symbol_mask_ite_sdfg(f'symbol_mask_ite_splat_{isa.lower()}', isa)
+    sdfg, state, ite = build_symbol_mask_ite_sdfg(f'symbol_mask_ite_splat_{isa.name.lower()}', isa)
     sdfg.expand_library_nodes()
     sdfg.validate()
     compiled = sdfg.compile()

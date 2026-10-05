@@ -11,6 +11,7 @@ import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 
 
 def _build_k1_axpy_sdfg():
@@ -80,25 +81,24 @@ def test_orchestrator_rejects_non_power_of_two():
 def test_orchestrator_rejects_avx512_innermost_not_8_aligned():
     """AVX-512 requires ``widths[-1] % 8 == 0``."""
     with pytest.raises(NotImplementedError, match="widths\\[-1\\] %% 8 == 0|widths\\[-1\\] % 8 == 0"):
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(4, ), target_isa="AVX512"))
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(4, ), target_isa=ISA.AVX512))
 
 
-def test_orchestrator_rejects_unknown_target_isa():
-    """An unknown target ISA is rejected at ``VectorizeConfig`` construction: the
-    ``ISA`` enum coercion raises ``ValueError`` for a string that is not a member."""
-    with pytest.raises(ValueError, match="ISA"):
-        VectorizeConfig(widths=(8, ), target_isa="NOT_AN_ISA")
+def test_orchestrator_rejects_a_target_isa_that_is_not_an_isa_member():
+    """``VectorizeConfig`` takes knob enum members only; a string, even a member's name, is refused."""
+    with pytest.raises(TypeError, match="target_isa must be a ISA member"):
+        VectorizeConfig(widths=(8, ), target_isa="AVX512")
 
 
 def test_orchestrator_k1_axpy_runs_and_validates():
     """K=1 axpy: orchestrator runs end-to-end + validates the result."""
     sdfg = _build_k1_axpy_sdfg()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="SCALAR")).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
 
 
 def test_orchestrator_k2_axpy_runs_and_validates():
     """K=2 axpy: orchestrator runs end-to-end + validates the result."""
     sdfg = _build_k2_axpy_sdfg()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa="SCALAR")).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()

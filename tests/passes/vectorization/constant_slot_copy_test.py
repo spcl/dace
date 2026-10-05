@@ -12,6 +12,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 N = dace.symbol('N')
 
@@ -35,7 +36,9 @@ def test_a_vectorized_constant_slot_copy_writes_its_own_slot(program, slot):
     rng = np.random.default_rng(42)
     sdfg = program.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(2, ), target_isa='SCALAR', remainder_strategy='masked_tail',
+        VectorizeConfig(widths=(2, ),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         validate_all=True)).apply_pass(sdfg, {})
     a = rng.random(7)
     out = np.zeros(7)

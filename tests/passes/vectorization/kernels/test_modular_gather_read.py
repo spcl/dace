@@ -17,6 +17,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
 from tests.passes.vectorization.helpers.harness import S, X, Y, run_vectorization_test
+from dace.transformation.passes.vectorization.enums import BranchMode
 
 pytestmark = pytest.mark.tile_nodes
 
@@ -43,7 +44,7 @@ def square_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_modular_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[i % S]`` -> per-lane gather ``a[(i+l) mod S]``; S=3 < 8 exercises the wrap."""
     xv, sv = 60, 3  # xv not a multiple of 8 -> remainder tile; sv < W -> cyclic wrap within a tile
@@ -65,7 +66,7 @@ def test_modular_gather_read_1d(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_modular_gather_read_2d(branch_mode, remainder_strategy):
     """2-D ``out[i, j] = a[i, j % S]`` -- linear ``i`` tile dim + modular ``j`` gather dim."""
     yv, xv, sv = 8, 60, 3
@@ -88,7 +89,7 @@ def test_modular_gather_read_2d(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_square_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[(i * i) % S]`` -- a non-affine (no integer stride) index -> per-lane
     ``((i+l)**2) mod S``."""
@@ -126,7 +127,7 @@ def cmod_gather_read_sdfg() -> dace.SDFG:
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
     """A truncating ``CMod`` index whose dividend sign is unknown gathers per lane like the floored one."""
     sdfg = cmod_gather_read_sdfg()

@@ -24,7 +24,7 @@ import dace
 from dace.libraries.tileops import TileBinop, TileUnop
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import _expand_pow
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -55,7 +55,7 @@ def sin_squared(x: dace.float64[N], y: dace.float64[N]):
     y[:] = np.sin(x)**2
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
 def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     """``np.sin(x) ** 2`` over a range where ``sin(x) < 0`` must vectorize to the
     numpy result, not NaN (the ``exp(2 * log(sin))`` regression)."""

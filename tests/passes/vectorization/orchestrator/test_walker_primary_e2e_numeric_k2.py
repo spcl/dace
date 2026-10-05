@@ -19,6 +19,7 @@ import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.passes.vectorization.tile_assertions import assert_tiled
+from dace.transformation.passes.vectorization.enums import ISA
 
 # K=2 kernels
 
@@ -108,7 +109,7 @@ def test_k2_copy_matches_reference(M, N):
     ref.name = f"copy_k2_ref_{M}_{N}"
     vec = _build_k2_copy_sdfg(M, N)
     vec.name = f"copy_k2_vec_{M}_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), B=b_ref)
     _run(vec, A=a.copy(), B=b_vec)
@@ -126,7 +127,7 @@ def test_k2_axpy_matches_reference(M, N):
     ref.name = f"axpy_k2_ref_{M}_{N}"
     vec = _build_k2_axpy_sdfg(M, N)
     vec.name = f"axpy_k2_vec_{M}_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), B=b.copy(), C=c_ref)
     _run(vec, A=a.copy(), B=b.copy(), C=c_vec)
@@ -143,7 +144,7 @@ def test_k2_unop_matches_reference(M, N):
     ref.name = f"unop_k2_ref_{M}_{N}"
     vec = _build_k2_unop_sdfg(M, N)
     vec.name = f"unop_k2_vec_{M}_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), C=c_ref)
     _run(vec, A=a.copy(), C=c_vec)
@@ -161,7 +162,7 @@ def test_k2_mixed_chain_matches_reference(M, N):
     ref.name = f"mixed_k2_ref_{M}_{N}"
     vec = _build_k2_mixed_sdfg(M, N)
     vec.name = f"mixed_k2_vec_{M}_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), B=b.copy(), C=c_ref)
     _run(vec, A=a.copy(), B=b.copy(), C=c_vec)
@@ -215,7 +216,7 @@ def test_k3_copy_matches_reference():
     ref.name = "copy_k3_ref"
     vec = _build_k3_copy_sdfg(M, N, P)
     vec.name = "copy_k3_vec"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(2, 4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(2, 4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), B=b_ref)
     _run(vec, A=a.copy(), B=b_vec)
@@ -234,7 +235,7 @@ def test_k3_axpy_matches_reference():
     ref.name = "axpy_k3_ref"
     vec = _build_k3_axpy_sdfg(M, N, P)
     vec.name = "axpy_k3_vec"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(2, 4, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(2, 4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     _run(ref, A=a.copy(), B=b.copy(), C=c_ref)
     _run(vec, A=a.copy(), B=b.copy(), C=c_vec)

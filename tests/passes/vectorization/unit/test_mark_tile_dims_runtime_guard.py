@@ -23,7 +23,7 @@ import pytest
 import dace
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -102,7 +102,8 @@ def test_mark_tile_dims_specs_static_trip_below_width_for_masked_tail():
     assert not _guard_states(sdfg)
 
 
-@pytest.mark.parametrize("strat,isa", [("full_mask", HOST_ISA), ("scalar_postamble", "SCALAR")])
+@pytest.mark.parametrize("strat,isa", [(RemainderStrategy.FULL_MASK, HOST_ISA),
+                                       (RemainderStrategy.SCALAR_POSTAMBLE, ISA.SCALAR)])
 @pytest.mark.parametrize("n", [3, 5, 7])
 def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
     """A symbolic-trip kernel run with ``N < W`` produces correct results -- the

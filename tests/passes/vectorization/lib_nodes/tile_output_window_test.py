@@ -22,6 +22,7 @@ from dace.libraries.tileops.validation import edge_moves_a_tile
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 N = dace.symbol('N')
 
@@ -65,7 +66,9 @@ def test_a_windowed_tile_write_vectorizes_and_keeps_its_numbers():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), target_isa='SCALAR', remainder_strategy='masked_tail',
+            VectorizeConfig(widths=(8, ),
+                            target_isa=ISA.SCALAR,
+                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
                             validate_all=True)).apply_pass(sdfg, {})
     sdfg.validate()
     # A refusal leaves the kernel correct but un-tiled, which would pass the numbers below without

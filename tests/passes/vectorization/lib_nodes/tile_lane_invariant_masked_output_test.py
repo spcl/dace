@@ -14,7 +14,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileUnop
-from dace.libraries.tileops.dispatch import select_tile_implementation
+from dace.libraries.tileops.dispatch import ISA, select_tile_implementation
 
 
 def masked_sdfg(name: str, node, widths, implementation: str) -> dace.SDFG:
@@ -32,7 +32,7 @@ def masked_sdfg(name: str, node, widths, implementation: str) -> dace.SDFG:
     if implementation == 'pure':
         node.implementation = 'pure'
     else:
-        node.target_isa = implementation.upper()
+        node.target_isa = ISA[implementation.upper()]
         node.implementation = select_tile_implementation(node, state)
     sdfg.expand_library_nodes()
     sdfg.validate()

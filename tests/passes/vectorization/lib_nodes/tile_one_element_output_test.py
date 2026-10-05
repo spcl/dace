@@ -14,6 +14,7 @@ from dace.libraries.tileops import TileBinop, TileUnop
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 N = dace.symbol('N')
 
@@ -30,7 +31,7 @@ def element_write_sdfg(name: str, node, implementation: str) -> dace.SDFG:
     if implementation == 'pure':
         node.implementation = 'pure'
     else:
-        node.target_isa = implementation.upper()
+        node.target_isa = ISA[implementation.upper()]
         node.implementation = select_tile_implementation(node, state)
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -69,7 +70,9 @@ def test_a_vectorized_map_storing_a_negated_literal_into_one_element_stores_it()
     rng = np.random.default_rng(42)
     sdfg = flag_every_column.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(2, ), target_isa='SCALAR', remainder_strategy='masked_tail',
+        VectorizeConfig(widths=(2, ),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         validate_all=True)).apply_pass(sdfg, {})
     stores = [(n.has_mask, str(e.data)) for n, state in sdfg.all_nodes_recursive() if isinstance(n, TileUnop)
               for e in state.out_edges(n)]

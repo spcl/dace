@@ -28,11 +28,12 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES, VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA
 
 M = 64  # exact multiple of every tested width (2 / 4)
 
 
-def _vectorize(prog, isa="SCALAR", width=4, assume_even=False):
+def _vectorize(prog, isa=ISA.SCALAR, width=4, assume_even=False):
     sdfg = prog.to_sdfg(simplify=True)
     pristine = copy.deepcopy(sdfg)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(width, ), target_isa=isa,

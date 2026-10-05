@@ -30,7 +30,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from tests.passes.vectorization.tile_assertions import assert_tiled
@@ -44,7 +44,7 @@ S2 = dace.symbol("S2")
 NB_VAL, NLEV_VAL, NPROMA_VAL = 2, 16, 64
 
 
-def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode="merge", seeds=(0, 1, 2)):
+def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode=BranchMode.MERGE, seeds=(0, 1, 2)):
     """Vectorise ``kern`` with ``VectorizeCPUMultiDim`` and assert bit-equivalence
     with the unvectorised reference across several random seeds."""
     import copy
@@ -239,7 +239,7 @@ def _pred_chain(a: dace.float64[S1, S2], b: dace.float64[S1, S2], c: dace.float6
 
 
 @pytest.mark.parametrize("kern", [_pred_store, _pred_rmw, _pred_chain])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_predicated_branch_body(kern, branch_mode):
     """Guarded ``if a < 0.5: ...`` body. Regression: the K=1 comparison cast its
     operands to the (bool) output type -- ``(bool)1e-12 -> 1`` -- so the mask was

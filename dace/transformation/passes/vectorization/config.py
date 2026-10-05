@@ -2,20 +2,12 @@
 """Overall configuration for the multi-dim tile-op vectorizer.
 
 :class:`VectorizeConfig` bundles every vectorizer knob into one dataclass.
-``__post_init__`` coerces string-valued variants to enum members, so a raw
-string (``"AVX512"``) and the enum member (``ISA.AVX512``) are interchangeable.
+``__post_init__`` refuses a variant that is not a member of its enum.
 """
 import dataclasses
 
 from dace.dtypes import DeviceType
-from dace.transformation.passes.vectorization.enums import (
-    ISA,
-    BranchMode,
-    RemainderStrategy,
-    coerce_branch_mode,
-    coerce_isa,
-    coerce_remainder_strategy,
-)
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 
 
 @dataclasses.dataclass(slots=True)
@@ -51,7 +43,9 @@ class VectorizeConfig:
     device: DeviceType = DeviceType.CPU
 
     def __post_init__(self) -> None:
-        self.target_isa = coerce_isa(self.target_isa)
-        self.remainder_strategy = coerce_remainder_strategy(self.remainder_strategy)
-        self.branch_mode = coerce_branch_mode(self.branch_mode)
+        for name, enum_cls in (("target_isa", ISA), ("remainder_strategy", RemainderStrategy), ("branch_mode",
+                                                                                                BranchMode)):
+            if not isinstance(getattr(self, name), enum_cls):
+                raise TypeError(f"VectorizeConfig.{name} must be a {enum_cls.__name__} member, "
+                                f"got {getattr(self, name)!r}")
         self.widths = tuple(self.widths)

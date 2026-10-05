@@ -14,6 +14,7 @@ from dace.dtypes import DeviceType
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
+from dace.transformation.passes.vectorization.enums import ISA
 
 N, M = dace.symbol('N'), dace.symbol('M')
 
@@ -33,7 +34,7 @@ def vectorized_kernel():
     kernel = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
     kernel.map.schedule = dace.ScheduleType.GPU_Device
     kernel.map.gpu_block_size = [256, 1, 1]
-    VectorizeMultiDim(VectorizeConfig(widths=(2, ), target_isa='SCALAR', device=DeviceType.GPU)).apply_pass(sdfg, {})
+    VectorizeMultiDim(VectorizeConfig(widths=(2, ), target_isa=ISA.SCALAR, device=DeviceType.GPU)).apply_pass(sdfg, {})
     return sdfg, kernel
 
 

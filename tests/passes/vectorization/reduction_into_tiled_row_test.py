@@ -44,14 +44,14 @@ def test_reduction_into_a_row_is_tiled_on_the_inner_param_only():
     assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive())
 
 
-@pytest.mark.parametrize('isa', sorted({ISA.SCALAR.value, detect_host_isa()}))
+@pytest.mark.parametrize('isa', list(dict.fromkeys((ISA.SCALAR, detect_host_isa()))))
 @pytest.mark.parametrize('n,m', [(8, 16), (12, 16), (12, 21), (5, 3)])
 def test_reduction_into_a_tiled_row_sums_each_row(n, m, isa):
     rng = np.random.default_rng(seed=n)
     A = rng.random((n, m))
     y = np.zeros(n)
     sdfg, _, _ = row_sums()
-    sdfg.name = f'row_sums_{n}_{m}_{isa}'
+    sdfg.name = f'row_sums_{n}_{m}_{isa.name}'
     VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=isa)).apply_pass(sdfg, {})
 
     sdfg(A=A.copy(), y=y, N=n, M=m)

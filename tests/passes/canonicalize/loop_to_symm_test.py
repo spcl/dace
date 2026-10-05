@@ -38,6 +38,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -320,8 +321,8 @@ def test_lifted_slice_nest_survives_vectorization():
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(8, ),
                         target_isa=detect_host_isa(),
-                        remainder_strategy="masked_tail",
-                        branch_mode="merge")).apply_pass(sdfg, {})
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     assert len(_symm_nodes(sdfg)) == 1, "vectorization must not dismantle the lifted node"
     # No parallel map may write C: the prescale is elementwise and the product is the
     # library node's business, so a Multicore scope storing to C means the hand-rolled

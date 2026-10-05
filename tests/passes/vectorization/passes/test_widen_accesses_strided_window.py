@@ -23,6 +23,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from tests.passes.vectorization.tile_assertions import masked_stores
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
 N = dace.symbol('N')
 
@@ -87,9 +88,9 @@ def canonicalized_and_vectorized(prog):
         warnings.simplefilter('always')
         VectorizeCPUMultiDim(
             VectorizeConfig(widths=(8, ),
-                            target_isa='SCALAR',
-                            remainder_strategy='masked_tail',
-                            branch_mode='merge',
+                            target_isa=ISA.SCALAR,
+                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                            branch_mode=BranchMode.MERGE,
                             validate_all=True)).apply_pass(sdfg, {})
         refusals = [str(m.message) for m in caught if 'refusing to vectorize' in str(m.message)]
     sdfg.validate()
@@ -172,9 +173,9 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
         warnings.simplefilter('always')
         VectorizeCPUMultiDim(
             VectorizeConfig(widths=(8, 8),
-                            target_isa='SCALAR',
-                            remainder_strategy='masked_tail',
-                            branch_mode='merge',
+                            target_isa=ISA.SCALAR,
+                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                            branch_mode=BranchMode.MERGE,
                             validate_all=True)).apply_pass(sdfg, {})
         refusals = [str(m.message) for m in caught if 'refusing to vectorize' in str(m.message)]
     sdfg.validate()

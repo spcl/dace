@@ -14,14 +14,13 @@ import pytest
 import dace
 from dace.libraries.tileops import dispatch
 from dace.libraries.tileops import environments as tile_env
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VALID_ISAS
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
 
 
 def test_cuda_isa_registered():
-    assert "CUDA" in VALID_ISAS
-    assert dispatch.ISA_TO_IMPL["CUDA"] == "cuda"
+    assert dispatch.ISA_TO_IMPL[ISA.CUDA] == "cuda"
 
 
 def test_cuda_environment_pulls_header():
@@ -72,7 +71,7 @@ def wired_binop(op, widths):
     state.add_edge(state.add_access("a"), None, node, "_a", dace.Memlet(f"a[{subset}]"))
     state.add_edge(state.add_access("b"), None, node, "_b", dace.Memlet(f"b[{subset}]"))
     state.add_edge(node, "_c", state.add_access("c"), None, dace.Memlet(f"c[{subset}]"))
-    node.target_isa = "CUDA"
+    node.target_isa = ISA.CUDA
     return node, state
 
 
@@ -92,7 +91,7 @@ def test_reduce_selects_cuda_for_full_k1_tile():
     # A full (axis=None), unmasked, K=1 TileReduce lowers to the cuda ``tile_reduce``
     # intrinsic (composed half2 fold for fp16, per-lane fold otherwise).
     sdfg, st, n = _reduce_sdfg(dace.float16, 2)
-    n.target_isa = "CUDA"
+    n.target_isa = ISA.CUDA
     assert "cuda" in n.implementations
     assert dispatch.select_tile_implementation(n, st) == "cuda"
 
@@ -104,7 +103,7 @@ def test_reduce_kge2_falls_back_to_pure_under_cuda():
     n = TileReduce("t", op="+", widths=(2, 2))
     st = dace.SDFG("cuda_selection_reduce").add_state()
     st.add_node(n)
-    n.target_isa = "CUDA"
+    n.target_isa = ISA.CUDA
     assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
@@ -146,16 +145,16 @@ def test_reduce_cuda_selects_pure_for_masked_and_axis():
     # The tile_reduce intrinsic takes no mask and only does a full reduction, so a
     # masked reduce or a single-axis reduce lowers to the pure per-lane loop.
     for sdfg, st, n in (_reduce_sdfg(dace.float16, 4, "+", mask=True), _reduce_sdfg(dace.float32, 4, "+", axis=1)):
-        n.target_isa = "CUDA"
+        n.target_isa = ISA.CUDA
         assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def test_cuda_requires_even_width():
     # half2 packs 2 lanes, so the innermost tile width must be a multiple of 2.
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _validate_knobs
-    _validate_knobs((2, ), "CUDA", "scalar_postamble", "merge", "tile_k1")  # ok
+    _validate_knobs((2, ), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")  # ok
     with pytest.raises(NotImplementedError, match="half2"):
-        _validate_knobs((1, ), "CUDA", "scalar_postamble", "merge", "tile_k1")
+        _validate_knobs((1, ), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")
 
 
 if __name__ == "__main__":

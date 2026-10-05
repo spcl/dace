@@ -38,6 +38,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 #: Every test here is about float16, so the whole module carries the marker the fp16 CI leg
 #: selects on.
@@ -80,7 +81,8 @@ def _vectorized(program, name: str = None, width: int = 2) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(width, ),
+                                 remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg
@@ -139,7 +141,7 @@ def test_masked_select_store_stays_per_element():
     sdfg.specialize({"N": 1024})
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     ops = _fp16_tile_ops(_device_code(sdfg))
     assert "tile_load" in ops, f"the select kernel stopped widening its loads too: {sorted(ops)}"
     assert "tile_store" not in ops, f"a masked fp16 store was widened: {sorted(ops)}"

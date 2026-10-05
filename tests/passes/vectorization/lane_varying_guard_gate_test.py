@@ -32,6 +32,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
     no_conditional_interstate_assign_on_widened_data)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.npbench import npbench
+from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 
 WIDTHS = (8, )
 
@@ -92,8 +93,8 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=WIDTHS,
                         target_isa=detect_host_isa(),
-                        remainder_strategy='full_mask',
-                        branch_mode='merge')).apply_pass(sdfg, {})
+                        remainder_strategy=RemainderStrategy.FULL_MASK,
+                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
 
     assert no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS) is None
 

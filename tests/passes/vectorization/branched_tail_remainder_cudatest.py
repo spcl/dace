@@ -44,6 +44,7 @@ from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -147,8 +148,9 @@ def _run_in_fork(work) -> int:
 # Structural / gating tests (no GPU device needed)
 def test_branched_tail_refused_on_cpu():
     """The strategy is GPU-only: a CPU config raises ``NotImplementedError`` at construction."""
-    with pytest.raises(NotImplementedError, match="branched_tail.*GPU-only"):
-        VectorizeMultiDim(VectorizeConfig(widths=(8, ), device=DeviceType.CPU, remainder_strategy="branched_tail"))
+    with pytest.raises(NotImplementedError, match="BRANCHED_TAIL.*GPU-only"):
+        VectorizeMultiDim(
+            VectorizeConfig(widths=(8, ), device=DeviceType.CPU, remainder_strategy=RemainderStrategy.BRANCHED_TAIL))
 
 
 def test_assume_even_opts_out_of_branched_tail():
@@ -193,7 +195,7 @@ def test_default_gpu_k1_peels_a_masked_tail():
     assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes)
 
     # The explicit opt-in to the scalar-tail variant still peels a scalar tail.
-    scalar = VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail"))
+    scalar = VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL))
     assert [p.tail_mode for p in scalar.passes if isinstance(p, SplitMapForTileRemainder)] == ["scalar"]
 
 
@@ -271,7 +273,7 @@ def test_branched_tail_provably_nondivisible_does_not_raise():
         VectorizeGPU(VectorizeConfig(widths=(8, ), assume_even=True)).apply_pass(_prep(_add16_literal), {})
 
     sdfg = _prep(_add16_literal)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.validate()
     maps = _top_maps(sdfg)
     assert len(maps) == 1, f"branched_tail must fuse to one map; got {len(maps)}"
@@ -285,7 +287,7 @@ def test_branched_tail_structure_if_vector_else_scalar():
     tile ops (masked copies and TileBinop) and NO scalar tasklet; the ``else`` branch holds a
     Sequential loop with the scalar tasklet."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_top_maps(sdfg)) == 1
     conds = _conditionals(sdfg)
@@ -363,7 +365,7 @@ def test_branched_tail_emits_single_kernel():
     """The emitted device (``.cu``) TU contains exactly ONE ``__global__`` kernel for the fused
     region -- the two-kernel remainder is folded into one -- with a split-residue-free bound."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert cu.count("__global__ void") == 1, "branched_tail must emit exactly ONE kernel for the tiled region"
@@ -393,7 +395,7 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
     explicit fp16 dtype assertions below.
     """
     sdfg = _prep(_where16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
 
     ites = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileITE)]
     assert len(ites) == 1, f"expected exactly one TileITE for the tiled interior; got {len(ites)}"
@@ -437,7 +439,8 @@ def test_branched_tail_elementwise_bitexact(width):
         import cupy
         sdfg = _prep(_add16)
         sdfg.name = f"bt_add16_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width, ),
+                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
         sdfg.expand_library_nodes()
         cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
@@ -468,7 +471,8 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
         import cupy
         sdfg = _prep(_neighbor16)
         sdfg.name = f"bt_neighbor16_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width, ),
+                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
         sdfg.expand_library_nodes()
         cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
@@ -499,7 +503,8 @@ def test_branched_tail_outer_param_bitexact(width):
         import cupy
         sdfg = _prep(_add16_2d)
         sdfg.name = f"bt_add16_2d_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width, ),
+                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
         # Pin the fused shape: un-fused, this kernel would still be numerically right, so a bare
         # value check would pass without ever exercising the merge.
         assert len(_top_maps(sdfg)) == 1, "the prefix-param pair must fuse to a single map"
@@ -573,7 +578,8 @@ def test_branched_tail_where_literal_arm_bitexact():
         import cupy
         sdfg = _prep(_where16)
         sdfg.name = "bt_where16"
-        VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(2, ),
+                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         csr = sdfg.compile()

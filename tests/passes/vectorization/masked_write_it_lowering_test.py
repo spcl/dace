@@ -29,7 +29,7 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode
+from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -105,8 +105,8 @@ def test_normalize_skips_scalar_tail():
     assert not _bare_if_tasklets(sdfg)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
-@pytest.mark.parametrize("remainder", ["scalar_postamble", "masked_tail"])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
+@pytest.mark.parametrize("remainder", [RemainderStrategy.SCALAR_POSTAMBLE, RemainderStrategy.MASKED_TAIL])
 def test_masked_const_write_matches_numpy(isa, remainder):
     """``A[A > thresh] = 0`` lowers through the tile pipeline (interior masked store +
     scalar/masked tail) bit-exact vs NumPy, at a non-tile-divisible size."""
@@ -129,8 +129,8 @@ def test_masked_const_write_matches_numpy(isa, remainder):
     assert np.array_equal(work, ref), f"{work[:6]} != {ref[:6]}"
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
-@pytest.mark.parametrize("remainder", ["scalar_postamble", "masked_tail"])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
+@pytest.mark.parametrize("remainder", [RemainderStrategy.SCALAR_POSTAMBLE, RemainderStrategy.MASKED_TAIL])
 def test_masked_value_write_matches_numpy(isa, remainder):
     """``A[m] = x`` (value tile, not a constant) lowers bit-exact vs NumPy. The
     ``masked_tail`` config exercises the AND-combine of ``cond`` with the tile
