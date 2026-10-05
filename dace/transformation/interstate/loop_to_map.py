@@ -792,7 +792,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     # Other passes map symbols without declaring them; type it off the symbol.
-                    nsdfg.symbols[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
+                    nsdfg.symbol_repo.add(s, sdfg.symbols.get(s, symbolic.symbol(s).dtype))
         for name in read_set:
             r = body.add_read(name)
             body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
@@ -805,7 +805,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.symbols[sym] = dtype
+            nsdfg.symbol_repo.add(sym, dtype)
 
         # Mapping a symbol the nested SDFG assigns itself desyncs a later pruning pass.
         internally_defined = set()
@@ -820,12 +820,12 @@ class LoopToMap(xf.MultiStateTransformation):
                     continue
                 if sym_name in sdfg.symbols:
                     if sym_name not in nsdfg.symbols:
-                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
+                        nsdfg.symbol_repo.add(sym_name, sdfg.symbols[sym_name])
                     if sym_name not in cnode.symbol_mapping:
                         cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
         # Propagate symbols, where types cannot be inferred
-        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes = dict(nsdfg.symbols)
         alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
         for e in self.loop.all_interstate_edges():
             for k, v in e.data.assignments.items():
@@ -847,7 +847,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
                 # Only add explicit type, if it cannot be inferred
                 if vtype is None:
-                    nsdfg.symbols[k] = ktype
+                    nsdfg.symbol_repo.add(k, ktype)
 
         # The registrations above can free a symbol after the mapping was fixed; validation
         # rejects one that is missing, so self-map the leftovers.
@@ -857,7 +857,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             cnode.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
             if sym not in nsdfg.symbols and sym in sdfg.symbols:
-                nsdfg.symbols[sym] = sdfg.symbols[sym]
+                nsdfg.symbol_repo.add(sym, sdfg.symbols[sym])
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.

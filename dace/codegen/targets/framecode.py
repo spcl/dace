@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import copy
 import pathlib
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
@@ -566,7 +565,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
+        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg)
 
         opbar.done()
 
@@ -1002,7 +1001,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
-        global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols = dict(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():

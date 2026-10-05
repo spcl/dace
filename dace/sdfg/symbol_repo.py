@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open. """
 import enum
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, Union
 
@@ -312,7 +312,7 @@ class SymbolRepo:
         ``at``. """
         chain_facts([candidate, *self.chain(at)[1:]])
 
-    def replace(self, names: dict[str, str], replacements: dict[str, sympy.Basic]) -> None:
+    def replace(self, names: dict[str, str], replacements: Mapping[str, symbolic.SymbolicType]) -> None:
         """ Renames declared names (``names``) in every scope, as ``SDFG.replace_dict`` does in the whole graph, and
         rewrites the relations. A name replaced by an expression becomes relations over it; a parameter's free symbols
         are declared with its dtype. """
@@ -330,10 +330,13 @@ class SymbolRepo:
                     if predicates:
                         scope.predicates[new_name] = predicates
                     continue
+                replacement = replacements[name]
+                if not isinstance(replacement, sympy.Basic):
+                    raise TypeError(f'Cannot replace symbol "{name}" by {replacement}')
                 if owner is None:
-                    scope.types.update({str(free): dtype for free in replacements[name].free_symbols})
+                    scope.types.update({str(free): dtype for free in replacement.free_symbols})
                 scope.relations.update([
-                    predicate_relation(predicate, as_expr(replacements[name]))
+                    predicate_relation(predicate, as_expr(replacement))
                     for predicate in sorted(predicates, key=lambda p: p.name)
                 ])
 

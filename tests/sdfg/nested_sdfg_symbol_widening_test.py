@@ -88,8 +88,8 @@ def test_value_beyond_32_bits_reaches_the_nested_sdfg():
 def test_declared_wider_symbol_is_kept():
     sdfg = _map_over_nested_sdfg()
     inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    inner.symbols['n'] = dace.int64
-    sdfg.symbols['N'] = dace.int32
+    inner.symbol_repo.set_type('n', dace.int64)
+    sdfg.symbol_repo.set_type('N', dace.int32)
     infer_types.infer_connector_types(sdfg)
     assert inner.symbols['n'] == dace.int64
 

@@ -1948,7 +1948,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
     # Swap symbols
     for sym_name, sym_type in sdfg.symbols.items():
         if sym_type == from_type:
-            sdfg.symbols[sym_name] = to_type
+            sdfg.symbol_repo.set_type(sym_name, to_type)
             swaps_count += 1
 
     # Swap array types

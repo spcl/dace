@@ -5,7 +5,7 @@ from functools import lru_cache, cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, Optional, Set, Tuple, Union, TYPE_CHECKING
 import numpy
 
 import sympy.abc
@@ -2289,7 +2289,7 @@ def symbol_replacements(
     return result or None
 
 
-def replace_symbols(expr: Any, replacements: Optional[Dict[str, sympy.Basic]]) -> Any:
+def replace_symbols(expr: Any, replacements: Optional[Mapping[str, Any]]) -> Any:
     """
     Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
     whatever their types.

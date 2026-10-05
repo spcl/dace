@@ -184,7 +184,7 @@ def test_validation_rejects_symbol_bound_by_a_map():
     sdfg.add_array('A', [10], dace.float64)
     state = sdfg.add_state(is_start_block=True)
     state.add_mapped_tasklet('m', {'j': '0:10'}, {}, 'a = 1.0', {'a': dace.Memlet('A[j]')}, external_edges=True)
-    sdfg.symbols['j'] = dace.int64
+    sdfg.symbol_repo.add('j', dace.int64)
     with pytest.raises(InvalidSDFGError, match='bound by a loop or map scope'):
         sdfg.validate()
 

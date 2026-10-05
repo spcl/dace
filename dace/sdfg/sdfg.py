@@ -13,7 +13,8 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+import types
+from typing import Any, AnyStr, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
 import dace
@@ -1058,8 +1059,9 @@ class SDFG(ControlFlowRegion):
             predicates = frozenset(predicate for predicate in symbolic.Predicate
                                    if declared.get(predicate.name.lower()))
             name, stype = name.name, name.dtype
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
+        dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Invalid type {stype} for symbol "{name}"')
         if find_new_name:
             name = self._find_new_name(name)
         elif name in self.arrays:
@@ -1068,7 +1070,7 @@ class SDFG(ControlFlowRegion):
         elif name in scope_bound_names(self):
             raise NameCollisionError(f'Cannot create symbol "{name}", a loop or map scope binds it; '
                                      'its facts come from the scope.')
-        self._symbol_repo.add(name, stype, predicates)
+        self._symbol_repo.add(name, dtype, predicates)
         return name
 
     def set_symbol_assumptions(self, name: str, predicates: FrozenSet[symbolic.Predicate]) -> None:
@@ -1097,9 +1099,10 @@ class SDFG(ControlFlowRegion):
         return self._symbol_repo
 
     @property
-    def symbols(self) -> Dict[str, dtypes.typeclass]:
-        """ The symbols passed into this SDFG, by name: the parameters of its symbol repository. """
-        return self._symbol_repo.params.types
+    def symbols(self) -> Mapping[str, dtypes.typeclass]:
+        """ The symbols passed into this SDFG, by name: a read-only view of the parameters of its symbol repository,
+        which every change goes through. """
+        return types.MappingProxyType(self._symbol_repo.params.types)
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
@@ -1607,10 +1610,11 @@ class SDFG(ControlFlowRegion):
         defined_syms |= set(self.constants_prop.keys())
 
         # Add used symbols from init and exit code
+        declared = set(self.symbols)
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
 
         # Snapshot the set so super() can filter array names out of
         # ``free_syms``; we re-extract them from internal references below.

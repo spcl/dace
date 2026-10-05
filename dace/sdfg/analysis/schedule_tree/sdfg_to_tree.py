@@ -670,7 +670,7 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     :param stree: The tree root in which to make the unified descriptor repository.
     """
     stree.containers = sdfg.arrays
-    stree.symbols = sdfg.symbols
+    stree.symbols = dict(sdfg.symbols)
     stree.constants = sdfg.constants_prop
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of

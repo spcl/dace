@@ -1100,7 +1100,7 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) ->
     for outer, replacement in replacements.items():
         parent_node.symbol_mapping[outer] = replacement
         if outer in parent_types and outer in sdfg.symbols:
-            sdfg.symbols[outer] = parent_types[outer]
+            sdfg.symbol_repo.set_type(outer, parent_types[outer])
 
     # The nested SDFGs below are connected to containers whose descriptors were just restated
     integrate_nested_sdfgs_within(sdfg)

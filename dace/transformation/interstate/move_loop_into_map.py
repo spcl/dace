@@ -189,7 +189,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         if itervar in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
-            del sdfg.symbols[itervar]
+            sdfg.symbol_repo.remove(itervar)
 
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:

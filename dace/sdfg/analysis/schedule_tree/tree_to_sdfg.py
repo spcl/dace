@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final, Sequence
 
-from dace import subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -914,6 +914,8 @@ def from_schedule_tree(
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
     for name, dtype in stree.symbols.items():
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Symbol "{name}" of the schedule tree has no type')
         result.symbol_repo.add(name, dtype)
 
     # Insert artificial state boundaries after WAW, before label, etc.

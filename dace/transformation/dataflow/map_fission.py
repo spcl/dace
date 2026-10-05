@@ -271,14 +271,19 @@ class MapFission(transformation.SingleStateTransformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
+                    dtype = graph.symbols_defined_at(nsdfg_node)[symname]
+                    repo = nsdfg_node.sdfg.symbol_repo
+                    if symname in repo.params.types:
+                        repo.set_type(symname, dtype)
+                    else:
+                        repo.add(symname, dtype)
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
                 if str(name) in nsdfg_node.symbol_mapping:
                     del nsdfg_node.symbol_mapping[str(name)]
                 if str(name) in nsdfg_node.sdfg.symbols:
-                    del nsdfg_node.sdfg.symbols[str(name)]
+                    nsdfg_node.sdfg.symbol_repo.remove(str(name))
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
