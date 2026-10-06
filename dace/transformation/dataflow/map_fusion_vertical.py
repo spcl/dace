@@ -546,9 +546,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         if st.in_degree(n) > 0:
                             continue
                         n.data = new_name
+                        # The whole memlet path, through the scopes below the access node too
                         for e in st.out_edges(n):
-                            if e.data is not None and e.data.data == orig:
-                                e.data.data = new_name
+                            for tree_edge in st.memlet_tree(e):
+                                if tree_edge.data.data == orig:
+                                    tree_edge.data.data = new_name
                 # 3. Replace the InOut input connector on the NestedSDFG node.
                 in_type = inner.in_connectors.get(orig)
                 inner.remove_in_connector(orig)
@@ -895,6 +897,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 reduced_intermediate_shape=reduced_inter_shape,
                                 outer_edge=final_producer_edge,
                         ):
+                            return None
+                        if self._nsdfg_producer_carries_intermediate(final_producer, final_producer_edge,
+                                                                     intermediate_node, first_map_exit, sdfg):
                             return None
                         nsdfg_producer_leaves.append((final_producer, final_producer_edge))
 
@@ -2312,6 +2317,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # There is no reason for us to allow it.
         return False
+
+    @staticmethod
+    def _nsdfg_producer_carries_intermediate(nsdfg: nodes.NestedSDFG,
+                                             producer_leaf_edge: graph.MultiConnectorEdge[dace.Memlet],
+                                             intermediate_node: nodes.AccessNode, first_map_exit: nodes.MapExit,
+                                             sdfg: SDFG) -> bool:
+        """Whether a NestedSDFG producer updates the whole intermediate in place in every iteration of the first Map.
+
+        Its connector is then in and out, and claims the whole intermediate: iteration ``i`` reads what iteration
+        ``i - 1`` wrote, so the value the second Map reads at ``i`` is not final until the last iteration. Fusing
+        would hand the consumer an intermediate state.
+        """
+        if producer_leaf_edge.src_conn not in nsdfg.in_connectors:
+            return False
+        if (first_map_exit.map.range.num_elements() == 1) == True:
+            return False
+        claimed = producer_leaf_edge.data.dst_subset
+        if claimed is None:
+            return True
+        full_range = subsets.Range.from_array(intermediate_node.desc(sdfg))
+        return claimed.covers(full_range) is not False
 
     def _nsdfg_producer_fully_defines_intermediate(
         self,
