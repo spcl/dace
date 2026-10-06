@@ -309,7 +309,29 @@ def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
     assert visitor.shape_promotions == {'m': 'm_version'}
 
 
+def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
+    """``px[:nlp, i] = seed[:, i]`` in a loop writes ``px``, not ``nlp``: the slice reads the symbol ``seed`` was
+    sized by, so the copy's extents match (cp2k_grid_integrate in HPCAgent-Bench)."""
+
+    @dace.program
+    def store_in_a_loop(lmax: dace.int32[N], px: dace.float64[5, 4]):
+        for t in range(N):
+            nlp = int(lmax[t]) + 1
+            seed = np.full((nlp, 4), 1.0)
+            for i in range(4):
+                px[:nlp, i] = seed[:, i] + t
+
+    lmax = np.array([1, 3, 2], dtype=np.int32)
+    px = np.zeros((5, 4))
+    store_in_a_loop(lmax, px)
+    expected = np.zeros((5, 4))
+    for t, n in enumerate(lmax + 1):
+        expected[:n, :] = 1.0 + t
+    assert np.allclose(px, expected), px
+
+
 if __name__ == '__main__':
+    test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
     test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()

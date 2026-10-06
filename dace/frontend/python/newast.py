@@ -347,6 +347,17 @@ def _connected_container(dependency: Union[Memlet, nodes.Tasklet], connector: st
 ###############################################################
 
 
+def bound_names(target: ast.AST) -> Set[str]:
+    """The names an assignment target writes: ``a[i:n] = ...`` writes ``a``, never the ``i`` or ``n`` it is indexed by."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(bound_names(element) for element in target.elts))
+    if isinstance(target, (ast.Starred, ast.Subscript, ast.Attribute)):
+        return bound_names(target.value)
+    return set()
+
+
 def is_affine_in(expr, sym) -> bool:
     """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
     expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
@@ -5340,7 +5351,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 targets = [node.target]
             else:
                 continue
-            written |= {n.id for target in targets for n in ast.walk(target) if isinstance(n, ast.Name)}
+            for target in targets:
+                written |= bound_names(target)
         for name in written:
             self.shape_promotions.pop(self.variables.get(name, name), None)
 
