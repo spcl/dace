@@ -570,7 +570,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         if isinstance(node, nd.EntryNode):
             try:
-                state.exit_node(node)
+                exit_node = state.exit_node(node)
             except StopIteration:
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching "
@@ -579,6 +579,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+
+            # A scope's entry and exit are two views of one Map/Consume object, and code that pairs them relies on
+            # that identity (CPU codegen keys the map's brace on it). Nodes cloned against separate deepcopy memos
+            # each get their own object, which otherwise first surfaces as unbalanced C++.
+            if isinstance(node, nd.MapEntry):
+                shared_scope = node.map is exit_node.map
+            elif isinstance(node, nd.ConsumeEntry):
+                shared_scope = node.consume is exit_node.consume
+            else:
+                shared_scope = True
+            if not shared_scope:
+                raise InvalidSDFGNodeError(
+                    "Entry and exit nodes do not share the same scope object (copied separately?)", state.parent_graph,
+                    state_id, nid)
 
         if isinstance(node, (nd.EntryNode, nd.ExitNode)):
             for iconn in node.in_connectors:
