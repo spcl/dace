@@ -946,5 +946,22 @@ def test_an_sdfg_whose_state_executions_is_an_unevaluated_sum_compiles_under_the
     assert np.array_equal(values, np.arange(8, dtype=np.float64))
 
 
+def test_a_loaded_sum_or_product_equals_the_one_built_in_memory():
+    """sympy compares an Add or a Mul by its argument tuple, so a loaded ``klon*(klev + 1)`` whose factors come
+    back in another order is unequal to the same product built in memory, and a loaded container no longer
+    matches the nested SDFG connector that describes it."""
+    klon, klev, n = dace.symbol('klon'), dace.symbol('klev'), dace.symbol('n')
+    for built in (klon * (klev + 1), 2 * klon * (klev + 1) - 3, 3 * n**2 + klon * (n + 1) * (klev - 2)):
+        loaded = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(built))
+        assert loaded == built
+        assert loaded.args == built.args
+
+    sdfg = dace.SDFG('loaded_strides')
+    sdfg.add_array('a', [5, klev + 1, klon], dace.float64)
+    loaded = dace.SDFG.from_json(sdfg.to_json()).arrays['a']
+    assert loaded.strides == sdfg.arrays['a'].strides
+    assert loaded.is_equivalent(sdfg.arrays['a'])
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

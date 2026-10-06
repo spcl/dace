@@ -306,10 +306,9 @@ def test_loop_condition_off_by_one_not_relaxed():
 
 
 def test_relaxes_pow_inside_a_packed_product():
-    """A stored shape product comes back from serialization UNEVALUATED, so the evaluating
-    constructor answers a canonically REORDERED product. That reordering is not a value change:
-    reading it as one drops the whole node's relaxation and leaves a ``double`` ``pow`` in an
-    int64 array size."""
+    """A stored shape product comes back from serialization unevaluated, in the order the evaluating
+    constructor would give it. The relaxation must reach the powers inside it, or a ``double``
+    ``pow`` stays in an int64 array size."""
     R = dace.symbol('R', positive=True, integer=True)
     K = dace.symbol('K', positive=True, integer=True)
     i = dace.symbol('i', positive=True, integer=True)
@@ -322,7 +321,7 @@ def test_relaxes_pow_inside_a_packed_product():
     sdfg = dace.SDFG.from_json(sdfg.to_json())  # the route a packed product actually reaches the pass by
 
     packed = sdfg.arrays['x'].total_size
-    assert packed.args != symbolic_engine.Mul(*packed.args).args  # unevaluated: NOT in canonical order
+    assert packed.args == symbolic_engine.Mul(*packed.args).args  # loaded in canonical order
 
     assert RelaxIntegerPowers().apply_pass(sdfg, {}) is not None
     total = sdfg.arrays['x'].total_size

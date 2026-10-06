@@ -3073,13 +3073,25 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 result.append(arg)
         return result
 
-    @staticmethod
-    def _add(*args):
-        return sympy.Add._from_args(tuple(args))
+    @classmethod
+    def _canonical_args(cls, args, sort) -> tuple:
+        """Orders ``args`` as sympy's evaluating constructors do: the numeric coefficient first, the rest sorted.
 
-    @staticmethod
-    def _mul(*args):
-        return sympy.Mul._from_args(tuple(args))
+        The raw constructors below skip that evaluation, and sympy compares an Add or a Mul by its argument tuple: a
+        loaded ``klon*(klev + 1)`` must be equal to the same product built in memory.
+        """
+        coeffs = [arg for arg in args if _is_sympy_number(arg) and not isinstance(arg, TypedConstant)]
+        rest = [arg for arg in args if not (_is_sympy_number(arg) and not isinstance(arg, TypedConstant))]
+        sort(rest)
+        return tuple(coeffs + rest)
+
+    @classmethod
+    def _add(cls, *args):
+        return sympy.Add._from_args(cls._canonical_args(args, sympy.core.add._addsort))
+
+    @classmethod
+    def _mul(cls, *args):
+        return sympy.Mul._from_args(cls._canonical_args(args, sympy.core.mul._mulsort))
 
     @staticmethod
     def _pow(a, b):
@@ -3099,14 +3111,11 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     @staticmethod
     def _binop_add(a, b):
         flat = _SerializedSymbolicParser._flatten_args(sympy.Add, a, b)
-        flat.sort(key=sympy.default_sort_key)
         return _SerializedSymbolicParser._add(*flat)
 
     @staticmethod
     def _binop_mul(a, b):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
-        args.sort(key=sympy.default_sort_key)
-
         if len(args) > 1:
             args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
 
