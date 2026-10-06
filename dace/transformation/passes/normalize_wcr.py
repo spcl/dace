@@ -56,7 +56,6 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import scopes
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.helpers import unsqueeze_memlet
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
@@ -149,7 +148,7 @@ class NormalizeWCR(ppl.Pass):
       as a slice at the boundary (the nsdfg is multi-state -> not inlinable).
       ``_extract_slice_wcr`` clones that scatter map to the OUTER scope writing the
       destination ``dest[k,...]`` single-element WCR directly (inputs recomposed
-      through the nsdfg boundary via ``unsqueeze_memlet``); the trapped nsdfg output
+      through the nsdfg boundary in the container's coordinates); the trapped nsdfg output
       is redirected to a dead transient (DCE prunes). Yields the vectorizable
       single-element form; a slice WCR is neither omp- nor tblock-reducible.
 
@@ -452,13 +451,17 @@ class NormalizeWCR(ppl.Pass):
         new_me, new_mx = state.add_map('extract_' + oc, {str(nksym): str(ime.map.range)})
         new_t = state.add_tasklet('extract_' + oc, tasklet.in_connectors.keys(), tasklet.out_connectors.keys(),
                                   tasklet.code.as_string)
+        # The connectors are the containers (the nested SDFG contract): an inner memlet already indexes the outer
+        # container and only takes its name.
         for ie, ext, top_src in plan:
-            ml = unsqueeze_memlet(ie.data, ext.data)
+            ml = copy.deepcopy(ie.data)
+            ml.data = ext.data.data
             ml.subset.replace({ksym: nksym})
             state.add_memlet_path(top_src, outer_me, new_me, new_t, dst_conn=ie.dst_conn, memlet=ml)
         for oe in istate.out_edges(tasklet):
             if oe.src_conn == tconn:
-                ml = unsqueeze_memlet(oe.data, out_edge.data)
+                ml = copy.deepcopy(oe.data)
+                ml.data = dest
                 ml.subset.replace({ksym: nksym})
                 ml.wcr = None
                 state.add_memlet_path(new_t, new_mx, outer_mx, dest_an, src_conn=oe.src_conn, memlet=ml)
@@ -567,10 +570,10 @@ class NormalizeWCR(ppl.Pass):
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
             return False
 
-        # Rewrite the body: explicit plain read-modify-write.
-        # Body-local scratch for the per-iteration addend.
-        addend_desc = self._seed_desc(oc_desc)
-        addend = inner.add_datadesc(f'_nnr_addend_{oc}', addend_desc, find_new_name=True)
+        # Rewrite the body: explicit plain read-modify-write of the one element the WCR updates. The connector
+        # is the container, so that element is the WCR edge's subset, not element 0.
+        element = wcr_edge.data.subset
+        addend, _ = inner.add_scalar(f'_nnr_addend_{oc}', oc_desc.dtype, transient=True, find_new_name=True)
 
         # Fresh output connector array (non-transient, because it is a connector).
         out_desc = copy.deepcopy(oc_desc)
@@ -585,10 +588,7 @@ class NormalizeWCR(ppl.Pass):
         out_node = wcr_state.add_write(out_conn_name)
 
         # Reroute the addend source onto the scratch.
-        addend_memlet = copy.deepcopy(wcr_edge.data)
-        addend_memlet.data = addend
-        addend_memlet.wcr = None
-        wcr_state.add_edge(src, src_conn, addend_node, None, addend_memlet)
+        wcr_state.add_edge(src, src_conn, addend_node, None, Memlet(data=addend, subset='0'))
 
         # New tasklet: __out = __old OP __addend (plain).
         dtype = oc_desc.dtype
@@ -596,9 +596,9 @@ class NormalizeWCR(ppl.Pass):
             '__old': dtype,
             '__addend': dtype
         }, {'__out': dtype}, _rmw_tasklet_code(op))
-        wcr_state.add_edge(old_node, None, rmw, '__old', Memlet(data=oc, subset='0'))
+        wcr_state.add_edge(old_node, None, rmw, '__old', Memlet(data=oc, subset=copy.deepcopy(element)))
         wcr_state.add_edge(addend_node, None, rmw, '__addend', Memlet(data=addend, subset='0'))
-        wcr_state.add_edge(rmw, '__out', out_node, None, Memlet(data=out_conn_name, subset='0'))
+        wcr_state.add_edge(rmw, '__out', out_node, None, Memlet(data=out_conn_name, subset=copy.deepcopy(element)))
 
         # Remove the old redundant WCR edge and its sink if orphaned.
         old_sink = wcr_edge.dst
