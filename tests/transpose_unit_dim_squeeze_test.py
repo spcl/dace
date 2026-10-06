@@ -68,9 +68,27 @@ def test_integer_index_squeezes_axis():
     assert np.allclose(got, np.sum(x[:, 1]))
 
 
+@dace.program
+def transposed_column_difference(pos: dace.float64[N, 3], dx: dace.float64[N, N]):
+    dx[:] = pos[:, 0:1].T - pos[:, 0:1]
+
+
+def test_a_length1_slice_keeps_its_axis():
+    """``pos[:, 0:1]`` is ``(N, 1)`` as in numpy: squeezing it to ``(N,)`` makes ``.T`` a no-op and the difference a
+    row-wise broadcast, silently wrong."""
+    sdfg = transposed_column_difference.to_sdfg(simplify=False)
+    views = [desc for desc in sdfg.arrays.values() if isinstance(desc, dace.data.View)]
+    assert views and all(len(view.shape) == 2 for view in views), [str(view.shape) for view in views]
+    pos = np.random.default_rng(0).random((6, 3))
+    dx = np.zeros((6, 6))
+    transposed_column_difference(pos=pos, dx=dx, N=6)
+    assert np.allclose(dx, pos[:, 0:1].T - pos[:, 0:1])
+
+
 if __name__ == "__main__":
     test_column_vector_transpose_matmul()
     test_column_vector_outer_product()
     test_row_vector_transpose()
     test_integer_index_squeezes_axis()
+    test_a_length1_slice_keeps_its_axis()
     print("OK")
