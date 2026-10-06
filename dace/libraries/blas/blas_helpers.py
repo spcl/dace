@@ -225,6 +225,18 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     return opts[optA + optB + optC]
 
 
+def check_one_device(*descs: data.Data):
+    """ Raise unless one device can access every operand: a register vector and a heap matrix both live on the
+        host, although their storage types differ.
+
+        :param descs: the operand descriptors.
+    """
+    if not any(
+            all(dtypes.can_access(schedule, desc.storage) for desc in descs)
+            for schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)):
+        raise ValueError("Input matrices must be accessible from one device")
+
+
 def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     """ If schedule cannot access all passed descriptors, through an error.
 
