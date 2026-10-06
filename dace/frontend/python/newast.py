@@ -169,6 +169,19 @@ augassign_ops = {
 # itself to reject the operand combinations numpy rejects.
 bitwise_augassign_ops = {'<<': 'LShift', '>>': 'RShift', '|': 'BitOr', '^': 'BitXor', '&': 'BitAnd'}
 
+#: Calls whose first positional argument (or ``shape=``) is an array SHAPE rather than data, so the
+#: arithmetic in it stays symbolic instead of being evaluated into a scalar transient. The
+#: ``*_like`` and ``*_scalar`` variants are absent on purpose: they take an array or no shape at all.
+SHAPE_ARGUMENT_FUNCTIONS = frozenset({
+    'numpy.empty',
+    'numpy.zeros',
+    'numpy.ones',
+    'numpy.full',
+    'numpy.ndarray',
+    'dace.define_local',
+    'dace.ndarray',
+})
+
 # Mappings for determining variable name based on operator
 _UNOP_TO_NAME = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
 _BINOP_TO_NAME = {
@@ -1163,6 +1176,13 @@ class ProgramVisitor(ExtNodeVisitor):
         #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
         #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
+        #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
+        self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        #: Promoted symbols every read so far provably set to a symbolic value, with the region it holds in.
+        self.promoted_symbol_values: Dict[symbolic.symbol, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        #: Promoted symbols some read may have set to another value.
+        self.unproven_symbols: Set[str] = set()
+
         #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
         #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
         self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
@@ -2534,8 +2554,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 for atom in symrng.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         astr = str(atom)
-                        # Check for undefined variables
-                        if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
+                        # Check for undefined variables. Scalar-to-symbol promotion declares ``__sym_<scalar>`` on the
+                        # SDFG without touching the visitor's scope, so a declared symbol counts as defined.
+                        if (astr not in self.defined and astr not in self.sdfg.symbols
+                                and not ('.' in astr and astr in self.sdfg.arrays)):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
@@ -2912,7 +2934,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
-        # The write ends the version the scalar's shape symbol was read from
+        # The write ends the value the scalar was known to hold, and the version its shape symbol was read from.
+        self.symbolic_scalar_values.pop(target_name, None)
         self.shape_promotions.pop(target_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
@@ -2931,7 +2954,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 for sym in operand.free_symbols:
                     if str(sym) not in self.sdfg.symbols:
                         self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                target_desc = self.sdfg.arrays.get(target_name)
+                if (op is None and boolarr is None and not indirect_indices and isinstance(target_desc, data.Scalar)
+                        and target_desc.dtype in dtypes.INTEGER_TYPES):
+                    self.symbolic_scalar_values[target_name] = (operand, self.cfg_target)
                 operand = symbolic.symstr(operand)
+        proven = self.proven_symbol_values()
+        if proven:
+            target_subset, op_subset = copy.deepcopy(target_subset), copy.deepcopy(op_subset)
+            target_subset.replace(proven)
+            op_subset.replace(proven)
 
         indirect_indices = indirect_indices or {}
         tasklet_code = ''
@@ -3167,7 +3199,8 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
-        # An update is a write too
+        # An update is a write too: it ends the value the scalar was known to hold, and its shape symbol's version.
+        self.symbolic_scalar_values.pop(wtarget_name, None)
         self.shape_promotions.pop(wtarget_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
@@ -3187,6 +3220,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     if str(sym) not in self.sdfg.symbols:
                         self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
+        proven = self.proven_symbol_values()
+        if proven:
+            rtarget_subset, wtarget_subset, op_subset = (copy.deepcopy(s)
+                                                         for s in (rtarget_subset, wtarget_subset, op_subset))
+            for subset in (rtarget_subset, wtarget_subset, op_subset):
+                subset.replace(proven)
 
         if op in bitwise_augassign_ops:
             bitwise_args = [self.sdfg.arrays[wtarget_name]]
@@ -4088,7 +4127,19 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (shape, dtype)
 
-    def _parse_function_arg(self, arg: ast.AST):
+    def _parse_function_arg(self, arg: ast.AST, as_shape: bool = False):
+        """One call argument. ``as_shape`` marks the argument that is an array shape.
+
+        A shape is symbolic, not data: visited as an ordinary expression, ``np.empty(lp + 1)`` becomes one opaque
+        symbol ``__sym_lp_plus_1`` while a slice bound over the same scalar keeps ``__sym_lp + 1``, and a copy between
+        the two is refused. Promoting the leaves gives both spellings one form.
+        """
+        if as_shape:
+            if isinstance(arg, (ast.Tuple, ast.List)):
+                return [self._parse_function_arg(element, as_shape=True) for element in arg.elts]
+            folded = self.slice_bound_over_promoted_leaves(arg)
+            if folded is not None:
+                return folded
         # Obtain a string representation
         result = self.visit(arg)
         if isinstance(result, (list, tuple)):
@@ -4990,6 +5041,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Set arguments
         args = []
+        shape_call = funcname in SHAPE_ARGUMENT_FUNCTIONS
 
         # NumPy ufunc support
         found_ufunc = False
@@ -5085,8 +5137,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     mpi_args.append(self._parse_function_arg(arg))
             args.extend(mpi_args)
         else:
-            args.extend([self._parse_function_arg(arg) for arg in node.args])
-        keywords = {arg.arg: self._parse_function_arg(arg.value) for arg in node.keywords}
+            args.extend([
+                self._parse_function_arg(arg, as_shape=shape_call and index == 0) for index, arg in enumerate(node.args)
+            ])
+        keywords = {
+            arg.arg: self._parse_function_arg(arg.value, as_shape=shape_call and arg.arg == 'shape')
+            for arg in node.keywords
+        }
 
         self._add_state('call_%d' % node.lineno)
         self.last_block.set_default_lineinfo(self.current_lineinfo)
@@ -5664,6 +5721,16 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
+    def dominated_by_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether an assignment made in ``defining_region`` still reaches the current region: it is that region or a
+        branch nested in it, with no loop in between (a later iteration may have rebound it)."""
+        region = self.cfg_target
+        while region is not defining_region:
+            if region is None or isinstance(region, (LoopRegion, SDFG)):
+                return False
+            region = region.parent_graph
+        return True
+
     def drop_shape_versions_written_in(self, loop: Union[ast.For, ast.While]):
         """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
         does not see: a shape in the body ahead of the write must read the scalar again."""
@@ -5690,6 +5757,32 @@ class ProgramVisitor(ExtNodeVisitor):
                 return False
             region = region.parent_graph
         return True
+
+    def value_holds_here(self, value: symbolic.SymbolicType, defining_region: ControlFlowRegion) -> bool:
+        """Whether ``value``, bound in ``defining_region``, provably still holds at the current region.
+
+        It holds in that region or in a branch nested in it, with no loop in between (a later
+        iteration may have rebound it), while none of its symbols is assigned on an interstate edge
+        or as a loop variable.
+        """
+        if not self.dominated_by_region(defining_region):
+            return False
+        assigned = {name for edge in self.sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
+        assigned.update(loop.loop_variable for loop in self.sdfg.all_control_flow_regions(recursive=True)
+                        if isinstance(loop, LoopRegion))
+        return not any(str(sym) in assigned for sym in value.free_symbols)
+
+    def proven_symbol_values(self) -> Dict[symbolic.symbol, symbolic.SymbolicType]:
+        """Promoted symbols that provably equal a symbolic value at the current region.
+
+        ``n = N; hc[:n, :n] = c`` bounds the store by ``n``'s promoted symbol while ``c`` is sized by
+        ``N``. The symbol stays the extent everywhere, so every read of one assignment names the
+        same shape; only a store compares its extents through these values.
+        """
+        return {
+            sym: value
+            for sym, (value, region) in self.promoted_symbol_values.items() if self.value_holds_here(value, region)
+        }
 
     def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
         """
@@ -5746,7 +5839,78 @@ class ProgramVisitor(ExtNodeVisitor):
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
         edge.data.assignments = {str(sym): rhs}
+        # One read that may see another value (a loop iteration after a rebind) spoils the symbol for good.
+        known = self.symbolic_scalar_values.get(scalar)
+        if known is not None and str(sym) not in self.unproven_symbols and self.value_holds_here(*known):
+            self.promoted_symbol_values[sym] = known
+        else:
+            self.promoted_symbol_values.pop(sym, None)
+            self.unproven_symbols.add(str(sym))
         return sym
+
+    #: AST nodes a slice bound may be built from and still be read as plain integer arithmetic.
+    SLICE_ARITHMETIC_NODES = (ast.Expression, ast.Name, ast.Load, ast.Constant, ast.BinOp, ast.UnaryOp, ast.Add,
+                              ast.Sub, ast.Mult, ast.USub, ast.UAdd)
+
+    def slice_bound_over_promoted_leaves(self, node: ast.AST):
+        """A COMPOUND slice bound such as ``pad + N`` as one symbolic expression whose scalar
+        leaves are promoted individually, or ``None`` to fall back to materializing it.
+
+        Visiting the expression instead evaluates it into a scalar transient and promotes THAT to
+        a single opaque symbol, which loses the arithmetic: ``buf[pad : pad + N] = x`` then sizes
+        its target ``__sym_buf_slice - __sym_pad``. That is ``N``, but no consumer can see it, so
+        the frontend rejects the copy as a shape mismatch even though the extents are identical.
+        Promoting ``pad`` alone and keeping ``+ N`` symbolic makes the extent literally ``N``.
+
+        Refuses anything that is not integer arithmetic over names already in scope -- a call, a
+        subscript, a float, a name that is an array rather than a scalar -- so the fallback still
+        handles every shape it handled before.
+        """
+        if not isinstance(node, (ast.BinOp, ast.UnaryOp)):
+            return None  # a bare name or constant already promotes exactly; leave that path alone
+        for sub in ast.walk(node):
+            if not isinstance(sub, self.SLICE_ARITHMETIC_NODES):
+                return None
+            if isinstance(sub, ast.Constant) and not isinstance(sub.value, (int, numpy.integer)):
+                return None
+        try:
+            expr = symbolic.pystr_to_symbolic(astutils.unparse(node))
+        except Exception:  # noqa: BLE001 - an unparseable bound simply falls back
+            return None
+
+        defined_vars = {**self.variables, **self.scope_vars}
+        repl = {}
+        for leaf in sorted(expr.free_symbols, key=str):
+            name = str(leaf)
+            # ``variables`` maps symbols onto themselves as well as data onto their descriptors, so
+            # membership there says nothing; what the name RESOLVES to is the question. The value
+            # is not always a string (a symbol maps to its own symbol object), hence ``str``.
+            resolved = str(defined_vars.get(name, name))
+            # Only THIS SDFG's data can be promoted: the promotion reads the descriptor from
+            # ``self.sdfg.arrays`` and writes the assignment on an interstate edge of this SDFG.
+            # A scalar that lives in an enclosing scope (a program argument used inside a map body,
+            # say) is not there, so it goes back to the materializing path that handled it before.
+            if resolved not in self.sdfg.arrays and resolved in self.scope_arrays:
+                return None
+            desc = self.sdfg.arrays.get(resolved)
+            if isinstance(desc, data.Scalar):
+                if desc.dtype not in dtypes.INTEGER_TYPES:
+                    return None
+                repl[leaf] = self.promote_scalar_to_symbol(resolved)
+            elif desc is not None:
+                return None  # an array cannot be a bound
+            elif isinstance(self.sdfg.constants.get(resolved), (int, numpy.integer)):
+                repl[leaf] = int(self.sdfg.constants[resolved])
+            elif resolved != name:
+                return None  # the source name is not the SDFG name; only ``visit`` knows the mapping
+            elif name in self.sdfg.symbols or isinstance(self.globals.get(name), symbolic.symbol):
+                continue  # already a symbol of this SDFG -- keep it as written
+            else:
+                return None
+        # Nothing to promote means the bound is pure symbol arithmetic, which the fallback already
+        # handles correctly -- and handles in the scope's own symbol instances rather than in ones
+        # minted from the source text. Only the scalar case is this method's business.
+        return expr.subs(repl) if repl else None
 
     def _parse_subscript_slice(self,
                                s: ast.AST,
@@ -5755,12 +5919,22 @@ class ProgramVisitor(ExtNodeVisitor):
             Scalar data are promoted to symbols.
         """
 
-        def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
+        def _promote(node: ast.AST, slice_bound: bool = False) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             if isinstance(node, str):
                 scalar = node_str
             else:
+                # Only a slice bound needs its leaves promoted separately: its extent is a difference of two
+                # bounds, and one opaque symbol per bound hides that arithmetic. A bare index promotes whole.
+                folded = self.slice_bound_over_promoted_leaves(node) if slice_bound else None
+                if folded is not None:
+                    return folded
                 scalar = self.visit(node)
+                # A replacement returns its results as a list; only a list/tuple display is a literal index list,
+                # a one-element list from anything else is a computed index.
+                if (isinstance(scalar, (list, tuple)) and len(scalar) == 1
+                        and not isinstance(node, (ast.List, ast.Tuple))):
+                    scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 if isinstance(self.sdfg.arrays[scalar], data.Scalar):
                     return self.promote_scalar_to_symbol(scalar, key=node_str)
@@ -5779,13 +5953,13 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(s, ast.Slice):
             lower = s.lower
             if isinstance(lower, ast.AST):
-                lower = _promote(lower)
+                lower = _promote(lower, slice_bound=True)
             upper = s.upper
             if isinstance(upper, ast.AST):
-                upper = _promote(upper)
+                upper = _promote(upper, slice_bound=True)
             step = s.step
             if isinstance(step, ast.AST):
-                step = _promote(step)
+                step = _promote(step, slice_bound=True)
             if multidim:
                 res = (lower, upper, step)
             else:
@@ -5928,6 +6102,32 @@ class ProgramVisitor(ExtNodeVisitor):
                               other_subset_str=other_subset))
         return tmp, other_subset
 
+    def _index_literal_to_constant(self, aname: str, indices: Union[List[Any], Tuple[Any, ...]]) -> numpy.ndarray:
+        """
+        Converts a list or tuple literal used as an advanced index (e.g., ``A[[0, 2, 4]]``) to a constant
+        integer array.
+
+        :param aname: The name of the array being indexed, used for error reporting.
+        :param indices: The elements of the literal, as returned by the subscript slice parser.
+        :return: A NumPy array with the contents of the literal.
+        :raise DaceSyntaxError: If an element is not an integer known at parse time.
+        """
+        values = []
+        for elem in indices:
+            if isinstance(elem, Number):
+                values.append(elem)
+                continue
+            # Elements are already parsed at this point, so only AST leftovers go back through the visitor.
+            value = symbolic.pystr_to_symbolic(self._parse_value(elem) if isinstance(elem, ast.AST) else str(elem))
+            if not value.is_Integer:
+                node = self.current_ast_stack[-1] if self.current_ast_stack else None
+                raise DaceSyntaxError(
+                    self, node, f'Element "{value}" of the index list used to index "{aname}" is not an integer '
+                    'known at parse time. Store the indices in an integer array and index with that array instead.')
+            values.append(int(value))
+
+        return numpy.array(values, dtype=dtypes.typeclass(int).type)
+
     def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
         """
         Computes the output shape of a slicing operation with advanced indexing.
@@ -5982,9 +6182,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
-                arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
-                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
-                shape = carr.shape
+                shape = self._index_literal_to_constant(aname, arrname).shape
 
             if chunk_shape is not None:
                 chunk_shape, *_ = broadcast_together(shape, chunk_shape)
@@ -6093,8 +6291,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise NameError(f'Array "{idxarrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
-                idxarr = [v if isinstance(v, Number) else self._parse_value(v) for v in idxarrname]
-                carr = numpy.array(idxarr, dtype=dtypes.typeclass(int).type)
+                carr = self._index_literal_to_constant(aname, idxarrname)
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)
                 self.sdfg.arrays[cname] = self.sdfg.constants_prop[cname][0]
