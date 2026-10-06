@@ -16,6 +16,7 @@ import numpy
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.libraries.layout.algebra import Permute
 from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, Layout, apply_assignment, writes_cover_array)
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
@@ -198,6 +199,7 @@ def build_nested_kernel():
     nsdfg = state.add_nested_sdfg(inner, {"xrow"}, {"yrow"}, symbol_mapping={"N": "N"})
     state.add_memlet_path(state.add_access("X"), me, nsdfg, dst_conn="xrow", memlet=dace.Memlet("X[i, 0:N]"))
     state.add_memlet_path(nsdfg, mx, state.add_access("Y"), src_conn="yrow", memlet=dace.Memlet("Y[i, 0:N]"))
+    convert_legacy_nested_sdfgs(outer)
     outer.validate()
     return outer
 
