@@ -124,6 +124,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     datatypes = []
     dtypes_for_result = []
     dtypes_for_result_np2 = []
+    weak_integer_symbols = {}
     for arg in arguments:
         if isinstance(arg, sp.logic.boolalg.BooleanAtom):  # a comparison the symbols decide, folded to sympy.true
             arg = bool(arg)
@@ -151,15 +152,23 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             # produced a mixed-dtype ``r1 <= radius`` comparison the K-dim tiler can't
             # lower. A Python ``int`` makes ``np.result_type`` apply weak (kind-based)
             # promotion, matching the NumPy reference (where ``i`` is a Python int).
-            # Non-integer symbols keep their strong type.
+            # Non-integer symbols keep their strong type, and so does an integer symbol among integers only
+            # (restored below): weakening it there narrows ``j * N`` to a narrower integer operand's type.
             sym_dtype = sym_type(arg)
-            dtypes_for_result_np2.append(1 if np.issubdtype(sym_dtype.type, np.integer) else sym_dtype.type)
+            if np.issubdtype(sym_dtype.type, np.integer):
+                weak_integer_symbols[len(dtypes_for_result_np2)] = sym_dtype.type
+                dtypes_for_result_np2.append(1)
+            else:
+                dtypes_for_result_np2.append(sym_dtype.type)
         elif isinstance(arg, dtypes.typeclass):
             datatypes.append(arg)
             dtypes_for_result.append(representative_num(arg))
             dtypes_for_result_np2.append(arg.type)
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(t=type(arg), a=arg))
+    if not any(np.issubdtype(dtype.type, np.inexact) for dtype in datatypes):
+        for index, strong_type in weak_integer_symbols.items():
+            dtypes_for_result_np2[index] = strong_type
 
     complex_types = {dtypes.complex64, dtypes.complex128, np.complex64, np.complex128}
     float_types = {dtypes.float16, dtypes.float32, dtypes.float64, np.float16, np.float32, np.float64}
