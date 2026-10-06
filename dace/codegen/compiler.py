@@ -1064,7 +1064,11 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
             cmake_variables[var] = env_variables[var]
         cmake_packages |= set(_get_or_eval(env.cmake_packages))
         cmake_includes |= set(_get_or_eval(env.cmake_includes))
-        cmake_libraries |= set(_get_or_eval(env.cmake_libraries))
+        # One group per environment, in its own order: a library precedes what it needs on the link line,
+        # which ``--as-needed`` and static archives depend on. Groups are sorted against each other below.
+        env_libraries = [lib for lib in _get_or_eval(env.cmake_libraries) if lib]
+        if env_libraries:
+            cmake_libraries.add(' '.join(env_libraries))
         cmake_compile_flags |= set(_get_or_eval(env.cmake_compile_flags))
         cmake_link_flags |= set(_get_or_eval(env.cmake_link_flags))
         # Make path absolute

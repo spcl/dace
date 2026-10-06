@@ -6,6 +6,7 @@ import subprocess
 import numpy as np
 
 import dace
+from dace import dtypes, library
 from dace.config import set_temporary
 
 
@@ -66,3 +67,50 @@ def test_cmake_no_static_archive_by_default(tmp_path):
     sdfg.build_folder = str(tmp_path / 'cache')
     csdfg = sdfg.compile()
     assert not os.path.isfile(archive_path(str(csdfg._lib._library_filename)))
+
+
+def library_environment(name: str, libraries):
+    fields = dict(cmake_minimum_version=None,
+                  cmake_packages=[],
+                  cmake_variables={},
+                  cmake_includes=[],
+                  cmake_libraries=list(libraries),
+                  cmake_compile_flags=[],
+                  cmake_link_flags=[],
+                  cmake_files=[],
+                  headers=[],
+                  state_fields=[],
+                  init_code='',
+                  finalize_code='',
+                  dependencies=[],
+                  __module__=__name__)
+    return library.environment(type(name, (), fields))
+
+
+def test_an_environment_links_its_libraries_in_the_order_it_lists_them(tmp_path):
+    """A static archive listed before the shared library it needs must stay before it: sorted, ``-ldep``
+    came first, ``--as-needed`` dropped it, and the link failed on the archive's undefined reference."""
+    dep, archive = tmp_path / 'dep', tmp_path / 'libk.a'
+    dep.mkdir()
+    (dep / 'dep.c').write_text('double dep_factor(void) { return 3.0; }\n')
+    subprocess.run(['gcc', '-fPIC', '-shared', str(dep / 'dep.c'), '-o', str(dep / 'libdep.so')], check=True)
+    (tmp_path /
+     'k.c').write_text('double dep_factor(void);\ndouble kernel_value(void) { return 2.0 * dep_factor(); }\n')
+    subprocess.run(['gcc', '-fPIC', '-c', str(tmp_path / 'k.c'), '-o', str(tmp_path / 'k.o')], check=True)
+    subprocess.run(['ar', 'rcs', str(archive), str(tmp_path / 'k.o')], check=True)
+    env = library_environment('OrderedLinkEnv', [str(archive), f'-L{dep}', '-ldep', f'-Wl,-rpath,{dep}'])
+    sdfg = dace.SDFG('ordered_link')
+    sdfg.add_array('out', [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('call', {}, {'o'},
+                                'o = kernel_value();',
+                                language=dtypes.Language.CPP,
+                                code_global='extern "C" double kernel_value();')
+    tasklet.environments = {env.full_class_path()}
+    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.build_folder = str(tmp_path / 'cache')
+    out = np.zeros(1)
+
+    sdfg(out=out)
+
+    assert out[0] == 6.0
