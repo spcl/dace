@@ -44,9 +44,10 @@ def test_a_map_around_a_host_issued_library_call_launches_it_from_the_host():
 
 
 def test_a_map_around_an_in_kernel_reduce_is_the_kernel():
+    """A cub block reduce expands to device code, so the map around it is the kernel."""
     sdfg = row_sums_with_a_device_reduce()
     next(node for node, _ in sdfg.all_nodes_recursive()
-         if isinstance(node, dace.nodes.LibraryNode)).implementation = None
+         if isinstance(node, dace.nodes.LibraryNode)).implementation = 'CUDA (block)'
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     rows = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.MapEntry))
     assert rows.map.schedule == dtypes.ScheduleType.GPU_Device
