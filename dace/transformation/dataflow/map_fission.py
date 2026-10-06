@@ -275,6 +275,23 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
+                # A View between the components would stay bound by the removed map's parameters outside the new maps,
+                # and widening it would rebind it: one descriptor holds one binding.
+                if any(
+                        isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dt.View)
+                        for n in sg.scope_children()[None]):
+                    return False
+
+                # A border transient filled by a copy from outside the map is widened by the map extent and the
+                # copy moves out of the map; a source element not indexed by every map parameter would then have
+                # to broadcast, which one copy cannot express.
+                params = set(map_node.map.params)
+                for e in graph.out_edges(map_node):
+                    if (isinstance(e.dst, nodes.AccessNode) and e.dst.data in border_arrays and not e.data.is_empty()):
+                        src_subset = e.data.get_src_subset(e, graph)
+                        if src_subset is None or not params <= {str(s) for s in src_subset.free_symbols}:
+                            return False
+
         if expr_index == 1 and not self.fission_makes_progress(subgraphs, total_components):
             return False
 
