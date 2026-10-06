@@ -1678,6 +1678,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
 
+        # A library node with one fixed data connector per side (``Reduce``'s ``_in``/``_out``) is wired unnamed
+        # where it declares none (main); bind such a data edge to that connector.
+        if u_connector is None and not memlet.is_empty():
+            u_connector = self.sole_fixed_connector(u, outgoing=True)
+        if v_connector is None and not memlet.is_empty():
+            v_connector = self.sole_fixed_connector(v, outgoing=False)
         if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
         if v_connector and isinstance(v, nd.AccessNode) and v_connector not in v.in_connectors:
@@ -1687,6 +1693,18 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector, memlet)
         memlet.try_initialize(self.sdfg, self, result)
         return result
+
+    def sole_fixed_connector(self, node: nd.Node, outgoing: bool) -> Optional[str]:
+        """The one fixed data connector of a library node on one side, if it declares exactly that and it is unused."""
+        name = getattr(node, 'OUTPUT_CONNECTOR_NAME' if outgoing else 'INPUT_CONNECTOR_NAME', None)
+        connectors = node.out_connectors if outgoing else node.in_connectors
+        if not isinstance(node, nd.LibraryNode) or name is None or list(connectors) != [name]:
+            return None
+        if node in self.nodes():
+            used = [e.src_conn for e in self.out_edges(node)] if outgoing else [e.dst_conn for e in self.in_edges(node)]
+            if name in used:
+                return None
+        return name
 
     def remove_edge(self, edge):
         self._clear_scopedict_cache()
@@ -2525,6 +2543,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         src_node = path_nodes[0]
         dst_node = path_nodes[-1]
+        if isinstance(memlet, mm.Memlet) and not memlet.is_empty():
+            src_conn = src_conn if src_conn is not None else self.sole_fixed_connector(src_node, outgoing=True)
+            dst_conn = dst_conn if dst_conn is not None else self.sole_fixed_connector(dst_node, outgoing=False)
 
         # Add edges first so that scopes can be understood
         edges = [
