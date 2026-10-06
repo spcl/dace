@@ -10,6 +10,7 @@ import json
 from hashlib import md5, sha256
 import pathlib
 import random
+import re
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
@@ -79,6 +80,9 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
+        # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
+        if type(key) is str and '.' not in key:
+            return super(NestedDict, self).__getitem__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
@@ -93,6 +97,8 @@ class NestedDict(dict):
         super(NestedDict, self).__setitem__(key, val)
 
     def __contains__(self, key):
+        if type(key) is str and '.' not in key:  # fast path, as in __getitem__
+            return super(NestedDict, self).__contains__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)
@@ -470,9 +476,19 @@ class InterstateEdge(object):
         assignments) to their type.
         """
 
+        if not self.assignments:
+            return {}
+
         if sdfg is not None:
-            alltypes = copy.copy(symbols)
-            alltypes.update({k: v.dtype for k, v in sdfg.arrays.items()})
+            arrays = sdfg.arrays
+            if all(isinstance(v, str) for v in self.assignments.values()):
+                # Type inference only looks up the identifiers of an expression, so only the data containers named
+                # in the assignments are needed (layered over the symbols, without copying either)
+                names = set(re.findall(r'[A-Za-z_]\w*', ' '.join(self.assignments.values())))
+                alltypes = collections.ChainMap({k: arrays[k].dtype for k in names if k in arrays}, symbols)
+            else:
+                alltypes = copy.copy(symbols)
+                alltypes.update({k: v.dtype for k, v in arrays.items()})
         else:
             alltypes = symbols
 
@@ -841,7 +857,8 @@ class SDFG(ControlFlowRegion):
             nci['sdfg'] = ret
 
             block = dace.serialize.from_json(n, context=nci)
-            ret.add_node(block)
+            # Resetting the CFG list walks the whole SDFG, so it is done once below rather than per region
+            ret.add_node(block, reset_cfg_list=False)
             nodelist.append(block)
 
         for e in edges:
@@ -850,6 +867,8 @@ class SDFG(ControlFlowRegion):
 
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
+
+        ret.reset_cfg_list()
 
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
@@ -1574,9 +1593,10 @@ class SDFG(ControlFlowRegion):
         write_set = set()
         for state in self.states():
             # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_sets()
-            read_set |= rs.keys()
-            write_set |= ws.keys()
+            rs, ws = state._read_and_write_subsets()
+            # NOTE: ``set |= dict.keys()`` creates a new set, so the sets are updated in-place instead
+            read_set.update(rs.keys())
+            write_set.update(ws.keys())
 
         array_names = self.arrays.keys()
         for edge in self.all_interstate_edges():
@@ -2992,7 +3012,7 @@ class SDFG(ControlFlowRegion):
                                        permissive: bool = False,
                                        states: Optional[List[Any]] = None,
                                        print_report: Optional[bool] = None,
-                                       order_by_transformation: bool = True,
+                                       order_by_transformation: bool = False,
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
@@ -3042,7 +3062,7 @@ class SDFG(ControlFlowRegion):
                                               permissive: bool = False,
                                               states: Optional[List[Any]] = None,
                                               print_report: Optional[bool] = None,
-                                              order_by_transformation: bool = True,
+                                              order_by_transformation: bool = False,
                                               progress: Optional[bool] = None) -> int:
         """
         This function applies a transformation or a set of (unique) transformations

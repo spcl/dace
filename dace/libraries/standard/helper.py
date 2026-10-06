@@ -37,9 +37,11 @@ def collapse_shape_and_strides(
     """
     collapsed_shape = []
     collapsed_strides = []
-    # ``Range.size()`` already folds the tile in (``tile * ceiling((e + 1 - b) / step)``); dividing
+    # ``Range.size_exact()`` already folds the tile in (``tile * ceiling((e + 1 - b) / step)``); dividing
     # it back out is exact and avoids re-deriving a per-dim count formula that could drift from it.
-    for (_, _, s), stride, tile, dim_size in zip(subset, strides, subset.tile_sizes, subset.size()):
+    # Not ``Range.size()``: it uses the over-approximation of bounds such as the end of a partial tile, and the
+    # copy would then overrun the subset.
+    for (_, _, s), stride, tile, dim_size in zip(subset, strides, subset.tile_sizes, subset.size_exact()):
         length = dim_size / tile
         if length != 1:
             collapsed_shape.append(length)

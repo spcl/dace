@@ -8,7 +8,8 @@ from networkx import MultiDiGraph
 from ordered_set import OrderedSet
 
 from dace.properties import CodeBlock
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, CodeGeneratorFunctionRegion, ConditionalBlock,
+                             ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock)
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
@@ -275,6 +276,88 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         return_state = blocks[0]
 
     return return_state
+
+
+def control_flow_exit(block: ControlFlowBlock) -> Optional[ControlFlowBlock]:
+    """
+    Finds a block through which control flow leaves ``block`` other than by completing it: a return, or a break or
+    continue of a loop that does not lie inside ``block``.
+
+    :param block: The block to check.
+    :return: Such a block, or None if control flow only leaves ``block`` by completing it.
+    """
+    inner = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else []
+    for b in itertools.chain([block], inner):
+        if isinstance(b, ReturnBlock):
+            return b
+        if isinstance(b, (BreakBlock, ContinueBlock)):
+            if b is block:
+                return b
+            # The innermost loop around ``b`` that ``block`` contains (``block`` itself included), if any
+            parent = b.parent_graph
+            while parent is not block and not isinstance(parent, LoopRegion):
+                parent = parent.parent_graph
+            if not isinstance(parent, LoopRegion):
+                return b
+    return None
+
+
+def wrap_in_function_region(blocks: List[ControlFlowBlock],
+                            label: str,
+                            function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.CallerUnit,
+                            translation_unit: str = '',
+                            inlining: dtypes.FunctionInlining = dtypes.FunctionInlining.Default,
+                            reset_cfg_list: bool = True) -> CodeGeneratorFunctionRegion:
+    """
+    Moves a chain of consecutive control flow blocks into a ``CodeGeneratorFunctionRegion``, so that code generation
+    emits them as a function of their own. Nothing else changes: the blocks keep their data and symbols.
+
+    :param blocks: The blocks, in execution order. They must belong to the same region, each but the last must flow
+                   unconditionally into the next one (the edge may assign symbols), and only the first may be entered
+                   from elsewhere.
+    :param label: The label of the new region, which also names the generated function.
+    :param function_placement: Where code generation emits the function.
+    :param translation_unit: The translation unit of a function placed in a separate unit.
+    :param inlining: The inlining hint for the function.
+    :param reset_cfg_list: Whether to update the control flow graph IDs of the SDFG. A caller wrapping many chains
+                           can skip it and reset the list once at the end.
+    :return: The new region, which replaces the blocks.
+    :raises ValueError: If the blocks are not such a chain, or if control flow leaves them other than by completing
+                        the last one (a break or continue of an enclosing loop, or a return).
+    """
+    graph: ControlFlowRegion = blocks[0].parent_graph
+    if any(block.parent_graph is not graph for block in blocks):
+        raise ValueError('All blocks must belong to the same region')
+    for src, dst in zip(blocks[:-1], blocks[1:]):
+        out_edges = graph.out_edges(src)
+        if (len(out_edges) != 1 or out_edges[0].dst is not dst or not out_edges[0].data.is_unconditional()
+                or graph.in_degree(dst) != 1):
+            raise ValueError(f'Blocks "{src.label}" and "{dst.label}" do not form a chain')
+    for block in blocks:
+        exit_block = control_flow_exit(block)
+        if exit_block is not None:
+            raise ValueError(f'Control flow leaves the blocks through "{exit_block.label}"')
+
+    chain_edges = [graph.out_edges(block)[0] for block in blocks[:-1]]
+    region = CodeGeneratorFunctionRegion(label,
+                                         graph.sdfg,
+                                         function_placement=function_placement,
+                                         translation_unit=translation_unit,
+                                         inlining=inlining)
+    graph.add_node(region, is_start_block=(graph.start_block is blocks[0]), ensure_unique_name=True)
+    for e in graph.in_edges(blocks[0]):
+        graph.add_edge(e.src, region, e.data)
+    for e in graph.out_edges(blocks[-1]):
+        graph.add_edge(region, e.dst, e.data)
+    graph.remove_nodes_from(blocks)
+    region.add_node(blocks[0], is_start_block=True)
+    for block in blocks[1:]:
+        region.add_node(block)
+    for e in chain_edges:
+        region.add_edge(e.src, e.dst, e.data)
+    if reset_cfg_list:
+        graph.sdfg.root_sdfg.reset_cfg_list()
+    return region
 
 
 def nest_sdfg_control_flow(sdfg: SDFG):
