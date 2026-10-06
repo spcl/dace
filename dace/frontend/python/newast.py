@@ -4738,7 +4738,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                      lineno=node.lineno,
                                      col_offset=node.col_offset)
             assign_node = ast.fix_missing_locations(assign_node)
-            return self._visit_assign(assign_node, assign_node.targets, None)
+            # The call's result is the (empty) return values, whatever the assignment visit returns.
+            self._visit_assign(assign_node, assign_node.targets, None)
 
         # Return SDFG return values, if exist
         if len(rets) == 1:
