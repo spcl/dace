@@ -649,7 +649,7 @@ def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
     cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == 'cp')
-    body = next(inner.states())
+    body = inner.states()[0]
 
     plan = plan_split_snapshots(outer, inner, sdfg)
     assert plan is not None

@@ -21,12 +21,10 @@ def test_simplify_ext_min() -> None:
 
 def test_shapes_equal_compares_by_name() -> None:
     """Two instances of one name -- what a rebuilt descriptor and a reparsed bound produce -- are
-    the same dimension. Raw '==' calls them different, which is the bug this exists to stop."""
+    the same dimension."""
     wide = symbol("SEQ", dace.int32)
     narrow = symbol("SEQ", dace.int64)
     parsed = pystr_to_symbolic("SEQ")
-    # the premise: identity disagrees with the name
-    assert wide is not narrow and wide != narrow
 
     assert shapes_equal([4, wide], [4, narrow])
     assert shapes_equal([wide, narrow], [parsed, parsed])

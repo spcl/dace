@@ -4,6 +4,7 @@ from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
 from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
+from dace.ordered import OrderedSet
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
@@ -225,12 +226,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
         uncond_write_indices = list()
         all_write_indices = list()
 
-        read_edges = set(e for st in loop.states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
-        uncond_write_edges = set(e for st in loop.states() for an in st.data_nodes()
-                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
-        all_write_edges = set(e for st in loop.states() for an in st.data_nodes() if an.data == array_name
-                              for e in st.in_edges(an))
+        # Empty memlets are ordering edges: they access no element, so they carry no indices.
+        read_edges = OrderedSet(e for st in loop.states() for an in st.data_nodes() if an.data == array_name
+                                for e in st.out_edges(an) if not e.data.is_empty())
+        uncond_write_edges = OrderedSet(e for st in loop.states() for an in st.data_nodes()
+                                        if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an)
+                                        if not e.data.is_empty())
+        all_write_edges = OrderedSet(e for st in loop.states() for an in st.data_nodes() if an.data == array_name
+                                     for e in st.in_edges(an) if not e.data.is_empty())
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -305,11 +308,20 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 span = (read_ub - write_ub) / (-a)
                 cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
 
-            # If we have a span of one, it's enough that reads happen after writes in the loop.
-            if span == 0:
-                cond = all(
-                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.states() for an in st.data_nodes()
-                    if an.data == array_name)
+            # Relaxation: when writes are not strictly past all reads, the buffer can
+            # still be safely reused if every read happens after every write within the
+            # loop iteration. This generalises the K=1 (scalar collapse) case to any K
+            # and handles split-state patterns (e.g. unconditional init + conditional
+            # override + later read in a separate state). Only attempted when cond is
+            # a definite Python False — symbolic conds are left to the existing
+            # try/except below.
+            cond_is_concrete_false = False
+            try:
+                cond_is_concrete_false = bool(cond) is False
+            except TypeError:
+                pass
+            if cond_is_concrete_false:
+                cond = self._writes_precede_reads_in_loop(array_name, sdfg, loop)
 
             # Add positive symbol assumption
             if self.assume_positive_symbols and issymbolic(cond):
@@ -639,9 +651,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = set(e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
+                         for e in st.out_edges(an) if not e.data.is_empty())
         write_edges = set(e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name
-                          for e in st.in_edges(an))
+                          for e in st.in_edges(an) if not e.data.is_empty())
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:

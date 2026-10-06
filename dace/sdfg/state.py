@@ -61,8 +61,8 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
     if dace.Config.get("compiler", "lineinfo") == "inspect":
         # ``inspect.stack()`` builds a FrameInfo, with source lookups, for every frame up to the root just to
         # read one: two frames up is this function's caller's caller.
-        caller = inspect.getframeinfo(sys._getframe(2), context=0)
-        return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+        lineno, filename = caller_position(sys._getframe(2))
+        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
     return None
 

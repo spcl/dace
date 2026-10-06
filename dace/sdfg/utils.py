@@ -2863,8 +2863,6 @@ def specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[s
             if scalar_name in sdfg.symbols:
                 sdfg.remove_symbol(scalar_name)
 
-    nsdfgs = set()
-    c = 0
     for state in sdfg.states():
         # Check dynamic inputs
         for e in state.edges():

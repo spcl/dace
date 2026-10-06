@@ -295,29 +295,8 @@ class AccessSets(ppl.Pass):
             # Key order is load-bearing (it reaches ``ScalarFission`` through the shadow-scope
             # passes) and the fill below is depth-first, so claim the keys in the old order first.
             for block in sdfg.all_control_flow_blocks():
-                readset, writeset = OrderedSet(), OrderedSet()
-                if isinstance(block, SDFGState):
-                    for anode in block.data_nodes():
-                        if block.in_degree(anode) > 0:
-                            writeset.add(anode.data)
-                        if block.out_degree(anode) > 0:
-                            readset.add(anode.data)
-                elif isinstance(block, AbstractControlFlowRegion):
-                    for state in block.states():
-                        for anode in state.data_nodes():
-                            if state.in_degree(anode) > 0:
-                                writeset.add(anode.data)
-                            if state.out_degree(anode) > 0:
-                                readset.add(anode.data)
-                    if isinstance(block, LoopRegion):
-                        readset |= self._get_loop_region_readset(block, arrays)
-                    elif isinstance(block, ConditionalBlock):
-                        for cond, _ in block.branches:
-                            if cond is not None:
-                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
-                                            | symbolic.arrays(cond.as_string)) & arrays
-
-                result[block] = (readset, writeset)
+                result[block] = (OrderedSet(), OrderedSet())
+            self._collect_sets(sdfg, arrays, result)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()

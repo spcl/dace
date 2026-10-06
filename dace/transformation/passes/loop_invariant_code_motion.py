@@ -282,7 +282,7 @@ def _region_rw_sets(region: Any) -> Tuple[Set[str], Set[str]]:
             if region.out_degree(n) > 0:
                 reads.add(n.data)
         return reads, writes
-    if hasattr(region, "all_states"):
+    if hasattr(region, "states"):
         for s in region.states():
             for n in s.data_nodes():
                 if s.in_degree(n) > 0:
@@ -309,7 +309,7 @@ def _region_has_work(region: Any) -> bool:
             if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG, nodes.LibraryNode, nodes.MapEntry)):
                 return True
         return False
-    if hasattr(region, "all_states"):
+    if hasattr(region, "states"):
         for s in region.states():
             if _region_has_work(s):
                 return True
@@ -326,7 +326,7 @@ def _region_has_side_effect(region: Any) -> bool:
                 if oe.data is not None and oe.data.wcr is not None:
                     return True
         return False
-    if hasattr(region, "all_states"):
+    if hasattr(region, "states"):
         for s in region.states():
             if _region_has_side_effect(s):
                 return True
