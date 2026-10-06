@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.config import set_temporary
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -166,6 +167,7 @@ def _build_slice_wcr_scatter() -> dace.SDFG:
                           state.add_write('dest'),
                           src_conn='c_out',
                           memlet=dace.Memlet(data='dest', subset=f'i, 0:{N}', wcr='lambda x, y: x + y'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -270,6 +272,7 @@ def _build_masked_reduction(op_wcr: str, seed_outer: bool) -> dace.SDFG:
     state.add_memlet_path(state.add_read('data'), me, n, dst_conn='d', memlet=dace.Memlet('data[i]'))
     state.add_memlet_path(state.add_read('mask'), me, n, dst_conn='m', memlet=dace.Memlet('mask[i]'))
     state.add_memlet_path(n, mx, state.add_write('acc'), src_conn='acc_out', memlet=dace.Memlet('acc[0]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -357,6 +360,7 @@ def _build_two_independent_reductions() -> dace.SDFG:
     state.add_memlet_path(state.add_read('data2'), me, n, dst_conn='d2', memlet=dace.Memlet('data2[i]'))
     state.add_memlet_path(n, mx, state.add_write('acc1'), src_conn='acc1_out', memlet=dace.Memlet('acc1[0]'))
     state.add_memlet_path(n, mx, state.add_write('acc2'), src_conn='acc2_out', memlet=dace.Memlet('acc2[0]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -438,6 +442,7 @@ def _build_readwrite_redundant_interior_wcr() -> dace.SDFG:
                           state.add_write('b'),
                           src_conn='b_io',
                           memlet=dace.Memlet(data='b', subset='i', wcr='lambda x, y: x + y'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
