@@ -14,6 +14,7 @@ from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import AssignmentAndCopyKernelToMemsetAndMemcpy
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 
 # Global dimension size for all test arrays
 DIM_SIZE = 10
@@ -248,9 +249,11 @@ def temporarily_disable_autoopt_and_serialization(func):
 
 
 def _sdfg_from_program(program) -> dace.SDFG:
-    # simplify: nested-SDFG simplifications affect pass applicability
+    # simplify: nested-SDFG simplifications affect pass applicability. The fold reads ``A[i]`` straight into the
+    # copy tasklet, as canonicalize does before it runs the lift.
     sdfg = program.to_sdfg()
     sdfg.simplify()
+    FoldScalarReadCopies().apply_pass(sdfg, {})
     return sdfg
 
 
