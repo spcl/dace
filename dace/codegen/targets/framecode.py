@@ -876,12 +876,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 persistent_types[param] = (defined_type, ctype)
             elif name in state_local:
                 # Every state that reads it writes it first, so no value flows into or out of the region
-                local_declarations.append(f'{ctype} {ptrname};\n')
+                # (Code generation may declare its own variable for it in a state, leaving this one unused)
+                local_declarations.append(f'[[maybe_unused]] {ctype} {ptrname};\n')
                 continue
             elif name in literals and name not in written:
                 # Only ever assigned one literal: the compiler can fold it, which an argument would prevent across
                 # translation units
-                local_declarations.append(f'const {ctype} {ptrname} = {literals[name]};\n')
+                local_declarations.append(f'[[maybe_unused]] const {ctype} {ptrname} = {literals[name]};\n')
                 continue
             if defined_type == disp.DefinedType.Pointer and name not in allocated_inside:
                 restrict = (region.restrict_arguments and ctype.rstrip().endswith('*') and not desc.may_alias
