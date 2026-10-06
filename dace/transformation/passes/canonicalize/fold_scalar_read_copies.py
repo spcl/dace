@@ -57,7 +57,8 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: Dict[str, int]) ->
     subset = copy.data.subset if copy.data.data == root.data else copy.data.other_subset
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
         return None
-    before = reachable(state, copy.src, forward=False)
+    # The source node's own writes land before the copy reads it.
+    before = reachable(state, copy.src, forward=False) | {copy.src}
     after = set.intersection(*(reachable(state, edge.dst) for edge in consumers))
     if any(writer not in before and writer not in after for writer in writers(state, root.data)):
         return None

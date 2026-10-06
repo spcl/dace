@@ -201,29 +201,17 @@ def test_compound_nest_maps_value_preserving():
 
 
 def test_compound_nest_maps_outer_map_survives():
-    """Structural: the outer parallel ``i`` map must be present after
-    canonicalize -- the per-i bound dependencies cannot kill it. Regression
-    for the UniqueLoopIterators NSDFG symbol-mapping crash (the pass no
-    longer re-renames already-unique ``_loop_it_*`` iterators, so the
-    SDFG validates)."""
+    """The outer parallel ``i`` map survives canonicalize and spans the ``i`` axis; the per-``i``
+    bounds never leak to SDFG scope. As in the loop variant, the constant-extent inner nests unroll
+    away, so the ``i`` map is the only map left."""
     sdfg = compound_nest_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    # One outer i-map plus the five inner nests it distributes over: body1's (k, m), body3's k
-    # and, under the guard, body2's (k, m) and a second copy of each sibling.
-    assert _nmaps(sdfg) == 6, f'expected the outer i-map over five inner nests, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f'maps={_nmaps(sdfg)} loops={_nloops(sdfg)}'
     top_maps = [
         n for blk in sdfg.nodes() if isinstance(blk, SDFGState) for n in blk.nodes() if isinstance(n, nodes.MapEntry)
     ]
     assert len(top_maps) == 1, f'exactly one map at SDFG scope, got {len(top_maps)}'
     assert str(top_maps[0].map.range) == '0:N', f'the outer map must span the i axis, got {top_maps[0].map.range}'
-    # The per-i bounds stay where they belong: the inner ranges read the outer iterator, and
-    # nothing at SDFG scope does.
-    inner_ranges = [
-        str(n.map.range) for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.MapEntry) and n is not top_maps[0]
-    ]
-    outer_it = top_maps[0].map.params[0]
-    assert all(outer_it in r for r in inner_ranges), f'inner bounds lost their per-i dependence: {inner_ranges}'
     leaked = [label for label, syms in top_level_expressions(sdfg) if syms & set(iterator_names(sdfg))]
     assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
 

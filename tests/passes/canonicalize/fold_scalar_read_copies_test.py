@@ -45,6 +45,13 @@ def recurrence(a: dace.float64[N], b: dace.float64[N]):
         a[i + 1] = a[i] + b[i]
 
 
+@dace.program
+def written_then_read(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in dace.map[0:N]:
+        b[i] = a[i] * 2.0
+        c[i] = b[i] + 1.0
+
+
 def test_a_read_only_copy_folds():
     A, out = np.random.rand(8), np.zeros(8)
     before, after = folded(doubled, A=A, out=out, N=8)
@@ -67,6 +74,13 @@ def test_a_recurrence_whose_write_follows_the_read_folds():
     before, after = folded(recurrence, a=a, b=b, N=8)
     assert before > after
     assert np.allclose(a, expected)
+
+
+def test_a_copy_out_of_the_node_its_writer_fills_folds():
+    a, b, c = np.random.rand(8), np.zeros(8), np.zeros(8)
+    before, after = folded(written_then_read, a=a, b=b, c=c, N=8)
+    assert before > 0 and after == 0
+    assert np.allclose(b, 2 * a) and np.allclose(c, 2 * a + 1)
 
 
 def copy_beside_a_writer(ordered: bool) -> dace.SDFG:
@@ -147,6 +161,7 @@ if __name__ == '__main__':
     test_a_read_only_copy_folds()
     test_a_same_element_update_folds()
     test_a_recurrence_whose_write_follows_the_read_folds()
+    test_a_copy_out_of_the_node_its_writer_fills_folds()
     test_a_copy_beside_an_unordered_writer_stays()
     test_a_copy_whose_writer_follows_the_read_folds()
     test_a_scalar_read_again_in_another_state_stays()
