@@ -3444,7 +3444,56 @@ def test_map_fusion_is_deprecated() -> None:
         MapFusion()
 
 
+def test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place():
+    """The first Map's nested SDFG adds 1 to all of ``x`` in every iteration, through an in and out connector
+    claiming the whole array. The second Map's iteration ``i`` must read ``x`` after the last update, so the Maps
+    are not fused."""
+    n = 8
+    inc_all = dace.SDFG("inc_all")
+    inc_all.add_array("x", [n], dace.float64)
+    inner = inc_all.add_state()
+    ime, imx = inner.add_map("inc", {"j": f"0:{n}"})
+    inc = inner.add_tasklet("inc", {"a"}, {"b"}, "b = a + 1")
+    inner.add_memlet_path(inner.add_read("x"), ime, inc, dst_conn="a", memlet=dace.Memlet("x[j]"))
+    inner.add_memlet_path(inc, imx, inner.add_write("x"), src_conn="b", memlet=dace.Memlet("x[j]"))
+
+    double = dace.SDFG("double")
+    double.add_symbol("i", dace.int64)
+    double.add_array("x", [n], dace.float64)
+    double.add_array("Y", [n], dace.float64)
+    dstate = double.add_state()
+    dbl = dstate.add_tasklet("dbl", {"a"}, {"b"}, "b = 2 * a")
+    dstate.add_edge(dstate.add_read("x"), None, dbl, "a", dace.Memlet("x[i]"))
+    dstate.add_edge(dbl, "b", dstate.add_write("Y"), None, dace.Memlet("Y[i]"))
+
+    sdfg = dace.SDFG("map_fusion_whole_in_place_producer")
+    sdfg.add_array("X", [n], dace.float64)
+    sdfg.add_array("Y", [n], dace.float64)
+    sdfg.add_array("x", [n], dace.float64, transient=True)
+    state = sdfg.add_state()
+    x0, x1 = state.add_access("x"), state.add_access("x")
+    state.add_nedge(state.add_read("X"), x0, dace.Memlet(f"X[0:{n}]"))
+    me0, mx0 = state.add_map("m0", {"i": f"0:{n}"}, schedule=dace.ScheduleType.Sequential)
+    n0 = state.add_nested_sdfg(inc_all, {"x"}, {"x"}, symbol_mapping={})
+    state.add_memlet_path(x0, me0, n0, dst_conn="x", memlet=dace.Memlet(f"x[0:{n}]"))
+    state.add_memlet_path(n0, mx0, x1, src_conn="x", memlet=dace.Memlet(f"x[0:{n}]"))
+    me1, mx1 = state.add_map("m1", {"i": f"0:{n}"}, schedule=dace.ScheduleType.Sequential)
+    n1 = state.add_nested_sdfg(double, {"x"}, {"Y"}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(x1, me1, n1, dst_conn="x", memlet=dace.Memlet(f"x[0:{n}]"))
+    state.add_memlet_path(n1, mx1, state.add_write("Y"), src_conn="Y", memlet=dace.Memlet(f"Y[0:{n}]"))
+    after = sdfg.add_state_after(state)
+    after.add_nedge(after.add_read("x"), after.add_write("X"), dace.Memlet(f"x[0:{n}]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) == 0
+    X, Y = np.arange(n, dtype=np.float64), np.zeros(n)
+    sdfg(X=X, Y=Y)
+    assert np.allclose(X, np.arange(n) + n)
+    assert np.allclose(Y, 2 * X)
+
+
 if __name__ == '__main__':
+    test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
     test_fusion_different_global_accesses()
