@@ -685,6 +685,14 @@ with open(r"{temp_path}", "wb") as f:
                 )
             kwargs.update(positional_arguments)
 
+        # A shape symbol of a non-transient container is in the signature even when the code does not read it, so a
+        # caller passing only the arrays has it inferred from them, as a call through the frontend does.
+        missing_symbols = {name for name in self._sig if name not in kwargs and name in self._sdfg.symbols}
+        if missing_symbols:
+            from dace.frontend.python.parser import infer_symbols_from_datadescriptor
+            inferred = infer_symbols_from_datadescriptor(self._sdfg, kwargs, exclude=set(kwargs))
+            kwargs.update({name: value for name, value in inferred.items() if name in missing_symbols})
+
         # NOTE: This might invalidate the elements associated to the return values of
         #   all argument vectors that were created before.
         self._initialize_return_values(kwargs)

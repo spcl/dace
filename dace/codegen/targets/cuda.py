@@ -1464,7 +1464,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if (nsdfg, node.data) in visited:
                     continue
                 visited.add((nsdfg, node.data))
-                if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
+                # A container the frame did not place (a scalar the readable CPU codegen declares at its first use)
+                # lives where it is used, so it is no extra kernel argument
+                if desc.transient and self._frame.where_allocated.get((nsdfg, node.data), nsdfg) is not nsdfg:
                     outer_name = self.ptr(node.data, desc, nsdfg)
 
                     # Create name from within kernel

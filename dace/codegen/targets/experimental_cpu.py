@@ -278,6 +278,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_functions: Dict[str, str] = {}
         # Output-file key -> helper names already flushed into that file (see _flush_generated_functions).
         self._emitted_functions: Dict[Union[int, str], Set[str]] = {}
+        # Stream -> the output-file key of its first flush (see _flush_generated_functions).
+        self._stream_file_keys: Dict[int, Union[int, str]] = {}
         # (base name, signature) -> helper name, so same-named arrays of different shape get distinct helpers.
         self._index_sig_to_name: Dict[tuple, str] = {}
         self._size_sig_to_name: Dict[tuple, str] = {}
@@ -898,6 +900,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # keys on ``_current_tu_key`` (the frame .cpp, or a split nest's own unit); device code keys on the
         # delegating GPU codegen, which owns the single .cu.
         file_key = self._current_tu_key if self.calling_codegen is self else id(self.calling_codegen)
+        # A stream belongs to one file: the legacy GPU codegen also hands its device stream to allocations it
+        # dispatches without delegating, which would key that same file as host code and emit every helper twice.
+        file_key = self._stream_file_keys.setdefault(id(function_stream), file_key)
         emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():

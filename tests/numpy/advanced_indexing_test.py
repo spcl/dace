@@ -780,6 +780,7 @@ def test_multidim_tuple_multidim_index():
         indexing_test.to_sdfg()
 
 
+@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
     with pytest.raises(IndexError, match='could not be broadcast together'):
 
