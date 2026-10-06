@@ -196,7 +196,6 @@ def test_serialization_nestedclass():
     assert plane_restored == plane
 
 
-
 def test_pickling():
     """Templates, their instances and plain members pickle back to the same object; a nested dataclass alone does
     not, since the enum member took its name."""

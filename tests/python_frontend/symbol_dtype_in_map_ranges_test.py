@@ -61,19 +61,22 @@ def nested_caller(a: dace.float64[N], b: dace.float64[N]):
     b[:] = a + b
 
 
-@pytest.mark.xfail(strict=True, reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
+@pytest.mark.xfail(strict=True,
+                   reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
                    "returns with it")
 def test_map_and_elementwise_ranges_keep_declared_dtype():
     assert_declared_dtype(map_and_elementwise.to_sdfg(simplify=False), {'N': dace.int64})
 
 
-@pytest.mark.xfail(strict=True, reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
+@pytest.mark.xfail(strict=True,
+                   reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
                    "returns with it")
 def test_body_only_symbol_keeps_declared_dtype():
     assert_declared_dtype(body_only_symbol.to_sdfg(simplify=False), {'K': dace.int64})
 
 
-@pytest.mark.xfail(strict=True, reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
+@pytest.mark.xfail(strict=True,
+                   reason="symbol identity is the name until the symbol registry; a dtype per occurrence "
                    "returns with it")
 def test_nested_program_call_keeps_declared_dtype():
     assert_declared_dtype(nested_caller.to_sdfg(simplify=False), {'N': dace.int64})
