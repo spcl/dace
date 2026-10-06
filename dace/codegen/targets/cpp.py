@@ -263,6 +263,10 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
         elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
+            # A code generator function region may receive the data as an argument
+            argument = framecode.region_arguments.get((sdfg, name)) if framecode is not None else None
+            if argument is not None:
+                return argument
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'

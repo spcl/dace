@@ -136,6 +136,8 @@ class DaCeCodeGenerator(object):
         self._symbol_types: Dict[SDFG, Dict[str, dtypes.typeclass]] = {}
         self._symbol_uses_cache: Dict[SDFG, Dict[Any, Set[str]]] = {}
         self._state_local_cache: Dict[SDFG, Set[str]] = {}
+        # The persistent data that the region function being generated receives as arguments (see ``cpp.ptr``)
+        self.region_arguments: Dict[Tuple[SDFG, str], str] = {}
         self._literal_cache: Dict[SDFG, Dict[str, str]] = {}
         # The functions of regions in separate translation units, by ``_region_function_key``
         self._region_functions: Dict[str, str] = {}
@@ -809,26 +811,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 raise cgx.CodegenError(f'Control flow leaves function region "{region.label}" through "{block.label}"')
 
         ######################################
-        # Function body
-        outer_unit = self.current_translation_unit
-        outer_global_stream = self._global_streams[sdfg]
-        unit_global_stream = None
-        if placement == dtypes.FunctionPlacement.SeparateUnit:
-            self.current_translation_unit = region.translation_unit or fname
-            unit_global_stream = CodeIOStream()
-            self._global_streams[sdfg] = unit_global_stream
-
-        self._dispatcher.defined_vars.enter_scope(region)
-        body = (cflow.allocation_on_entry(region, self) +
-                cflow.control_flow_region_to_code(region, dispatch_state, self, symbols) +
-                cflow.deallocation_on_exit(region, self))
-        self._dispatcher.defined_vars.exit_scope(region)
-
-        self._global_streams[sdfg] = outer_global_stream
-        unit = self.current_translation_unit
-        self.current_translation_unit = outer_unit
-
-        ######################################
         # Data arguments
         arrays = set(sdfg.arrays.keys())
         accessed: Set[str] = set()
@@ -876,7 +858,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Persistent data is passed as arguments (which compilers can treat as unaliased, unlike state struct members)
         # unless code in the region may reach it through the state struct by other means
         pass_persistent = region.persistent_arguments and not _reaches_state_struct(sdfg, inner_states)
-        persistent_names: Dict[str, str] = {}
+        persistent_arguments: Dict[Tuple[SDFG, str], str] = {}
+        persistent_types: Dict[str, Tuple[disp.DefinedType, str]] = {}
         for name in sorted(accessed - declared_inside):
             if name in sdfg.constants_prop:
                 continue
@@ -887,8 +870,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if ptrname.startswith('__state->'):
                 if not pass_persistent:
                     continue
+                # ``cpp.ptr`` names the argument instead of the state struct member while the body is generated
                 param = ptrname[len('__state->'):]
-                persistent_names[ptrname] = param
+                persistent_arguments[(sdfg, name)] = param
+                persistent_types[param] = (defined_type, ctype)
             elif name in state_local:
                 # Every state that reads it writes it first, so no value flows into or out of the region
                 local_declarations.append(f'{ctype} {ptrname};\n')
@@ -909,10 +894,31 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 params.append(f'{ctype} &{param}')
             args.append(ptrname)
-        if persistent_names:
-            # The body refers to persistent data through the state struct: refer to the arguments instead
-            pattern = re.compile(r'__state->(' + '|'.join(re.escape(p) for p in persistent_names.values()) + r')\b')
-            body = pattern.sub(r'\1', body)
+
+        ######################################
+        # Function body
+        outer_unit = self.current_translation_unit
+        outer_global_stream = self._global_streams[sdfg]
+        unit_global_stream = None
+        if placement == dtypes.FunctionPlacement.SeparateUnit:
+            self.current_translation_unit = region.translation_unit or fname
+            unit_global_stream = CodeIOStream()
+            self._global_streams[sdfg] = unit_global_stream
+
+        outer_arguments = self.region_arguments
+        self.region_arguments = {**outer_arguments, **persistent_arguments}
+        self._dispatcher.defined_vars.enter_scope(region)
+        for param, (defined_type, ctype) in persistent_types.items():
+            self._dispatcher.defined_vars.add(param, defined_type, ctype)
+        body = (cflow.allocation_on_entry(region, self) +
+                cflow.control_flow_region_to_code(region, dispatch_state, self, symbols) +
+                cflow.deallocation_on_exit(region, self))
+        self._dispatcher.defined_vars.exit_scope(region)
+        self.region_arguments = outer_arguments
+
+        self._global_streams[sdfg] = outer_global_stream
+        unit = self.current_translation_unit
+        self.current_translation_unit = outer_unit
 
         ######################################
         # Symbol arguments
