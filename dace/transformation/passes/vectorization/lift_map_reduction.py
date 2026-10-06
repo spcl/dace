@@ -455,18 +455,40 @@ class LiftMapReductionToReduce(ppl.Pass):
 
         buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip, ), dtype, find_new_name=True)
         zero, _ = sdfg.add_scalar(f"_red_zero_{acc}", dtype, transient=True, find_new_name=True)
+        zero_slot = "0"
+        # A nested body's connector descriptor is the outer container and the body picks the element (No-View):
+        # it reads the identity from a transient shaped like the accumulator, at the accumulator's slot.
+        nested = isinstance(info.body, nodes.NestedSDFG)
+        if nested:
+            del sdfg.arrays[zero]
+            zero_desc = copy.deepcopy(sdfg.arrays[acc])
+            zero_desc.transient = True
+            zero = sdfg.add_datadesc(f"_red_zero_{acc}", zero_desc, find_new_name=True)
+            zero_slot = str(slot)
 
         # READ side: rename pre-map accumulator + its seed writes to the fresh
         # identity scalar, so ``acc`` has a single writer (the Reduce) -- no
         # two-access-node aliasing.
         acc_in_node.data = zero
-        me_in_edge.data = dace.Memlet(f"{zero}[0]")
-        info.read_edge.data = dace.Memlet(f"{zero}[0]")
+        me_in_edge.data = dace.Memlet(f"{zero}[{zero_slot}]")
+        info.read_edge.data = dace.Memlet(f"{zero}[{zero_slot}]")
         for ie in init_edges:
-            ie.data = dace.Memlet(f"{zero}[0]")
+            ie.data = dace.Memlet(f"{zero}[{zero_slot}]")
 
-        # WRITE side: per-iteration result -> product buffer (drop the carry).
-        write_edge.data = dace.Memlet(f"{buf}[{param} - ({lb})]")
+        # WRITE side: per-iteration result -> product buffer (drop the carry). A nested body writes the
+        # accumulator's slot of an accumulator-shaped transient, which is copied into the buffer.
+        if not nested:
+            write_edge.data = dace.Memlet(f"{buf}[{param} - ({lb})]")
+        else:
+            part_desc = copy.deepcopy(sdfg.arrays[acc])
+            part_desc.transient = True
+            part = sdfg.add_datadesc(f"_red_part_{acc}", part_desc, find_new_name=True)
+            part_node = state.add_access(part)
+            state.add_edge(write_edge.src, write_edge.src_conn, part_node, None,
+                           dace.Memlet(data=part, subset=copy.deepcopy(slot)))
+            state.add_edge(part_node, None, write_edge.dst, write_edge.dst_conn,
+                           dace.Memlet(data=buf, subset=f"{param} - ({lb})", other_subset=copy.deepcopy(slot)))
+            state.remove_edge(write_edge)
         buf_node = state.add_access(buf)
         state.remove_edge(mx_out_edge)
         state.add_edge(mx, write_out_conn, buf_node, None, dace.Memlet(f"{buf}[0:{trip}]"))

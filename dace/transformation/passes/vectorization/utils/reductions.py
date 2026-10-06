@@ -309,10 +309,14 @@ def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge
         return None
     inner = body.sdfg
     for st in inner.states():
-        for an in st.data_nodes():
-            if an.data != cin:
-                continue
+        # A view of the connector (the No-View form of a sliced connector) reads the same element.
+        frontier = [an for an in st.data_nodes() if an.data == cin]
+        while frontier:
+            an = frontier.pop()
             for oe in st.out_edges(an):
+                if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(oe.dst.desc(inner), dace.data.View):
+                    frontier.append(oe.dst)
+                    continue
                 op = _reduction_op_for_connector(oe.dst, oe.dst_conn)
                 if op is not None:
                     return op

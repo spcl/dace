@@ -177,11 +177,10 @@ class DeadStateElimination(ppl.Pass):
                 if not i == len(block.branches) - 1:
                     raise InvalidSDFGNodeError(
                         'Conditional block detected, where else branch is not the last branch.',
-                        sdfg=block.sdfg,
+                        # ``block_id`` indexes the parent region, not the SDFG.
+                        sdfg=block.parent_graph,
                         state_id=block.block_id,
                         node_id=None,
-                        # ``block_id`` indexes the parent region, not the SDFG.
-                        cfg=block.parent_graph,
                     )
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.

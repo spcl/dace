@@ -93,11 +93,12 @@ def rebinding_map(begin: int, extent: int) -> Tuple[SDFG, nodes.MapEntry]:
     """
     inner = SDFG("inner")
     inner.add_array("iin", [extent], dace.float64)
-    inner.add_array("iout", [1], dace.float64)
+    inner.add_array("iout", [extent], dace.float64)
+    inner.add_symbol("k", dace.int64)
     istate = inner.add_state("is")
     itasklet = istate.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
     istate.add_edge(istate.add_access("iin"), None, itasklet, "x", Memlet("iin[k]"))
-    istate.add_edge(itasklet, "y", istate.add_access("iout"), None, Memlet("iout[0]"))
+    istate.add_edge(itasklet, "y", istate.add_access("iout"), None, Memlet("iout[k]"))
 
     sdfg = SDFG("rebinding")
     sdfg.add_array("A", [extent], dace.float64)
@@ -109,7 +110,7 @@ def rebinding_map(begin: int, extent: int) -> Tuple[SDFG, nodes.MapEntry]:
     state.add_memlet_path(read, entry, nested, dst_conn="iin", memlet=Memlet(f"A[0:{extent}]"))
     state.add_memlet_path(nested, exit_node, state.add_access("B"), src_conn="iout", memlet=Memlet("B[i]"))
     plant_write_only_scratch(sdfg, state, entry)
-    convert_legacy_nested_sdfgs(sdfg)
+    # Already in the nested SDFG contract: converting a legacy body would rename ``k`` to ``i``.
     sdfg.validate()
     return sdfg, entry
 

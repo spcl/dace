@@ -415,17 +415,17 @@ def test_ordering_memlet_is_not_a_prior_writer():
 
     @dace.program
     def k2(A: dace.float64[n, k], B: dace.float64[k, m], C: dace.float64[n, m]):
-        E = dace.define_local([n, m], dace.float64)
+        Eacc = dace.define_local([n, m], dace.float64)
         for i in range(n):
             for j in range(m):
                 for kk in range(k):
-                    E[i, j] += A[i, kk] * B[kk, j]
-        C[:] = E
+                    Eacc[i, j] += A[i, kk] * B[kk, j]
+        C[:] = Eacc
 
     sdfg = k2.to_sdfg(simplify=True)
     # An ordering-only AccessNode for the accumulator: legal SDFG, transfers nothing.
     last = sdfg.states()[-1]
-    last.add_edge(next(iter(last.data_nodes())), None, last.add_access('E'), None, dace.Memlet())
+    last.add_edge(next(iter(last.data_nodes())), None, last.add_access('Eacc'), None, dace.Memlet())
 
     assert LoopToEinsum().apply_pass(sdfg, {}) == 1
     betas = [nd.beta for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, Einsum)]
@@ -482,20 +482,21 @@ def transpose4(A: dace.float64[4, 4], B: dace.float64[4, 4]):
 @pytest.mark.parametrize('prog, lift', [(symmetrize4, LoopToSymmetrize), (transpose4, LoopToTranspose),
                                         (transpose4, LoopToEinsum)])
 def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog, lift):
+    """The lift reads the nested SDFG's descriptors, not same-named ones of its parent. The connectors bind
+    differently named outer containers (No-View lets only the name differ), so a parent lookup finds nothing."""
     inner = prog.to_sdfg(simplify=True)
     inner.remove_symbol('i'), inner.remove_symbol('j')  # loop iterators, not free symbols
     outer = dace.SDFG('outer_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays')
     state = outer.add_state()
     names = [n for n, d in inner.arrays.items() if not d.transient]
     call = state.add_nested_sdfg(inner, dict.fromkeys(names), dict.fromkeys(names), symbol_mapping={})
-    for n, d in inner.arrays.items():
-        outer.add_array(n, [5, 4] if not d.transient else d.shape, d.dtype, transient=d.transient)
     for n in names:
-        state.add_edge(state.add_read(n), None, call, n, dace.Memlet(f'{n}[0:4, 0:4]'))
-        state.add_edge(call, n, state.add_write(n), None, dace.Memlet(f'{n}[0:4, 0:4]'))
-    arrays = {n: np.arange(20.0).reshape(5, 4) * (k + 1) for k, n in enumerate(names)}
+        outer.add_array(f'{n}_outer', inner.arrays[n].shape, inner.arrays[n].dtype)
+        state.add_edge(state.add_read(f'{n}_outer'), None, call, n, dace.Memlet(f'{n}_outer[0:4, 0:4]'))
+        state.add_edge(call, n, state.add_write(f'{n}_outer'), None, dace.Memlet(f'{n}_outer[0:4, 0:4]'))
+    arrays = {n: np.arange(16.0).reshape(4, 4) * (k + 1) for k, n in enumerate(names)}
     expected = {n: a.copy() for n, a in arrays.items()}
-    prog.f(**{n: e[:4] for n, e in expected.items()})
+    prog.f(**expected)
 
     lift().apply_pass(outer, {})
 
@@ -503,7 +504,7 @@ def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog
         str(e.data.subset) for n, st in outer.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)
         for e in st.all_edges(n)
     ] == ['0:4, 0:4', '0:4, 0:4']
-    outer(**arrays)
+    outer(**{f'{n}_outer': a for n, a in arrays.items()})
     assert all(np.array_equal(arrays[n], expected[n]) for n in names)
 
 

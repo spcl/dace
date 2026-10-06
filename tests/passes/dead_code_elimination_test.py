@@ -218,8 +218,8 @@ def test_dse_malformed_conditional_block_in_region_names_its_own_region():
         DeadStateElimination().apply_pass(sdfg, {})
 
     err = excinfo.value
-    assert err.cfg is loop
-    assert err.resolve_block() is condition
+    assert err.sdfg is loop
+    assert err.sdfg.node(err.state_id) is condition
     assert err.to_json()['cfg_id'] == loop.cfg_id
     # Formatting must not raise, and must not blame the unrelated top-level state.
     assert 'decoy_block_at_index_one' not in str(err)

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -104,27 +103,25 @@ def _build_nested_map_scatter_sdfg():
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
 
+    # The frontend's No-View body: the connectors are the outer arrays, and the write index is bound on an
+    # interstate edge from the ``idx`` connector at the mapped loop variable.
     nsdfg = dace.SDFG('scatter_body')
-    nsdfg.add_scalar('src_in', dace.float64)
-    nsdfg.add_scalar('idx_in', dace.int64)
-    nsdfg.add_array('dst_out', [N], dace.float64)
-    nstate = nsdfg.add_state('s', is_start_block=True)
-    read = nstate.add_read('src_in')
-    write = nstate.add_write('dst_out')
+    nsdfg.add_array('src', [N], dace.float64)
+    nsdfg.add_array('idx', [N], dace.int64)
+    nsdfg.add_array('dst', [N], dace.float64)
+    nsdfg.add_symbol('i', dace.int64)
+    nsdfg.add_symbol('k', dace.int64)
+    bind = nsdfg.add_state('bind', is_start_block=True)
+    nstate = nsdfg.add_state_after(bind, 's', assignments={'k': 'idx[i]'})
     tasklet = nstate.add_tasklet('cp', {'inp'}, {'outp'}, 'outp = inp')
-    nstate.add_edge(read, None, tasklet, 'inp', Memlet('src_in[0]'))
-    # The write index ``idx_in`` (an input connector) drives the data-dependent write.
-    nstate.add_edge(tasklet, 'outp', write, None, Memlet(data='dst_out', subset='idx_in'))
+    nstate.add_edge(nstate.add_read('src'), None, tasklet, 'inp', Memlet('src[i]'))
+    nstate.add_edge(tasklet, 'outp', nstate.add_write('dst'), None, Memlet('dst[k]'))
 
-    nnode = body.add_nested_sdfg(nsdfg, {'src_in', 'idx_in'}, {'dst_out'}, symbol_mapping={'N': N})
-    a_src = body.add_read('src')
-    a_idx = body.add_read('idx')
-    a_dst = body.add_write('dst')
-    body.add_edge(a_src, None, nnode, 'src_in', Memlet('src[i]'))
-    body.add_edge(a_idx, None, nnode, 'idx_in', Memlet('idx[i]'))
+    nnode = body.add_nested_sdfg(nsdfg, {'src': None, 'idx': None}, {'dst': None}, symbol_mapping={'N': N, 'i': 'i'})
+    body.add_edge(body.add_read('src'), None, nnode, 'src', Memlet('src[i]'))
+    body.add_edge(body.add_read('idx'), None, nnode, 'idx', Memlet('idx[i]'))
     # Data-dependent write: a single element (volume 1) scattered into 0:N.
-    body.add_edge(nnode, 'dst_out', a_dst, None, Memlet(data='dst', subset='0:N', volume=1))
-    convert_legacy_nested_sdfgs(sdfg)
+    body.add_edge(nnode, 'dst', body.add_write('dst'), None, Memlet(data='dst', subset='0:N', volume=1))
     sdfg.validate()
     return sdfg
 
