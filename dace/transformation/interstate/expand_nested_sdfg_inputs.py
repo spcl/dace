@@ -104,6 +104,20 @@ def _full_subset(sdfg: SDFG, arr_name: str) -> subsets.Range:
     return subsets.Range.from_array(sdfg.arrays[arr_name])
 
 
+def _container_window(sdfg: SDFG, nsdfg_node: nodes.NestedSDFG, conn: str, outer_name: str,
+                      outer_subset: subsets.Range) -> Tuple[subsets.Range, List[bool]]:
+    """The outer window a connector's inner memlets are relative to, and which of its dimensions they collapse.
+
+    A connector that describes the whole container (the No-View nested SDFG contract) is indexed in the
+    container's own coordinates, whatever the narrower footprint on the outer edge: its window is the full array
+    and it collapses nothing. Offsetting its memlets by the edge's start indexes ``C[i + i]``.
+    """
+    inner_desc, outer_desc = nsdfg_node.sdfg.arrays[conn], sdfg.arrays[outer_name]
+    if inner_desc.is_equivalent(outer_desc, symbol_mapping=nsdfg_node.symbol_mapping):
+        return _full_subset(sdfg, outer_name), [False] * len(outer_desc.shape)
+    return outer_subset, [(e + 1 - b) // s == 1 for (b, e, s) in as_range(outer_subset).ranges]
+
+
 def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Dict[str, Tuple[str, Range]]:
     """Collect the original read subsets on every NSDFG input edge, keyed
     by the inner connector name. Used for the Map-scope case to capture
@@ -691,15 +705,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             # Widen if not already full: find collapsed dims (outer [N,N,N], read [1,0:N,0:N] →
             # inner [N,N]).
-            inner_desc = inner_sdfg.arrays[in_conn]
-            collapsed_dims = []
-            for (b, e, s) in as_range(iedge.data.subset).ranges:
-                if (e + 1 - b) // s == 1:
-                    collapsed_dims.append(True)
-                else:
-                    collapsed_dims.append(False)
-
-            read_subsets[in_conn] = (iedge.data.data, iedge.data.subset, collapsed_dims)
+            window, collapsed_dims = _container_window(sdfg, nsdfg_node, in_conn, iedge.data.data, iedge.data.subset)
+            read_subsets[in_conn] = (iedge.data.data, window, collapsed_dims)
 
         for oedge in state.out_edges(nsdfg_node):
             if oedge.data is None or oedge.data.data is None:
@@ -711,15 +718,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             if out_conn is None:
                 continue
 
-            inner_desc = inner_sdfg.arrays[out_conn]
-            collapsed_dims = []
-            for (b, e, s) in as_range(oedge.data.subset).ranges:
-                if (e + 1 - b) // s == 1:
-                    collapsed_dims.append(True)
-                else:
-                    collapsed_dims.append(False)
-
-            write_subsets[out_conn] = (oedge.data.data, oedge.data.subset, collapsed_dims)
+            window, collapsed_dims = _container_window(sdfg, nsdfg_node, out_conn, oedge.data.data, oedge.data.subset)
+            write_subsets[out_conn] = (oedge.data.data, window, collapsed_dims)
 
         # ``_rewrite_memlets_with_offset`` offsets EVERY inner memlet referencing ``conn``'s
         # array, not just the boundary edge. When the same inner array is read AND written
