@@ -640,6 +640,16 @@ class RemoveViews(ppl.Pass):
                 return True
         return False
 
+    @staticmethod
+    def _binds_nested_sdfg(state: SDFGState, vnode: nd.AccessNode, is_viewed_src: bool) -> bool:
+        """True if a memlet tree from ``vnode`` away from the viewed array ends at a nested SDFG connector."""
+        edges = state.out_edges(vnode) if is_viewed_src else state.in_edges(vnode)
+        for edge in edges:
+            for leaf in state.memlet_tree(edge).leaves():
+                if isinstance(leaf.dst if is_viewed_src else leaf.src, nd.NestedSDFG):
+                    return True
+        return False
+
     def _process_state(self, sdfg, state, removed):
         changed = False
 
@@ -672,6 +682,11 @@ class RemoveViews(ppl.Pass):
             if self._is_library_node_operand(state, vnode):
                 if _DEBUGPRINT:
                     print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
+                continue
+
+            # A nested SDFG's connector descriptor IS the container it is bound to (No-View). Binding it to the
+            # viewed array instead would need the nested SDFG's descriptor and accesses rewritten.
+            if self._binds_nested_sdfg(state, vnode, is_viewed_src=info[3]):
                 continue
 
             if _DEBUGPRINT:
