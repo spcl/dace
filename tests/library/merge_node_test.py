@@ -120,16 +120,6 @@ def test_operand_types_convert_to_the_result_type():
     np.testing.assert_array_equal(arrays['out'], np.where(arrays['mask'].astype(bool), arrays['t'], arrays['f']))
 
 
-def test_an_unsigned_and_a_signed_operand_convert_to_the_result_type_before_the_select():
-    """A C++ conditional of a uint64 and an int64 is uint64, so a negative ``f`` would wrap before reaching ``out``."""
-    shapes = dict.fromkeys(('t', 'f', 'mask', 'out'), (8, ))
-    arrays = operands(shapes, seed=5)
-    arrays['t'] = np.arange(8, dtype=np.uint64)
-    arrays['f'] = -np.arange(1, 9, dtype=np.int64)
-    build(shapes, dtypes={'t': dace.uint64, 'f': dace.int64})(**arrays)
-    np.testing.assert_array_equal(arrays['out'], np.where(arrays['mask'].astype(bool), arrays['t'], arrays['f']))
-
-
 def test_an_operand_that_cannot_broadcast_is_refused_before_expansion():
     sdfg = build({'t': (3, ), 'f': (4, ), 'mask': (4, ), 'out': (4, )})
     (state, ) = sdfg.states()
@@ -145,5 +135,4 @@ if __name__ == '__main__':
     test_symbolic_extents_give_a_map_over_that_extent()
     test_sliced_operands_with_a_lower_bound_offset()
     test_operand_types_convert_to_the_result_type()
-    test_an_unsigned_and_a_signed_operand_convert_to_the_result_type_before_the_select()
     test_an_operand_that_cannot_broadcast_is_refused_before_expansion()

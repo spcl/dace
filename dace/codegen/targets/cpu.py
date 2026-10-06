@@ -550,12 +550,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            aligned = ''
+            allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
             if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f'(std::align_val_t({align_value}))'
-            allocation_stream.write(f"{alloc_name} = new {aligned} {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}];\n",
-                                    cfg, state_id, node)
+                allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
+            allocation_stream.write(f"{alloc_name} = {allocation};\n", cfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -607,19 +606,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
-            aligned = ''
+            allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
             if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f'(std::align_val_t({align_value}))'
+                allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
 
             allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {aligned}{ctype} [{arrsize}];""".format(aligned=aligned,
-                                                                         ctype=nodedesc.dtype.ctype,
-                                                                         name=alloc_name,
-                                                                         arrsize=cpp.sym2cpp(arrsize)),
+                    {name} = {allocation};""".format(name=alloc_name, allocation=allocation),
                 cfg,
                 state_id,
                 node,
@@ -657,15 +653,10 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage == dtypes.StorageType.Register
                   and not register_array_on_stack(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared))):
             if isinstance(nodedesc, data.Array):
-                # Memory from the aligned operator new[] must be released by the aligned operator
-                # delete[]. The direct operator call skips destructors and relies on the new-expression
-                # emitting no array cookie - both only hold for trivially destructible element types.
                 if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                    callsite_stream.write(
-                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                        f"\"aligned heap deallocation skips destructors\");\n"
-                        f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));\n", cfg, state_id, node)
+                    callsite_stream.write(f"dace::aligned_delete_array({alloc_name}, {align_value});\n", cfg, state_id,
+                                          node)
                 else:
                     callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:
@@ -673,12 +664,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                # Aligned pairing + trivial-destructibility guard as above.
                 if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                                   f"\"aligned heap deallocation skips destructors\"); "
-                                   f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));")
+                    delete_stmt = f"dace::aligned_delete_array({alloc_name}, {align_value});"
                 else:
                     delete_stmt = f"delete[] {alloc_name};"
             else:

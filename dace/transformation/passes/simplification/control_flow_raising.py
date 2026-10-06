@@ -32,6 +32,7 @@ class ControlFlowRaising(ppl.Pass):
     raise_sink_node_returns = properties.Property(
         dtype=bool,
         default=False,
+        category='Parameters',
         desc='Whether or not to lift sink nodes in an SDFG context to explicit return blocks.')
 
     def modifies(self) -> ppl.Modifies:

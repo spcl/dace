@@ -22,10 +22,14 @@ class Einsum(nodes.LibraryNode):
     # Configurable properties of the einsum node
     einsum_str = properties.Property(dtype=str,
                                      default='',
+                                     category='Semantics',
                                      desc='The Einstein notation string that describes this einsum')
 
-    alpha = properties.SymbolicProperty(desc='The coefficient to multiply the inputs with', default=1.0)
-    beta = properties.SymbolicProperty(desc='The coefficient to multiply the output with when added to the product',
+    alpha = properties.SymbolicProperty(category='Semantics',
+                                        desc='The coefficient to multiply the inputs with',
+                                        default=1.0)
+    beta = properties.SymbolicProperty(category='Semantics',
+                                       desc='The coefficient to multiply the output with when added to the product',
                                        default=0.0)
 
 

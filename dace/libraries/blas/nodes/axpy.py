@@ -95,8 +95,8 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"))
-    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
+    a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"), category="Semantics")
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"), category="Semantics")
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)

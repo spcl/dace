@@ -15,11 +15,11 @@ import numpy as np
 def _count_heap_allocs(code: str, ctype: str) -> int:
     # The transients in these tests use the default alignment; consult the active
     # cpp_standard: C++ >= 17 emits the aligned form
-    # ``new (std::align_val_t(64)) <type>``, earlier standards the plain form.
+    # ``dace::aligned_new_array<type>(...)``, earlier standards the plain form.
     # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
     probe = dace.data.Array(dace.float64, [1])
     if _use_aligned_operator_new(probe):
-        return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
+        return code.count(f'dace::aligned_new_array<{ctype}>(')
     return len(re.findall(rf'new\s+{ctype}\b', code))
 
 
@@ -522,7 +522,7 @@ def test_branched_allocation(mode):
     code = sdfg.generate_code()[0].clean_code
     num_allocs = 2 if mode == 'multivalue' else 1
     assert _count_heap_allocs(code, 'float') == num_allocs
-    assert code.count('delete[]') == num_allocs
+    assert len(re.findall(r'aligned_delete_array\(|delete\[\]', code)) == num_allocs
 
     sdfg.compile()
 
@@ -551,7 +551,7 @@ def test_scope_multisize():
     # Make sure array is allocated twice
     code = sdfg.generate_code()[0].clean_code
     assert _count_heap_allocs(code, 'double') == 2
-    assert code.count('delete[]') == 2
+    assert len(re.findall(r'aligned_delete_array\(|delete\[\]', code)) == 2
 
     sdfg()
 
@@ -681,7 +681,7 @@ def test_multisize():
     # Make sure array is allocated once
     code = sdfg.generate_code()[0].clean_code
     assert _count_heap_allocs(code, 'double') == 1
-    assert code.count('delete[]') == 1
+    assert len(re.findall(r'aligned_delete_array\(|delete\[\]', code)) == 1
 
     res1 = sdfg(cond=np.uint64(0))
     res2 = sdfg(cond=np.uint64(1))

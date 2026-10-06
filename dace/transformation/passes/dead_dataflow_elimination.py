@@ -33,10 +33,14 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
     skip_library_nodes = properties.Property(dtype=bool,
                                              default=False,
+                                             category='Applicability',
                                              desc='If True, does not remove library nodes if their results are unused. '
                                              'Otherwise removes library nodes without side effects.')
     remove_persistent_memory = properties.Property(
-        dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead')
+        dtype=bool,
+        default=False,
+        category='Applicability',
+        desc='If True, marks code with Persistent allocation lifetime as dead')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors

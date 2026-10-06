@@ -29,11 +29,13 @@ class MapExpansion(pm.SingleStateTransformation):
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    inner_schedule = EnumProperty(desc="Schedule for inner maps",
+    inner_schedule = EnumProperty(category='Scheduling',
+                                  desc="Schedule for inner maps",
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Sequential,
                                   allow_none=True)
-    expansion_limit = Property(desc="How many unidimensional maps will be created, known as k. "
+    expansion_limit = Property(category='Parameters',
+                               desc="How many unidimensional maps will be created, known as k. "
                                "If None, the default no limit is in place.",
                                dtype=int,
                                allow_none=True,

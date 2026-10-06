@@ -715,9 +715,18 @@ class ScalarToSymbolPromotion(passes.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    ignore = props.SetProperty(element_type=str, default=set(), desc='Fields that should not be promoted.')
-    transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
-    integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
+    ignore = props.SetProperty(element_type=str,
+                               default=set(),
+                               category='Applicability',
+                               desc='Fields that should not be promoted.')
+    transients_only = props.Property(dtype=bool,
+                                     default=True,
+                                     category='Applicability',
+                                     desc='Promote only transients.')
+    integers_only = props.Property(dtype=bool,
+                                   default=True,
+                                   category='Applicability',
+                                   desc='Allow promotion of integer scalars only.')
 
     def modifies(self) -> passes.Modifies:
         return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)

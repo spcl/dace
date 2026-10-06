@@ -20,7 +20,9 @@ class FFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
     axis = properties.Property(dtype=int,
                                allow_none=True,
                                default=None,
@@ -38,7 +40,9 @@ class IFFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
     axis = properties.Property(dtype=int,
                                allow_none=True,
                                default=None,

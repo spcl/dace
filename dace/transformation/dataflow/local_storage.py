@@ -25,13 +25,22 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
     node_b = xf.PatternNode(nodes.Node)
 
     array = Property(dtype=str,
+                     category='Parameters',
                      desc="Array to create local storage for (if empty, first available)",
                      default=None,
                      allow_none=True)
 
-    prefix = Property(dtype=str, default="trans_", allow_none=True, desc='Prefix for new data node')
+    prefix = Property(dtype=str,
+                      default="trans_",
+                      allow_none=True,
+                      category='Parameters',
+                      desc='Prefix for new data node')
 
-    create_array = Property(dtype=bool, default=True, desc="if false, it does not create a new array.", allow_none=True)
+    create_array = Property(dtype=bool,
+                            default=True,
+                            category='Memory',
+                            desc="if false, it does not create a new array.",
+                            allow_none=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

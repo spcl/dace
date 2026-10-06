@@ -22,7 +22,10 @@ class BufferTiling(transformation.SingleStateTransformation):
     array = transformation.PatternNode(nodes.AccessNode)
     map2_entry = transformation.PatternNode(nodes.MapEntry)
 
-    tile_sizes = ShapeProperty(dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
+    tile_sizes = ShapeProperty(dtype=tuple,
+                               default=(128, 128, 128),
+                               category='Parameters',
+                               desc="Tile size per dimension")
 
     # Returns a list of graphs that represent the pattern
     @classmethod

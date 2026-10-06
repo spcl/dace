@@ -18,7 +18,11 @@ class ParameterArray(Array):
     An array for which a gradient can be computed.
     """
     # since this can be None, this is not a DataProperty
-    gradient = properties.Property(dtype=str, desc="The corresponding gradient buffer", default=None, allow_none=True)
+    gradient = properties.Property(dtype=str,
+                                   category="General",
+                                   desc="The corresponding gradient buffer",
+                                   default=None,
+                                   allow_none=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
