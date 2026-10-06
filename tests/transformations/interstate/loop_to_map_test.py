@@ -1298,6 +1298,34 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_a_symbol_assigned_later_stays_out_of_the_mapping():
+    """The nested SDFG a lift makes maps only the symbols it reads: a mapping entry is a read, and ``later`` is
+    assigned only after the loop, so mapping it would make it a free symbol of the whole SDFG."""
+    sdfg = dace.SDFG("l2m_later_symbol")
+    sdfg.add_array("A", [10, 10], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_symbol("later", dace.int64)
+    outer = LoopRegion("outer", "j < 10", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    fill = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
+    outer.add_node(fill, is_start_block=True)
+    body = fill.add_state("body", is_start_block=True)
+    zero = body.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+    body.add_edge(zero, "o", body.add_write("A"), None, dace.Memlet("A[i, j]"))
+    use = sdfg.add_state("use")
+    sdfg.add_edge(outer, use, dace.InterstateEdge(assignments={"later": "3"}))
+    read = use.add_tasklet("read", {}, {"o"}, "o = later")
+    use.add_edge(read, "o", use.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    before = {str(s) for s in sdfg.free_symbols}
+
+    LoopToMap.apply_to(sdfg, loop=fill)
+
+    assert not any(block is fill for block, _ in sdfg.all_nodes_recursive())
+    assert {str(s) for s in sdfg.free_symbols} <= before
+    sdfg.validate()
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
