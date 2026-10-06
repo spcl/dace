@@ -213,7 +213,7 @@ def test_canonicalize_conditional_with_else(av):
 
 
 def test_canonicalize_indirect_scatter():
-    """A scatter through an unproven-injective index table stays sequential."""
+    """A scatter through an unproven-injective index table is parallel only behind the runtime collision guard."""
     rng = np.random.default_rng(42)
     n = 22
     a, cc = rng.random(n), rng.random(n)
@@ -224,9 +224,12 @@ def test_canonicalize_indirect_scatter():
     sdfg = scatter.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     # ``b[idx[i]] = ...`` is an overwrite, not an accumulation, and ``idx`` is a runtime
-    # argument: nothing proves it injective, so parallelizing it would be a race.
-    assert nmaps(sdfg) == 0, f'an unproven-injective scatter must not become a map, got {nmaps(sdfg)}'
-    assert nloops(sdfg) == 1, f'the scatter must stay one sequential loop, got {nloops(sdfg)}'
+    # argument: nothing proves it injective, so the map runs only when the guard finds no
+    # collision, and the sequential loop stays as the fallback.
+    guards = [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__ == 'ScatterConflictCheck']
+    assert len(guards) == 1, f'an unproven-injective scatter needs exactly one runtime guard, got {len(guards)}'
+    assert nmaps(sdfg) == 1, f'the guarded branch must hold the one map, got {nmaps(sdfg)}'
+    assert nloops(sdfg) == 1, f'the sequential fallback must stay one loop, got {nloops(sdfg)}'
     assert nwcr_edges(sdfg) == 0, 'an overwrite scatter must not acquire a WCR'
     out_b, out_e = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), idx=idx.copy(), b=out_b, cc=cc.copy(), e=out_e, N=n)
