@@ -41,19 +41,12 @@ def reference_sdfg(nsdfg: nodes.NestedSDFG) -> SDFG:
     return ref
 
 
-def default_abi_order(nsdfg: nodes.NestedSDFG) -> List[str]:
-    """Inputs, outputs that are not inputs, then the nest's free symbols by name."""
-    arrays = list(dict.fromkeys([*nsdfg.in_connectors, *nsdfg.out_connectors]))
-    symbols = sorted(str(s) for s in nsdfg.sdfg.free_symbols if str(s) not in arrays)
-    return arrays + symbols
-
-
 def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: str) -> external_call.ExternalCall:
+    """An ``ExternalCall`` in place of ``nsdfg``, calling ``name`` in DaCe's nested-SDFG argument order."""
     node = external_call.ExternalCall(name,
                                       inputs=[external_call.in_conn(i) for i in nsdfg.in_connectors],
                                       outputs=[external_call.out_conn(o) for o in nsdfg.out_connectors],
                                       standalone_sdfg=reference_sdfg(nsdfg))
-    node.abi_order = default_abi_order(nsdfg)
     state.add_node(node)
     for edge in state.in_edges(nsdfg):
         conn = None if edge.dst_conn is None else external_call.in_conn(edge.dst_conn)
@@ -61,7 +54,11 @@ def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: 
     for edge in state.out_edges(nsdfg):
         conn = None if edge.src_conn is None else external_call.out_conn(edge.src_conn)
         state.add_edge(node, conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+    symbols = [str(s) for s in nsdfg.sdfg.free_symbols]
     state.remove_node(nsdfg)
+    node.symbol = name
+    node.abi_order = external_call.nested_sdfg_order(node, state, symbols)
+    node.signature = external_call.derive_signature(node, state)
     return node
 
 

@@ -4,7 +4,7 @@ from .argminmax import ArgMax, ArgMin
 from .broadcast import Broadcast
 from .code import CodeLibraryNode
 from .copy import CopyLibraryNode
-from .external_call import ExternalCall, ExternLibEnv
+from .external_call import ExternalCall
 from .count_node import CountLibraryNode
 from .cshift import CShift
 from .norm2 import Norm2

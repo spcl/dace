@@ -48,19 +48,25 @@ def outlined(program, name: str):
     return sdfg, calls
 
 
-def shared_library(tmp_path: pathlib.Path, source: str) -> str:
+def compiled_object(tmp_path: pathlib.Path, source: str) -> pathlib.Path:
     compiler = shutil.which('gcc')
     assert compiler is not None, 'the ExternCall tests build their library with gcc'
-    unit, lib = tmp_path / 'kernel.c', tmp_path / 'libkernel.so'
+    unit, obj = tmp_path / 'kernel.c', tmp_path / 'kernel.o'
     unit.write_text('#include <stdint.h>\n' + source)
-    subprocess.run([compiler, '-O2', '-shared', '-fPIC', str(unit), '-o', str(lib)], check=True)
+    subprocess.run([compiler, '-O2', '-fPIC', '-c', str(unit), '-o', str(obj)], check=True)
+    return obj
+
+
+def shared_library(tmp_path: pathlib.Path, source: str) -> str:
+    obj, lib = compiled_object(tmp_path, source), tmp_path / 'libkernel.so'
+    subprocess.run([shutil.which('gcc'), '-shared', str(obj), '-o', str(lib)], check=True)
     return str(lib)
 
 
-def link(call: external_call.ExternalCall, lib: str, symbol: str, abi_order) -> None:
-    external_call.ExternLibEnv.reset()
-    call.implementation = 'ExternCall'
-    call.lib_path, call.symbol, call.abi_order = lib, symbol, list(abi_order)
+def static_library(tmp_path: pathlib.Path, source: str) -> str:
+    obj, lib = compiled_object(tmp_path, source), tmp_path / 'libkernel.a'
+    subprocess.run(['ar', 'rcs', str(lib), str(obj)], check=True)
+    return str(lib)
 
 
 def generated_code(sdfg: dace.SDFG) -> str:
@@ -81,60 +87,93 @@ def test_each_top_level_nest_becomes_an_external_call_and_the_program_is_unchang
     assert np.array_equal(c, a * 2.0 + 1.0)
 
 
-def test_extern_call_runs_the_linked_library_with_parameters_in_abi_order(tmp_path):
-    sdfg, (call, ) = outlined(scale, 'extcall_scale')
+def test_the_recorded_signature_follows_the_nested_sdfg_convention():
+    sdfg, (call, ) = outlined(scale_by, 'extcall_signature')
+
+    assert call.symbol == call.name
+    assert list(call.abi_order) == ['a', 'alpha', 'b', 'N']
+    assert call.signature == 'const double* __restrict__ a, double alpha, double* __restrict__ b, int64_t N'
+
+
+def test_a_static_library_with_the_recorded_signature_links_into_the_program(tmp_path):
+    sdfg, (call, ) = outlined(scale, 'extcall_static')
     # triples, while the nest doubles: the result shows which body ran
-    lib = shared_library(
-        tmp_path, 'void triple(int64_t N, double* b, const double* a) {'
+    call.lib_path = static_library(
+        tmp_path, f'void {call.symbol}(const double* restrict a, double* restrict b, int64_t N) {{'
         ' for (int64_t i = 0; i < N; ++i) b[i] = 3.0 * a[i]; }')
-    link(call, lib, 'triple', ['N', 'b', 'a'])
+    call.implementation = 'ExternCall'
     a = np.random.default_rng(1).random(SIZE)
     b = np.zeros(SIZE)
 
     sdfg(a=a, b=b, N=SIZE)
 
-    assert 'extern "C" void triple(int64_t N, double* b, const double* a);' in generated_code(sdfg)
+    assert (f'extern "C" void {call.symbol}(const double* __restrict__ a, double* __restrict__ b, int64_t N);'
+            in generated_code(sdfg))
     assert np.array_equal(b, a * 3.0)
+
+
+def test_a_custom_abi_order_derives_its_signature_and_call_in_that_order(tmp_path):
+    sdfg, (call, ) = outlined(scale, 'extcall_order')
+    call.lib_path = shared_library(
+        tmp_path, 'void triple(int64_t N, double* b, const double* a) {'
+        ' for (int64_t i = 0; i < N; ++i) b[i] = 3.0 * a[i]; }')
+    call.implementation, call.symbol, call.abi_order, call.signature = 'ExternCall', 'triple', ['N', 'b', 'a'], ''
+    a = np.random.default_rng(2).random(SIZE)
+    b = np.zeros(SIZE)
+
+    sdfg(a=a, b=b, N=SIZE)
+
+    assert 'extern "C" void triple(int64_t N, double* __restrict__ b, const double* __restrict__ a);' in (
+        generated_code(sdfg))
+    assert np.array_equal(b, a * 3.0)
+
+
+def test_a_signature_whose_arity_differs_from_the_abi_order_is_refused():
+    sdfg, (call, ) = outlined(scale, 'extcall_arity')
+    call.implementation, call.lib_path, call.signature = 'ExternCall', '/opt/libkernel.a', 'const double* a, double* b'
+
+    with pytest.raises(ValueError, match='2 parameters, abi_order 3'):
+        sdfg.expand_library_nodes()
 
 
 def test_a_read_only_scalar_crosses_the_call_by_value(tmp_path):
     sdfg, (call, ) = outlined(scale_by, 'extcall_scale_by')
-    lib = shared_library(
-        tmp_path, 'void axpy0(const double* a, double alpha, double* b, int64_t N) {'
+    call.lib_path = shared_library(
+        tmp_path, f'void {call.symbol}(const double* a, double alpha, double* b, int64_t N) {{'
         ' for (int64_t i = 0; i < N; ++i) b[i] = alpha * a[i] + 1.0; }')
-    link(call, lib, 'axpy0', ['a', 'alpha', 'b', 'N'])
-    a = np.random.default_rng(2).random(SIZE)
+    call.implementation = 'ExternCall'
+    a = np.random.default_rng(3).random(SIZE)
     b = np.zeros(SIZE)
 
     sdfg(a=a, alpha=0.5, b=b, N=SIZE)
 
-    assert 'extern "C" void axpy0(const double* a, double alpha, double* b, int64_t N);' in generated_code(sdfg)
     assert np.array_equal(b, a * 0.5 + 1.0)
 
 
 def test_data_read_and_written_is_one_pointer_parameter(tmp_path):
     sdfg, (call, ) = outlined(increment, 'extcall_increment')
-    lib = shared_library(tmp_path, 'void bump(double* a, int64_t N) { for (int64_t i = 0; i < N; ++i) a[i] += 5.0; }')
-    link(call, lib, 'bump', ['a', 'N'])
-    a = np.random.default_rng(3).random(SIZE)
+    call.lib_path = static_library(
+        tmp_path, f'void {call.symbol}(double* a, int64_t N) {{ for (int64_t i = 0; i < N; ++i) a[i] += 5.0; }}')
+    call.implementation = 'ExternCall'
+    a = np.random.default_rng(4).random(SIZE)
     expected = a + 5.0
 
     sdfg(a=a, N=SIZE)
 
     assert {'_in_a', '_out_a'} == {*call.in_connectors, *call.out_connectors}
-    assert 'extern "C" void bump(double* a, int64_t N);' in generated_code(sdfg)
+    assert call.signature == 'double* __restrict__ a, int64_t N'
     assert np.array_equal(a, expected)
 
 
 def test_a_reloaded_node_keeps_its_call_but_not_its_reference_nest():
     sdfg, (call, ) = outlined(scale, 'extcall_reload')
-    call.symbol, call.lib_path, call.numpy_source = 'triple', '/opt/libkernel.so', 'b[:] = a * 2.0'
+    call.lib_path, call.link_flags, call.numpy_source = '/opt/libkernel.a', ['-lomp'], 'b[:] = a * 2.0'
 
     reloaded = dace.SDFG.from_json(sdfg.to_json())
 
     (twin, ) = external_call.external_calls(reloaded)
-    assert (twin.symbol, twin.lib_path, twin.numpy_source) == ('triple', '/opt/libkernel.so', 'b[:] = a * 2.0')
-    assert list(twin.abi_order) == ['a', 'b', 'N']
+    assert (twin.symbol, twin.signature, twin.lib_path) == (call.symbol, call.signature, '/opt/libkernel.a')
+    assert (list(twin.link_flags), twin.numpy_source) == (['-lomp'], 'b[:] = a * 2.0')
     assert twin.standalone_sdfg is None
     with pytest.raises(ValueError, match='only use ExternCall'):
         reloaded.expand_library_nodes()

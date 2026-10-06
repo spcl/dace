@@ -4,14 +4,17 @@
 Expansions:
 
 ``DaceReference``  Default. A copy of the nest's SDFG (``standalone_sdfg``), so the program runs unchanged.
-``ExternCall``     A C++ tasklet that calls ``extern "C" <symbol>(...)`` in ``lib_path``, its parameters in
-                   ``abi_order``. The library and its runtimes are linked through ``ExternLibEnv``.
+``ExternCall``     A C++ tasklet calling ``extern "C" void <symbol>(<signature>)``, whose forward declaration
+                   is the tasklet's global code. ``lib_path`` (a ``.a`` or ``.so``), then ``link_flags``, go on
+                   the program's link line, with ``rpath`` for the loader.
 
 Connectors are the nest's data names behind a prefix: ``_in_<name>`` for an input, ``_out_<name>`` for an
-output; data read and written has both. Pointer types and pass-by-value come from the parent's data
-descriptors and symbols, so the node carries no type manifest of its own.
+output; data read and written has both. ``signature`` follows DaCe's nested-SDFG convention: read-only inputs
+by name, then outputs by name (data read and written once), then symbols by name; a read-only array is
+``const T* __restrict__``, a written one ``T* __restrict__``, a read-only scalar ``T`` by value.
 """
 import copy
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -24,6 +27,9 @@ from dace.transformation.transformation import ExpandTransformation
 IN_PREFIX = '_in_'
 OUT_PREFIX = '_out_'
 
+#: Hex digits of a link environment's name digest.
+DIGEST_DIGITS = 16
+
 
 def in_conn(name: str) -> str:
     return IN_PREFIX + name
@@ -31,6 +37,10 @@ def in_conn(name: str) -> str:
 
 def out_conn(name: str) -> str:
     return OUT_PREFIX + name
+
+
+def data_name(conn: str) -> str:
+    return conn.removeprefix(IN_PREFIX).removeprefix(OUT_PREFIX)
 
 
 def one_element(memlet: dace.Memlet) -> bool:
@@ -62,12 +72,20 @@ def call_site(node: 'ExternalCall', state: dace.SDFGState) -> CallSite:
     for edge in state.out_edges(node):
         if edge.src_conn is None or edge.data.data is None:
             continue
-        site.outputs[edge.src_conn.removeprefix(OUT_PREFIX)] = None
+        site.outputs[data_name(edge.src_conn)] = None
         site.descriptors[edge.src_conn] = state.sdfg.arrays[edge.data.data]
         # a dynamic non-WCR output stays a pointer
         if one_element(edge.data) and not (edge.data.dynamic and edge.data.wcr is None):
             site.by_value[edge.src_conn] = None
     return site
+
+
+def nested_sdfg_order(node: 'ExternalCall', state: dace.SDFGState, symbols: Sequence[str]) -> List[str]:
+    """DaCe's nested-SDFG argument order: read-only inputs, then outputs, each by name, then ``symbols`` by name."""
+    site = call_site(node, state)
+    names = dict.fromkeys(data_name(conn) for conn in site.descriptors)
+    inputs = sorted(name for name in names if name not in site.outputs)
+    return inputs + sorted(site.outputs) + sorted(s for s in symbols if s not in names)
 
 
 def data_param(node: 'ExternalCall', arg: str, site: CallSite) -> Tuple[str, str]:
@@ -80,7 +98,7 @@ def data_param(node: 'ExternalCall', arg: str, site: CallSite) -> Tuple[str, str
     if conn in site.scalars:
         return f'{ctype} {arg}', conn
     const = '' if arg in site.outputs else 'const '
-    return f'{const}{ctype}* {arg}', f'&{conn}' if conn in site.by_value else conn
+    return f'{const}{ctype}* __restrict__ {arg}', f'&{conn}' if conn in site.by_value else conn
 
 
 def symbol_param(arg: str, sdfg: dace.SDFG) -> str:
@@ -90,15 +108,15 @@ def symbol_param(arg: str, sdfg: dace.SDFG) -> str:
     return f'{sdfg.symbols[arg].ctype} {arg}'
 
 
-def proto_and_call(node: 'ExternalCall', state: dace.SDFGState) -> Tuple[str, str]:
-    """The ``extern "C"`` prototype and call of the linked entry, in ``node.abi_order``. C linkage matches the
-    name alone, so any other order links cleanly and swaps buffers."""
+def params_and_args(node: 'ExternalCall', state: dace.SDFGState) -> Tuple[List[str], List[str]]:
+    """The C parameters and the call arguments, in ``node.abi_order``. C linkage matches the name alone, so a
+    wrong order links cleanly and swaps buffers."""
     order = list(node.abi_order)
     if not order:
-        raise ValueError(f'ExternalCall {node.name!r} has no abi_order; ExternCall must declare the linked '
-                         'symbol in the order it was compiled with')
+        raise ValueError(f'ExternalCall {node.name!r} has no abi_order; ExternCall must call the linked symbol '
+                         'in the order it was compiled with')
     site = call_site(node, state)
-    connected = {conn.removeprefix(IN_PREFIX).removeprefix(OUT_PREFIX) for conn in site.descriptors}
+    connected = {data_name(conn) for conn in site.descriptors}
     params: List[str] = []
     call_args: List[str] = []
     for arg in order:
@@ -108,45 +126,48 @@ def proto_and_call(node: 'ExternalCall', state: dace.SDFGState) -> Tuple[str, st
             param, call_arg = symbol_param(arg, state.sdfg), arg
         params.append(param)
         call_args.append(call_arg)
-    proto = f'extern "C" void {node.symbol}({", ".join(params)});'
-    call = f'{node.symbol}({", ".join(call_args)});'
-    return proto, call
+    return params, call_args
 
 
-def with_new_items(existing: List[str], items: Sequence[str]) -> List[str]:
-    return [*existing, *(item for item in dict.fromkeys(items) if item not in existing)]
+def derive_signature(node: 'ExternalCall', state: dace.SDFGState) -> str:
+    """The parameter list of ``node``'s entry in ``abi_order``, typed by the parent state's descriptors."""
+    return ', '.join(params_and_args(node, state)[0])
 
 
-@library.environment
-class ExternLibEnv:
-    """Links every called library and its runtimes into the program. DaCe reads environments as classes, so
-    ``configure`` accumulates class attributes during expansion; ``reset`` before expanding a fresh SDFG."""
+def parameter_count(signature: str) -> int:
+    depth, count = 0, 1 if signature.strip() else 0
+    for ch in signature:
+        depth += ch in '(<'
+        depth -= ch in ')>'
+        count += ch == ',' and depth == 0
+    return count
 
-    cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
-    headers = []
-    state_fields = []
-    init_code = ''
-    finalize_code = ''
-    dependencies = []
 
-    @classmethod
-    def reset(cls) -> None:
-        cls.cmake_libraries = []
-        cls.cmake_link_flags = []
-
-    @classmethod
-    def configure(cls, lib_path: str, runtime_libraries: Sequence[str] = ()) -> None:
-        lib = os.path.abspath(lib_path)
-        cls.cmake_libraries = with_new_items(cls.cmake_libraries, [lib, *runtime_libraries])
-        if not lib.endswith('.a'):  # a shared library needs an rpath
-            cls.cmake_link_flags = with_new_items(cls.cmake_link_flags, [f'-Wl,-rpath,{os.path.dirname(lib)}'])
+def link_environment(lib_path: str, link_flags: Sequence[str], rpath: Sequence[str]) -> type:
+    """The environment linking one library, then ``link_flags``, with ``rpath``; one per distinct triple. A ``.so``
+    adds its own directory to the rpath."""
+    lib = os.path.abspath(lib_path)
+    rpaths = list(dict.fromkeys([*rpath, *([] if lib.endswith('.a') else [os.path.dirname(lib)])]))
+    key = '\0'.join([lib, *link_flags, '', *rpaths])
+    name = 'ExternalCallLink_' + hashlib.sha256(key.encode()).hexdigest()[:DIGEST_DIGITS]
+    registered = library._DACE_REGISTERED_ENVIRONMENTS.get(f'{__name__}.{name}')
+    if registered is not None:
+        return registered
+    fields = dict(cmake_minimum_version=None,
+                  cmake_packages=[],
+                  cmake_variables={},
+                  cmake_includes=[],
+                  cmake_libraries=[lib, *link_flags],
+                  cmake_compile_flags=[],
+                  cmake_link_flags=[f'-Wl,-rpath,{path}' for path in rpaths],
+                  cmake_files=[],
+                  headers=[],
+                  state_fields=[],
+                  init_code='',
+                  finalize_code='',
+                  dependencies=[],
+                  __module__=__name__)
+    return library.environment(type(name, (), fields))
 
 
 @library.expansion
@@ -165,23 +186,35 @@ class ExpandDaceReference(ExpandTransformation):
 
 @library.expansion
 class ExpandExternCall(ExpandTransformation):
-    """Expand to a C++ tasklet calling the linked library's entry."""
+    """Expand to a C++ tasklet calling the linked library's entry, declared in the tasklet's global code."""
 
-    environments = [ExternLibEnv]
+    environments = []
 
     @staticmethod
     def expansion(node: 'ExternalCall', parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         if not node.lib_path or not node.symbol:
             raise ValueError(f'ExternalCall {node.name!r} needs lib_path and symbol for ExternCall')
-        proto, call = proto_and_call(node, parent_state)
-        ExternLibEnv.configure(node.lib_path, list(node.runtime_libraries))
+        params, call_args = params_and_args(node, parent_state)
+        signature = node.signature or ', '.join(params)
+        if parameter_count(signature) != len(call_args):
+            raise ValueError(f'ExternalCall {node.name!r}: signature ({signature}) has {parameter_count(signature)} '
+                             f'parameters, abi_order {len(call_args)}')
         return nodes.Tasklet(node.name,
                              node.in_connectors,
                              node.out_connectors,
-                             call,
+                             f'{node.symbol}({", ".join(call_args)});',
                              language=dtypes.Language.CPP,
-                             code_global=proto,
+                             code_global=f'extern "C" void {node.symbol}({signature});',
                              side_effects=True)
+
+    def apply(self, state: dace.SDFGState, sdfg: dace.SDFG, *args: Any, **kwargs: Any) -> None:
+        node = state.node(self.subgraph[type(self)._match_node])
+        env = link_environment(node.lib_path, list(node.link_flags), list(node.rpath))
+        before = dict.fromkeys(state.nodes())
+        super().apply(state, sdfg, *args, **kwargs)
+        for added in state.nodes():
+            if added not in before:
+                added.environments = {*added.environments, env.full_class_path()}
 
 
 @library.node
@@ -189,18 +222,24 @@ class ExternalCall(nodes.LibraryNode):
     """A nest lowered to a call of a separately compiled kernel. See the module docstring."""
 
     implementations = {'DaceReference': ExpandDaceReference, 'ExternCall': ExpandExternCall}
+    default_implementation = 'DaceReference'
     #: a deserialized node is built without __init__
     _standalone_sdfg: Optional[dace.SDFG] = None
-    default_implementation = 'DaceReference'
 
     numpy_source = properties.Property(dtype=str, default='', desc='NumPy reference source of the nest')
     symbol = properties.Property(dtype=str, default='', desc='extern-C symbol to call')
     abi_order = properties.ListProperty(element_type=str, default=[], desc='parameter order of the linked entry')
+    signature = properties.Property(dtype=str,
+                                    default='',
+                                    desc='C parameter list of the linked entry; derived from the parent when empty')
     lib_path = properties.Property(dtype=str, default='', desc='kernel library, .a or .so')
-    runtime_libraries = properties.ListProperty(element_type=str,
-                                                default=[],
-                                                desc='link items for the runtimes the library needs (libomp, '
-                                                'cudart), placed after the objects')
+    link_flags = properties.ListProperty(element_type=str,
+                                         default=[],
+                                         desc='link items after the library: runtimes it needs (-lomp, -lcudart) '
+                                         'and their -L directories')
+    rpath = properties.ListProperty(element_type=str,
+                                    default=[],
+                                    desc='loader search directories; a .so library adds its own')
 
     def __init__(self,
                  name: str,
