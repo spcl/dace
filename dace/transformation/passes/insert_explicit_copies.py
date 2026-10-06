@@ -183,8 +183,27 @@ class InsertExplicitCopies(ppl.Pass):
             name for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
             if name in sdfg.arrays
         ]
-        if taken:
-            sdfg.replace_dict({name: sdfg.find_new_name_avoiding_connectors(name.lstrip('_')) for name in taken})
+        if not taken:
+            return
+        renames = {name: sdfg.find_new_name_avoiding_connectors(name.lstrip('_')) for name in taken}
+        sdfg.replace_dict(renames)
+        # A non-transient is also the name of the nested SDFG node's connector, which the parent spells.
+        node, parent = sdfg.parent_nsdfg_node, sdfg.parent
+        if node is None or parent is None:
+            return
+        for old, new in renames.items():
+            if sdfg.arrays[new].transient:
+                continue
+            for edge in list(parent.in_edges_by_connector(node, old)):
+                edge.dst_conn = new
+            for edge in list(parent.out_edges_by_connector(node, old)):
+                edge.src_conn = new
+            if old in node.in_connectors:
+                node.add_in_connector(new, node.in_connectors[old], force=True)
+                node.remove_in_connector(old)
+            if old in node.out_connectors:
+                node.add_out_connector(new, node.out_connectors[old], force=True)
+                node.remove_out_connector(old)
 
     def _replace_direct_copies(self, state: SDFGState) -> int:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.

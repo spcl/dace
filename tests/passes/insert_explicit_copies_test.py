@@ -1548,6 +1548,35 @@ def test_a_copy_lifted_beside_a_view_named_like_its_connector_validates():
     assert np.array_equal(a, b)
 
 
+def test_freeing_a_copy_connector_name_renames_the_nested_connector_too():
+    """A nested SDFG's NON-transient ``_cpy_in`` is also its node's connector: renaming the data alone left the
+    parent wiring a connector the nest no longer declared (fuse_physics_into_scan on the GPU)."""
+    name = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    inner = dace.SDFG('inner')
+    inner.add_array(name, [4], dace.float64)
+    inner.add_array('y', [4], dace.float64)
+    inner.add_state('s').add_mapped_tasklet('twice',
+                                            dict(i='0:4'), {'a': dace.Memlet(f'{name}[i]')},
+                                            'b = 2 * a', {'b': dace.Memlet('y[i]')},
+                                            external_edges=True)
+    sdfg = dace.SDFG('free_a_connector_named_copy_input')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {name}, {'y'})
+    state.add_edge(state.add_read('A'), None, node, name, dace.Memlet('A[0:4]'))
+    state.add_edge(node, 'y', state.add_write('B'), None, dace.Memlet('B[0:4]'))
+    sdfg.validate()
+
+    InsertExplicitCopies.free_copy_connector_names(inner)
+    sdfg.validate()
+    assert name not in inner.arrays and name not in node.in_connectors
+
+    a, b = np.arange(4.0), np.zeros(4)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2 * a)
+
+
 if __name__ == '__main__':
     test_a_copy_lifted_beside_a_view_named_like_its_connector_validates()
     test_insert_cpu_to_cpu_1d()
@@ -1628,3 +1657,4 @@ if __name__ == '__main__':
         ("insert_gpu_gpu", "A", dace.StorageType.GPU_Global, "B", dace.StorageType.GPU_Global, 128)
     ]:
         test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_name, dst_storage, size)
+    test_freeing_a_copy_connector_name_renames_the_nested_connector_too()
