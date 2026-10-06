@@ -787,12 +787,14 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
+        passed_on: Dict[str, dtypes.typeclass] = {}
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
-                    # Other passes map symbols without declaring them; type it off the symbol.
-                    nsdfg.symbol_repo.add(s, sdfg.symbols.get(s, symbolic.symbol(s).dtype))
+                    # Other passes map symbols without declaring them; type it off the symbol
+                    passed_on[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
+                    nsdfg.symbol_repo.add(s, passed_on[s])
         for name in read_set:
             r = body.add_read(name)
             body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
@@ -806,6 +808,10 @@ class LoopToMap(xf.MultiStateTransformation):
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
             nsdfg.symbol_repo.add(sym, dtype)
+        # This SDFG now passes on what its parent maps in, so it declares it too
+        for sym, dtype in passed_on.items():
+            if sym not in sdfg.symbols:
+                sdfg.add_symbol(sym, dtype)
 
         # Mapping a symbol the nested SDFG assigns itself desyncs a later pruning pass.
         internally_defined = set()

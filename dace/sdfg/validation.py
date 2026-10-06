@@ -269,6 +269,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if scoped:
             raise InvalidSDFGError(
                 f'Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols', sdfg, None)
+        # What the SDFG needs from outside must be declared as its parameters
+        undeclared = sorted(sdfg.free_symbols - sdfg.symbols.keys())
+        if undeclared:
+            raise InvalidSDFGError(f'Free symbols {undeclared} are not declared as SDFG symbols', sdfg, None)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():

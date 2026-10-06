@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``LiftTrivialIf`` simplification pass."""
+import ast
+
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
@@ -39,6 +41,21 @@ _CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
 _DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
+def _declare_condition_names(sdfg: dace.SDFG, *conditions: str) -> None:
+    """Declare the names the conditions read: subscripted ones as arrays, the others as symbols."""
+    for condition in conditions:
+        tree = ast.parse(condition)
+        data = {
+            node.value.id
+            for node in ast.walk(tree) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+        }
+        for name in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} - sdfg.arrays.keys()):
+            if name in data:
+                sdfg.add_array(name, [5], dace.float64)
+            elif name not in sdfg.symbols:
+                sdfg.add_symbol(name, dace.int64)
+
+
 def _get_sdfg(condition: str):
     """Build a one-state SDFG inside a single-branch ``ConditionalBlock``.
 
@@ -52,6 +69,7 @@ def _get_sdfg(condition: str):
     _, B = sdfg.add_array(name="B", shape=[
         5,
     ], dtype=dace.float64, transient=False)
+    _declare_condition_names(sdfg, condition)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -113,6 +131,7 @@ def _get_nested_sdfg(condition1: str, condition2: str):
     _, B = sdfg.add_array(name="B", shape=[
         5,
     ], dtype=dace.float64, transient=False)
+    _declare_condition_names(sdfg, condition1, condition2)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg1 = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
