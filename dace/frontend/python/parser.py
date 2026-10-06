@@ -1027,7 +1027,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             if newast.NESTED_PROGRAM_CALLS.get() == 0:
                 unproven = newast.pop_extent_equalities(sdfg)
                 if unproven:
-                    raise IndexError(newast.extent_mismatch(unproven))
+                    raise IndexError(newast.extent_mismatch([pair for pair, _ in unproven]))
 
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]

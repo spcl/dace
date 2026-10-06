@@ -115,6 +115,17 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: Dict[s
     owner.pop(name, None)
 
 
+def bound_names(target: ast.AST) -> Set[str]:
+    """The names an assignment target writes: ``a[i:n] = ...`` writes ``a``, never the ``i`` or ``n`` it is indexed by."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(bound_names(element) for element in target.elts))
+    if isinstance(target, (ast.Starred, ast.Subscript, ast.Attribute)):
+        return bound_names(target.value)
+    return set()
+
+
 def extent_mismatch(pairs: List[Tuple[Any, Any]]) -> str:
     targets, sources = (', '.join(str(p[i]) for p in pairs) for i in (0, 1))
     return f'could not broadcast input array from extents [{sources}] into extents [{targets}]'
@@ -5778,7 +5789,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 targets = [node.target]
             else:
                 continue
-            written |= {n.id for target in targets for n in ast.walk(target) if isinstance(n, ast.Name)}
+            for target in targets:
+                written |= bound_names(target)
         for name in written:
             self.shape_promotions.pop(self.variables.get(name, name), None)
 
