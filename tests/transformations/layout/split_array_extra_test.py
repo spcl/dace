@@ -4,6 +4,7 @@ splitting behaviour, and error paths not covered by tests/layout/split_array_tes
 import numpy
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.split_array import (SplitArray, resolve_aliases, copy_state_contents,
@@ -253,6 +254,7 @@ def test_split_into_nested_sdfg_raises():
     nsdfg = state.add_nested_sdfg(inner, {"phase"}, {"res"})
     state.add_edge(rp, None, nsdfg, "phase", dace.Memlet("phase[0]"))
     state.add_edge(nsdfg, "res", wr, None, dace.Memlet("res[0]"))
+    convert_legacy_nested_sdfgs(sdfg)
 
     raised = False
     try:

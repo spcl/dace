@@ -21,6 +21,7 @@ import numpy
 import pytest
 import dace
 
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
 
@@ -88,6 +89,7 @@ def _mixed_rank_cube():
     nsdfg = state.add_nested_sdfg(inner, {"a"}, {"out"}, {"N": N})
     state.add_edge(state.add_read("A"), None, nsdfg, "a", dace.Memlet(f"A[0:{N}, 0:{N}, 0:{N}]"))
     state.add_edge(nsdfg, "out", state.add_write("B"), None, dace.Memlet(f"B[0, 0:{N}, 0:{N}]"))
+    convert_legacy_nested_sdfgs(sdfg)
     return sdfg
 
 
