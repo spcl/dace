@@ -248,22 +248,28 @@ def get_gpu_backend() -> str:
     backend: str = config.Config.get('compiler', 'cuda', 'backend')
     if backend and backend != 'auto':
         return backend
+    return probe_gpu_backend()
 
-    def _try_execute(cmd: str) -> bool:
+
+@lru_cache(maxsize=None)
+def probe_gpu_backend() -> str:
+    """The GPU backend the machine offers, probed once per process: the probes run external tools."""
+
+    def try_execute(cmd: str) -> bool:
         # The output is never read: an unread pipe leaks its file and can block a chatty process.
         completed = subprocess.run(cmd.split(' '), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, shell=True)
         return completed.returncode == 0
 
     # Test 1: Test for existence of *-smi
-    if _try_execute('nvidia-smi'):
+    if try_execute('nvidia-smi'):
         return 'cuda'
-    if _try_execute('rocm-smi'):
+    if try_execute('rocm-smi'):
         return 'hip'
 
     # Test 2: Attempt to check with CMake
-    if _try_execute('cmake --find-package -DNAME=CUDA -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
+    if try_execute('cmake --find-package -DNAME=CUDA -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
         return 'cuda'
-    if _try_execute('cmake --find-package -DNAME=HIP -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
+    if try_execute('cmake --find-package -DNAME=HIP -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
         return 'hip'
 
     # Test 3: Environment variables
