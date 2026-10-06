@@ -263,31 +263,32 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
-        if expr_index == 1 and not self.fission_makes_progress(total_components):
+        if expr_index == 1 and not self.fission_makes_progress(subgraphs, total_components):
             return False
 
         return True
 
     @staticmethod
-    def fission_makes_progress(total_components) -> bool:
+    def fission_makes_progress(subgraphs, total_components) -> bool:
         """Whether fissioning a nested SDFG would yield anything other than its input.
 
-        Fission replicates the map around each component. Two shapes produce no change, and both then
-        re-match on the result, so ``apply_transformations_repeated`` never reaches a fixpoint:
+        Fission replicates the map around each state of the nested SDFG. Two shapes produce no change, and
+        both then re-match on the result, so ``apply_transformations_repeated`` never reaches a fixpoint:
 
-        * NO component -- there is nothing to replicate the map around.
-        * exactly ONE component which is itself a nested SDFG. That is what
+        * NO state does anything -- there is nothing to replicate the map around.
+        * ONE state does something, and that is a single nested SDFG. That is what
           ``nest_sdfg_control_flow`` makes of a control-flow region, so apply rebuilds the same
           map-around-nested-SDFG one nesting level deeper (TSVC s1119 renested ~490 times before
           hitting the recursion limit).
 
-        One component of real dataflow is NOT this case: apply pushes the map inside, which is progress
-        and does not re-match.
+        A state of plain copies, with no code node, still does something: the map is replicated around it.
         """
-        flat = [component for components in total_components for component in components]
-        if not flat:
+        working = [components for sg, components in zip(subgraphs, total_components) if sg.number_of_nodes() > 0]
+        if not working:
             return False
-        return not (len(flat) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in flat[0]))
+        if len(working) > 1:
+            return True
+        return not (len(working[0]) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in working[0][0]))
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry

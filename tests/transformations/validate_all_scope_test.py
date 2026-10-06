@@ -151,8 +151,8 @@ def test_validate_all_failure_in_a_region_names_the_state_it_matched():
         sdfg.apply_transformations_repeated(BreakTheStateInRegion, validate=False, validate_all=True)
 
     err = excinfo.value
-    assert err.cfg is loop
-    assert err.resolve_block() is target
+    assert err.sdfg is loop
+    assert err.sdfg.node(err.state_id) is target
     assert 'decoy_block_at_index_one' not in str(err)
     assert '(at state target)' in str(err)
 

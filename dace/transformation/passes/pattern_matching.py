@@ -236,10 +236,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 # ``match.state_id`` indexes ``tcfg``, not the SDFG.
                 raise InvalidSDFGError(
                     f'Validation failed after applying {match_name}. '
-                    f'{type(err).__name__}: {err}',
-                    sdfg,
-                    match.state_id,
-                    cfg=tcfg) from err
+                    f'{type(err).__name__}: {err}', tcfg, match.state_id) from err
 
     def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
         """
@@ -330,10 +327,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 # `match` is the last applied transformation. `print_match()` needs the control flow region
                 #  it belongs to, not this pass.
                 tcfg = sdfg.cfg_list[match.cfg_id]
-                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.",
-                                       sdfg,
-                                       match.state_id,
-                                       cfg=tcfg) from err
+                raise InvalidSDFGError(f"Validation failed after applying {match.print_match(tcfg)}.", tcfg,
+                                       match.state_id) from err
 
         return applied_transformations
 
