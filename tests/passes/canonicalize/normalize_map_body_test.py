@@ -237,8 +237,9 @@ def _scalar_body(name: str, in_conn: str, out_conn: str, code: str) -> dace.SDFG
     inner.add_array(in_conn, [1], dace.float64)
     inner.add_array(out_conn, [1], dace.float64)
     st = inner.add_state('body', is_start_block=True)
-    t = st.add_tasklet('t', {'i'}, {'o'}, code)
-    st.add_edge(st.add_read(in_conn), None, t, 'i', dace.Memlet(f'{in_conn}[0]'))
+    # The input connector is not named ``i``: under the nested SDFG contract the body also sees the map parameter.
+    t = st.add_tasklet('t', {'v'}, {'o'}, code)
+    st.add_edge(st.add_read(in_conn), None, t, 'v', dace.Memlet(f'{in_conn}[0]'))
     st.add_edge(t, 'o', st.add_write(out_conn), None, dace.Memlet(f'{out_conn}[0]'))
     return inner
 
@@ -257,8 +258,8 @@ def _producer_consumer_siblings() -> dace.SDFG:
 
     state = sdfg.add_state('main', is_start_block=True)
     me, mx = state.add_map('m', dict(i='0:N'))
-    producer = state.add_nested_sdfg(_scalar_body('produce', 'x', 'y', 'o = i + 1.0'), {'x'}, {'y'})
-    consumer = state.add_nested_sdfg(_scalar_body('consume', 'y', 'z', 'o = i * 2.0'), {'y'}, {'z'})
+    producer = state.add_nested_sdfg(_scalar_body('produce', 'x', 'y', 'o = v + 1.0'), {'x'}, {'y'})
+    consumer = state.add_nested_sdfg(_scalar_body('consume', 'y', 'z', 'o = v * 2.0'), {'y'}, {'z'})
     carrier = state.add_access('carrier')
 
     state.add_memlet_path(state.add_read('a'), me, producer, dst_conn='x', memlet=dace.Memlet('a[i]'))
@@ -461,12 +462,12 @@ def guarded_scalar_body(name: str, taken_condition: str) -> dace.SDFG:
     inner.add_array('o', [1], dace.float64)
     cond = ConditionalBlock('cond', inner)
     inner.add_node(cond, is_start_block=True)
-    for label, condition, code in (('taken', CodeBlock(taken_condition), 'r = i + 1.0'), ('otherwise', None,
-                                                                                          'r = i - 1.0')):
+    for label, condition, code in (('taken', CodeBlock(taken_condition), 'r = v + 1.0'), ('otherwise', None,
+                                                                                          'r = v - 1.0')):
         branch = ControlFlowRegion(label, inner)
         st = branch.add_state(f'{label}_body', is_start_block=True)
-        t = st.add_tasklet(label, {'i'}, {'r'}, code)
-        st.add_edge(st.add_read('x'), None, t, 'i', dace.Memlet('x[0]'))
+        t = st.add_tasklet(label, {'v'}, {'r'}, code)
+        st.add_edge(st.add_read('x'), None, t, 'v', dace.Memlet('x[0]'))
         st.add_edge(t, 'r', st.add_write('o'), None, dace.Memlet('o[0]'))
         cond.add_branch(condition, branch)
     return inner

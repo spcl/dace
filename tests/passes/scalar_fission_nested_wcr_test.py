@@ -23,8 +23,9 @@ def outlined_body() -> dace.SDFG:
     body.add_scalar('x', dace.float64)
     body.add_scalar('acc', dace.float64)
     state = body.add_state('accumulate')
-    tasklet = state.add_tasklet('add', ['i'], ['o'], 'o = i')
-    state.add_edge(state.add_read('x'), None, tasklet, 'i', dace.Memlet('x[0]'))
+    # The connector is not named ``i``: under the nested SDFG contract the body also sees the map parameter.
+    tasklet = state.add_tasklet('add', ['v'], ['o'], 'o = v')
+    state.add_edge(state.add_read('x'), None, tasklet, 'v', dace.Memlet('x[0]'))
     state.add_edge(tasklet, 'o', state.add_write('acc'), None, dace.Memlet('acc[0]', wcr='lambda a, b: a + b'))
     return body
 
