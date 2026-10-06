@@ -309,6 +309,46 @@ required:
                     "none": Do not save any line info in the resulting SDFG.
 
             #############################################
+            # Function outlining
+            outlining:
+                type: dict
+                title: Function outlining
+                description: >
+                    Dividing large programs into functions and translation units before code
+                    generation (see ``dace.transformation.passes.outlining``).
+                required:
+                    enabled:
+                        type: bool
+                        default: false
+                        title: Outline functions
+                        description: >
+                            If set to true, code generation divides programs larger than the size budget into
+                            functions in separate translation units, which compile in parallel.
+
+                    max_basic_blocks:
+                        type: int
+                        default: 2000
+                        title: Function size budget
+                        description: >
+                            The largest function, in basic blocks as estimated from the SDFG. Compilers skip
+                            optimizations in very large functions (e.g., GCC runs no partial redundancy
+                            elimination at 4000 basic blocks or more).
+
+                    min_basic_blocks:
+                        type: int
+                        default: 16
+                        title: Smallest outlined function
+                        description: >
+                            Code smaller than this (in estimated basic blocks) stays in its caller.
+
+                    translation_units:
+                        type: int
+                        default: 8
+                        title: Translation units
+                        description: >
+                            The number of translation units the outlined functions are spread over.
+
+            #############################################
             # CPU compiler
             cpu:
                 type: dict
