@@ -1069,9 +1069,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
-        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
-        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
-        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
+        #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
         #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
         #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
@@ -5358,8 +5357,6 @@ class ProgramVisitor(ExtNodeVisitor):
         :return: The symbol carrying the scalar's value.
         """
         desc = self.sdfg.arrays[scalar]
-        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
-        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
         # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
         # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
         version = key in (None, scalar) or self.variables.get(key) == scalar
