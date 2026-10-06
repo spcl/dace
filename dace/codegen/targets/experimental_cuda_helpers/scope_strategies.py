@@ -2,7 +2,7 @@
 """Scope-emission strategies (RAII bracket managers) for the experimental CUDA codegen."""
 from abc import ABC, abstractmethod
 
-from dace import dtypes, subsets, symbolic
+from dace import cpf_lowering, dtypes, subsets, symbolic
 from dace.codegen import common
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -56,12 +56,15 @@ class ScopeGenerationStrategy(ABC):
     """Base strategy for generating GPU scope code.
 
     Subclasses set ``SCHEDULE`` (matched by ``applicable()`` against the source MapEntry's
-    schedule) and ``SCOPE_COMMENT``, implement ``generate()``, and reuse the
+    schedule), ``SCOPE_COMMENT`` and ``SCOPE_HINT``, implement ``generate()``, and reuse the
     ``dispatch_and_deallocate`` tail.
     """
 
     SCHEDULE: dtypes.ScheduleType = None
     SCOPE_COMMENT: str = ""
+    #: What the scope is, for whoever reads a CPF rendering; a pass that made the scope says more in
+    #: the map's ``specialization_hint``, which follows it.
+    SCOPE_HINT: str = ""
 
     def __init__(self, codegen: ExperimentalCUDACodeGen):
         self.codegen: ExperimentalCUDACodeGen = codegen
@@ -76,6 +79,13 @@ class ScopeGenerationStrategy(ABC):
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         raise NotImplementedError('Abstract class')
+
+    def write_scope_hint(self, node: nodes.MapEntry, cfg: ControlFlowRegion, state_id: int,
+                         callsite_stream: CodeIOStream):
+        """Explain the scope ahead of it in a CPF rendering; a no-op in an ordinary build."""
+        hint = cpf_lowering.hint_comment('\n'.join(filter(None, (self.SCOPE_HINT, node.specialization_hint))))
+        if hint:
+            callsite_stream.write(hint.rstrip('\n'), cfg, state_id, node)
 
     def dispatch_and_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                                 entry_node: nodes.MapEntry, function_stream: CodeIOStream,
@@ -117,6 +127,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_Device
     SCOPE_COMMENT = "Kernel scope"
+    SCOPE_HINT = ('parallel -- kernel: one GPU launch; the iterations of this map make up the launch grid (blockIdx)\n'
+                  'proven parallel; settled -- focus: block size, tiling, memory access pattern')
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -129,6 +141,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           callsite_stream=callsite_stream,
                           comment=self.SCOPE_COMMENT,
                           brackets_on_enter=False) as scope_manager:
+            self.write_scope_hint(self._current_kernel_spec.kernel_map_entry, cfg, state_id, callsite_stream)
             scope_manager.open(prefix=self.kernel_signature(dfg_scope))
 
             kernel_spec = self._current_kernel_spec
@@ -180,10 +193,14 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_ThreadBlock
     SCOPE_COMMENT = "ThreadBlock Scope"
+    SCOPE_HINT = (
+        'parallel -- thread block: the iterations of this map run on the threads of one block (threadIdx), one each\n'
+        'proven parallel; settled -- a thread past the bounds of a trailing block is masked off')
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
+        self.write_scope_hint(dfg_scope.source_nodes()[0], cfg, state_id, callsite_stream)
         with ScopeManager(sdfg=sdfg,
                           cfg=cfg,
                           dfg_scope=dfg_scope,
@@ -249,10 +266,14 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
     SCHEDULE = dtypes.ScheduleType.GPU_Warp
     SCOPE_COMMENT = "WarpLevel Scope"
+    SCOPE_HINT = (
+        'parallel -- warp: the iterations of this map run one per warp of the block (flat thread index / warp size)\n'
+        'proven parallel; settled -- the lanes of one warp execute in step and share its iteration')
 
     def generate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
+        self.write_scope_hint(dfg_scope.source_nodes()[0], cfg, state_id, callsite_stream)
         with ScopeManager(sdfg=sdfg,
                           cfg=cfg,
                           dfg_scope=dfg_scope,

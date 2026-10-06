@@ -50,6 +50,15 @@ from dace.transformation import pass_pipeline as ppl
 WITHIN_A_BLOCK = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                   dtypes.ScheduleType.GPU_Warp)
 
+#: What a promoted warp-tile map is, for a CPF reader; any hint the producer left follows it.
+WARP_TILE_HINT = (
+    'parallel -- warp tile: a map its producer proved parallel (tagged is_warp_tile), spread over the threads of '
+    'the block instead of one thread walking it\nwhy: the device offload serializes every map nested '
+    'in a kernel; the producer\'s proof lets this one use the block')
+#: Added when a sequential loop re-enters the warp tile.
+WARP_TILE_BARRIER_HINT = ('a block barrier follows the map: the enclosing loop runs it again, and without the barrier '
+                          'the next run could read what this one has not finished writing')
+
 
 def block_scope_inside(state, entry: nodes.MapEntry) -> bool:
     """``True`` iff some map under ``entry`` is already scheduled within a thread block."""
@@ -132,8 +141,12 @@ class PromoteWarpTiles(ppl.Pass):
             if not promotable(sdfg, state, node):
                 continue
             node.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
+            hints = [WARP_TILE_HINT]
             if steps_inside_a_loop(sdfg, state, node):
                 add_block_barrier(state, node)
+                hints.append(WARP_TILE_BARRIER_HINT)
+            node.specialization_hint = '\n'.join(hints +
+                                                 ([node.specialization_hint] if node.specialization_hint else []))
             promoted += 1
         return promoted or None
 

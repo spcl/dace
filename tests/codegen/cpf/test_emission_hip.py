@@ -114,6 +114,25 @@ def test_device_reduction_folds_without_a_runtime_functor():
         'the block result must commit through one device atomic taking the operator as a functor'
 
 
+def test_each_gpu_scope_says_what_it_is_ahead_of_it():
+    """A kernel and its thread block read as two plain brace blocks over ``blockIdx`` and ``threadIdx``;
+    the comment ahead of each says which level of the launch it is."""
+    from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import (KernelScopeGenerator,
+                                                                                 ThreadBlockScopeGenerator)
+
+    @dace.program
+    def scale(a: dace.float64[N]):
+        for i in range(N):
+            a[i] = 2.0 * a[i]
+
+    code = render_gpu(scale, 'cpf_hip_scope_hints')[1]
+    lines = [line.strip() for line in code.splitlines()]
+    kernel = next(index for index, line in enumerate(lines) if line.startswith('__global__'))
+    kernel_hint = ['// ' + line for line in KernelScopeGenerator.SCOPE_HINT.splitlines()]
+    assert lines[kernel - len(kernel_hint):kernel] == kernel_hint, code
+    assert '// ' + ThreadBlockScopeGenerator.SCOPE_HINT.splitlines()[0] in lines[kernel:], code
+
+
 def test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma():
     """A scatter whose index array may repeat is the WCR that stays conflicting. On the host CPF
     writes ``#pragma omp atomic update`` for it; inside a ``__global__`` function that pragma is

@@ -35,6 +35,16 @@ from dace.transformation import helpers as xfh, pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
 from dace.optionals import required
 
+#: What a block-tiled kernel's lane map is, for a CPF reader.
+BLOCK_TILE_HINT = (
+    'parallel -- block tile: this kernel runs one block per outer iteration, and these are the lanes of the '
+    'block\nwhy: the inner parallel maps are strided across the lanes, so one outer iteration uses a '
+    'whole block instead of one thread; code outside them runs on every lane, or on lane 0 alone '
+    'between two barriers when it updates data other lanes read')
+#: What a map strided across the lanes of a block-tiled kernel is, for a CPF reader.
+LANE_STRIDED_HINT = ('parallel -- lane-strided: lane t of the block takes iterations t, t + B, ... (B lanes)\n'
+                     'why: the map is parallel, and adjacent lanes touching adjacent elements coalesce the accesses')
+
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
 
@@ -196,6 +206,7 @@ class BlockTileKernels(ppl.Pass):
             # WarpTiling strides the non-serial maps; the serial pinning re-applies to each lane's loop.
             for inner in [entry for owner, entry in strided]:
                 inner.map.schedule = dtypes.ScheduleType.Default
+                inner.specialization_hint = LANE_STRIDED_HINT
             WarpTiling.apply_to(state.sdfg,
                                 options={
                                     'warp_size': BLOCK_COLLECTIVE_THREADS,
@@ -207,6 +218,10 @@ class BlockTileKernels(ppl.Pass):
             owners = {node: owner for node, owner in sdfg.all_nodes_recursive() if node in single}
             for node in single:
                 run_on_lane_zero(node, owners[node])
+            for lane_map in state.scope_children()[kernel]:
+                if isinstance(lane_map,
+                              nodes.MapEntry) and lane_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                    lane_map.specialization_hint = BLOCK_TILE_HINT
             # The lane map sizes the block now; a declared block size beside it is a conflict.
             kernel.map.gpu_block_size = None
             tiled += 1
