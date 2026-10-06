@@ -261,10 +261,10 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
 
 
 def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
-    """A name the preprocessing builds may lack ``ctx`` (on Python 3.12 the attribute is missing), and it is still a
-    write: the loop must drop that size's shape version, and keep the one of a size it only reads."""
+    """A name the preprocessing builds may lack ``ctx``, and it is still a write: the loop must drop that size's shape
+    version, and keep the one of a size it only reads."""
     target = ast.Name(id='n')
-    del target.ctx
+    vars(target).pop('ctx', None)  # Python >= 3.13 fills a default ``Load()``, older versions leave it unset
     loop = ast.parse('for i in range(m):\n    n = n + 1').body[0]
     loop.body[0].targets = [target]
     visitor = types.SimpleNamespace(shape_promotions={'n': 'n_version', 'm': 'm_version'}, variables={})
