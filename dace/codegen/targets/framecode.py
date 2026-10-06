@@ -672,7 +672,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         sdfg = region.sdfg
         placement = region.function_placement
-        fname = re.sub(r'\W', '_', f'{region.label}_{region.cfg_id}')
+        fname = region.function_name or re.sub(r'\W', '_', f'{region.label}_{region.cfg_id}')
+        inlining = region.inlining
+        if (placement == dtypes.FunctionPlacement.SeparateUnit
+                and inlining in (dtypes.FunctionInlining.Inline, dtypes.FunctionInlining.ForceInline)):
+            raise cgx.CodegenError(f'Function region "{region.label}" in a separate translation unit cannot be '
+                                   f'inlined into its caller ({inlining.name})')
 
         inner_blocks = set(region.all_control_flow_blocks())
         inner_states = [b for b in inner_blocks if isinstance(b, SDFGState)]
@@ -744,7 +749,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 continue  # Persistent data is reached through the state struct
             defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
             if defined_type == disp.DefinedType.Pointer and name not in allocated_inside:
-                restrict = (ctype.rstrip().endswith('*') and not desc.may_alias
+                restrict = (region.restrict_arguments and ctype.rstrip().endswith('*') and not desc.may_alias
                             and not isinstance(desc, (data.View, data.Reference)))
                 params.append(f'{ctype} {"__restrict__ " if restrict else ""}{ptrname}')
             elif defined_type == disp.DefinedType.Scalar and name not in written:
@@ -794,13 +799,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         state_struct = f'{cpp.mangle_dace_state_struct_name(self._toplevel_sdfg)} *__state'
         signature = f'void {fname}({", ".join([state_struct] + params)})'
         definition = signature + ' {\n' + ''.join(local_declarations) + body + '}\n'
+        specifiers = {
+            dtypes.FunctionInlining.Default: '',
+            dtypes.FunctionInlining.Inline: 'inline ',
+            dtypes.FunctionInlining.NoInline: 'DACE_NOINLINE ',
+            dtypes.FunctionInlining.ForceInline: 'DACE_FORCEINLINE ',
+        }[inlining]
+        if region.attributes:
+            specifiers += region.attributes + ' '
         if placement == dtypes.FunctionPlacement.SeparateUnit:
-            outer_global_stream.write(f'DACE_HIDDEN {signature};\n', sdfg)
-            self.add_to_translation_unit(unit, unit_global_stream.getvalue() + 'DACE_HIDDEN ' + definition)
-        elif placement == dtypes.FunctionPlacement.NoInline:
-            outer_global_stream.write('static DACE_NOINLINE ' + definition, sdfg)
+            outer_global_stream.write(f'DACE_HIDDEN {specifiers}{signature};\n', sdfg)
+            self.add_to_translation_unit(unit, unit_global_stream.getvalue() + 'DACE_HIDDEN ' + specifiers + definition)
         else:
-            outer_global_stream.write('static inline ' + definition, sdfg)
+            outer_global_stream.write('static ' + specifiers + definition, sdfg)
 
         return f'{fname}({", ".join(["__state"] + args)});\n'
 

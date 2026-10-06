@@ -9,6 +9,7 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.codegen.exceptions import CodegenError
 from dace.sdfg.state import CodeGeneratorFunctionRegion, LoopRegion
 from dace.transformation import helpers as xfh
 
@@ -53,18 +54,21 @@ def _run_three_loops(sdfg: dace.SDFG):
     assert np.allclose(C, B_ref.sum())
 
 
-def _three_loop_regions(name: str, placement: dtypes.FunctionPlacement, unit: str = '') -> dace.SDFG:
+def _three_loop_regions(name: str,
+                        placement: dtypes.FunctionPlacement,
+                        unit: str = '',
+                        inlining: dtypes.FunctionInlining = dtypes.FunctionInlining.Default) -> dace.SDFG:
     sdfg = three_loops.to_sdfg(simplify=True)
     sdfg.name = name
     loops = _top_level_loops(sdfg)
-    xfh.wrap_in_function_region(loops[:2], 'first_loops', placement, unit)
-    xfh.wrap_in_function_region(loops[2:], 'last_loop', placement, unit)
+    xfh.wrap_in_function_region(loops[:2], 'first_loops', placement, unit, inlining)
+    xfh.wrap_in_function_region(loops[2:], 'last_loop', placement, unit, inlining)
     sdfg.validate()
     return sdfg
 
 
 def test_region_function_interface():
-    sdfg = _three_loop_regions('fnregion_interface', dtypes.FunctionPlacement.Default)
+    sdfg = _three_loop_regions('fnregion_interface', dtypes.FunctionPlacement.CallerUnit)
     regions = [b for b in sdfg.nodes() if isinstance(b, CodeGeneratorFunctionRegion)]
     assert len(regions) == 2
 
@@ -79,11 +83,47 @@ def test_region_function_interface():
     _run_three_loops(sdfg)
 
 
-def test_region_noinline():
-    sdfg = _three_loop_regions('fnregion_noinline', dtypes.FunctionPlacement.NoInline)
+@pytest.mark.parametrize('inlining, specifier', [
+    (dtypes.FunctionInlining.Default, 'static void'),
+    (dtypes.FunctionInlining.Inline, 'static inline void'),
+    (dtypes.FunctionInlining.NoInline, 'static DACE_NOINLINE void'),
+    (dtypes.FunctionInlining.ForceInline, 'static DACE_FORCEINLINE void'),
+])
+def test_region_inlining_hints(inlining: dtypes.FunctionInlining, specifier: str):
+    sdfg = _three_loop_regions(f'fnregion_inlining_{inlining.name}', dtypes.FunctionPlacement.CallerUnit, '', inlining)
     sources = _linkable_sources(sdfg)
     assert len(sources) == 1
-    assert len(re.findall(r'static DACE_NOINLINE void (first_loops|last_loop)', sources[0])) == 2
+    assert len(re.findall(rf'{specifier} (first_loops|last_loop)', sources[0])) == 2
+    _run_three_loops(sdfg)
+
+
+@pytest.mark.parametrize('inlining', [dtypes.FunctionInlining.Inline, dtypes.FunctionInlining.ForceInline])
+def test_region_separate_unit_cannot_inline(inlining: dtypes.FunctionInlining):
+    sdfg = _three_loop_regions(f'fnregion_bad_inlining_{inlining.name}', dtypes.FunctionPlacement.SeparateUnit, '',
+                               inlining)
+    with pytest.raises(CodegenError, match='cannot be inlined'):
+        sdfg.generate_code()
+
+
+def test_region_separate_unit_noinline():
+    sdfg = _three_loop_regions('fnregion_separate_noinline', dtypes.FunctionPlacement.SeparateUnit, '',
+                               dtypes.FunctionInlining.NoInline)
+    frame, *units = _linkable_sources(sdfg)
+    assert len(re.findall(r'DACE_HIDDEN DACE_NOINLINE void (first_loops|last_loop)\w*\(.*;', frame)) == 2
+    _run_three_loops(sdfg)
+
+
+def test_region_name_attributes_restrict():
+    sdfg = three_loops.to_sdfg(simplify=True)
+    sdfg.name = 'fnregion_name_attributes'
+    region = xfh.wrap_in_function_region(_top_level_loops(sdfg)[:2], 'first_loops')
+    region.function_name = 'my_kernel'
+    region.attributes = '__attribute__((cold))'
+    region.restrict_arguments = False
+    sources = _linkable_sources(sdfg)
+    params = _signature(sources[0], 'my_kernel')
+    assert re.search(r'static __attribute__\(\(cold\)\) void my_kernel\(', sources[0])
+    assert '__restrict__' not in params and re.search(r'\bA\b', params)
     _run_three_loops(sdfg)
 
 
@@ -281,7 +321,15 @@ def test_region_serialization():
 
 if __name__ == '__main__':
     test_region_function_interface()
-    test_region_noinline()
+    for inlining, specifier in [(dtypes.FunctionInlining.Default, 'static void'),
+                                (dtypes.FunctionInlining.Inline, 'static inline void'),
+                                (dtypes.FunctionInlining.NoInline, 'static DACE_NOINLINE void'),
+                                (dtypes.FunctionInlining.ForceInline, 'static DACE_FORCEINLINE void')]:
+        test_region_inlining_hints(inlining, specifier)
+    test_region_separate_unit_cannot_inline(dtypes.FunctionInlining.Inline)
+    test_region_separate_unit_cannot_inline(dtypes.FunctionInlining.ForceInline)
+    test_region_separate_unit_noinline()
+    test_region_name_attributes_restrict()
     test_region_separate_units()
     test_region_shared_unit()
     test_region_transient_used_after(dtypes.AllocationLifetime.SDFG)

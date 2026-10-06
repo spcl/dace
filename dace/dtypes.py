@@ -156,9 +156,17 @@ class AllocationLifetime(Enum):
 class FunctionPlacement(Enum):
     """ Where code generation emits the function of a ``CodeGeneratorFunctionRegion``. """
 
-    Default = auto()  #: An ``inline`` function in the translation unit of its caller
-    NoInline = auto()  #: A function in the translation unit of its caller that the compiler must not inline
+    CallerUnit = auto()  #: A ``static`` function in the translation unit of its caller
     SeparateUnit = auto()  #: A function in a translation unit of its own (see ``translation_unit`` of the region)
+
+
+class FunctionInlining(Enum):
+    """ The inlining hint code generation gives the compiler for the function of a ``CodeGeneratorFunctionRegion``. """
+
+    Default = auto()  #: No hint: the compiler decides
+    Inline = auto()  #: The ``inline`` keyword (only within the caller's translation unit)
+    NoInline = auto()  #: Never inline the function
+    ForceInline = auto()  #: Always inline the function (only within the caller's translation unit)
 
 
 @undefined_safe_enum
