@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import numpy
 
-from dace import SDFG, SDFGState, data, dtypes
+from dace import SDFG, SDFGState, data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -261,6 +261,10 @@ class NormalizeWCR(ppl.Pass):
         if out_edge is None or not isinstance(out_edge.dst, nodes.MapExit):
             return False
         if out_edge.data.wcr is not None and _op_from_wcr(out_edge.data.wcr) != op:
+            return False
+        # The rewrite buffers the whole connector per iteration; a frontend connector is the outer container, so
+        # only a single-element one is the accumulator itself.
+        if out_edge.data.wcr is not None and symbolic.equal(oc_desc.total_size, 1) is not True:
             return False
 
         # (c) The map-level private buffer mirrors `oc`'s inner descriptor. If that
@@ -568,6 +572,18 @@ class NormalizeWCR(ppl.Pass):
 
         # Do not leak symbols that are only defined inside the NestedSDFG.
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
+            return False
+
+        # A plain read-modify-write is only race-free when each map iteration updates its own element. An
+        # element no map parameter selects is a reduction across the iterations, and keeps its WCR.
+        params = set(state.entry_node(nsdfg).map.params)
+        selecting = {
+            inner
+            for inner, outer in nsdfg.symbol_mapping.items()
+            if {str(s)
+                for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols} & params
+        }
+        if not {str(s) for s in wcr_edge.data.subset.free_symbols} & selecting:
             return False
 
         # Rewrite the body: explicit plain read-modify-write of the one element the WCR updates. The connector
