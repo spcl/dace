@@ -94,6 +94,12 @@ def test_pass_fires_on_weighted_histogram():
     and the surfaced ``NestedSDFG -> MapExit -> accumulator`` edge chain now carries the
     ``+`` WCR (idempotent: a second run finds nothing)."""
     sdfg = weighted_histogram.to_sdfg(simplify=True)
+    # The frontend surfaces the body's WCR onto the boundary itself; plain boundary edges are the shape the pass
+    # still meets from bodies other passes build.
+    for st in sdfg.states():
+        for e in st.edges():
+            if isinstance(e.dst, nodes.MapExit) or isinstance(e.src, nodes.MapExit):
+                e.data.wcr = None
     n = PrivatizeScatterReduction().apply_pass(sdfg, {})
     assert n == 1
     # The accumulator's map-exit edge chain now carries a WCR.
