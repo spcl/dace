@@ -20,6 +20,7 @@ through a library node that the expansion consumes; every loop kind is named and
 the naming adds comments and nothing else; and nothing reaches ordinary code generation, which
 already has a target and would only be given noise.
 """
+import re
 import pytest
 
 import dace
@@ -448,7 +449,9 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith('sequential -- carried: RAW on aa['), hints
-    assert hints[0][0].endswith(' - 1, _loop_it_0]'), hints
+    # The column index is the element the carry runs along, or the whole row once the parallel column
+    # map sits inside the sequential recurrence.
+    assert re.search(r' - 1, (?:_loop_it_\d+|0:N)\]$', hints[0][0]), hints
     assert hints[0][1].startswith('settled: proven, ' + CONFLICT_MEANING['RAW']), hints
 
 

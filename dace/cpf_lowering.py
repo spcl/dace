@@ -1294,6 +1294,8 @@ class NativeSite:
 SCAN_ENTRY_CALL: 're.Pattern' = re.compile(
     r'(?:::)?dace::scan::(inclusive|exclusive|strided_inclusive)_(sum|product|min|max)\s*\(')
 AFFINE_SCAN_ENTRY_CALL: 're.Pattern' = re.compile(r'(?:::)?dace::scan::inclusive_affine(_strided)?\s*\(')
+#: The copy node's contiguous CPU lowering, ``dace::CopyImpl<T, 1>(src, dst, count)``.
+COPY_IMPL_CALL: 're.Pattern' = re.compile(r'(?:::)?dace::CopyImpl\s*<\s*([^,<>]+?)\s*,\s*1\s*>\s*\(')
 
 #: ``out[j]`` from ``out[j - s]`` and ``in[j]`` per scan operation, as the runtime's ``std::min`` /
 #: ``std::max`` order them, so C and C++ read the same expression.
@@ -1362,6 +1364,25 @@ def respell_scan_entry_points(code: str) -> str:
     return c_rewrite_calls(code, AFFINE_SCAN_ENTRY_CALL, affine)
 
 
+def respell_copy_impl(code: str) -> str:
+    """Spell the copy node's ``dace::CopyImpl<T, 1>(src, dst, count)`` as the ``std::memcpy`` it performs.
+
+    The runtime template only differs from a byte copy for a type that is not trivially copyable, and every
+    element type a CPF unit declares is a scalar.
+
+    :param code: the body as the expansion wrote it.
+    :returns: the body with every contiguous ``CopyImpl`` as a ``std::memcpy``.
+    """
+
+    def copy(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        if len(arguments) != 3:
+            return None
+        source, target, count = arguments
+        return 'std::memcpy(%s, %s, sizeof(%s) * %s)' % (target, source, match.group(1), parenthesized(count))
+
+    return c_rewrite_calls(code, COPY_IMPL_CALL, copy)
+
+
 def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Optional[NativeSite] = None) -> str:
     """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
 
@@ -1392,7 +1413,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Opti
     tables = tables_for(dialect)
     c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
     code = POLICY_SORT_CALL.sub('std::sort(', code)
-    code = rewrite_ctypes(respell_scan_entry_points(code), dialect)
+    code = rewrite_ctypes(respell_scan_entry_points(respell_copy_impl(code)), dialect)
 
     if c_dialect:
         # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.

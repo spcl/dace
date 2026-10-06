@@ -1,26 +1,49 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-#pragma once
+#ifndef __DACE_ALLOC_H
+#define __DACE_ALLOC_H
 
-#include <cstdlib>
+#include <cstddef>
+#include <new>
+#include <type_traits>
 
-namespace dace {
+#include "types.h"
 
-// Allocate `count` elements of type T aligned to `alignment` bytes. The byte
-// size is rounded up to a multiple of the alignment, as std::aligned_alloc
-// requires. Free with dace::free.
-template <typename T>
-inline T* aligned_alloc(size_t count, size_t alignment = 64) {
-  const size_t bytes = ((sizeof(T) * count + alignment - 1) / alignment) * alignment;
-  return static_cast<T*>(std::aligned_alloc(alignment, bytes));
-}
+namespace dace
+{
+    // Aligned heap arrays. The aligned ``operator delete[]`` runs no destructors, so only trivially
+    // destructible types are allocated aligned; all others use plain ``new[]`` / ``delete[]``.
 
-// Allocate and zero-initialize `count` elements of type T. Free with dace::free.
-template <typename T>
-inline T* calloc(size_t count) {
-  return static_cast<T*>(std::calloc(count, sizeof(T)));
-}
+    template <typename T>
+    DACE_HDFI T *aligned_new_array(std::size_t size, std::size_t alignment)
+    {
+#if defined(__cpp_aligned_new)
+        // Compiler supports aligned new (C++17 feature)
+        if constexpr (std::is_trivially_destructible<T>::value) {
+            return new (std::align_val_t(alignment)) T[size];
+        } else {
+            return new T[size];
+        }
+#else
+        // Plain new and delete[], just to be safe
+        return new T[size];
+#endif
+    }
 
-// Free memory obtained from dace::aligned_alloc or dace::calloc.
-inline void free(void* ptr) { std::free(ptr); }
-
+    template <typename T>
+    DACE_HDFI void aligned_delete_array(T *ptr, std::size_t alignment)
+    {
+#if defined(__cpp_aligned_new)
+        // Compiler supports aligned new (C++17 feature)
+        if constexpr (std::is_trivially_destructible<T>::value) {
+            ::operator delete[](ptr, std::align_val_t(alignment));
+        } else {
+            delete[] ptr;
+        }
+#else
+        // Plain new and delete[], just to be safe
+        delete[] ptr;
+#endif
+    }
 }  // namespace dace
+
+#endif  // __DACE_ALLOC_H

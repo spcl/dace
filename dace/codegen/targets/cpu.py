@@ -60,14 +60,20 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
     return int(arrsize) * nodedesc.dtype.bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
-def use_aligned_operator_new(desc: data.Data) -> bool:
+def _use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
-    DaCe always builds against C++20 or newer (see ``dace.codegen.common.cpp_standard``), where
-    aligned ``operator new``/``operator delete`` are guaranteed available, so this follows the
-    descriptor's ``alignment`` property alone.
+    The function considers the selected C++ standard and the `alignment` property
+    of the data descriptor.
     """
-    return desc.alignment >= 0  # Alignment requested either default (0) or concrete value
+    try:
+        if int(Config.get('compiler', 'cpp_standard')) < 17:
+            return False  # Aligned `new` not supported by the standard.
+        if desc.alignment >= 0:
+            return True  # Alignment requested either default (0) or concrete value
+        return False
+    except ValueError:
+        return False  # Unknown standard version
 
 
 def aligned_new_value(desc: data.Data) -> int:
@@ -2716,25 +2722,16 @@ class CPUCodeGen(TargetCodeGenerator):
         which case the emitted statement is a definition. The trailing ``sdfg``/``nodedesc``/
         ``data_name`` are unused here; the readable generator overrides this to route the count
         through an ``<array>_size`` helper."""
-        # ``DACE_ALIGN(64)`` on the element type only constrains the TYPE's alignment -- plain
-        # ``new[]`` is free to ignore it for an over-aligned type, so the buffer was never reliably
-        # aligned. Aligned ``operator new[]`` (C++17) is the allocation that actually honours it.
-        placement = ''
-        if nodedesc is not None and use_aligned_operator_new(nodedesc):
-            placement = f' (std::align_val_t({aligned_new_value(nodedesc)}))'
-        return f"{alloc_name} = new{placement} {ctype}[{arrsize}];\n"
+        if nodedesc is not None and _use_aligned_operator_new(nodedesc):
+            return f"{alloc_name} = dace::aligned_new_array<{ctype}>({arrsize}, {aligned_new_value(nodedesc)});\n"
+        return f"{alloc_name} = new {ctype}[{arrsize}];\n"
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[data.Data] = None) -> str:
         """ C++ statement freeing a CPU heap array (paired with heap_alloc_stmt). """
         if not is_array:
             return f"delete {alloc_name};\n"
-        # Memory from the aligned operator new[] must be released by the aligned operator delete[].
-        # The direct operator call skips destructors and relies on the new-expression emitting no
-        # array cookie -- both only hold for trivially destructible element types.
-        if nodedesc is not None and use_aligned_operator_new(nodedesc):
-            return (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                    f'"aligned heap deallocation skips destructors");\n'
-                    f"::operator delete[]({alloc_name}, std::align_val_t({aligned_new_value(nodedesc)}));\n")
+        if nodedesc is not None and _use_aligned_operator_new(nodedesc):
+            return f"dace::aligned_delete_array({alloc_name}, {aligned_new_value(nodedesc)});\n"
         return f"delete[] {alloc_name};\n"
 
     def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg):

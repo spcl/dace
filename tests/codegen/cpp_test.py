@@ -2,12 +2,13 @@
 
 from functools import reduce
 from operator import mul
+import re
 import warnings
 
 from dace import SDFG, Memlet, config, dtypes, symbol
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import use_aligned_operator_new
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.subsets import Range
 
 
@@ -189,9 +190,11 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         code = program_objects[0].clean_code
         # Consult the active cpp_standard: C++ >= 17 emits the aligned
         # new/delete forms, earlier standards the plain ones.
-        if use_aligned_operator_new(a_desc):
-            assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
-            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, "A is deallocated from the heap."
+        if _use_aligned_operator_new(a_desc):
+            # The count is a literal under the legacy codegen and a size helper under the readable one.
+            assert re.search(rf"A = dace::aligned_new_array<double>\([^;]*, {array_a_alignment}\);", code), \
+                "A is allocated on the heap."
+            assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
         else:
             assert "A = new double" in code, "A is allocated on the heap."
             assert "delete[] A" in code, "A is deallocated from the heap."
