@@ -341,12 +341,28 @@ required:
                         description: >
                             Code smaller than this (in estimated basic blocks) stays in its caller.
 
+                    max_statements:
+                        type: int
+                        default: 600
+                        title: Function statement budget
+                        description: >
+                            The largest function, in statements as estimated from the SDFG. Compile time grows
+                            faster than the size of a function.
+
                     translation_units:
                         type: int
                         default: 8
                         title: Translation units
                         description: >
-                            The number of translation units the outlined functions are spread over.
+                            The largest number of translation units the outlined functions are spread over.
+
+                    min_unit_statements:
+                        type: int
+                        default: 2500
+                        title: Smallest translation unit
+                        description: >
+                            Fewer translation units are used if they would hold fewer statements than this on
+                            average, since each one also parses the runtime headers and the state struct.
 
             #############################################
             # CPU compiler

@@ -153,6 +153,7 @@ class OutliningPlanner:
     Plans which chains of blocks become functions. See the module documentation for the method.
 
     :param max_basic_blocks: The size budget of a function, in estimated basic blocks.
+    :param max_statements: The size budget of a function, in estimated statements (None for no limit).
     :param min_basic_blocks: Chains smaller than this stay in their caller.
     :param scalar_weight: The weight of a scalar (or register array) live across a cut.
     :param symbol_weight: The weight of a symbol assigned before a cut and read after it.
@@ -162,11 +163,13 @@ class OutliningPlanner:
     def __init__(self,
                  max_basic_blocks: int,
                  min_basic_blocks: int = 0,
+                 max_statements: Optional[int] = None,
                  scalar_weight: float = 4.0,
                  symbol_weight: float = 2.0,
                  function_weight: float = 1.0):
         self.max_basic_blocks = max_basic_blocks
         self.min_basic_blocks = min_basic_blocks
+        self.max_statements = max_statements
         self.scalar_weight = scalar_weight
         self.symbol_weight = symbol_weight
         self.function_weight = function_weight
@@ -261,6 +264,11 @@ class OutliningPlanner:
     ##########################################################################
     # Planning
 
+    def fits(self, cost: BlockCost) -> bool:
+        """ Whether code of the given size fits in one function. """
+        return cost.basic_blocks <= self.max_basic_blocks and (self.max_statements is None
+                                                               or cost.statements <= self.max_statements)
+
     def _divide_run(self, run: List[ControlFlowBlock], weights: List[float]) -> List[List[ControlFlowBlock]]:
         """
         Divides a run of consecutive blocks (each within the budget) into segments within the budget, minimizing the
@@ -270,15 +278,15 @@ class OutliningPlanner:
         :param weights: The weights of the cuts between consecutive blocks of the run.
         :return: The segments, in order.
         """
-        sizes = [self.costs.block(block).basic_blocks for block in run]
+        costs = [self.costs.block(block) for block in run]
         n = len(run)
         best = [0.0] + [float('inf')] * n  # best[j]: the cost of dividing the first j blocks
         start = [0] * (n + 1)
         for j in range(1, n + 1):
-            size = 0
+            size = BlockCost(0, 0)
             for i in range(j, 0, -1):  # Segment run[i - 1:j]
-                size += sizes[i - 1]
-                if size > self.max_basic_blocks:
+                size += costs[i - 1]
+                if not self.fits(size):
                     break
                 cost = best[i - 1] + self.function_weight + (weights[i - 2] if i > 1 else 0.0)
                 if cost < best[j]:
@@ -315,7 +323,7 @@ class OutliningPlanner:
                 run_weights.clear()
 
             for k, block in enumerate(chain):
-                too_large = self.costs.block(block).basic_blocks > self.max_basic_blocks
+                too_large = not self.fits(self.costs.block(block))
                 if too_large or isinstance(block, CodeGeneratorFunctionRegion) or xfh.control_flow_exit(block):
                     # Not a part of any function: divide its contents instead if it is too large
                     flush()
@@ -342,19 +350,24 @@ class OutliningPlanner:
         :param sdfg: The SDFG.
         :return: The planned functions.
         """
-        if self.costs.block(sdfg).basic_blocks <= self.max_basic_blocks:
+        if self.fits(self.costs.block(sdfg)):
             return []
         return self.plan_region(sdfg)
 
 
-def assign_translation_units(plans: List[FunctionPlan], units: int) -> None:
+def assign_translation_units(plans: List[FunctionPlan], units: int, min_unit_statements: int = 0) -> None:
     """
     Spreads functions over translation units, balancing the estimated statements per unit (largest first, each into
     the currently smallest unit).
 
     :param plans: The planned functions, whose ``translation_unit`` is set.
-    :param units: The number of translation units.
+    :param units: The largest number of translation units.
+    :param min_unit_statements: Fewer units are used if they would hold fewer statements than this on average: each
+                                unit also parses the common preamble (the runtime headers and the state struct).
     """
+    if min_unit_statements > 0:
+        total = sum(plan.cost.statements for plan in plans)
+        units = min(units, total // min_unit_statements)
     load = [0] * max(1, units)
     for plan in sorted(plans, key=lambda p: p.cost.statements + p.cost.basic_blocks, reverse=True):
         unit = min(range(len(load)), key=lambda u: load[u])
@@ -380,20 +393,32 @@ class OutlineFunctions(ppl.Pass):
                                            default=16,
                                            desc='Chains smaller than this (in estimated basic blocks) stay in their '
                                            'caller')
+    max_statements = properties.Property(dtype=int,
+                                         default=600,
+                                         allow_none=True,
+                                         desc='Size budget of a function, in estimated statements (None for no limit)')
     translation_units = properties.Property(dtype=int,
                                             default=8,
-                                            desc='Number of translation units to spread the functions over')
+                                            desc='Largest number of translation units to spread the functions over')
+    min_unit_statements = properties.Property(dtype=int,
+                                              default=2500,
+                                              desc='Fewer translation units are used if they would hold fewer '
+                                              'statements than this on average, since each one parses the common '
+                                              'preamble')
     function_placement = properties.EnumProperty(dtype=dtypes.FunctionPlacement,
                                                  default=dtypes.FunctionPlacement.SeparateUnit,
                                                  desc='Where to emit the functions')
     inlining = properties.EnumProperty(dtype=dtypes.FunctionInlining,
-                                       default=dtypes.FunctionInlining.Default,
-                                       desc='The inlining hint of the functions')
+                                       default=dtypes.FunctionInlining.NoInline,
+                                       desc='The inlining hint of the functions. Without a hint, compilers may inline '
+                                       'a function called once back into its caller')
 
     def __init__(self,
                  max_basic_blocks: Optional[int] = None,
                  min_basic_blocks: Optional[int] = None,
+                 max_statements: Optional[int] = None,
                  translation_units: Optional[int] = None,
+                 min_unit_statements: Optional[int] = None,
                  function_placement: Optional[dtypes.FunctionPlacement] = None,
                  inlining: Optional[dtypes.FunctionInlining] = None):
         """ Creates the pass. Arguments left as None keep the defaults of the corresponding properties. """
@@ -402,8 +427,12 @@ class OutlineFunctions(ppl.Pass):
             self.max_basic_blocks = max_basic_blocks
         if min_basic_blocks is not None:
             self.min_basic_blocks = min_basic_blocks
+        if max_statements is not None:
+            self.max_statements = max_statements
         if translation_units is not None:
             self.translation_units = translation_units
+        if min_unit_statements is not None:
+            self.min_unit_statements = min_unit_statements
         if function_placement is not None:
             self.function_placement = function_placement
         if inlining is not None:
@@ -425,10 +454,10 @@ class OutlineFunctions(ppl.Pass):
         :param sdfg: The SDFG.
         :return: The planned functions, with translation units assigned if placed in separate units.
         """
-        planner = OutliningPlanner(self.max_basic_blocks, self.min_basic_blocks)
+        planner = OutliningPlanner(self.max_basic_blocks, self.min_basic_blocks, self.max_statements)
         plans = planner.plan(sdfg)
         if self.function_placement == dtypes.FunctionPlacement.SeparateUnit:
-            assign_translation_units(plans, self.translation_units)
+            assign_translation_units(plans, self.translation_units, self.min_unit_statements)
         return plans
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:

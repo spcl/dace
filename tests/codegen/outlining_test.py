@@ -177,8 +177,10 @@ def test_region_transient_used_after(lifetime: dtypes.AllocationLifetime):
     frame, unit = _linkable_sources(sdfg)
     params = _signature(unit, 'loops')
     if lifetime == dtypes.AllocationLifetime.Persistent:
-        # Persistent data is reached through the state struct
-        assert not re.search(r'\btmp\b', params)
+        # Persistent data is passed as an argument instead of through the state struct, which compilers do not treat
+        # as unaliased
+        assert re.search(r'__restrict__ __\d+_tmp\b', params)
+        assert not re.search(r'__state->__\d+_tmp', unit)
     else:
         assert re.search(r'__restrict__ tmp\b', params)
 
@@ -186,6 +188,68 @@ def test_region_transient_used_after(lifetime: dtypes.AllocationLifetime):
     B = np.zeros(16)
     sdfg(A=A, B=B, N=16)
     assert np.allclose(B, (A + 1) * 3)
+
+
+def test_region_persistent_data_with_nested_sdfg():
+    """ Persistent data stays in the state struct if a nested SDFG in the region could reach it there. """
+    sdfg = _transient_loops_sdfg('fnregion_persistent_nested', dtypes.AllocationLifetime.Persistent)
+    inner = dace.SDFG('noop')
+    inner.add_array('X', [1], dace.float64)
+    state = inner.add_state()
+    state.add_edge(state.add_tasklet('noop', {}, {'o'}, 'o = 0'), 'o', state.add_write('X'), None, dace.Memlet('X[0]'))
+    loops = _top_level_loops(sdfg)
+    body = loops[0].start_block
+    nested = body.add_nested_sdfg(inner, {}, {'X'})
+    body.add_edge(nested, 'X', body.add_write('B'), None, dace.Memlet('B[0]'))
+    xfh.wrap_in_function_region(loops, 'loops', dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+    frame, unit = _linkable_sources(sdfg)
+    assert not re.search(r'__\d+_tmp', _signature(unit, 'loops'))
+    assert re.search(r'__state->__\d+_tmp', unit)
+
+
+def test_region_state_local_scalar():
+    """ A scalar every state writes before reading it is a local of each function, even if several regions use it. """
+    sdfg = dace.SDFG('fnregion_state_local')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_scalar('t', dace.float64, transient=True)
+    loops = []
+    for k in range(2):
+        loop = LoopRegion(f'loop_{k}', 'i < N', 'i', 'i = 0', 'i = i + 1')
+        sdfg.add_node(loop, is_start_block=(k == 0))
+        body = loop.add_state(f'body_{k}', is_start_block=True)
+        first = body.add_tasklet(f'first_{k}', {'a'}, {'b'}, 'b = a * 2')
+        second = body.add_tasklet(f'second_{k}', {'a'}, {'b'}, 'b = a + 1')
+        t = body.add_access('t')
+        body.add_edge(body.add_read('A'), None, first, 'a', dace.Memlet('A[i]'))
+        body.add_edge(first, 'b', t, None, dace.Memlet('t'))
+        body.add_edge(t, None, second, 'a', dace.Memlet('t'))
+        body.add_edge(second, 'b', body.add_write('A'), None, dace.Memlet('A[i]'))
+        if loops:
+            sdfg.add_edge(loops[-1], loop, dace.InterstateEdge())
+        loops.append(loop)
+    for k, loop in enumerate(loops):
+        xfh.wrap_in_function_region([loop], f'loop_fn_{k}', dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+    frame, *units = _linkable_sources(sdfg)
+    for k, unit in enumerate(units):
+        assert not re.search(r'\bt\b', _signature(unit, f'loop_fn_{k}'))
+        assert re.search(r'double t;', unit)
+    A = np.random.rand(10)
+    ref = (A * 2 + 1) * 2 + 1
+    sdfg(A=A, N=10)
+    assert np.allclose(A, ref)
+
+
+def test_region_live_scalar_copied_in_and_out():
+    """ A scalar the region updates and code around it reads is copied into a local and back. """
+    sdfg = three_loops.to_sdfg(simplify=True)
+    sdfg.name = 'fnregion_live_scalar'
+    xfh.wrap_in_function_region([_top_level_loops(sdfg)[-1]], 'reduction', dtypes.FunctionPlacement.SeparateUnit)
+    frame, unit = _linkable_sources(sdfg)
+    assert re.search(r'double &__ref_s\b', _signature(unit, 'reduction'))
+    assert re.search(r'double s = __ref_s;', unit) and re.search(r'__ref_s = s;', unit)
+    _run_three_loops(sdfg)
 
 
 def test_region_allocates_local_scalar():
@@ -231,7 +295,7 @@ def test_region_in_loop_body():
 
 
 def test_region_symbol_assigned_inside_used_after():
-    """ A symbol the region assigns and the code after it reads is passed by reference. """
+    """ A symbol the region assigns and the code after it reads is copied in and out through a reference. """
     sdfg = dace.SDFG('fnregion_live_out_symbol')
     sdfg.add_array('A', [1], dace.int64)
     sdfg.add_symbol('k', dace.int64)
@@ -246,7 +310,8 @@ def test_region_symbol_assigned_inside_used_after():
     xfh.wrap_in_function_region([first, second], 'assigns', dtypes.FunctionPlacement.SeparateUnit)
     sdfg.validate()
     frame, unit = _linkable_sources(sdfg)
-    assert re.search(r'&\s*k\b', _signature(unit, 'assigns'))
+    assert re.search(r'&\s*__ref_k\b', _signature(unit, 'assigns'))
+    assert re.search(r'\bk = __ref_k;', unit) and re.search(r'__ref_k = k;', unit)
     A = np.zeros(1, dtype=np.int64)
     sdfg(A=A)
     assert A[0] == 5
@@ -334,6 +399,9 @@ if __name__ == '__main__':
     test_region_shared_unit()
     test_region_transient_used_after(dtypes.AllocationLifetime.SDFG)
     test_region_transient_used_after(dtypes.AllocationLifetime.Persistent)
+    test_region_persistent_data_with_nested_sdfg()
+    test_region_state_local_scalar()
+    test_region_live_scalar_copied_in_and_out()
     test_region_allocates_local_scalar()
     test_region_in_loop_body()
     test_region_symbol_assigned_inside_used_after()

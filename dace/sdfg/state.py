@@ -4349,6 +4349,12 @@ class CodeGeneratorFunctionRegion(NamedRegion):
     restrict_arguments = Property(dtype=bool,
                                   desc='Whether pointer arguments that cannot alias are marked ``__restrict__``',
                                   default=True)
+    persistent_arguments = Property(dtype=bool,
+                                    desc='Whether persistent data is passed as arguments instead of being reached '
+                                    'through the state struct (compilers do not treat struct members as unaliased). '
+                                    'Code generation still uses the state struct if code in the region may reach '
+                                    'the data through it by other means (e.g., nested SDFGs or callbacks)',
+                                    default=True)
 
     def __init__(self,
                  label: str,

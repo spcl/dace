@@ -27,6 +27,23 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, CodeGenerato
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
+def _reaches_state_struct(sdfg: SDFG, states: List[SDFGState]) -> bool:
+    """
+    Whether code in the given states may access data through the state struct other than by name: nested SDFGs and
+    library nodes (their functions receive the state struct), code with side effects (e.g., callbacks), and tasklets
+    whose code mentions the state struct.
+    """
+    for state in states:
+        for node in state.nodes():
+            if isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+                return True
+            if isinstance(node, nodes.CodeNode) and node.has_side_effects(sdfg):
+                return True
+            if isinstance(node, nodes.Tasklet) and '__state' in node.code.as_string:
+                return True
+    return False
+
+
 def _inside_loop_of(block: ControlFlowBlock, region: ControlFlowRegion) -> bool:
     """ Whether a loop inside ``region`` encloses ``block`` (i.e., a break or continue there stays in the region). """
     graph = block.parent_graph
@@ -74,6 +91,7 @@ class DaCeCodeGenerator(object):
         # The types of the symbols (including inter-state symbols) of each SDFG, filled during code generation
         self._symbol_types: Dict[SDFG, Dict[str, dtypes.typeclass]] = {}
         self._symbol_uses_cache: Dict[SDFG, Dict[Any, Set[str]]] = {}
+        self._state_local_cache: Dict[SDFG, Set[str]] = {}
         self._toplevel_sdfg = sdfg
         self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
@@ -652,6 +670,33 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         self._symbol_uses_cache[sdfg] = uses
         return uses
 
+    def _state_local_scalars(self, sdfg: SDFG) -> Set[str]:
+        """
+        The transient scalars of an SDFG whose value never crosses a state boundary: every state that reads one writes
+        it first (no read without a preceding write in the state, no write-conflict resolution, which reads the old
+        value), and no inter-state edge or control flow expression reads it. Computed once per SDFG.
+        """
+        cached = self._state_local_cache.get(sdfg)
+        if cached is not None:
+            return cached
+        candidates = {
+            name
+            for name, desc in sdfg.arrays.items()
+            if desc.transient and isinstance(desc, data.Scalar) and desc.lifetime not in
+            (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External, dtypes.AllocationLifetime.Global)
+        }
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                if node.data not in candidates:
+                    continue
+                if state.in_degree(node) == 0 or any(e.data.wcr is not None for e in state.in_edges(node)):
+                    candidates.discard(node.data)
+        for key, syms in self._symbol_uses(sdfg).items():
+            if not isinstance(key, SDFGState):
+                candidates -= syms
+        self._state_local_cache[sdfg] = candidates
+        return candidates
+
     def generate_function_region(self, region: CodeGeneratorFunctionRegion, dispatch_state: Callable[[SDFGState], str],
                                  symbols: Dict[str, dtypes.typeclass]) -> str:
         """
@@ -740,23 +785,52 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         params: List[str] = []
         args: List[str] = []
+        local_declarations: List[str] = []
+        epilogue: List[str] = []
+
+        def copy_in_out(ctype: str, name: str):
+            # A value the region writes and others may read: the function works on a local copy, which the compiler
+            # can keep in a register (it could not prove that nothing else accesses a reference)
+            params.append(f'{ctype} &__ref_{name}')
+            local_declarations.append(f'{ctype} {name} = __ref_{name};\n')
+            epilogue.append(f'__ref_{name} = {name};\n')
+
+        state_local = self._state_local_scalars(sdfg)
+        # Persistent data is passed as arguments (which compilers can treat as unaliased, unlike state struct members)
+        # unless code in the region may reach it through the state struct by other means
+        pass_persistent = region.persistent_arguments and not _reaches_state_struct(sdfg, inner_states)
+        persistent_names: Dict[str, str] = {}
         for name in sorted(accessed - declared_inside):
             if name in sdfg.constants_prop:
                 continue
             desc = sdfg.arrays[name]
             ptrname = cpp.ptr(name, desc, sdfg, self)
-            if ptrname.startswith('__state->'):
-                continue  # Persistent data is reached through the state struct
             defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+            param = ptrname
+            if ptrname.startswith('__state->'):
+                if not pass_persistent:
+                    continue
+                param = ptrname[len('__state->'):]
+                persistent_names[ptrname] = param
+            elif name in state_local:
+                # Every state that reads it writes it first, so no value flows into or out of the region
+                local_declarations.append(f'{ctype} {ptrname};\n')
+                continue
             if defined_type == disp.DefinedType.Pointer and name not in allocated_inside:
                 restrict = (region.restrict_arguments and ctype.rstrip().endswith('*') and not desc.may_alias
                             and not isinstance(desc, (data.View, data.Reference)))
-                params.append(f'{ctype} {"__restrict__ " if restrict else ""}{ptrname}')
+                params.append(f'{ctype} {"__restrict__ " if restrict else ""}{param}')
             elif defined_type == disp.DefinedType.Scalar and name not in written:
-                params.append(f'{ctype} {ptrname}')
+                params.append(f'{ctype} {param}')
+            elif defined_type == disp.DefinedType.Scalar:
+                copy_in_out(ctype, param)
             else:
-                params.append(f'{ctype} &{ptrname}')
+                params.append(f'{ctype} &{param}')
             args.append(ptrname)
+        if persistent_names:
+            # The body refers to persistent data through the state struct: refer to the arguments instead
+            pattern = re.compile(r'__state->(' + '|'.join(re.escape(p) for p in persistent_names.values()) + r')\b')
+            body = pattern.sub(r'\1', body)
 
         ######################################
         # Symbol arguments
@@ -779,7 +853,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         for name in accessed:
             used_inside |= {str(s) for s in sdfg.arrays[name].free_symbols}
         symbol_types = self._symbol_types[sdfg]
-        local_declarations = []
         for sym in sorted((used_inside | assigned_inside) - arrays - set(sdfg.constants_prop.keys())):
             if sym not in symbol_types:
                 continue
@@ -789,7 +862,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 args.append(sym)
             elif sym in used_outside or sym in used_inside:
                 # Assigned inside but read before it (``used_inside`` holds the free symbols only) or elsewhere
-                params.append(f'{ctype} &{sym}')
+                copy_in_out(ctype, sym)
                 args.append(sym)
             else:
                 local_declarations.append(f'{ctype} {sym};\n')
@@ -798,7 +871,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Function definition and call
         state_struct = f'{cpp.mangle_dace_state_struct_name(self._toplevel_sdfg)} *__state'
         signature = f'void {fname}({", ".join([state_struct] + params)})'
-        definition = signature + ' {\n' + ''.join(local_declarations) + body + '}\n'
+        definition = signature + ' {\n' + ''.join(local_declarations) + body + ''.join(epilogue) + '}\n'
         specifiers = {
             dtypes.FunctionInlining.Default: '',
             dtypes.FunctionInlining.Inline: 'inline ',
