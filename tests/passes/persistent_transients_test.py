@@ -42,7 +42,7 @@ def allocates_in_init(sdfg: dace.SDFG, name: str) -> bool:
     code = sdfg.generate_code()[0].clean_code
     head = code.index(f'__dace_init_{sdfg.name}(')
     init = code[head:code.index(f'__dace_exit_{sdfg.name}(', head)]
-    return any(f'{name} = new ' in line for line in init.splitlines())
+    return any(f'{name} = new ' in line or f'{name} = dace::aligned_new_array<' in line for line in init.splitlines())
 
 
 def test_free_symbol_sized_transient_is_promoted():

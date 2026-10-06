@@ -182,7 +182,7 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         # Consult the active cpp_standard: C++ >= 17 emits the aligned
         # new/delete forms, earlier standards the plain ones.
         if _use_aligned_operator_new(a_desc):
-            assert f"A = dace::aligned_new_array<double>(10000, {array_a_alignment})" in code, "A is allocated on the heap."
+            assert f"A = dace::aligned_new_array<double>({over_the_limit}, {array_a_alignment})" in code, "A is allocated on the heap."
             assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
         else:
             assert "A = new double" in code, "A is allocated on the heap."
