@@ -3238,20 +3238,34 @@ class ProgramVisitor(ExtNodeVisitor):
                 # We first squeeze both sides, then try to broadcast the remaining shapes together
                 # This mimics numpy's behavior, where first the indices are taken (C[:i, j] -> (i,))
                 # and then the operation is performed.
-                sqz_osub = copy.deepcopy(op_subset)
-                osqz = sqz_osub.squeeze()
                 sqz_wsub = copy.deepcopy(wtarget_subset)
                 wsqz = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 rsqz = sqz_rsub.squeeze()
+                # A size-1 dimension the operand declares is not an index artifact: numpy broadcasts against it
+                # (``y += np.reshape(bias, (1, C, 1, 1))``). The operand may only lose the axes the target lost,
+                # matched right-aligned the way numpy aligns operands. A sliced operand arrives as an already
+                # materialized transient, so its provenance is unavailable here.
+                wdropped = [i for i in range(len(wtarget_subset)) if i not in wsqz]
+                # numpy aligns an operand with the result of the indexing, where an integer index already removed
+                # its axis (``pf[:, corners, 0]`` is rank 2): an operand already carrying that rank drops nothing.
+                if len(op_subset) == len(sqz_wsub) < len(wtarget_subset):
+                    op_drop: Set[int] = set()
+                else:
+                    shift = len(wtarget_subset) - len(op_subset)
+                    op_drop = {i - shift for i in wdropped if 0 <= i - shift < len(op_subset)}
+                sqz_osub = copy.deepcopy(op_subset)
+                osqz = sqz_osub.squeeze([i for i in range(len(op_subset)) if i not in op_drop])
                 _, all_idx_tuples, _, out_idx, inp_idx = broadcast_to(sqz_wsub.size(), sqz_osub.size())
                 # Re-add squeezed dimensions from original subset so that memlets match original arrays
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
                 rsqueezed = [i for i in range(len(rtarget_subset)) if i not in rsqz]
 
-                if (boolarr or indirect_indices
-                        or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())):
+                # ``broadcast_to`` proved the operand broadcasts into the target and ``inp_idx`` reads each
+                # broadcast axis at 0, which the mapped tasklet expresses; the copy path below cannot. The read
+                # and write targets must still agree: they are the same buffer.
+                if boolarr or indirect_indices or sqz_wsub.size() == sqz_rsub.size():
                     map_range = {i: rng for i, rng in all_idx_tuples}
                     in1_memlet = Memlet.simple(rtarget_name, out_idx)
                     in1_memlet.subset.unsqueeze(rsqueezed)
