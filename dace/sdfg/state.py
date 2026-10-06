@@ -4589,7 +4589,7 @@ class CodeGeneratorFunctionRegion(NamedRegion):
     function_placement = EnumProperty(
         dtype=dtypes.FunctionPlacement,
         desc="Where code generation emits the function of this region",
-        default=dtypes.FunctionPlacement.Default,
+        default=dtypes.FunctionPlacement.CallerUnit,
     )
     translation_unit = Property(
         dtype=str,
@@ -4598,18 +4598,39 @@ class CodeGeneratorFunctionRegion(NamedRegion):
         "own",
         default="",
     )
+    inlining = EnumProperty(
+        dtype=dtypes.FunctionInlining,
+        desc="The inlining hint for the function. Inline and ForceInline require the caller's translation unit",
+        default=dtypes.FunctionInlining.Default,
+    )
+    function_name = Property(
+        dtype=str,
+        desc="Name of the generated function (e.g., to find it in a profile). If empty, it is "
+        "derived from the label of the region",
+        default="",
+    )
+    attributes = Property(
+        dtype=str,
+        desc="Additional specifiers of the function, written before its return type (e.g., ``__attribute__((cold))``)",
+        default="",
+    )
+    restrict_arguments = Property(
+        dtype=bool, desc="Whether pointer arguments that cannot alias are marked ``__restrict__``", default=True
+    )
 
     def __init__(
         self,
         label: str,
         sdfg: Optional["SDFG"] = None,
         debuginfo: dtypes.DebugInfo | None = None,
-        function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.Default,
+        function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.CallerUnit,
         translation_unit: str = "",
+        inlining: dtypes.FunctionInlining = dtypes.FunctionInlining.Default,
     ):
         super().__init__(label, sdfg, debuginfo)
         self.function_placement = function_placement
         self.translation_unit = translation_unit
+        self.inlining = inlining
 
 
 @make_properties

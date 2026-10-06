@@ -291,8 +291,9 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
 def wrap_in_function_region(
     blocks: list[ControlFlowBlock],
     label: str,
-    function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.Default,
+    function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.CallerUnit,
     translation_unit: str = "",
+    inlining: dtypes.FunctionInlining = dtypes.FunctionInlining.Default,
 ) -> CodeGeneratorFunctionRegion:
     """
     Moves a chain of consecutive control flow blocks into a ``CodeGeneratorFunctionRegion``, so that code generation
@@ -304,6 +305,7 @@ def wrap_in_function_region(
     :param label: The label of the new region, which also names the generated function.
     :param function_placement: Where code generation emits the function.
     :param translation_unit: The translation unit of a function placed in a separate unit.
+    :param inlining: The inlining hint for the function.
     :return: The new region, which replaces the blocks.
     :raises ValueError: If the blocks are not such a chain, or if control flow leaves them other than by completing
                         the last one (a break or continue of an enclosing loop, or a return).
@@ -334,7 +336,7 @@ def wrap_in_function_region(
 
     chain_edges = [graph.out_edges(block)[0] for block in blocks[:-1]]
     region = CodeGeneratorFunctionRegion(
-        label, graph.sdfg, function_placement=function_placement, translation_unit=translation_unit
+        label, graph.sdfg, function_placement=function_placement, translation_unit=translation_unit, inlining=inlining
     )
     graph.add_node(region, is_start_block=(graph.start_block is blocks[0]), ensure_unique_name=True)
     for e in graph.in_edges(blocks[0]):
