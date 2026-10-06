@@ -31,9 +31,9 @@ def test_view_write_in_map():
     sdfg = view_write_in_map.to_sdfg(simplify=False)
     sdfg.validate()
 
+    # The connector is the container (No-View nested SDFGs): the row write leaves through ``A`` itself
     nsdfg = nested_sdfg_node(sdfg)
-    written = nsdfg.in_connectors.keys() & nsdfg.out_connectors.keys()
-    assert written, 'the sliced row must reach the map body as an IN/OUT connector'
+    assert 'A' in nsdfg.out_connectors, 'the write through the sliced row must leave the map body through A'
 
     A = np.arange(64, dtype=np.float64).reshape(8, 8).copy()
     B = np.arange(1, 9, dtype=np.float64).copy()
@@ -210,7 +210,7 @@ def boolean_mask_read_in_map(A: dace.float64[4, 8], m: dace.bool[4, 8], out: dac
 
 
 def test_boolean_mask_read_in_map_is_refused():
-    with pytest.raises(DaceSyntaxError, match='Boolean array indexing'):
+    with pytest.raises(IndexError, match='Boolean array indexing'):
         boolean_mask_read_in_map.to_sdfg(simplify=False)
 
 
