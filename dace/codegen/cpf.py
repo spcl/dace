@@ -121,6 +121,7 @@ LIBRARY_NODE_DESCRIPTIONS: Dict[str, str] = {
     'Dummy': 'MPI placeholder node carrying an ordering dependency',
     'Eigh': 'eigh: eigenvalues and eigenvectors of a Hermitian matrix',
     'Einsum': 'einsum: a contraction over the index expression',
+    'ExternalCall': 'external call: a nest run from its own SDFG or called in a separately compiled library',
     'FFT': 'discrete Fourier transform',
     'FFTInterpolate': 'Fourier interpolation: resample through the frequency domain',
     'FillLibraryNode': 'fill: set every element to a constant',

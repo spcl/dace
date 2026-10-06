@@ -1193,9 +1193,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
-        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
-        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
-        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
+        #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
         self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
@@ -4613,7 +4612,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                         break
                             if not sub:
                                 raise KeyError("Did not find output subscript")
-                            output_slices.add((sub, ast.Name(id=aname, ctx=ast.Load())))
+                            output_slices.add((sub, ast.Name(id=aname)))
                             slice_state.remove_edge(e)
                             slice_state.remove_node(e.src)
                         slice_state.remove_node(n)
@@ -5294,7 +5293,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     node)
                 self._visit_assign(new_node, ast_tuple, None, is_return=True)
             else:
-                ast_name = ast.copy_location(ast.Name(id='__return', ctx=ast.Store()), node)
+                ast_name = ast.copy_location(ast.Name(id='__return'), node)
                 self._visit_assign(new_node, ast_name, None, is_return=True)
 
             if not isinstance(self.cfg_target, SDFG):
@@ -5831,8 +5830,6 @@ class ProgramVisitor(ExtNodeVisitor):
         :return: The symbol carrying the scalar's value.
         """
         desc = self.sdfg.arrays[scalar]
-        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
-        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
         # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
         # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
         version = key in (None, scalar) or self.variables.get(key) == scalar
@@ -6048,7 +6045,7 @@ class ProgramVisitor(ExtNodeVisitor):
         nslice = self._parse_subscript_slice(node.slice)
 
         # Try to construct memlet from subscript
-        node.value = ast.Name(id=array, ctx=ast.Load())
+        node.value = ast.Name(id=array)
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
 
         if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
@@ -6085,7 +6082,7 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(r, (Number, numpy.bool_)):
                 newnode = ast.Constant(value=r, kind='')
             else:
-                newnode = ast.Name(id=r, ctx=ast.Load())
+                newnode = ast.Name(id=r)
             ast.copy_location(newnode, node)
             out.append(newnode)
         if res_num == 1:

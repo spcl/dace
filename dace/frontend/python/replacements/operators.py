@@ -125,6 +125,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     dtypes_for_result = []
     dtypes_for_result_np2 = []
     for arg in arguments:
+        if isinstance(arg, sp.logic.boolalg.BooleanAtom):  # a comparison the symbols decide, folded to sympy.true
+            arg = bool(arg)
         if isinstance(arg, (data.Array, data.Stream)):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(arg.dtype.type)

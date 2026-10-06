@@ -874,3 +874,59 @@ def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) 
     ParallelizeLoops().apply_pass(sdfg, {})
     assert outer in checked, f'the enclosing iterator {outer} was never declared, so nothing was exercised'
     assert not mismatches, mismatches
+
+
+NBLK = dace.symbol('NBLK', dace.int64, positive=True)
+
+
+@dace.program
+def unrolled_by_four(a: dace.float64[4 * NBLK], b: dace.float64[4 * NBLK]):
+    for i in range(0, 4 * NBLK, 4):
+        a[i] = a[i] + b[i]
+        a[i + 1] = a[i + 1] + b[i + 1]
+        a[i + 2] = a[i + 2] + b[i + 2]
+        a[i + 3] = a[i + 3] + b[i + 3]
+
+
+def test_a_strided_lift_ends_at_its_last_iterate():
+    """``range(0, 4 * NBLK, 4)`` last runs ``i = 4 * NBLK - 4``: a map ending at the bound ``4 * NBLK - 1`` would
+    propagate ``b[i + 3]`` past the array (tsvc s351)."""
+    sdfg = unrolled_by_four.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    ranges = [
+        n.map.range[0] for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.params == ['i']
+    ]
+    assert ranges and all(dace.symbolic.evaluate(end, {'NBLK': 5}) == 16 for _, end, _ in ranges), ranges
+    sdfg.validate()
+    a, b = np.random.rand(20), np.random.rand(20)
+    expected = a + b
+    sdfg(a=a, b=b, NBLK=5)
+    assert np.allclose(a, expected)
+
+
+GATHER_LEN = dace.symbol('GATHER_LEN')
+
+
+@dace.program
+def gather_then_scale(A: dace.float64[GATHER_LEN], idx: dace.int64[GATHER_LEN], C: dace.float64[GATHER_LEN]):
+    gathered = np.empty_like(A)
+    for k in dace.map[0:GATHER_LEN]:
+        gathered[k] = A[idx[k]]
+    for k in dace.map[0:GATHER_LEN]:
+        C[k] = gathered[k] * 2.0
+
+
+def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
+    """Canonicalize turns the gather map into a loop and back; the lifted body's nested SDFG must keep its
+    per-iteration ``gathered[k]`` connector, or fusion sees all of it written and keeps two kernels."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = gather_then_scale.to_sdfg(simplify=True)
+    canonicalize(sdfg, target='cpu', validate_all=False)
+    top_maps = [
+        n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry) and s.entry_node(n) is None
+    ]
+    assert len(top_maps) == 1, len(top_maps)
+    A, idx, C = np.random.rand(20), np.random.randint(0, 20, 20).astype(np.int64), np.zeros(20)
+    sdfg(A=A, idx=idx, C=C, GATHER_LEN=20)
+    assert np.allclose(C, 2 * A[idx])
