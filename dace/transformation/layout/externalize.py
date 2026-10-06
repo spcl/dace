@@ -54,15 +54,34 @@ def constant_or_none(expr, symbols: Dict[str, int]) -> Optional[int]:
         return None
 
 
+def indexes_indirectly(nsdfg: nodes.NestedSDFG) -> bool:
+    """Whether the nested SDFG subscripts a container with a value read from data (``data[idx[i]]`` lowers to
+    ``idx_index = idx[i]`` on an interstate edge, then ``data[idx_index]``)."""
+    inner = nsdfg.sdfg
+    read_from_data = {
+        name
+        for edge in inner.all_interstate_edges(recursive=True)
+        for name, value in edge.data.assignments.items() if dace.symbolic.arrays(dace.symbolic.pystr_to_symbolic(value))
+    }
+    for state in inner.states():
+        for edge in state.edges():
+            if edge.data.subset is None:
+                continue
+            if any(str(sym) in read_from_data for sym in edge.data.subset.free_symbols):
+                return True
+    return False
+
+
 def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
     """Smallest extent of any array an index array could subscript -- the tightest in-bounds cap for an
     integer fill; None when the nest has no such access.
 
     Two signals are needed because the frontend lowers indirection differently per source form:
       * a DYNAMIC (data-dependent) memlet -- e.g. a masked gather, where the condition propagates it;
-      * a WHOLE-array read handed to the map BODY -- a plain ``data[idx[i]]`` becomes a nested SDFG
-        receiving all of ``data`` through a STATIC full-range memlet, so the dynamic flag never gets set.
-    An ordinary elementwise or stencil read enters the body with a point/partial subset and trips neither.
+      * a WHOLE-array read handed to a map body that subscripts with a value read from data -- a plain
+        ``data[idx[i]]`` becomes a nested SDFG receiving all of ``data`` through a STATIC full-range memlet,
+        so the dynamic flag never gets set. Every nested SDFG receives whole arrays once prepare_for_layout
+        widened its edges, so the whole-array read alone says nothing.
     """
     extents = []
     for state in ext.states():
@@ -77,8 +96,9 @@ def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
             if None in shape or math.prod(shape) <= 1:
                 continue
             elements = constant_or_none(edge.data.subset.num_elements(), symbols) if edge.data.subset else None
-            whole = isinstance(edge.src, nodes.MapEntry) and elements == math.prod(shape)
-            if edge.data.dynamic or whole:
+            gathered = (isinstance(edge.dst, nodes.NestedSDFG) and elements == math.prod(shape)
+                        and indexes_indirectly(edge.dst))
+            if edge.data.dynamic or gathered:
                 extents += shape
     return min(extents) if extents else None
 
