@@ -917,6 +917,12 @@ class ExitNode(Node):
 # ------------------------------------------------------------------------------
 
 
+def _dynamic_input_type(entry: 'EntryNode', sdfg, edge) -> dtypes.typeclass:
+    """ The type of a dynamic scope input: its connector's, or the data's while the connector is still untyped. """
+    connector = entry.in_connectors[edge.dst_conn]
+    return connector if connector is not None and connector.type is not None else sdfg.arrays[edge.data.data].dtype
+
+
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
@@ -986,7 +992,7 @@ class MapEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                result[e.dst_conn] = _dynamic_input_type(self, sdfg, e)
 
         # Add map params
         known = {**symbols, **_constant_types(sdfg), **result}
@@ -1331,7 +1337,7 @@ class ConsumeEntry(EntryNode):
         # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+                result[e.dst_conn] = _dynamic_input_type(self, sdfg, e)
 
         return result
 

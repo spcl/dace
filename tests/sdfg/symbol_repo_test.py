@@ -2,6 +2,7 @@
 import copy
 import json
 
+import numpy as np
 import pytest
 
 import dace
@@ -144,6 +145,27 @@ def test_edge_scopes_declare_no_facts():
         sdfg.symbol_repo.add('k', dace.int64, POSITIVE, at=edge)
 
 
+def test_dynamic_map_range_round_trips():
+    """ A map whose range reads a scalar binds a dynamic input; the map body nested in it declares that input with
+    the scalar's type, so the SDFG loads back. """
+
+    @dace.program
+    def dynamic_range(inp: dace.int32[4, 2], out: dace.float64[5, 5]):
+        A = np.zeros((5, 5))
+        end = inp.shape[1]
+        for e in dace.map[0:end]:
+            with dace.tasklet:
+                a << inp[0, e]
+                b << inp[1, e]
+                o[a, b] = 1
+                o >> A(-1, lambda x, y: x + y)
+        out[:] = A
+
+    sdfg = dynamic_range.to_sdfg(simplify=False)
+    loaded = reloaded(sdfg)
+    assert json.dumps(loaded.to_json()) == json.dumps(sdfg.to_json())
+
+
 if __name__ == '__main__':
     test_params_and_facts_round_trip()
     test_symbols_is_a_read_only_view_of_the_params()
@@ -153,3 +175,4 @@ if __name__ == '__main__':
     test_nested_sdfg_round_trips_its_own_repo()
     test_validation_rejects_scopes_that_do_not_match_their_owners()
     test_edge_scopes_declare_no_facts()
+    test_dynamic_map_range_round_trips()

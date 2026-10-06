@@ -189,6 +189,8 @@ class SymbolRepo:
             :raise InconsistentAssumptionsError: If the name is declared there with another dtype or other predicates,
                                                  or the predicates contradict the facts there.
         """
+        if dtype.type is None:
+            raise TypeError(f'Cannot declare symbol "{name}" with no type')
         if at is not None and name not in bound_names(at):
             raise ValueError(f'{at} does not bind "{name}"')
         if predicates and not isinstance(at, (LoopRegion, nodes.EntryNode, type(None))):
