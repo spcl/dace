@@ -7,8 +7,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
-from dace.sdfg.symbol_repo import SymbolInfo
+from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.sdfg.validation import InvalidSDFGError
 
 POSITIVE = frozenset({symbolic.Predicate.POSITIVE})
@@ -39,15 +38,10 @@ def loop_in_loop_sdfg() -> dace.SDFG:
                                           external_edges=True)
 
     repo = sdfg.symbol_repo
-    repo.open_scope(outer)
     repo.add('i', dace.int64, at=outer)
     repo.add_relation(relation(symbolic.RelationKind.LT, 'i', 'N'), at=outer)
-    repo.open_scope(edge.data, parent=outer)
-    repo.add('k', dace.int64, POSITIVE, at=edge.data)
-    repo.open_scope(inner, parent=edge.data)
     repo.add('i', dace.int32, at=inner)
     repo.add_relation(relation(symbolic.RelationKind.LT, 'i', 'k'), at=inner)
-    repo.open_scope(entry, parent=inner)
     repo.add('j', dace.int16, at=entry)
     sdfg.validate()
     return sdfg
@@ -57,7 +51,7 @@ def scope_owners(sdfg: dace.SDFG):
     outer = next(block for block in sdfg.nodes() if isinstance(block, LoopRegion))
     inner = next(block for block in outer.nodes() if isinstance(block, LoopRegion))
     entry = next(node for node in inner.start_block.nodes() if isinstance(node, nodes.MapEntry))
-    return outer, outer.edges()[0].data, inner, entry
+    return outer, inner, entry
 
 
 def test_params_and_facts_round_trip():
@@ -85,36 +79,31 @@ def test_symbols_is_a_read_only_view_of_the_params():
 def test_scopes_round_trip_to_their_owners():
     sdfg = loop_in_loop_sdfg()
     loaded = reloaded(sdfg)
-    outer, edge, inner, entry = scope_owners(loaded)
+    outer, inner, entry = scope_owners(loaded)
     repo = loaded.symbol_repo
-    assert list(repo.scopes) == [outer, edge, inner, entry]
-    assert [repo.scopes[owner].parent for owner in (outer, edge, inner, entry)] == [None, outer, edge, inner]
-    assert repo.lookup('i', at=outer) == SymbolInfo(dace.int64, frozenset())
-    assert repo.lookup('k', at=edge) == SymbolInfo(dace.int64, POSITIVE)
-    assert repo.lookup('j', at=entry) == SymbolInfo(dace.int16, frozenset())
+    assert list(repo.scopes) == [outer, inner, entry]
+    assert repo.scopes[outer].types == {'i': dace.int64}
+    assert repo.scopes[inner].types == {'i': dace.int32}
+    assert repo.scopes[entry].types == {'j': dace.int16}
     assert json.dumps(loaded.to_json()) == json.dumps(sdfg.to_json())
 
 
 def test_inner_scope_shadows_outer_after_round_trip():
     loaded = reloaded(loop_in_loop_sdfg())
-    _, edge, inner, entry = scope_owners(loaded)
-    repo = loaded.symbol_repo
-    assert repo.lookup('i', at=entry) == SymbolInfo(dace.int32, frozenset())
-    assert repo.lookup('N', at=entry) == SymbolInfo(dace.int64, POSITIVE)
+    outer, inner, entry = scope_owners(loaded)
+    resolver = SymbolResolver()
     i_below_n = relation(symbolic.RelationKind.LE, 'i', 'N - 1')
-    # The outer ``i < N`` holds on the edge, but not in the inner loop, which reopens ``i``
-    assert symbolic.ask(i_below_n, repo.facts(edge)) is symbolic.Truth.TRUE
-    assert symbolic.ask(i_below_n, repo.facts(entry)) is symbolic.Truth.UNKNOWN
-    assert symbolic.ask(relation(symbolic.RelationKind.LE, 'i', 'k - 1'), repo.facts(entry)) is symbolic.Truth.TRUE
-    with pytest.raises(KeyError, match='not declared'):
-        repo.lookup('j', at=inner)
+    # The outer ``i < N`` holds in the outer loop, but not in the inner one, which reopens ``i``
+    assert symbolic.ask(i_below_n, resolver.facts_at(outer.start_block)) is symbolic.Truth.TRUE
+    at_map = resolver.facts_at(inner.start_block, entry)
+    assert symbolic.ask(i_below_n, at_map) is symbolic.Truth.UNKNOWN
+    assert symbolic.ask(relation(symbolic.RelationKind.LE, 'i', 'k - 1'), at_map) is symbolic.Truth.TRUE
 
 
 def test_deepcopy_keys_scopes_by_the_copied_owners():
     sdfg = loop_in_loop_sdfg()
     copied = copy.deepcopy(sdfg)
     assert list(copied.symbol_repo.scopes) == list(scope_owners(copied))
-    assert copied.symbol_repo.scopes[scope_owners(copied)[2]].parent is scope_owners(copied)[1]
     copied.validate()
 
 
@@ -137,17 +126,22 @@ def test_nested_sdfg_round_trips_its_own_repo():
 
 def test_validation_rejects_scopes_that_do_not_match_their_owners():
     sdfg = loop_in_loop_sdfg()
-    outer, _, _, entry = scope_owners(sdfg)
-    sdfg.symbol_repo.add('k2', dace.int64, at=entry)
-    with pytest.raises(InvalidSDFGError, match='does not bind'):
-        sdfg.validate()
-    sdfg.symbol_repo.remove('k2', at=entry)
-    outer.remove_edge(outer.edges()[0])
+    outer, inner, entry = scope_owners(sdfg)
+    with pytest.raises(ValueError, match='does not bind'):
+        sdfg.symbol_repo.add('k2', dace.int64, at=entry)
+    outer.remove_node(inner)
     with pytest.raises(InvalidSDFGError, match='no owner in the SDFG'):
         sdfg.validate()
-    # Saving leaves out the scopes of removed owners and the scopes nested in them
+    # Saving leaves out the scopes of removed owners
     loaded = reloaded(sdfg)
     assert list(loaded.symbol_repo.scopes) == [loaded.start_block]
+
+
+def test_edge_scopes_declare_no_facts():
+    sdfg = loop_in_loop_sdfg()
+    edge = scope_owners(sdfg)[0].edges()[0].data
+    with pytest.raises(NotImplementedError):
+        sdfg.symbol_repo.add('k', dace.int64, POSITIVE, at=edge)
 
 
 if __name__ == '__main__':
@@ -158,3 +152,4 @@ if __name__ == '__main__':
     test_deepcopy_keys_scopes_by_the_copied_owners()
     test_nested_sdfg_round_trips_its_own_repo()
     test_validation_rejects_scopes_that_do_not_match_their_owners()
+    test_edge_scopes_declare_no_facts()

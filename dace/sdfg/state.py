@@ -2689,7 +2689,8 @@ class SymbolResolver:
         return self._facts[key]
 
     def derive_facts(self, block: 'ControlFlowBlock', entry: Optional[nd.EntryNode]) -> symbolic.Facts:
-        # Avoid cyclic import
+        # Avoid cyclic imports
+        from dace.sdfg.symbol_repo import scope_facts
         from dace.transformation.passes.analysis import loop_analysis
 
         sdfg = block.sdfg
@@ -2697,14 +2698,14 @@ class SymbolResolver:
         relations, integers = self.outer_facts(sdfg)
         relations.extend(own.relations)
         integers |= own.integers
-        scopes: List[Tuple[Dict[str, dtypes.typeclass], List[Tuple[str, Any, Any, Any]]]] = []
+        scopes: List[Tuple[Any, Dict[str, dtypes.typeclass], List[Tuple[str, Any, Any, Any]]]] = []
         region = block
         while region is not None and region is not sdfg:
             if isinstance(region, LoopRegion) and region.loop_variable:
                 bounds = (loop_analysis.get_init_assignment(region), loop_analysis.get_loop_end(region),
                           loop_analysis.get_loop_stride(region))
-                scopes.append(
-                    (region.new_symbols(sdfg.symbols), [(region.loop_variable, *bounds)] if None not in bounds else []))
+                scopes.append((region, region.new_symbols(sdfg.symbols), [(region.loop_variable,
+                                                                           *bounds)] if None not in bounds else []))
             region = region.parent_graph
         scopes.reverse()
         maps = []
@@ -2714,8 +2715,8 @@ class SymbolResolver:
         for map_entry in reversed(maps):
             bound = map_entry.new_symbols(sdfg, block, self.defined_at(block, map_entry))
             ranges = [(param, *rng[:3]) for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)]
-            scopes.append((bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
-        for bound, ranges in scopes:
+            scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
+        for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
             relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
             integers = (integers -
@@ -2729,6 +2730,11 @@ class SymbolResolver:
                         symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
                         symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high))
                     ]
+            # What the scope declares for its names
+            if owner in sdfg.symbol_repo.scopes:
+                declared = scope_facts(sdfg.symbol_repo.scopes[owner])
+                relations.extend(declared.relations)
+                integers |= declared.integers
         return symbolic.Facts(tuple(relations), frozenset(integers))
 
     def outer_facts(self, sdfg: 'SDFG') -> Tuple[List[symbolic.Relation], Set[str]]:
