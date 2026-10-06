@@ -3517,7 +3517,11 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     # keeps the shape this test is about -- a NestedSDFG producer -- intact through compilation.
     nsdfg.no_inline = True
     s1.add_edge(idx1, None, me1, "IN_1", dace.Memlet("idx[0:N]"))
-    s1.add_edge(me1, "OUT_1", nsdfg, "idx_at", dace.Memlet("idx[i - 1]"))
+    # The index is staged in a scalar of the connector's own descriptor: `idx_at` is used as a value in a subset.
+    sdfg.add_scalar("idx_at", dace.int32, transient=True)
+    idx_at = s1.add_access("idx_at")
+    s1.add_edge(me1, "OUT_1", idx_at, None, dace.Memlet("idx[i - 1]"))
+    s1.add_edge(idx_at, None, nsdfg, "idx_at", dace.Memlet("idx_at[0]"))
     s1.add_edge(nsdfg, "A", mx1, "IN_1", dace.Memlet("A[0:N, 0:5]"))
     s1.add_edge(mx1, "OUT_1", a1, None, dace.Memlet("A[0:N, 0:5]"))
 

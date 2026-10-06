@@ -2414,6 +2414,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 for inner_edge in inner_state.in_edges(inner_node):
                     if inner_edge.data.is_empty():
                         continue
+                    # A View's binding edge names the window it aliases, not what is written through it.
+                    if (isinstance(inner_edge.src, nodes.AccessNode)
+                            and isinstance(inner_edge.src.desc(inner_sdfg), data.View)):
+                        continue
                     if inner_edge.data.data == inner_data:
                         write_subset = inner_edge.data.dst_subset
                     else:
