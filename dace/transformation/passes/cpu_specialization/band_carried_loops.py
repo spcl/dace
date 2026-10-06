@@ -8,7 +8,7 @@ opens the OpenMP team once for such a nest, but the worksharing construct inside
 
     #pragma omp parallel                       <- one fork/join
     for (j = 1; j < N; ++j) {
-        #pragma omp for                        <- an implicit barrier, ONCE PER TRIP
+        #pragma omp for simd                   <- an implicit barrier, ONCE PER TRIP
         for (i = 0; i < N; ++i) aa[j][i] = aa[j-1][i] + bb[j][i];
     }
 
@@ -22,7 +22,7 @@ giving a whole band's carry to one thread::
     #pragma omp parallel for                   <- one barrier, at the very end
     for (t = 0; t < __dace_num_threads; ++t)
         for (j = 1; j < N; ++j)
-            //                                 <- i still innermost, still contiguous
+            #pragma omp simd                   <- i still innermost, still contiguous
             for (i = lo(t); i < hi(t); ++i) aa[j][i] = aa[j-1][i] + bb[j][i];
 
 Measured on ``s231`` XL, 24 threads: 41.0 ms -> 16.5 ms.
@@ -78,7 +78,8 @@ Correctness does NOT depend on how OpenMP distributes the band loop. A band's en
 inside ONE iteration of the outer map, so whichever thread runs band ``t`` runs all of ``t``'s trips
 in order, for any band count and any schedule. That is what this form has over dropping the barrier
 with ``nowait``, which is correct only while consecutive worksharing regions hand the same
-iterations to the same thread -- a conditional guarantee that does not hold in general.
+iterations to the same thread -- a conditional guarantee whose conditions exclude the
+``simd``-associated loops canonicalize emits.
 
 Conditions (H) and (T) of ``HoistParallelRegion`` are inherited unchanged: this pass outlines the
 loop the same way and wraps it in a map the same way, so the same replication and privatization

@@ -330,7 +330,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """Whether the map's ``{ }`` scope bounds a declaration; without one the braces only nest."""
         if dynamic_map_inputs(state_dfg, node):
             return True
-        if hoist_loop_decls(node, self.map_loop_will_have_openmp_pragma(node)):
+        if any(
+                hoist_loop_decls(node, self.map_loop_will_have_openmp_pragma(sdfg, state_dfg, node, i))
+                for i in range(len(node.map.range))):
             return True
         if self.walk_plan_for(sdfg, state_dfg, node):
             return True

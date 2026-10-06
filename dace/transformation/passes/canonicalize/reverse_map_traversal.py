@@ -7,7 +7,7 @@ codegen as an ascending parameter over descending addresses:
 
     for i in range(N - 1, -1, -1): a[i] = b[i] + 1.0
 
-    #pragma omp parallel for
+    #pragma omp parallel for simd
     for (auto _loop_it_0 = 0; _loop_it_0 < N; _loop_it_0 += 1)
         a[((N - _loop_it_0) - 1)] = (b[((N - _loop_it_0) - 1)] + 1.0);
 

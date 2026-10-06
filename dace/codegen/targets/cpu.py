@@ -278,7 +278,9 @@ def hoist_loop_decls(node: nodes.MapEntry, will_have_openmp_pragma: bool = False
     Never for a loop that will be immediately preceded by an OpenMP directive: the pragma must be
     immediately followed by a CANONICAL loop whose init clause declares the induction variable, so
     hoisting leaves the pragma facing a declaration and the compiler rejects it ("loop nest
-    expected"). The knob therefore applies to sequential loops.
+    expected"). The knob therefore applies to sequential loops that do not get an OpenMP ``simd``
+    pragma, and to the non-innermost loops of a Sequential map even when ``MarkSIMDMaps`` marked
+    it.
     """
     if Config.get('compiler', 'cpu', 'codegen_params', 'loop_decl_style') != 'hoisted':
         return False
@@ -3600,13 +3602,52 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((op_str, clause_target, oedge.dst.data, declare))
         return one_section_per_array(out, whole_targets)
 
-    def map_loop_will_have_openmp_pragma(self, map_entry: nodes.MapEntry) -> bool:
-        """Whether the ``for`` loops of ``map_entry`` will be immediately preceded by an OpenMP directive.
-        OpenMP canonical form requires the loop after the directive to declare its induction variable in
-        the init clause and to use ``<``/``>`` (or ``<=``/``>=``) with a non-unit stride; callers use this
-        predicate to suppress non-canonical rewrites.
+    def renders_simd(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """Whether ``map_entry``'s loop carries ``simd``: ``MarkSIMDMaps`` marked it and, in a standalone
+        unit, no accumulation in its body falls back to ``omp atomic`` / ``omp critical``.
+
+        OpenMP admits no ``critical`` inside a ``simd`` region; vexx_k's complex scatter reaches one
+        through the nested SDFG its loop calls. A write this map tree-reduces is not a fallback.
         """
-        return map_entry.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+        if not map_entry.map.omp_simd or not cpf_lowering.standalone():
+            return map_entry.map.omp_simd
+        covered = set()
+        if (map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                and emits_tree_reductions(self.experimental_codegen)):
+            covered = {dname for op, target, dname, declare in self._collect_omp_reductions(sdfg, state, map_entry)}
+        scope = state.scope_subgraph(map_entry, include_entry=False, include_exit=True)
+        graphs = [(state, scope.edges())]
+        for node in scope.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                graphs.extend(
+                    (inner, inner.edges()) for nested in node.sdfg.all_sdfgs_recursive() for inner in nested.states())
+        for graph, edges in graphs:
+            for edge in edges:
+                if edge.data.wcr is None or (graph is state and edge.data.data in covered):
+                    continue
+                if cpp.is_write_conflicted_with_reason(graph, edge, sdfg_schedule=self._toplevel_schedule) is not None:
+                    return False
+        return True
+
+    def map_loop_will_have_openmp_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
+                                         loop_idx: int) -> bool:
+        """Whether the ``for`` loop at dimension ``loop_idx`` of ``map_entry`` will be immediately
+        preceded by an OpenMP directive. OpenMP canonical form requires the loop after the directive to
+        declare its induction variable in the init clause and to use ``<``/``>`` (or ``<=``/``>=``)
+        with a non-unit stride; callers use this predicate to suppress non-canonical rewrites.
+        """
+        schedule = map_entry.map.schedule
+        if schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+            return True
+        if schedule != dtypes.ScheduleType.Sequential:
+            return False
+        # ``simd`` goes on the innermost loop of a non-unrolled Sequential map, and only where
+        # ``MarkSIMDMaps`` marked the map -- the pass owns the decision, this reads its verdict.
+        if map_entry.map.unroll:
+            return False
+        if loop_idx != len(map_entry.map.range) - 1:
+            return False
+        return self.renders_simd(sdfg, state, map_entry)
 
     def _generate_MapEntry(
         self,
@@ -3712,8 +3753,19 @@ class CPUCodeGen(TargetCodeGenerator):
                 for declare in declares:
                     map_header = declare + '\n' + map_header
 
+            # ``MarkSIMDMaps`` decided this map vectorizes -- it owns the analysis (leaf body, no
+            # directive-carrying tasklet, no min/max WCR) and expands a multidimensional map so the
+            # marked one is the innermost. Stamp its verdict onto the pragma the map already has;
+            # a covered reduction composes with it, the clause already sanctions reassociation
+            # inside the combining op, so vector partials are legal.
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and self.renders_simd(sdfg, state_dfg, node):
+                head, sep, rest = map_header.partition(' for')
+                map_header = f'{head}{sep} simd{rest}'
+
             # The fork/join cost model, evaluated at run time. The modifier scopes the clause to
-            # ``parallel`` alone. The count tested is the whole region's, spread over a perfect nest.
+            # ``parallel`` alone, so a combined ``parallel for simd`` keeps vectorizing on the
+            # single-thread side instead of losing its simd clause with the team. The count tested is
+            # the whole region's, which the SIMD split may have spread over a perfect nest.
             if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and not in_persistent
                     and node.map.omp_min_parallel_iterations > 0):
                 trip = sym2cpp(parallel_region_trip_count(state_dfg, node))
@@ -3791,8 +3843,20 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 # Determine whether this loop will be immediately preceded by an OpenMP directive.
-                # CPU_Multicore / CPU_Persistent emit the pragma in map_header above.
-                will_have_openmp = self.map_loop_will_have_openmp_pragma(node)
+                # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. A Sequential
+                # map emits ``#pragma omp simd`` here, before its innermost loop, exactly when
+                # ``MarkSIMDMaps`` marked it -- the pass owns the safety analysis, this renders its
+                # verdict. One write site, because the pragma must sit immediately before the
+                # ``for``, and only once: a second one has no loop after it ("loop nest expected").
+                will_have_openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
+                                                         dtypes.ScheduleType.CPU_Persistent)
+                pragma = None
+                if (not will_have_openmp and not node.map.unroll and i == len(node.map.range) - 1
+                        and node.map.schedule == dtypes.ScheduleType.Sequential
+                        and self.renders_simd(sdfg, state_dfg, node)):
+                    pragma = "#pragma omp simd"
+                    will_have_openmp = True
+
                 comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)
                 init = '%s %s = %s' % (loop_ctypes[i], var, cpp.sym2cpp(begin))
                 if hoist_loop_decls(node, will_have_openmp):
@@ -3800,6 +3864,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # what bounds it (experimental keeps that brace when hoisting).
                     result.write('%s;\n' % init, cfg, state_id, node)
                     init = ''
+                if pragma is not None:
+                    # ``#pragma omp simd`` must immediately precede the ``for``; ``None`` means
+                    # ``MarkSIMDMaps`` did not mark this map.
+                    result.write(pragma, cfg, state_id, node)
                 result.write(
                     "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),
                     cfg,

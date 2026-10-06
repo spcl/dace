@@ -68,11 +68,10 @@ def transpose_sdfg(name):
     sdfg.add_array('C', [N, N], dace.float64)
     st = sdfg.add_state('main')
     ra, wc = st.add_read('A'), st.add_write('C')
-    outer_entry, outer_exit = st.add_map('mi', {'i': '0:N'}, schedule=dace.ScheduleType.Sequential)
-    inner_entry, inner_exit = st.add_map('mj', {'j': '0:N'}, schedule=dace.ScheduleType.Sequential)
+    entry, exit_node = st.add_map('m', {'i': '0:N', 'j': '0:N'}, schedule=dace.ScheduleType.Sequential)
     tasklet = st.add_tasklet('t', {'a'}, {'c'}, 'c = a')
-    st.add_memlet_path(ra, outer_entry, inner_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[j, i]'))
-    st.add_memlet_path(tasklet, inner_exit, outer_exit, wc, src_conn='c', memlet=dace.Memlet('C[i, j]'))
+    st.add_memlet_path(ra, entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[j, i]'))
+    st.add_memlet_path(tasklet, exit_node, wc, src_conn='c', memlet=dace.Memlet('C[i, j]'))
     sdfg.validate()
     return sdfg
 
@@ -174,7 +173,8 @@ def test_stencil_multi_cursor_runs_bit_identical():
 
 
 def test_transpose_walks_each_side_with_its_own_stride():
-    """The ``C[i,j] = A[j,i]`` nest reaches ptr_increment as a 1-D inner loop and IS walked -- with a
+    """``MarkSIMDMaps`` gives the innermost dimension a map of its own, so the 2-D
+    ``C[i,j] = A[j,i]`` nest reaches ptr_increment as a 1-D inner loop and IS walked -- with a
     cursor per side, each advancing by that side's own stride (``C`` contiguous in ``j``, ``A``
     strided by ``N``). Correctness of the walked values is ``test_transpose_runs_bit_identical``."""
     code = generate(transpose_sdfg, 'tr_codegen', EXPERIMENTAL, 'ptr_increment')
