@@ -595,13 +595,6 @@ def configure_and_compile(
         folder_mode = Config.get('compiler.build_folder_mode')
     assert folder_mode in ["development", "production"]
 
-    # Rejected before any folder is made or any code compiled, so a typo'd mode cannot silently
-    # fall back to the other backend after doing half the work.
-    build_mode = Config.get('compiler', 'build_mode').strip().lower()
-    if build_mode not in ('cmake', 'native'):
-        raise cgx.CompilerConfigurationError(
-            f"Unknown compiler.build_mode {Config.get('compiler', 'build_mode')!r}; expected 'cmake' or 'native'.")
-
     if program_name is None:
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
@@ -643,32 +636,19 @@ def configure_and_compile(
         elif '/MT' not in os.environ['_CL_']:
             os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
-    # Resolve the environments the SDFG uses; both build backends take their flags from these.
+    # Resolve the environments the SDFG uses; the build takes its flags from these.
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
         environments = set(l.strip() for l in f)
     environments = dace.library.get_environments_and_dependencies(environments)
 
-    # Build the shared library either directly (native) or through CMake. Both write it to the same
-    # development-mode location that the shared tail below expects.
-    if build_mode == 'native':
-        # Lazy: native_compiler imports from this module, so a top-level import would be a cycle.
-        from dace.codegen import native_compiler
-        native_compiler.build_native(program_folder=program_folder,
-                                     program_name=program_name,
-                                     files=files,
-                                     targets=targets,
-                                     environments=environments,
-                                     build_folder=build_folder,
-                                     output_stream=output_stream)
-    else:
-        cmake_configure_and_build(program_folder=program_folder,
-                                  program_name=program_name,
-                                  src_folder=src_folder,
-                                  build_folder=build_folder,
-                                  files=files,
-                                  targets=targets,
-                                  environments=environments,
-                                  output_stream=output_stream)
+    cmake_configure_and_build(program_folder=program_folder,
+                              program_name=program_name,
+                              src_folder=src_folder,
+                              build_folder=build_folder,
+                              files=files,
+                              targets=targets,
+                              environments=environments,
+                              output_stream=output_stream)
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.
@@ -700,7 +680,7 @@ def cmake_configure_and_build(
     environments,
     output_stream=None,
 ) -> None:
-    """Configure and build a prepared program folder with CMake (the default ``build_mode``).
+    """Configure and build a prepared program folder with CMake.
 
     :param files: source paths relative to ``<program_folder>/src`` (from ``dace_files.csv``).
     :param targets: ``{target name: TargetCodeGenerator}`` for the linkable sources.
@@ -747,7 +727,7 @@ def cmake_configure_and_build(
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
-    # Additive static archive next to the .so (opt-in; matches native build mode). Part of the
+    # Additive static archive next to the .so (opt-in). Part of the
     # command ``shape`` below, so a static-archive build never reuses a non-archive recording.
     cmake_command.append(
         "-DDACE_STATIC_ARCHIVE={}".format("ON" if Config.get_bool('compiler', 'static_archive') else "OFF"))
@@ -1213,10 +1193,9 @@ def build_subprocess_sigmask() -> Iterator[None]:
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    # Every build subprocess is forked here -- CMake configure/build and the native backend's
-    # compile/link lines alike -- so both launcher safeguards belong at this one point rather than
-    # at each call site, where a new caller silently reintroduces the hang. Only the fork itself has
-    # to happen inside the sigmask context.
+    # Every build subprocess is forked here -- CMake configure and build alike -- so both launcher
+    # safeguards belong at this one point rather than at each call site, where a new caller silently
+    # reintroduces the hang. Only the fork itself has to happen inside the sigmask context.
     kwargs['env'] = build_subprocess_env(kwargs.get('env'))
     with build_subprocess_sigmask():
         process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)

@@ -14,7 +14,7 @@ The fixtures build the device programs DIRECTLY -- ``GPU_Global`` arrays and map
 ``apply_gpu_transformations``. That is exactly the shape a lifted child has (a standalone kernel over
 device pointers), it keeps the nestedness the test intends, and the device arguments are passed as
 cupy arrays at call time. Coverage: flat sibling kernels, a kernel inside a top-level loop, and a
-host/device hybrid, x both builders (``cmake`` / ``native``).
+host/device hybrid.
 """
 import re
 
@@ -186,21 +186,19 @@ def test_external_call_emitted():
 
 
 # #
-# Compile + run tests (need a GPU) -- correctness vs the single-TU build, both builders.
+# Compile + run tests (need a GPU) -- correctness vs the single-TU build.
 # #
 @pytest.mark.gpu
-@pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_two_siblings_run_matches_single_tu(build_mode):
+def test_two_siblings_run_matches_single_tu():
     """The split library must LINK (child extern-C entry points resolve in-binary) and compute exactly
-    what the single-TU build computes -- under both the cmake and native builders."""
+    what the single-TU build computes."""
     rng = np.random.default_rng(0)
     A = rng.random(256)
     outputs = {}
     for on in (False, True):
-        sdfg = two_sibling_kernels(f"run_{build_mode}_{int(on)}")
+        sdfg = two_sibling_kernels(f"run_{int(on)}")
         B, C = device_array(np.zeros(256)), device_array(np.zeros(256))
         with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary("compiler", "build_mode", value=build_mode), \
              dace.config.set_temporary(*EXT_TU_KEY, value=on):
             sdfg.compile()(A=device_array(A), B=B, C=C)
         outputs[on] = (to_host(B), to_host(C))
@@ -211,17 +209,15 @@ def test_two_siblings_run_matches_single_tu(build_mode):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_loop_nested_run(build_mode):
+def test_loop_nested_run():
     """The lifted loop-child must link + run: final value is the last iteration (t=3), matching single-TU."""
     rng = np.random.default_rng(1)
     A = rng.random(256)
     outs = {}
     for on in (False, True):
-        sdfg = kernel_in_loop(f"loop_run_{build_mode}_{int(on)}")
+        sdfg = kernel_in_loop(f"loop_run_{int(on)}")
         B = device_array(np.zeros(256))
         with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary("compiler", "build_mode", value=build_mode), \
              dace.config.set_temporary(*EXT_TU_KEY, value=on):
             sdfg.compile()(A=device_array(A), B=B)
         outs[on] = to_host(B)
@@ -230,20 +226,18 @@ def test_loop_nested_run(build_mode):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("build_mode", ["cmake", "native"])
-def test_hybrid_run(build_mode):
+def test_hybrid_run():
     """Hybrid host+device program links + runs: the host (CPU) map and the lifted GPU child both
-    compute, and both match the single-TU build, under either builder."""
+    compute, and both match the single-TU build."""
     rng = np.random.default_rng(2)
     A = rng.random(256)
     C = rng.random(256)
     outs = {}
     for on in (False, True):
-        sdfg = hybrid_cpu_gpu(f"hybrid_run_{build_mode}_{int(on)}")
+        sdfg = hybrid_cpu_gpu(f"hybrid_run_{int(on)}")
         B = np.zeros(256)  # host output
         D = device_array(np.zeros(256))  # device output
         with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary("compiler", "build_mode", value=build_mode), \
              dace.config.set_temporary(*EXT_TU_KEY, value=on):
             sdfg.compile()(A=A.copy(), B=B, C=device_array(C), D=D)
         outs[on] = (to_host(B), to_host(D))
@@ -259,7 +253,6 @@ if __name__ == "__main__":
     test_loop_nested_one_kernel_cu()
     test_hybrid_only_gpu_externalized()
     test_external_call_emitted()
-    for mode in ("cmake", "native"):
-        test_two_siblings_run_matches_single_tu(mode)
-        test_loop_nested_run(mode)
-        test_hybrid_run(mode)
+    test_two_siblings_run_matches_single_tu()
+    test_loop_nested_run()
+    test_hybrid_run()
