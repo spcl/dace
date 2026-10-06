@@ -329,16 +329,29 @@ def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
 
 
 def test_in_state_seed_is_written_before_the_reduction_map():
+    """``s[0] = 5; for i in map: s[0] += a[i]; c[0] = 2 * s[0]`` with the seed in the map's state, which the
+    frontend no longer fuses into one state."""
+    sdfg = dace.SDFG("seed_reduce_read")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    state = sdfg.add_state()
+    seed = state.add_tasklet("seed", {}, {"__o"}, "__o = 5.0")
+    s_init = state.add_access("s")
+    state.add_edge(seed, "__o", s_init, None, dace.Memlet("s[0]"))
+    s_out = state.add_write("s")
+    _, me, _ = state.add_mapped_tasklet("acc", {"i": "0:8"}, {"__a": dace.Memlet("a[i]")},
+                                        "__o = __a", {"__o": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+                                        output_nodes={"s": s_out},
+                                        external_edges=True)
+    state.add_nedge(s_init, me, dace.Memlet())
+    double = state.add_tasklet("double", {"__s"}, {"__c"}, "__c = __s * 2.0")
+    state.add_edge(s_out, None, double, "__s", dace.Memlet("s[0]"))
+    state.add_edge(double, "__c", state.add_write("c"), None, dace.Memlet("c[0]"))
+    sdfg.validate()
 
-    @dace.program
-    def seed_reduce_read(a: dace.float64[8], s: dace.float64[1], c: dace.float64[1]):
-        s[0] = 5.0
-        for i in dace.map[0:8]:
-            s[0] += a[i]
-        c[0] = s[0] * 2.0
-
-    sdfg = seed_reduce_read.to_sdfg(simplify=True)
     assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
     s, c = np.ones(1), np.zeros(1)
     sdfg(a=np.arange(8.0), s=s, c=c)
     assert c[0] == 66.0
