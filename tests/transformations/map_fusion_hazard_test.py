@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
 
@@ -213,6 +214,7 @@ def _make_inout_split_sdfg() -> dace.SDFG:
     second_exit.add_out_connector("OUT_B")
     state.add_edge(consumer, "o", second_exit, "IN_B", dace.Memlet(data="B", subset="j"))
     state.add_edge(second_exit, "OUT_B", state.add_access("B"), None, dace.Memlet(data="B", subset=f"0:{N}"))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

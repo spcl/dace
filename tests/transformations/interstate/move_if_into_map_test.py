@@ -11,6 +11,7 @@ import copy
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveIfIntoMap
@@ -276,6 +277,7 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     ostate.add_edge(mid_node, "A_out", OX, "IN_A_out", mm.Memlet("A_out[0:M, 0:N]"))
     ostate.add_edge(OX, "OUT_A_out", AW, None, mm.Memlet("A_out[0:M, 0:N]"))
 
+    convert_legacy_nested_sdfgs(outer)
     outer.validate()
 
     # The offending pre-transform edge: _if_cond_24 is assigned AND would be
@@ -392,6 +394,7 @@ def test_move_if_into_map_with_an_implicit_region_entry():
     # What canonicalize leaves behind: one source, so the entry is derivable and not stored.
     mid._start_block = None
     mid._cached_start_block = None
+    convert_legacy_nested_sdfgs(outer)
     outer.validate()
 
     applied = outer.apply_transformations_repeated(MoveIfIntoMap)

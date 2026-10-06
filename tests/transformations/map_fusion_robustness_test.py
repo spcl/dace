@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Tuple
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import subsets
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
@@ -382,6 +383,7 @@ def test_nested_sdfg_body_does_not_crash(xform, recwarn):
         state.add_edge(nested, 'bo', edge.dst, edge.dst_conn, dace.Memlet('B[j]'))
         state.remove_edge(edge)
     state.remove_node(old)
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     applied, swallowed = apply_and_collect(sdfg, xform, recwarn)
     assert not swallowed

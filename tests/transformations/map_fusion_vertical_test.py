@@ -4,6 +4,7 @@ from typing import Any, Union, Tuple, Type, Optional, List, Dict
 import numpy as np
 import os
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import copy
 import uuid
 import pytest
@@ -3256,6 +3257,7 @@ def test_map_fusion_inout_connector_intermediate_rename_consistency():
     state.add_memlet_path(a_inter, me2, t2, dst_conn='_a', memlet=dace.Memlet(data='a', subset='i'))
     state.add_memlet_path(t2, mx2, b_dst, src_conn='_b', memlet=dace.Memlet(data='b', subset='i'))
 
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     # Numeric oracle: capture pre-fuse output, then optionally re-run post-fuse.
@@ -3532,6 +3534,7 @@ def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
     s1.add_edge(mx2, "OUT_1", b1, None, dace.Memlet("B[0:N]"))
 
     sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -3659,6 +3662,7 @@ def _make_nsdfg_producer_shared_intermediate_sdfg(inner_mark: SDFG) -> SDFG:
     state.add_edge(search_exit, "OUT_1", b_node, None, dace.Memlet("B[0:N]"))
 
     sdfg.add_edge(init_state, state, dace.InterstateEdge())
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

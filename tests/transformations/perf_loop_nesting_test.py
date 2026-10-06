@@ -8,6 +8,7 @@ a NumPy reference to verify the transform is semantically sound.
 """
 import numpy as np
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import dtypes, memlet as mm, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.interstate import LoopToMap, StateFusion
@@ -196,6 +197,7 @@ def test_two_state_nested_sdfg_is_rejected():
     ostate.add_edge(ns, "b_out", px, "IN_b_out", mm.Memlet("B_out[j, 0:N]"))
     ostate.add_edge(px, "OUT_a_out", Aw, None, mm.Memlet("A_out[0:M, 0:N]"))
     ostate.add_edge(px, "OUT_b_out", Bw, None, mm.Memlet("B_out[0:M, 0:N]"))
+    convert_legacy_nested_sdfgs(outer)
     outer.validate()
 
     applied = outer.apply_transformations_repeated(PerfLoopNesting)

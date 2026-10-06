@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 
@@ -60,6 +61,7 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
                           state.add_write("C"),
                           src_conn="c",
                           memlet=dace.Memlet(cbound, wcr="lambda x, y: x + y"))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
