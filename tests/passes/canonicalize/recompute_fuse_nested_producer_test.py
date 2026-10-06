@@ -10,6 +10,7 @@ to decline outright when the producer's write does not pin the parameter down at
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.finalize import recompute_fuse_for_gpu
@@ -58,6 +59,7 @@ def producer_consumer_sdfg(whole_range: bool) -> dace.SDFG:
         state.add_memlet_path(src_node, entry, body, dst_conn='src', memlet=Memlet(f'{src}[{subset}]'))
         state.add_memlet_path(body, exit_node, dst_node, src_conn='dst', memlet=Memlet(f'{dst}[{subset}]'))
 
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

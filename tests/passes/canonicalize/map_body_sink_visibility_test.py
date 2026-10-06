@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import dtypes
 from dace.libraries.blas.nodes.symm import Symm
 from dace.libraries.linalg.nodes.inv import Inv
@@ -108,6 +109,7 @@ def rebinding_map(begin: int, extent: int) -> Tuple[SDFG, nodes.MapEntry]:
     state.add_memlet_path(read, entry, nested, dst_conn="iin", memlet=Memlet(f"A[0:{extent}]"))
     state.add_memlet_path(nested, exit_node, state.add_access("B"), src_conn="iout", memlet=Memlet("B[i]"))
     plant_write_only_scratch(sdfg, state, entry)
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, entry
 
@@ -142,6 +144,7 @@ def map_of_sibling_nsdfgs(siblings: int, with_scratch: bool) -> Tuple[SDFG, SDFG
                               memlet=Memlet(f"{out_name}[i]"))
     if with_scratch:
         plant_write_only_scratch(sdfg, state, entry)
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, state, entry
 

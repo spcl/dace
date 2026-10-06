@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -53,6 +54,7 @@ def map_chain_with_nested_sdfgs(width: int = 1) -> dace.SDFG:
         state.add_memlet_path(source, entry, nsdfg, dst_conn='x', memlet=dace.Memlet(f'{names[k - 1]}[{row}]'))
         state.add_memlet_path(nsdfg, exit_node, target, src_conn='y', memlet=dace.Memlet(f'{names[k]}[{row}]'))
         source = target
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

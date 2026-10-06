@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.codegen.codegen import generate_code
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
 
@@ -292,6 +293,7 @@ def _scan_in_nested_sdfg_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
                           state.add_write('arr_out'),
                           src_conn='ro',
                           memlet=dace.Memlet(f'arr_out[r, 0:{n}]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

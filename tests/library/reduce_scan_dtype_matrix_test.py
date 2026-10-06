@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import memlet as mm
 from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
@@ -151,6 +152,7 @@ def _sequential_sdfg(dtype, op):
     nested = state.add_nested_sdfg(inner, {'ri': None}, {'ro': None})
     state.add_memlet_path(state.add_read('A'), entry, nested, dst_conn='ri', memlet=mm.Memlet('A[i, 0:N]'))
     state.add_memlet_path(nested, exit_, state.add_write('B'), src_conn='ro', memlet=mm.Memlet('B[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

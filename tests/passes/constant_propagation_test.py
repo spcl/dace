@@ -2,6 +2,7 @@
 
 import pytest
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -658,6 +659,7 @@ def nest_with_a_string_symbol_mapping() -> dace.SDFG:
     # Item assignment is how a string gets in. The constructor coerces the value; a pass that rewrites
     # the mapping in place bypasses it.
     nest.symbol_mapping['stride'] = 'rows * cols'
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

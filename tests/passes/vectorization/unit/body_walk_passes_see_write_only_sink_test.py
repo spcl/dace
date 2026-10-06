@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import SDFGState, nodes
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.vectorization.lift_map_reduction import (LiftMapReductionToReduce, _pure_wcr_map_ok)
@@ -434,6 +435,7 @@ def test_an_opaque_body_nest_carrying_a_scalar_accumulator_is_recognized_as_a_re
     state.add_memlet_path(state.add_access('A'), me, ns, dst_conn='a', memlet=dace.Memlet('A[i]'))
     state.add_memlet_path(state.add_access('acc'), me, ns, dst_conn='acc_in', memlet=dace.Memlet('acc[0]'))
     state.add_memlet_path(ns, mx, state.add_access('acc'), src_conn='acc_out', memlet=dace.Memlet('acc[0]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     info = recognize_map_reduction(state, me)
 

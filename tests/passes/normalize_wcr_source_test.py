@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 
@@ -53,6 +54,7 @@ def _build_nsdfg_wcr_sum(n: int) -> dace.SDFG:
                           acc_write,
                           src_conn='_out',
                           memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -241,6 +243,7 @@ def _build_nsdfg_inout_wcr_sdfg() -> dace.SDFG:
     state.add_memlet_path(out_in, me, n, dst_conn='out', memlet=dace.Memlet('out[i]'))
     state.add_memlet_path(src_in, me, n, dst_conn='src', memlet=dace.Memlet('src[i]'))
     state.add_memlet_path(n, mx, out_out, src_conn='out', memlet=dace.Memlet('out[i]', wcr='lambda a, b: a + b'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -526,6 +529,7 @@ def _build_nsdfg_accumulating_connector_sdfg(n: int) -> dace.SDFG:
                           out_w,
                           src_conn='acc',
                           memlet=dace.Memlet(data='out', subset=f'i, 0:{n}', wcr='lambda a, b: a + b'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

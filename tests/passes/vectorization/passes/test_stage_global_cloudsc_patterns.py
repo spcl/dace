@@ -35,6 +35,7 @@ chain):
 import copy
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import numpy as np
 from dace.memlet import Memlet
 
@@ -207,6 +208,7 @@ def _build_inmap_multi_state_propagation(N: int = 8):
     state.add_memlet_path(nsdfg_node, mx, state.add_access("A"), src_conn="A_io", memlet=Memlet("A[i]"))
 
     sdfg.specialize({"N": N})
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -313,6 +315,7 @@ def _build_nsdfg_single_bridge(N: int = 8):
     state.add_memlet_path(nsdfg_node, mx, state.add_access("A"), src_conn="A_io", memlet=Memlet("A[i]"))
 
     sdfg.specialize({"N": N})
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

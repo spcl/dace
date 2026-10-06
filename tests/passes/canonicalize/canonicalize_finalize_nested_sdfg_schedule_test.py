@@ -17,6 +17,7 @@ already walks OUT across every nested-SDFG boundary to the root and yields every
 by the loop that follows -- the "Sequential nested SDFG" case was never a distinct one to probe.
 """
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.canonicalize.finalize import libnode_is_sequential
@@ -57,6 +58,7 @@ def _build_nested_reduce_in_parallel_map():
     state.add_memlet_path(a_access, map_entry, nsdfg_node, dst_conn='row', memlet=dace.Memlet('A[i, 0:8]'))
     state.add_memlet_path(nsdfg_node, map_exit, b_access, src_conn='acc', memlet=dace.Memlet('B[i:i+1]'))
 
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, reduce_node
 

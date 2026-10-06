@@ -39,6 +39,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.config import set_temporary
 from dace import nodes
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
@@ -147,6 +148,7 @@ def build_scatter(schedule, wcr: str = 'lambda x, y: (x + y)') -> dace.SDFG:
     mx.add_out_connector('OUT_acc')
     st.add_edge(node, 'oc', mx, 'IN_acc', dace.Memlet(data='acc', subset='0:bins'))
     st.add_edge(mx, 'OUT_acc', st.add_write('acc'), None, dace.Memlet(data='acc', subset='0:bins'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -195,6 +197,7 @@ def build_self_ref_via_view() -> dace.SDFG:
     mx.add_out_connector('OUT_acc')
     st.add_edge(node, 'oc', mx, 'IN_acc', dace.Memlet(data='acc', subset='0:bins'))
     st.add_edge(mx, 'OUT_acc', st.add_write('acc'), None, dace.Memlet(data='acc', subset='0:bins'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

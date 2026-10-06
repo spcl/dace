@@ -6,6 +6,7 @@ and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
 """
 import functools
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import numpy
 import pytest
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -694,6 +695,7 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
         inputs={"_in": dace.memlet.Memlet("zcovptot[i]")},
         outputs={"_out": dace.memlet.Memlet("pcovptot[i, _for_it_0]" if full_inner_range else "pcovptot[i]")},
     )
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

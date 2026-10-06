@@ -9,6 +9,7 @@ import copy
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.interstate import InlineSDFG
@@ -113,6 +114,7 @@ def two_mapped_bodies_in_one_state() -> dace.SDFG:
         body = state.add_nested_sdfg(scalar_body(factor), {'x': None}, {'y': None})
         state.add_memlet_path(src, entry, body, dst_conn='x', memlet=dace.Memlet(f'{src.data}[i]'))
         state.add_memlet_path(body, exit_node, dst, src_conn='y', memlet=dace.Memlet(f'{dst.data}[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

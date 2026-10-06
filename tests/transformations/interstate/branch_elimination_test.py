@@ -2,6 +2,7 @@ import copy
 import functools
 import numpy as np
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import pytest
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
@@ -1976,6 +1977,7 @@ def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
         o_s1.add_edge(nsdfg, inner_name, o_s1.add_access(outer_name), None,
                       dace.memlet.Memlet(f"{outer_name}{access_str}"))
 
+    convert_legacy_nested_sdfgs(outer_sdfg)
     outer_sdfg.validate()
     return outer_sdfg
 

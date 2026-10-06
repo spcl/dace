@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.sdfg.state import LoopRegion
@@ -210,6 +211,7 @@ def test_expand_terminates_on_wcr_reduction_out_edge():
                        st.add_write("out"),
                        src_conn="o",
                        memlet=dace.Memlet("out[i]", wcr="lambda x, y: x + y"))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     # The WCR out-edge is apply's no-widen set, so this is a fixed point already:

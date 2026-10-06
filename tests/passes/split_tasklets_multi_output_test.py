@@ -30,6 +30,7 @@ import networkx as nx
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
 
@@ -700,6 +701,7 @@ def build_nested_two_output() -> dace.SDFG:
     state.add_memlet_path(state.add_read('a'), map_entry, nested, dst_conn='x', memlet=dace.Memlet('a[i]'))
     state.add_memlet_path(nested, map_exit, state.add_write('b'), src_conn='y', memlet=dace.Memlet('b[i]'))
     state.add_memlet_path(nested, map_exit, state.add_write('c'), src_conn='z', memlet=dace.Memlet('c[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

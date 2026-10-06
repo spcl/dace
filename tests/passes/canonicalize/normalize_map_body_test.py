@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
@@ -152,6 +153,7 @@ def test_merge_siblings_data_vs_connector_name_collision():
     state.add_memlet_path(rd, me, nB, dst_conn='x', memlet=dace.Memlet('X[i]'))
     state.add_memlet_path(nA, mx, state.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
     state.add_memlet_path(nB, mx, state.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, 'the two siblings should merge'
@@ -275,6 +277,7 @@ def test_data_dependent_siblings_merge_without_a_cycle():
     that ordering edge instead.
     """
     sdfg = _producer_consumer_siblings()
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
@@ -352,6 +355,7 @@ def test_ordering_memlet_into_sibling_keeps_no_connector():
     """An ordering (empty) memlet into the dropped sibling must move over WITHOUT a connector."""
     n = 8
     sdfg = _sibling_nsdfgs_with_ordering_edge(n)
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
@@ -413,6 +417,7 @@ def outer_map_over_two_inner_maps() -> tuple:
                               state.add_write(name),
                               src_conn='o',
                               memlet=dace.Memlet(name + '[j]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, state
 
@@ -482,6 +487,7 @@ def guarded_siblings_sdfg(maps: int, siblings: int) -> dace.SDFG:
                                          {'o'})
             state.add_memlet_path(rd, me, body, dst_conn='x', memlet=dace.Memlet('X[i]'))
             state.add_memlet_path(body, mx, state.add_write(out), src_conn='o', memlet=dace.Memlet(f'{out}[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

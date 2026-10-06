@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -123,6 +124,7 @@ def _build_nested_map_scatter_sdfg():
     body.add_edge(a_idx, None, nnode, 'idx_in', Memlet('idx[i]'))
     # Data-dependent write: a single element (volume 1) scattered into 0:N.
     body.add_edge(nnode, 'dst_out', a_dst, None, Memlet(data='dst', subset='0:N', volume=1))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

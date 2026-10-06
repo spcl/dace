@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
@@ -287,6 +288,7 @@ def test_unroll_loop_body_with_nested_sdfg():
     nsdfg_node = body.add_nested_sdfg(nsdfg, set(), {"y"}, symbol_mapping={"ii": "i"})
     body.add_edge(nsdfg_node, "y", body.add_access("A"), None, Memlet(expr="A[i]"))
 
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
     sdfg.validate()  # would raise 'Parent SDFG not properly set' if the deepcopy left it detached

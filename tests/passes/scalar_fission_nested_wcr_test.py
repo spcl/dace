@@ -9,6 +9,7 @@ conditional sum accumulated into a persistent device scalar: 1x, 2x, 3x over rep
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.scalar_fission import ScalarFission
@@ -46,6 +47,7 @@ def zero_then_map_accumulate() -> dace.SDFG:
     tasklet = copy.add_tasklet('copy', ['x'], ['y'], 'y = x')
     copy.add_edge(copy.add_read('s'), None, tasklet, 'x', dace.Memlet('s[0]'))
     copy.add_edge(tasklet, 'y', copy.add_write('out'), None, dace.Memlet('out[0]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 

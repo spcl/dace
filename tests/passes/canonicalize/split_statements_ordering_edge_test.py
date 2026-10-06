@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
 
@@ -103,6 +104,7 @@ def test_a_body_that_goes_through_a_view_is_not_split():
     st.add_edge(st.add_access("A"), None, nsdfg, "a", dace.Memlet("A[0:4]"))
     st.add_edge(nsdfg, "b", st.add_access("B"), None, dace.Memlet("B[0]"))
     st.add_edge(nsdfg, "c", st.add_access("C"), None, dace.Memlet("C[0]"))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     assert SplitStatements._independent_output_groups(st, nsdfg) is None
