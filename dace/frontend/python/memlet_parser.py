@@ -96,7 +96,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
-            dim = ast.Name(id=dim, ctx=ast.Load())
+            dim = ast.Name(id=dim)
 
         if isinstance(dim, tuple):
             rb = _parse_dim_atom(das, dim[0] or 0)
