@@ -18,11 +18,6 @@ from dace.frontend.python.newast import ProgramVisitor
 N = dace.symbol('N')
 
 
-def run(program, **arguments):
-    """Runs the program as the frontend built it; where simplify() places an allocation is not what is tested."""
-    program.to_sdfg(simplify=False)(**arguments)
-
-
 @dace.program
 def size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
     b = np.empty(Nt + 1, dace.float64)
@@ -84,7 +79,7 @@ def test_scalar_size_as_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    run(size_from_empty, a=a, Nt=np.int64(nt), out=out, N=n)
+    size_from_empty(a, np.int64(nt), out, N=n)
     assert np.allclose(out, a * 2.0)
 
 
@@ -93,7 +88,7 @@ def test_size_descriptor_survives_its_use_as_a_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    run(size_read_after_use, a=a, Nt=np.int64(nt), out=out, N=n)
+    size_read_after_use(a, np.int64(nt), out, N=n)
     assert np.allclose(out, a + (nt + 1))
 
 
@@ -101,7 +96,7 @@ def test_size_can_be_reassigned_after_use_as_a_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
     out = np.zeros(n)
-    run(size_reassigned_after_use, a=a, Nt=np.int64(nt), out=out, N=n)
+    size_reassigned_after_use(a, np.int64(nt), out, N=n)
     assert np.allclose(out, a + 99)
 
 
@@ -111,7 +106,7 @@ def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
     A single shared symbol gave both the last value written, so ``np.sum(b)`` returned 2.0 not 64.0.
     """
     out = np.zeros(1)
-    run(two_arrays_from_reassigned_size, Nt=np.int64(64), out=out)
+    two_arrays_from_reassigned_size(np.int64(64), out)
     assert np.isclose(out[0], 64.0)
 
 
@@ -122,7 +117,7 @@ def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
     and the access goes out of bounds.
     """
     out = np.zeros(1)
-    run(size_reused_as_index, out=out)
+    size_reused_as_index(out)
     assert np.isclose(out[0], 2.0)
 
 
@@ -140,11 +135,53 @@ def test_promotion_leaves_the_descriptor_in_place():
     sdfg.validate()
 
 
+def test_shape_stays_correct_through_simplify():
+    """simplify() may rewrite the promotion, but the array must keep the right extent either way.
+
+    Run once unsimplified and once simplified; both must agree with numpy.
+    """
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    for simplify in (False, True):
+        sdfg = size_from_empty.to_sdfg(simplify=simplify)
+        out = np.zeros(n)
+        sdfg(a=a, Nt=np.int64(nt), out=out, N=n)
+        assert np.allclose(out, a * 2.0), f'wrong result with simplify={simplify}'
+
+
 def test_a_size_one_array_is_read_through_a_subscript():
     """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
     out = np.zeros(4)
-    run(size_from_size_one_array, nt=np.array([4], dtype=np.int64), out=out)
+    size_from_size_one_array(np.array([4], dtype=np.int64), out)
     assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
+
+
+@dace.program
+def size_from_empty_into_a_branch(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    b = np.empty(Nt + 1, dace.float64)  # promoted before the branch, so the assignment enters it
+    if Nt > 2:
+        for i in range(N):
+            b[i] = a[i] * 2.0
+        for i in range(N):
+            out[i] = b[i]
+    else:
+        for i in range(N):
+            out[i] = 0.0
+
+
+@dace.program
+def calls_size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    size_from_empty(a, Nt, out)
+
+
+@pytest.mark.parametrize('program', [size_from_empty_into_a_branch, calls_size_from_empty])
+def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program):
+    """The promoted size reaches a conditional, or a nested SDFG's loops, on the edge entering it."""
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    program(a=a, Nt=np.int64(nt), out=out)
+    assert np.allclose(out, a * 2.0)
 
 
 @dace.program
@@ -163,7 +200,7 @@ def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
 def test_the_fill_constructors_accept_a_computed_size(program, expected):
     """zeros/ones/full build their transient on their own path, which also has to promote the size."""
     out = np.zeros(1)
-    run(program, Nt=np.int64(3), out=out)
+    program(np.int64(3), out)
     assert np.isclose(out[0], expected)
 
 
@@ -261,10 +298,10 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
 
 
 def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
-    """A name the preprocessing builds may lack ``ctx``, and it is still a write: the loop must drop that size's shape
-    version, and keep the one of a size it only reads."""
+    """A name the preprocessing builds may lack ``ctx`` (on Python 3.12 the attribute is missing), and it is still a
+    write: the loop must drop that size's shape version, and keep the one of a size it only reads."""
     target = ast.Name(id='n')
-    vars(target).pop('ctx', None)  # Python >= 3.13 fills a default ``Load()``, older versions leave it unset
+    vars(target).pop('ctx', None)  # Python 3.13+ fills in a default ctx; 3.12 leaves it out
     loop = ast.parse('for i in range(m):\n    n = n + 1').body[0]
     loop.body[0].targets = [target]
     visitor = types.SimpleNamespace(shape_promotions={'n': 'n_version', 'm': 'm_version'}, variables={})
@@ -272,19 +309,44 @@ def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
     assert visitor.shape_promotions == {'m': 'm_version'}
 
 
+def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
+    """``px[:nlp, i] = seed[:, i]`` in a loop writes ``px``, not ``nlp``: the slice reads the symbol ``seed`` was
+    sized by, so the copy's extents match (cp2k_grid_integrate in HPCAgent-Bench)."""
+
+    @dace.program
+    def store_in_a_loop(lmax: dace.int32[N], px: dace.float64[5, 4]):
+        for t in range(N):
+            nlp = int(lmax[t]) + 1
+            seed = np.full((nlp, 4), 1.0)
+            for i in range(4):
+                px[:nlp, i] = seed[:, i] + t
+
+    lmax = np.array([1, 3, 2], dtype=np.int32)
+    px = np.zeros((5, 4))
+    store_in_a_loop(lmax, px)
+    expected = np.zeros((5, 4))
+    for t, n in enumerate(lmax + 1):
+        expected[:n, :] = 1.0 + t
+    assert np.allclose(px, expected), px
+
+
 if __name__ == '__main__':
+    test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
     test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
-    test_two_arrays_from_one_size_share_their_extent()
-    test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_a_slice_bounded_by_a_size_shares_its_extent()
+    test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
+    test_two_arrays_from_one_size_share_their_extent()
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
     test_size_can_be_reassigned_after_use_as_a_shape()
     test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
     test_a_size_reused_as_an_index_does_not_rebind_the_extent()
     test_promotion_leaves_the_descriptor_in_place()
+    test_shape_stays_correct_through_simplify()
     test_a_size_one_array_is_read_through_a_subscript()
     test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)

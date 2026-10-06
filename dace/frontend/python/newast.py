@@ -347,6 +347,17 @@ def _connected_container(dependency: Union[Memlet, nodes.Tasklet], connector: st
 ###############################################################
 
 
+def bound_names(target: ast.AST) -> Set[str]:
+    """The names an assignment target writes: ``a[i:n] = ...`` writes ``a``, never the ``i`` or ``n`` it is indexed by."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(bound_names(element) for element in target.elts))
+    if isinstance(target, (ast.Starred, ast.Subscript, ast.Attribute)):
+        return bound_names(target.value)
+    return set()
+
+
 def is_affine_in(expr, sym) -> bool:
     """ Returns True if ``expr`` is at most linear in the symbol named like ``sym``. """
     expr = expr.expr if isinstance(expr, symbolic.SymExpr) else sympy.sympify(expr)
@@ -1069,11 +1080,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
-        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
-        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
-        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
+        #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
         self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
-        # Scalars already promoted to symbols here, so a second promotion reuses the symbol
+        #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
+        #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
         self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
 
     @classmethod
@@ -5253,7 +5264,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # We also check the type of the slice attribute of the node
             # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
             # (the former is an index, the latter is a slice).
-            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+            # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
+            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
             other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5265,7 +5277,15 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. Shift slice_dims past inserted new axes.
+        keep = set(new_axes)
+        for dim in (expr.slice_dims or []):
+            shifted = dim
+            for inserted in sorted(new_axes):
+                if inserted <= shifted:
+                    shifted += 1
+            keep.add(shifted)
+        nsqz = other_subset.squeeze(ignore_indices=sorted(keep))
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
@@ -5335,7 +5355,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 targets = [node.target]
             else:
                 continue
-            written |= {n.id for target in targets for n in ast.walk(target) if isinstance(n, ast.Name)}
+            for target in targets:
+                written |= bound_names(target)
         for name in written:
             self.shape_promotions.pop(self.variables.get(name, name), None)
 
@@ -5349,53 +5370,49 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
-    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
-        :param fresh: A shape promotion: one suffixed symbol per VERSION of the scalar, shared by every shape
-                      sized from it until the scalar is written again, so two shapes sized from the same
-                      reassigned scalar keep their own values.
+        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key it is a
+                    shape promotion: one symbol per VERSION of the scalar, shared by every shape sized from it until
+                    the scalar is written again, so two shapes sized from the same reassigned scalar keep their own
+                    values.
         :return: The symbol carrying the scalar's value.
         """
-        key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
-        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
-        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
         # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
         # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
-        version = fresh or key == scalar or self.variables.get(key) == scalar
+        version = key in (None, scalar) or self.variables.get(key) == scalar
         if version and scalar in self.shape_promotions:
             version_sym, region = self.shape_promotions[scalar]
             if self.nested_in_region(region):
-                if fresh:
+                if key is None:
                     self.globals[str(version_sym)] = version_sym
                 return version_sym
+        base = f'__sym_{scalar}'
+        # A computed index follows No-View nested SDFGs: one symbol per scalar, re-assigned at every promotion.
         sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
         if sym is None:
-            base = f'__sym_{scalar}'
             if version:
-                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
-                # reuses; a later index on the same scalar would otherwise re-bind the extent.
-                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
-                name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
+                # A minted shape symbol never takes the bare name the computed-index promotion reuses
+                name = find_new_name(base, self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base})
             else:
                 # A name that already means something else here would shadow it
-                name = base
-                if name in self.sdfg.symbols:
-                    name = find_new_name(name, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
-                self.sdfg.add_symbol(name, desc.dtype)
+                name = base if base not in self.sdfg.symbols else find_new_name(
+                    base,
+                    set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
+            self.sdfg.add_symbol(name, desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
             if not version:
                 self.promoted_scalars[scalar] = sym
                 self.indirections[key] = sym
-            elif fresh:
-                # Shape symbols must resolve inside nested scopes, which look up free symbols in
-                # ``globals``. Subscript promotions must stay out: they shadow names there.
-                self.globals[str(sym)] = sym
-        state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+            elif key is None:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in ``globals``.
+                # Subscript promotions stay out: they shadow names there.
+                self.globals[name] = sym
+        state = self._add_state(f'promote_{scalar}_to_{sym}')
         if version:
             # A call region runs once, in sequence, so its symbol holds for the rest of the caller's region.
             region = self.cfg_target

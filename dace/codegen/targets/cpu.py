@@ -258,8 +258,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode: nodes.AccessNode = mpath[-1].dst if is_write else mpath[0].src
-        self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg),
-                                           global_stream, allocation_stream)
+        viewed_desc = viewed_dnode.desc(sdfg)
+        # A declared array is allocated by the state the frame generator chose; a view in a later state must not
+        # allocate it again, or it reads a fresh buffer instead of what the earlier state wrote.
+        if not self._dispatcher.declared_arrays.has(self.ptr(viewed_dnode.data, viewed_desc, sdfg)):
+            self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, viewed_dnode, viewed_desc, global_stream,
+                                               allocation_stream)
 
         # Memlet points to view, construct mirror memlet
         memlet = edge.data

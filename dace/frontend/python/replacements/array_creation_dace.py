@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains definitions of new data containers (arrays, locals, streams) as per DaCe's API, as well as several
 array creation functions for NumPy that reuse the same functionality.
@@ -40,7 +40,7 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
         return shape, False
 
     # One symbol per distinct name; sorted() keeps the promotion states deterministic.
-    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
+    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n) for n in sorted(names)}
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved], True
 
 
