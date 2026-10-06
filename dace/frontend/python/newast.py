@@ -5430,7 +5430,18 @@ class ProgramVisitor(ExtNodeVisitor):
     def drop_shape_versions_written_in(self, loop: Union[ast.For, ast.While]):
         """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
         does not see: a shape in the body ahead of the write must read the scalar again."""
-        for name in {n.id for n in ast.walk(loop) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}:
+        # By assignment target, not by ``ctx``: a name the preprocessing builds may carry none (Python 3.12 then has
+        # no ``ctx`` attribute at all)
+        written = set()
+        for node in ast.walk(loop):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For)):
+                targets = [node.target]
+            else:
+                continue
+            written |= {n.id for target in targets for n in ast.walk(target) if isinstance(n, ast.Name)}
+        for name in written:
             self.shape_promotions.pop(self.variables.get(name, name), None)
 
     def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
