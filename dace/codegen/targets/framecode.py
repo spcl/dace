@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import collections
 import copy
 import itertools
@@ -18,6 +19,7 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
+from dace.frontend.python.astutils import rname
 from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -44,6 +46,49 @@ def _reaches_state_struct(sdfg: SDFG, states: list[SDFGState]) -> bool:
     if any(isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)) for state in states for node in state.nodes()):
         return True
     return utils.calls_opaque_code(sdfg, states)
+
+
+def _assigned_literal(edge) -> bool | int | float | None:
+    """
+    The constant that the edge writes if it comes from a tasklet without inputs whose code assigns a numeric or
+    boolean literal (possibly cast, e.g., ``float(2.0)``, or negated) to the edge's connector; None otherwise.
+    """
+    tasklet = edge.src
+    if (
+        not isinstance(tasklet, nodes.Tasklet)
+        or tasklet.in_connectors
+        or len(tasklet.out_connectors) != 1
+        or edge.data.wcr is not None
+        or tasklet.code.language != dtypes.Language.Python
+        or len(tasklet.code.code) != 1
+    ):
+        return None
+    stmt = tasklet.code.code[0]
+    if (
+        not isinstance(stmt, ast.Assign)
+        or len(stmt.targets) != 1
+        or not isinstance(stmt.targets[0], ast.Name)
+        or stmt.targets[0].id != edge.src_conn
+    ):
+        return None
+    value = stmt.value
+    # A cast to a type, e.g., ``float(2.0)`` or ``dace.float32(2.0)``
+    if isinstance(value, ast.Call):
+        if (
+            len(value.args) != 1
+            or value.keywords
+            or rname(value.func).split(".")[-1] not in set(dtypes.TYPECLASS_STRINGS) | {"float", "int", "bool"}
+        ):
+            return None
+        value = value.args[0]
+    negate = isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub)
+    if negate:
+        value = value.operand
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, (bool, int, float)):
+        return None
+    if negate:
+        return None if isinstance(value.value, bool) else -value.value
+    return value.value
 
 
 _LABEL = re.compile(r"__state_(?:exit_)?\d+(?:_\w+)?")
@@ -109,6 +154,7 @@ class DaCeCodeGenerator:
         self._symbol_types: dict[SDFG, dict[str, dtypes.typeclass]] = {}
         self._symbol_uses_cache: dict[SDFG, dict[Any, set[str]]] = {}
         self._state_local_cache: dict[SDFG, set[str]] = {}
+        self._literal_cache: dict[SDFG, dict[str, str]] = {}
         # The functions of regions in separate translation units, by their code up to names (see ``_function_key``)
         self._region_functions: dict[str, str] = {}
         self._toplevel_sdfg = sdfg
@@ -764,6 +810,42 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         self._state_local_cache[sdfg] = candidates
         return candidates
 
+    def _literal_scalars(self, sdfg: SDFG) -> dict[str, str]:
+        """
+        The transient scalars of an SDFG that are only ever assigned one literal value, mapped to that value as C++
+        code. Every write must come from a tasklet without inputs whose code assigns a numeric or boolean constant
+        (possibly cast, e.g., ``float(2.0)``, or negated). Computed once per SDFG.
+        """
+        cached = self._literal_cache.get(sdfg)
+        if cached is not None:
+            return cached
+        values: dict[str, Any] = {}
+        excluded: set[str] = set()
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                desc = sdfg.arrays.get(node.data)
+                if (
+                    not isinstance(desc, data.Scalar)
+                    or not desc.transient
+                    or desc.lifetime
+                    in (
+                        dtypes.AllocationLifetime.Persistent,
+                        dtypes.AllocationLifetime.External,
+                        dtypes.AllocationLifetime.Global,
+                    )
+                ):
+                    continue
+                for edge in state.in_edges(node):
+                    value = _assigned_literal(edge)
+                    if value is None or values.setdefault(node.data, value) != value:
+                        excluded.add(node.data)
+        literals = {}
+        for name, value in values.items():
+            if name not in excluded:
+                literals[name] = ("true" if value else "false") if isinstance(value, bool) else repr(value)
+        self._literal_cache[sdfg] = literals
+        return literals
+
     def generate_function_region(
         self,
         region: CodeGeneratorFunctionRegion,
@@ -874,6 +956,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             epilogue.append(f"__ref_{name} = {name};\n")
 
         state_local = self._state_local_scalars(sdfg)
+        literals = self._literal_scalars(sdfg)
         # Persistent data is passed as arguments (which compilers can treat as unaliased, unlike state struct members)
         # unless code in the region may reach it through the state struct by other means
         pass_persistent = region.persistent_arguments and not _reaches_state_struct(sdfg, inner_states)
@@ -893,6 +976,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             elif name in state_local:
                 # Every state that reads it writes it first, so no value flows into or out of the region
                 local_declarations.append(f"{ctype} {ptrname};\n")
+                continue
+            elif name in literals and name not in written:
+                # Only ever assigned one literal: the compiler can fold it, which an argument would prevent across
+                # translation units
+                local_declarations.append(f"const {ctype} {ptrname} = {literals[name]};\n")
                 continue
             if defined_type == disp.DefinedType.Pointer and name not in allocated_inside:
                 restrict = (
