@@ -21,6 +21,7 @@ import pytest
 import dace
 from dace import memlet as mm
 from dace.codegen.codegen import inline_host_nested_sdfgs
+from dace.sdfg import dealias
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
@@ -349,6 +350,8 @@ def _row_reduce_sdfg(schedule):
     nested = state.add_nested_sdfg(inner, {'ri'}, {'ro'})
     state.add_memlet_path(state.add_read('A'), entry, nested, dst_conn='ri', memlet=mm.Memlet('A[i, 0:16]'))
     state.add_memlet_path(nested, exit_, state.add_write('B'), src_conn='ro', memlet=mm.Memlet('B[i]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     red.schedule = schedule
     return sdfg, red

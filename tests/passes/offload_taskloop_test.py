@@ -20,6 +20,7 @@ import dace
 from dace import dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import CodeBlock
+from dace.sdfg import dealias
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -182,6 +183,8 @@ def blocked_nest() -> dace.SDFG:
                           state.add_write('B'),
                           src_conn='b',
                           memlet=dace.Memlet(f'B[jb, 0:{NPROMA}, 0:{NLEV}]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -268,6 +271,8 @@ def rows_over_a_reducing_body(side_tasklet: bool) -> dace.SDFG:
                                  input_nodes={'U': tripled},
                                  output_nodes={'C': state.add_write('C')},
                                  external_edges=True)
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -343,6 +348,8 @@ def rows_over_a_scalar_body_with_inner_reduces() -> dace.SDFG:
     state.add_memlet_path(scaled, entry, rows_body, dst_conn='blk', memlet=dace.Memlet('T[i, 0:4, 0:4]'))
     state.add_memlet_path(rows_body, exit_node, state.add_write('B'), src_conn='res', memlet=dace.Memlet('B[i, 0:4]'))
     state.add_memlet_path(rows_body, exit_node, state.add_write('F'), src_conn='flags', memlet=dace.Memlet('F[i, 0:3]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -756,6 +763,8 @@ def rows_over_a_libnode_body() -> tuple:
     state.add_memlet_path(state.add_read('A'), entry, nested, dst_conn='a', memlet=dace.Memlet('A[i, 0:16]'))
     state.add_memlet_path(state.add_read('bounds'), entry, nested, dst_conn='bounds', memlet=dace.Memlet('bounds[0:2]'))
     state.add_memlet_path(nested, exit_node, state.add_write('B'), src_conn='res', memlet=dace.Memlet('B[i]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, nested
 
@@ -801,6 +810,8 @@ def unmapped_body_over_a_kernel() -> tuple:
     state.add_edge(state.add_read('A'), None, nested, 'a', dace.Memlet('A[0:16]'))
     state.add_edge(state.add_read('bounds'), None, nested, 'bounds', dace.Memlet('bounds[0:2]'))
     state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, nested
 
@@ -831,6 +842,8 @@ def body_taking_one_element_by_scalar() -> tuple:
     state.add_edge(state.add_read('A'), None, nested, 'lim', dace.Memlet('A[3]'))
     state.add_edge(state.add_read('C'), None, nested, 'a', dace.Memlet('C[0:16]'))
     state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, nested
 
@@ -906,6 +919,8 @@ def body_with_a_sequential_fallback_arm() -> tuple:
     nested = state.add_nested_sdfg(inner, dict(a=None), dict(res=None), symbol_mapping=dict(n='n'))
     state.add_edge(state.add_read('A'), None, nested, 'a', dace.Memlet('A[0:16]'))
     state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    # Assembled with slice connectors; restate them under the nested SDFG contract.
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, nested
 
