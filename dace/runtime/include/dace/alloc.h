@@ -18,10 +18,13 @@ namespace dace
         // Compiler supports aligned new (C++17 feature)
         if constexpr (std::is_trivially_destructible<T>::value) {
             return new (std::align_val_t(alignment)) T[size];
+        } else {
+            return new T[size];
         }
-#endif
+#else
         // Plain new and delete[], just to be safe
         return new T[size];
+#endif
     }
 
     template <typename T>
@@ -31,11 +34,13 @@ namespace dace
         // Compiler supports aligned new (C++17 feature)
         if constexpr (std::is_trivially_destructible<T>::value) {
             ::operator delete[](ptr, std::align_val_t(alignment));
-            return;
+        } else {
+            delete[] ptr;
         }
-#endif
+#else
         // Plain new and delete[], just to be safe
         delete[] ptr;
+#endif
     }
 }  // namespace dace
 
