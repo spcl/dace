@@ -1780,7 +1780,7 @@ def test_inline_shared_inout_connector_different_offsets(in_map: bool):
     rejected when integrated: one view cannot stand for both windows, and picking one would move the other's accesses.
     """
     with pytest.raises(ValueError, match='read through .* and written through'):
-        _make_shared_inout_sdfg('write_then_read', in_map, 'offset_mismatch')
+        make_shared_inout_sdfg('write_then_read', in_map, 'offset_mismatch')
 
 
 def test_inline_shared_inout_connector_different_ranges():

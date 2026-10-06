@@ -531,8 +531,14 @@ def test_prune_connectors_keeps_memlet_subset_index():
     nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={src, idx}, outputs={out})
     me, mx = state.add_map('map', dict(i="0:4"))
     state.add_memlet_path(state.add_access(SRC), me, nsdfg_node, dst_conn=src, memlet=dace.Memlet(f"{SRC}[0:4]"))
-    state.add_memlet_path(state.add_access(IDX), me, nsdfg_node, dst_conn=idx, memlet=dace.Memlet(f"{IDX}[i]"))
-    state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
+    outer_idx, _ = sdfg.add_scalar(idx, IDX_desc.dtype, transient=True)
+    idx_access = state.add_access(outer_idx)
+    state.add_memlet_path(state.add_access(IDX), me, idx_access, memlet=dace.Memlet(f"{IDX}[i]"))
+    state.add_edge(idx_access, None, nsdfg_node, idx, dace.Memlet(f"{outer_idx}[0]"))
+    sdfg.add_scalar(out, OUT_desc.dtype, transient=True)
+    out_access = state.add_access(out)
+    state.add_edge(nsdfg_node, out, out_access, None, dace.Memlet(f"{out}[0]"))
+    state.add_memlet_path(out_access, mx, state.add_access(OUT), memlet=dace.Memlet(f"{OUT}[i]"))
 
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
     assert idx in nsdfg_node.in_connectors
@@ -566,9 +572,15 @@ def test_prune_connectors_keeps_tasklet_code_reference():
     state = sdfg.add_state()
     nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b}, outputs={c})
     me, mx = state.add_map('map', dict(i="0:4"))
-    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
-    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
-    state.add_memlet_path(nsdfg_node, mx, state.add_access(C), src_conn=c, memlet=dace.Memlet(f"{C}[i]"))
+    for outer, inner in ((A, a), (B, b)):
+        sdfg.add_scalar(inner, nsdfg.arrays[inner].dtype, transient=True)
+        scalar_access = state.add_access(inner)
+        state.add_memlet_path(state.add_access(outer), me, scalar_access, memlet=dace.Memlet(f"{outer}[i]"))
+        state.add_edge(scalar_access, None, nsdfg_node, inner, dace.Memlet(f"{inner}[0]"))
+    sdfg.add_scalar(c, C_desc.dtype, transient=True)
+    c_access = state.add_access(c)
+    state.add_edge(nsdfg_node, c, c_access, None, dace.Memlet(f"{c}[0]"))
+    state.add_memlet_path(c_access, mx, state.add_access(C), memlet=dace.Memlet(f"{C}[i]"))
 
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
     assert a in nsdfg_node.in_connectors
@@ -593,9 +605,14 @@ def test_prune_connectors_drops_input_the_body_only_writes():
     state = sdfg.add_state()
     nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a: None, b: None}, outputs={a: None})
     me, mx = state.add_map('map', dict(i="0:4"))
-    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
-    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
-    state.add_memlet_path(nsdfg_node, mx, state.add_access(A), src_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    for outer, inner in ((A, a), (B, b)):
+        sdfg.add_scalar(inner, nsdfg.arrays[inner].dtype, transient=True)
+        scalar_access = state.add_access(inner)
+        state.add_memlet_path(state.add_access(outer), me, scalar_access, memlet=dace.Memlet(f"{outer}[i]"))
+        state.add_edge(scalar_access, None, nsdfg_node, inner, dace.Memlet(f"{inner}[0]"))
+    a_written = state.add_access(a)
+    state.add_edge(nsdfg_node, a, a_written, None, dace.Memlet(f"{a}[0]"))
+    state.add_memlet_path(a_written, mx, state.add_access(A), memlet=dace.Memlet(f"{A}[i]"))
 
     assert 1 == sdfg.apply_transformations_repeated(PruneConnectors)
     assert a not in nsdfg_node.in_connectors
