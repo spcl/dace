@@ -5427,6 +5427,34 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
+    def visit_IfExp(self, node: ast.IfExp):
+        """``a if cond else b`` as a symbolic :class:`~dace.symbolic.ITE`.
+
+        Preprocessing folds the conditional away when the condition is known at parse time; what
+        reaches here is the runtime case. ``ITE`` is symbolic, so the ordinary assignment path takes it.
+
+        The three operands are read unconditionally, like the links of a chained comparison: an
+        operand is a value in a dataflow graph, so evaluating the branch not taken costs a read and
+        never a side effect.
+        """
+        condition = self.evaluated_operand(node.test)
+        when_true = self.evaluated_operand(node.body)
+        when_false = self.evaluated_operand(node.orelse)
+        # ITE is a SYMBOLIC blend, so it can only carry symbols and constants. With a DATA operand
+        # the choice is a dataflow one and belongs in a tasklet -- which is exactly what ``where``
+        # builds, including the mixed data/constant cases, so it is reused rather than repeated.
+        # ``b[i] = a[i] if cond else b[i]`` (an if-then that keeps the old value) is this case.
+        if any(
+                isinstance(operand, str) and operand in self.sdfg.arrays
+                for operand in (condition, when_true, when_false)):
+            from dace.frontend.python.replacements.filtering import _array_array_where
+            self._add_state('IfExp_%d' % node.lineno)
+            self.last_block.set_default_lineinfo(self.current_lineinfo)
+            result = _array_array_where(self, self.sdfg, self.last_block, condition, when_true, when_false)
+            self.last_block.set_default_lineinfo(None)
+            return result
+        return symbolic.ITE(condition, when_true, when_false)
+
     def visit_UnaryOp(self, node: ast.UnaryOp):
         return self._visit_op(node, node.operand, None)
 
@@ -5440,15 +5468,46 @@ class ProgramVisitor(ExtNodeVisitor):
             last = self._visit_op(node, last, node.values[i])
         return last
 
+    def evaluated_operand(self, node: ast.AST):
+        """The single value ``node`` evaluates to, raising on a tuple as the operand paths do."""
+        parsed = self._gettype(node)
+        if len(parsed) > 1:
+            raise DaceSyntaxError(self, node, 'Operand cannot be a tuple')
+        return parsed[0][0]
+
     def visit_Compare(self, node: ast.Compare):
-        if len(node.ops) > 1 or len(node.comparators) > 1:
-            raise NotImplementedError
-        binop_node = ast.BinOp(node.left,
-                               node.ops[0],
-                               node.comparators[0],
-                               lineno=node.lineno,
-                               col_offset=node.col_offset)
-        return self.visit_BinOp(binop_node)
+        """A comparison, chained or not. ``0 <= i < n`` is the commonest bounds test there is.
+
+        Python defines a chain as the conjunction of its links with every operand evaluated ONCE:
+        ``a < b <= c`` is ``(a < b) and (b <= c)`` where ``b`` is read a single time. Rebuilding the
+        chain out of AST nodes would visit each middle operand twice -- a second read of a
+        subscript, a second call of whatever produced it -- so the operands are evaluated here and
+        the VALUES are handed to :meth:`_visit_op`, which takes either (``visit_BoolOp`` already
+        does this with its accumulator).
+
+        The links are not short-circuited, exactly as ``and``/``or`` are not: an operand is a value
+        in a dataflow graph, so evaluating one the chain would have skipped costs a read, never a
+        side effect.
+        """
+        if len(node.ops) == 1:
+            binop_node = ast.BinOp(node.left,
+                                   node.ops[0],
+                                   node.comparators[0],
+                                   lineno=node.lineno,
+                                   col_offset=node.col_offset)
+            return self.visit_BinOp(binop_node)
+        operands = [self.evaluated_operand(operand) for operand in (node.left, *node.comparators)]
+        conjunction = ast.BoolOp(op=ast.And(), values=[], lineno=node.lineno, col_offset=node.col_offset)
+        result = None
+        for index, op in enumerate(node.ops):
+            link = ast.BinOp(left=node.left,
+                             op=op,
+                             right=node.comparators[index],
+                             lineno=node.lineno,
+                             col_offset=node.col_offset)
+            value = self._visit_op(link, operands[index], operands[index + 1])
+            result = value if result is None else self._visit_op(conjunction, result, value)
+        return result
 
     def _add_read_slice(self, array: str, node: ast.Subscript, expr: MemletExpr):
 
