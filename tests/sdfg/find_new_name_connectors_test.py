@@ -81,7 +81,7 @@ def test_inlining_lifts_a_nested_transient_past_an_outer_connector_name() -> Non
 
     assert not any(isinstance(node, nodes.NestedSDFG) for node in outer.nodes())
     assert 'tmp' not in sdfg.arrays
-    assert 'tmp_0' in sdfg.arrays
+    assert f'{inner.label}_tmp' in sdfg.arrays  # main's InlineSDFG prefixes a taken name with the nested label
     sdfg.validate()
 
 
