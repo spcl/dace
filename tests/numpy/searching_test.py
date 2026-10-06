@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -62,22 +62,39 @@ def test_numpy_where_partial_broadcast():
     assert np.allclose(where_partial(A, B, C), np.where(C, A, B))
 
 
-def test_numpy_where_cast_stays_a_tasklet():
-    """ The library node's tasklet assigns straight across, so an operand needing a cast to the
-        result type has to keep the inlined-tasklet path. """
+def merge_nodes(program):
     from dace.libraries.standard.nodes import MergeLibraryNode
+    sdfg = program.to_sdfg(simplify=False)
+    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, MergeLibraryNode)]
+
+
+def test_numpy_where_cast_stays_a_tasklet():
+    """ The library node only expresses ``where`` without a cast, so an operand needing a cast to the result type
+        keeps the inlined-tasklet path. """
 
     @dace.program
     def where_mixed(A: dace.float64[N], B: dace.int32[N], C: dace.bool_[N]):
         return np.where(C, A, B)
 
-    sdfg = where_mixed.to_sdfg(simplify=False)
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, MergeLibraryNode)]
+    assert not merge_nodes(where_mixed)
 
     A = np.random.randn(N)
     B = np.random.randint(-8, 8, size=N).astype(np.int32)
-    C = A > 0.0
+    C = np.random.rand(N) > 0.5
     assert np.allclose(where_mixed(A, B, C), np.where(C, A, B))
+
+
+def test_numpy_where_of_an_unsigned_and_a_signed_array_keeps_the_sign():
+    """ numpy promotes uint64 with int64 to float64; a C++ conditional would give uint64 and wrap the negatives. """
+
+    @dace.program
+    def where_unsigned(A: dace.uint64[N], B: dace.int64[N], C: dace.bool_[N]):
+        return np.where(C, A, B)
+
+    A = np.random.randint(0, 8, size=N).astype(np.uint64)
+    B = -np.random.randint(1, 8, size=N).astype(np.int64)
+    C = np.random.rand(N) > 0.5
+    assert np.array_equal(where_unsigned(A, B, C), np.where(C, A, B))
 
 
 def test_numpy_where_with_a_condition_wider_than_the_operands():
@@ -93,10 +110,24 @@ def test_numpy_where_with_a_condition_wider_than_the_operands():
     assert np.allclose(where_wide_condition(A, B, C), np.where(C, A, B))
 
 
+def test_numpy_where_with_a_constant():
+    """ A scalar operand stays a tasklet, which autodiff differentiates (``hdiff``'s ``np.where(..., 0, res)``). """
+
+    @dace.program
+    def where_constant(A: dace.float64[N]):
+        return np.where(A > 0.5, A, 0.0)
+
+    assert not merge_nodes(where_constant)
+    A = np.random.rand(N)
+    assert np.allclose(where_constant(A), np.where(A > 0.5, A, 0.0))
+
+
 if __name__ == "__main__":
     test_numpy_where()
     test_numpy_select()
     test_numpy_where_uses_the_merge_library_node()
     test_numpy_where_partial_broadcast()
     test_numpy_where_cast_stays_a_tasklet()
+    test_numpy_where_of_an_unsigned_and_a_signed_array_keeps_the_sign()
     test_numpy_where_with_a_condition_wider_than_the_operands()
+    test_numpy_where_with_a_constant()
