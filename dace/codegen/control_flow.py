@@ -19,6 +19,9 @@ from dace.codegen.prettycode import CodeIOStream
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
+# The labels of control flow blocks (``__state_<cfg ID>_<label>``) and of region exits (``__state_exit_<cfg ID>``)
+CONTROL_FLOW_LABEL = re.compile(r'__state_(?:exit_)?\d+(?:_\w+)?')
+
 
 def _clean_loop_body(body: str) -> str:
     """ Cleans loop body from extraneous continue statements. """

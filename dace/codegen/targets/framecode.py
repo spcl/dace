@@ -2,6 +2,7 @@
 import ast
 import collections
 import copy
+import hashlib
 import itertools
 import pathlib
 import re
@@ -15,6 +16,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen import exceptions as cgx
+from dace.codegen.codeobject import strip_codegen_comments
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
@@ -70,18 +72,20 @@ def _assigned_literal(edge) -> Optional[Union[bool, int, float]]:
     return value.value
 
 
-_LABEL = re.compile(r'__state_(?:exit_)?\d+(?:_\w+)?')
-_MARKER = re.compile(r'////__DACE:[\d:]*')
-
-
-def _function_key(code: str, name: str) -> str:
+def _region_function_key(code: str, name: str) -> str:
     """
-    The code of a generated function up to the names that differ between equal regions: the function's name, the
-    labels of its control flow (numbered by appearance) and the comments mapping code to SDFG elements.
+    A key that is equal for region functions whose code is equal up to the names that differ between equal regions:
+    the function's name, the labels of its control flow (renumbered by appearance) and the comments that map code
+    to SDFG elements.
+
+    :param code: The code of the function (and the global code it needs).
+    :param name: The name of the function.
+    :return: The key, a digest.
     """
     labels: Dict[str, str] = {}
-    code = _MARKER.sub('', code.replace(name, '@'))
-    return _LABEL.sub(lambda m: labels.setdefault(m.group(0), f'@{len(labels)}'), code)
+    code = strip_codegen_comments(code.replace(name, '@'))
+    code = cflow.CONTROL_FLOW_LABEL.sub(lambda m: labels.setdefault(m.group(0), f'@{len(labels)}'), code)
+    return hashlib.sha256(code.encode()).hexdigest()
 
 
 def _inside_loop_of(block: ControlFlowBlock, region: ControlFlowRegion) -> bool:
@@ -133,7 +137,7 @@ class DaCeCodeGenerator(object):
         self._symbol_uses_cache: Dict[SDFG, Dict[Any, Set[str]]] = {}
         self._state_local_cache: Dict[SDFG, Set[str]] = {}
         self._literal_cache: Dict[SDFG, Dict[str, str]] = {}
-        # The functions of regions in separate translation units, by their code up to names (see ``_function_key``)
+        # The functions of regions in separate translation units, by ``_region_function_key``
         self._region_functions: Dict[str, str] = {}
         self._toplevel_sdfg = sdfg
         self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
@@ -963,7 +967,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Equal regions (e.g., repeated steps of an algorithm) share one function, unless named explicitly
             duplicate = False
             if not region.function_name:
-                first = self._region_functions.setdefault(_function_key(unit_code, fname), fname)
+                first = self._region_functions.setdefault(_region_function_key(unit_code, fname), fname)
                 duplicate = first != fname
                 fname = first
                 signature = f'void {fname}({", ".join([state_struct] + params)})'
