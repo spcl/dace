@@ -1900,7 +1900,15 @@ class OffloadToAccelerator(ppl.Pass):
         if isinstance(desc, data.View):
             sdfg.add_view(unknown_name, shape, dtype, storage=new_storage)
         else:
-            sdfg.add_array(unknown_name, shape, dtype, storage=new_storage, transient=True)
+            # The twin keeps the layout as spelled: a nested SDFG renamed onto it keeps its connector
+            # descriptor, which the No-View contract compares stride by stride.
+            sdfg.add_array(unknown_name,
+                           shape,
+                           dtype,
+                           storage=new_storage,
+                           transient=True,
+                           strides=desc.strides,
+                           total_size=desc.total_size)
 
     def _get_host_name(self, name: str) -> str:
         """Host-side copy of ``name``.
