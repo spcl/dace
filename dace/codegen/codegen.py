@@ -12,6 +12,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.outlining import OutlineFunctions
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -242,6 +243,14 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
     RelaxIntegerPowers().apply_pass(sdfg, {})
+
+    # Divide a large program into functions and translation units. Last, since simplification would inline them.
+    if config.Config.get_bool("compiler", "outlining", "enabled"):
+        OutlineFunctions(
+            max_basic_blocks=config.Config.get("compiler", "outlining", "max_basic_blocks"),
+            min_basic_blocks=config.Config.get("compiler", "outlining", "min_basic_blocks"),
+            translation_units=config.Config.get("compiler", "outlining", "translation_units"),
+        ).apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
