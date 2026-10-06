@@ -536,18 +536,15 @@ class NormalizeWCR(ppl.Pass):
         if oc_desc is None:
             return False
 
-        # (a) Unique scalar WCR edge inside the body writing the connector array `oc`.
-        wcr_edge = None
-        wcr_state = None
-        for ist in inner.states():
-            for e in ist.edges():
-                if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
-                        and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode)
-                        and e.dst.data == oc and ist.out_degree(e.dst) == 0):
-                    if wcr_edge is not None:
-                        return False
-                    wcr_edge, wcr_state = e, ist
-        if wcr_edge is None:
+        # (a) The body writes the connector array `oc` exactly once, through a scalar WCR edge. Any other
+        # write would lose its output connector once `oc` becomes input-only.
+        writes = [(e, ist) for ist in inner.states() for e in ist.edges()
+                  if isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc and not e.data.is_empty()]
+        if len(writes) != 1:
+            return False
+        wcr_edge, wcr_state = writes[0]
+        if (wcr_edge.data.wcr is None or wcr_edge.data.data != oc or wcr_edge.data.subset is None
+                or wcr_edge.data.subset.num_elements() != 1 or wcr_state.out_degree(wcr_edge.dst) != 0):
             return False
 
         op = _binop_expr_from_wcr(wcr_edge.data.wcr)

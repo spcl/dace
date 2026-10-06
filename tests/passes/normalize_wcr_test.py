@@ -487,6 +487,60 @@ def test_readwrite_redundant_interior_wcr_value_preserving():
     assert np.allclose(b, expected), f'got {b}, expected {expected}'
 
 
+def test_readwrite_connector_with_a_second_plain_write_is_left_alone():
+    """A read-write connector the body also writes plainly keeps its output connector: the
+    rewrite would retarget only the WCR write and strand the other one on an input-only container."""
+    sdfg = _build_readwrite_redundant_interior_wcr()
+    body = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)).sdfg
+    start = body.start_block
+    first = body.add_state_before(start, 'plain_write')
+    t = first.add_tasklet('overwrite', {'_d'}, {'__out'}, '__out = 2.0 * _d')
+    first.add_edge(first.add_read('d'), None, t, '_d', dace.Memlet('d[0]'))
+    first.add_edge(t, '__out', first.add_write('b_io'), None, dace.Memlet('b_io[i]'))
+    sdfg.validate()
+
+    assert NormalizeWCR().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+
+
+def test_canonicalize_keeps_a_conditional_plain_write_beside_a_conditional_accumulation():
+    """TSVC s279 shape: one branch overwrites ``c[i]``, the other accumulates into it, and ``c[i]``
+    is read afterwards. Canonicalization stays valid and computes the sequential result."""
+    N = dace.symbol('N', dtype=dace.int64, positive=True)
+
+    @dace.program
+    def overwrite_or_accumulate(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
+                                e: dace.float64[N]):
+        for i in range(N):
+            if a[i] > 0.0:
+                c[i] = -c[i] + e[i] * e[i]
+            else:
+                b[i] = -b[i] + d[i] * d[i]
+                if b[i] > a[i]:
+                    c[i] = c[i] + d[i] * e[i]
+            a[i] = b[i] + c[i] * d[i]
+
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = overwrite_or_accumulate.to_sdfg(simplify=False)
+    canonicalize(sdfg, target='cpu')
+    sdfg.validate()
+
+    n = 64
+    rng = np.random.default_rng(279)
+    a, b, c, d, e = (rng.standard_normal(n) for _ in range(5))
+    ra, rb, rc = a.copy(), b.copy(), c.copy()
+    for i in range(n):
+        if ra[i] > 0.0:
+            rc[i] = -rc[i] + e[i] * e[i]
+        else:
+            rb[i] = -rb[i] + d[i] * d[i]
+            if rb[i] > ra[i]:
+                rc[i] = rc[i] + d[i] * e[i]
+        ra[i] = rb[i] + rc[i] * d[i]
+    sdfg(a=a, b=b, c=c, d=d, e=e, N=n)
+    assert np.allclose(a, ra) and np.allclose(b, rb) and np.allclose(c, rc)
+
+
 def test_canonicalize_emits_reduction_clause_for_indirect_read_reduction():
     """s4115 shape: the reduction_to_wcr_map band outlines the loop body, trapping the WCR
     inside the loop_body nsdfg with a plain nsdfg-to-MapExit edge. The NormalizeWCR re-run at
