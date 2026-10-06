@@ -2,6 +2,7 @@
 import numpy as np
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
 from dace.transformation.passes.vectorization.utils.reductions import recognize_map_reduction
 
@@ -28,6 +29,7 @@ def rmw_map(seed: str, slot: str, accs: tuple[str, ...] = ('x', )) -> dace.SDFG:
         st.add_edge(st.add_tasklet('init', {}, {'o': None}, 'o = 0.0'), 'o', acc_in, None, dace.Memlet(f'{c}[{seed}]'))
         st.add_memlet_path(acc_in, me, ns, dst_conn=f'{c}_i', memlet=dace.Memlet(f'{c}[{slot}]'))
         st.add_memlet_path(ns, mx, st.add_write(c), src_conn=f'{c}_o', memlet=dace.Memlet(f'{c}[{slot}]'))
+    convert_legacy_nested_sdfgs(sdfg)
     return sdfg
 
 
