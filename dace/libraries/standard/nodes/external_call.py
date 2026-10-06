@@ -6,7 +6,8 @@ Expansions:
 ``DaceReference``  Default. A copy of the nest's SDFG (``standalone_sdfg``), so the program runs unchanged.
 ``ExternCall``     A C++ tasklet calling ``extern "C" void <symbol>(<signature>)``, whose forward declaration
                    is the tasklet's global code. ``lib_path`` (a ``.a`` or ``.so``), then ``link_flags``, go on
-                   the program's link line, with ``rpath`` for the loader.
+                   the program's link line in that order; a shared dependency's ``-Wl,-rpath,<dir>`` belongs in
+                   ``link_flags``.
 
 Connectors are the nest's data names behind a prefix: ``_in_<name>`` for an input, ``_out_<name>`` for an
 output; data read and written has both. ``signature`` follows DaCe's nested-SDFG convention: read-only inputs
@@ -143,12 +144,12 @@ def parameter_count(signature: str) -> int:
     return count
 
 
-def link_environment(lib_path: str, link_flags: Sequence[str], rpath: Sequence[str]) -> type:
-    """The environment linking one library, then ``link_flags``, with ``rpath``; one per distinct triple. A ``.so``
-    adds its own directory to the rpath."""
+def link_environment(lib_path: str, link_flags: Sequence[str]) -> type:
+    """The environment linking one library, then ``link_flags``; one per distinct pair. A ``.so`` adds its own
+    directory as an rpath, a ``.a`` needs none: it is copied into the program."""
     lib = os.path.abspath(lib_path)
-    rpaths = list(dict.fromkeys([*rpath, *([] if lib.endswith('.a') else [os.path.dirname(lib)])]))
-    key = '\0'.join([lib, *link_flags, '', *rpaths])
+    rpath = [] if lib.endswith('.a') else [f'-Wl,-rpath,{os.path.dirname(lib)}']
+    key = '\0'.join([lib, *link_flags])
     name = 'ExternalCallLink_' + hashlib.sha256(key.encode()).hexdigest()[:DIGEST_DIGITS]
     registered = library._DACE_REGISTERED_ENVIRONMENTS.get(f'{__name__}.{name}')
     if registered is not None:
@@ -157,9 +158,9 @@ def link_environment(lib_path: str, link_flags: Sequence[str], rpath: Sequence[s
                   cmake_packages=[],
                   cmake_variables={},
                   cmake_includes=[],
-                  cmake_libraries=[lib, *link_flags],
+                  cmake_libraries=[lib, *link_flags, *rpath],
                   cmake_compile_flags=[],
-                  cmake_link_flags=[f'-Wl,-rpath,{path}' for path in rpaths],
+                  cmake_link_flags=[],
                   cmake_files=[],
                   headers=[],
                   state_fields=[],
@@ -209,7 +210,7 @@ class ExpandExternCall(ExpandTransformation):
 
     def apply(self, state: dace.SDFGState, sdfg: dace.SDFG, *args: Any, **kwargs: Any) -> None:
         node = state.node(self.subgraph[type(self)._match_node])
-        env = link_environment(node.lib_path, list(node.link_flags), list(node.rpath))
+        env = link_environment(node.lib_path, list(node.link_flags))
         before = dict.fromkeys(state.nodes())
         super().apply(state, sdfg, *args, **kwargs)
         for added in state.nodes():
@@ -235,11 +236,8 @@ class ExternalCall(nodes.LibraryNode):
     lib_path = properties.Property(dtype=str, default='', desc='kernel library, .a or .so')
     link_flags = properties.ListProperty(element_type=str,
                                          default=[],
-                                         desc='link items after the library: runtimes it needs (-lomp, -lcudart) '
-                                         'and their -L directories')
-    rpath = properties.ListProperty(element_type=str,
-                                    default=[],
-                                    desc='loader search directories; a .so library adds its own')
+                                         desc='link items after the library, in order: -L directories, the '
+                                         'runtimes it needs (-lomp, -lcudart), -Wl,-rpath for shared ones')
 
     def __init__(self,
                  name: str,

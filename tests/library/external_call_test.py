@@ -112,6 +112,28 @@ def test_a_static_library_with_the_recorded_signature_links_into_the_program(tmp
     assert np.array_equal(b, a * 3.0)
 
 
+def test_link_flags_bring_the_shared_library_a_static_kernel_needs(tmp_path):
+    sdfg, (call, ) = outlined(scale, 'extcall_dependency')
+    dep = tmp_path / 'dep'
+    dep.mkdir()
+    (dep / 'dep.c').write_text('double dep_factor(void) { return 3.0; }\n')
+    subprocess.run([shutil.which('gcc'), '-fPIC', '-shared',
+                    str(dep / 'dep.c'), '-o',
+                    str(dep / 'libdep.so')],
+                   check=True)
+    call.lib_path = static_library(
+        tmp_path, 'double dep_factor(void);\n'
+        f'void {call.symbol}(const double* a, double* b, int64_t N) {{'
+        ' for (int64_t i = 0; i < N; ++i) b[i] = dep_factor() * a[i]; }')
+    call.implementation, call.link_flags = 'ExternCall', [f'-L{dep}', '-ldep', f'-Wl,-rpath,{dep}']
+    a = np.random.default_rng(5).random(SIZE)
+    b = np.zeros(SIZE)
+
+    sdfg(a=a, b=b, N=SIZE)
+
+    assert np.array_equal(b, a * 3.0)
+
+
 def test_a_custom_abi_order_derives_its_signature_and_call_in_that_order(tmp_path):
     sdfg, (call, ) = outlined(scale, 'extcall_order')
     call.lib_path = shared_library(
