@@ -64,14 +64,16 @@ def collect_tasklet_subsets(sdfg, arr):
 
     The map-boundary memlet (AccessNode <-> MapEntry) legitimately over-approximates with
     ``int_floor``; only the compute access decides whether a block match was perfect, so we
-    restrict to Tasklet-incident edges -- mirroring the existing test's helper."""
+    restrict to Tasklet-incident edges and to the per-iteration read a map entry hands to the
+    scalar the frontend reads an element into (``A[i] -> A_index``)."""
     out = []
     for state in sdfg.states():
         for e in state.edges():
             data = e.data
             if data is None or data.data != arr or data.subset is None:
                 continue
-            if isinstance(e.src, dace.nodes.Tasklet) or isinstance(e.dst, dace.nodes.Tasklet):
+            per_iteration_read = isinstance(e.src, dace.nodes.MapEntry) and isinstance(e.dst, dace.nodes.AccessNode)
+            if isinstance(e.src, dace.nodes.Tasklet) or isinstance(e.dst, dace.nodes.Tasklet) or per_iteration_read:
                 out.append(str(data.subset))
     return out
 
