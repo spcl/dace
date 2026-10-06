@@ -313,16 +313,15 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
                 dtype = symbol_dtypes[s]
-                # One name valid in BOTH SDFGs, so the NestedSDFG out-connector (added from write_set
-                # below) equals the inner data descriptor it maps to -- a NestedSDFG requires that. Two
-                # independent find_new_name=True calls resolve the suffix against each SDFG's OWN names, so
-                # they can diverge (outer picks ``__sym_out_x_0``, inner picks ``__sym_out_x``), desyncing
-                # the connector from its descriptor and producing an invalid nested SDFG that later passes
-                # (e.g. MapFission) crash on with a bare StopIteration.
-                oname = data.find_new_name(f"__sym_out_{s}", set(sdfg.arrays) | set(nsdfg.arrays))
-                name, _ = sdfg.add_scalar(oname, dtype, transient=True)
+                # The connector connects the two scalars by name, so it must be free in both SDFGs
+                name = sdfg._find_new_name(f"__sym_out_{s}")
+                suffix = 0
+                while nsdfg.is_name_used(name):
+                    name = sdfg._find_new_name(f"__sym_out_{s}_{suffix}")
+                    suffix += 1
+                sdfg.add_scalar(name, dtype, transient=True)
                 out_mapping[s] = name
-                nname, ndesc = nsdfg.add_scalar(oname, dtype)
+                nname, ndesc = nsdfg.add_scalar(name, dtype)
                 # Part (1)
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
                 acc = out_state.add_access(nname)

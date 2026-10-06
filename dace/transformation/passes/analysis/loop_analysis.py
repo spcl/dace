@@ -81,9 +81,20 @@ def counter_used_outside_loop(name: str,
     if use_sites is None or descriptor_symbols is None:
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
     inside = {id(loop)}
-    inside.update(id(block) for block in loop.all_control_flow_blocks())
-    inside.update(id(edge) for edge in loop.all_interstate_edges())
+    # Another loop that binds the same counter outright reads its own value, not this loop's
+    for other in [loop] + [b for b in sdfg.all_control_flow_blocks() if b is not loop and rebinds_counter(b, name)]:
+        inside.add(id(other))
+        inside.update(id(block) for block in other.all_control_flow_blocks())
+        inside.update(id(edge) for edge in other.all_interstate_edges())
     return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
+
+
+def rebinds_counter(block: ControlFlowBlock, name: str) -> bool:
+    """Whether ``block`` is a loop over ``name`` whose init sets it from scratch (``i = 0``, not ``i = i + 1``)."""
+    if not isinstance(block, LoopRegion) or block.loop_variable != name or not block.init_statement:
+        return False
+    init = get_init_assignment(block)
+    return init is not None and name not in symbolic.free_symbols_and_functions(init)
 
 
 def loop_jumps(loop: LoopRegion) -> List[ControlFlowBlock]:

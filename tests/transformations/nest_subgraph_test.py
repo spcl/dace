@@ -11,6 +11,8 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
 import networkx as nx
+
+from dace.sdfg.state import LoopRegion, StateSubgraphView
 import numpy as np
 
 
@@ -618,6 +620,32 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
     assert out[0] == 3.0
 
 
+def test_nest_two_loops_with_same_variable():
+    """ Nesting a second region that defines the same symbol must name its symbol output consistently. """
+
+    @dace.program
+    def two_loops(A: dace.float64[10], B: dace.float64[10]):
+        for i in range(10):
+            A[i] = A[i] * 2
+        for i in range(10):
+            B[i] = B[i] + A[i]
+
+    sdfg = two_loops.to_sdfg(simplify=True)
+    loops = [b for b in sdfg.bfs_nodes(sdfg.start_block) if isinstance(b, LoopRegion)]
+    assert len(loops) == 2
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loops[0]]))
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loops[1]]))
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+
+    A = np.random.rand(10)
+    B = np.random.rand(10)
+    A_ref = A * 2
+    B_ref = B + A_ref
+    sdfg(A=A, B=B)
+    assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -637,3 +665,5 @@ if __name__ == '__main__':
     test_input_edge_on_the_whole_container_gets_no_inner_copy()
     test_folded_write_ordering_is_not_reanchored_into_a_cycle()
     test_a_folded_input_keeps_the_moved_tasklets_connectors()
+
+    test_nest_two_loops_with_same_variable()
