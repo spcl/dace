@@ -1,10 +1,11 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// CUDA strided inclusive scan: ``s`` independent inclusive scans over the residue classes mod ``s``, the
-// device side of ``dace::scan::strided_inclusive_<op>``. Many classes take one thread each; few classes
-// (``s == 1`` included) are cut into chunks and scanned in three phases -- chunk totals, a scan of
-// the totals, and a rescan of every chunk entered with its carry -- so a long class still fills the
-// device.
+// CUDA batches of independent inclusive scans over one buffer: the residue classes mod ``s`` of a strided
+// scan (``strided_inclusive_<op>``, the device side of ``dace::scan::strided_inclusive_<op>``) and the
+// equal consecutive rows of a segmented one (``segmented_inclusive_<op>``). Many interleaved classes take
+// one thread each; otherwise every scan is cut into chunks and scanned in three phases -- chunk totals,
+// a scan of the totals, and a rescan of every chunk entered with its carry -- so a long scan still
+// fills the device.
 
 #ifndef __DACE_CUDA_SCAN_CUH
 #define __DACE_CUDA_SCAN_CUH
@@ -104,58 +105,71 @@ __device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __rest
   block_inclusive_scan_strided<T, Op, BLOCK>(in, out, m, s, op, identity, identity);
 }
 
-//: Few residue classes: the classes alone cannot fill the device, so each class is cut into chunks
-//: of ``chunk`` elements and every (class, chunk) pair gets a BLOCK. Block ``b`` is class
-//: ``b % s`` of chunk ``b / s``: the blocks reading one stretch of memory are adjacent, so the
-//: lines one class leaves are still in cache when the next class reads them.
-struct ChunkCoordinates {
-  long k;      // the residue class
-  long begin;  // first element of the chunk, counted within the class
-  long count;  // elements of the class in the chunk
+//: ``count`` independent scans over one buffer of ``n`` elements: scan ``k`` reads
+//: ``in[k * pitch + g * step]`` for ``g`` below its length. The residue classes of a strided scan are
+//: ``{n, s, 1, s, n}``; the rows of a segmented one ``{n, rows, n / rows, 1, n / rows}``.
+struct Segments {
+  long n;
+  long count;
+  long pitch;
+  long step;
+  long cap;  // the longest a scan may be
+  __host__ __device__ __forceinline__ long length(long k) const {
+    const long first = k * pitch;
+    if (first >= n) return 0;
+    const long m = (n - first + step - 1) / step;
+    return m < cap ? m : cap;
+  }
 };
 
-__device__ __forceinline__ ChunkCoordinates chunk_coordinates(long n, long s, long chunk) {
-  const long k = (long)blockIdx.x % s;
-  const long begin = ((long)blockIdx.x / s) * chunk;
-  const long m = (n > k) ? ((n - k + s - 1) / s) : 0;  // elements in the class: k, k+s, ... < n
+//: Scans too long for one block are cut into chunks of ``chunk`` elements and every (scan, chunk) pair
+//: gets a BLOCK. Block ``b`` is scan ``b % count`` of chunk ``b / count``: the blocks reading one
+//: stretch of memory are adjacent, so the lines one residue class leaves are still in cache when the
+//: next class reads them.
+struct ChunkCoordinates {
+  long offset;  // index of the chunk's first element in the buffer
+  long count;   // elements of the scan in the chunk
+};
+
+__device__ __forceinline__ ChunkCoordinates chunk_coordinates(const Segments& seg, long chunk) {
+  const long k = (long)blockIdx.x % seg.count;
+  const long begin = ((long)blockIdx.x / seg.count) * chunk;
+  const long m = seg.length(k);
   const long count = (m > begin) ? ((m - begin < chunk) ? (m - begin) : chunk) : 0;
-  return ChunkCoordinates{k, begin, count};
+  return ChunkCoordinates{k * seg.pitch + begin * seg.step, count};
 }
 
-//: Phase 1: the fold of every (class, chunk), into ``totals[chunk * s + class]``.
+//: Phase 1: the fold of every (scan, chunk), into ``totals[chunk * count + scan]``.
 template <typename T, typename Op, int BLOCK>
-__global__ void strided_chunk_totals_kernel(const T* __restrict__ in, T* __restrict__ totals, long n, long s,
-                                            long chunk, Op op, T identity) {
-  const ChunkCoordinates at = chunk_coordinates(n, s, chunk);
-  const T* first = in + at.k + at.begin * s;
+__global__ void chunk_totals_kernel(const T* __restrict__ in, T* __restrict__ totals, Segments seg, long chunk, Op op,
+                                    T identity) {
+  const ChunkCoordinates at = chunk_coordinates(seg, chunk);
+  const T* first = in + at.offset;
   T acc = identity;
-  for (long g = (long)threadIdx.x; g < at.count; g += BLOCK) acc = op(acc, first[g * s]);
+  for (long g = (long)threadIdx.x; g < at.count; g += BLOCK) acc = op(acc, first[g * seg.step]);
   typedef gpucub::BlockReduce<T, BLOCK> BlockReduceT;
   __shared__ typename BlockReduceT::TempStorage storage;
   const T total = BlockReduceT(storage).Reduce(acc, op);
   if (threadIdx.x == 0) totals[blockIdx.x] = total;
 }
 
-//: Phase 2 runs ``strided_blocked_kernel`` over ``totals``, whose layout makes the chunks of one class a
-//: residue class of their own. Phase 3: rescan every (class, chunk), entered with the scanned total of
+//: Phase 2 runs ``segment_scan_kernel`` over ``totals``, whose layout makes the chunks of one scan a
+//: residue class of their own. Phase 3: rescan every (scan, chunk), entered with the scanned total of
 //: the chunks before it.
 template <typename T, typename Op, int BLOCK>
-__global__ void strided_chunk_scan_kernel(const T* __restrict__ in, T* __restrict__ out, const T* __restrict__ totals,
-                                          long n, long s, long chunk, Op op, T identity) {
-  const ChunkCoordinates at = chunk_coordinates(n, s, chunk);
-  const T seed = ((long)blockIdx.x >= s) ? totals[(long)blockIdx.x - s] : identity;
-  const long offset = at.k + at.begin * s;
-  block_inclusive_scan_strided<T, Op, BLOCK>(in + offset, out + offset, at.count, s, op, identity, seed);
+__global__ void chunk_scan_kernel(const T* __restrict__ in, T* __restrict__ out, const T* __restrict__ totals,
+                                  Segments seg, long chunk, Op op, T identity) {
+  const ChunkCoordinates at = chunk_coordinates(seg, chunk);
+  const T seed = ((long)blockIdx.x >= seg.count) ? totals[(long)blockIdx.x - seg.count] : identity;
+  block_inclusive_scan_strided<T, Op, BLOCK>(in + at.offset, out + at.offset, at.count, seg.step, op, identity, seed);
 }
 
+//: One block per scan, each scanned outright.
 template <typename T, typename Op, int BLOCK>
-__global__ void strided_blocked_kernel(const T* __restrict__ in, T* __restrict__ out, long n, long s, Op op,
-                                       T identity) {
+__global__ void segment_scan_kernel(const T* __restrict__ in, T* __restrict__ out, Segments seg, Op op, T identity) {
   const long k = (long)blockIdx.x;
-  if (k >= s) return;  // uniform across the block: no barrier has been reached yet
-  // Elements in this class: j = k, k+s, k+2s, ... < n.
-  const long m = (n > k) ? ((n - k + s - 1) / s) : 0;
-  block_inclusive_scan_strided<T, Op, BLOCK>(in + k, out + k, m, s, op, identity);
+  block_inclusive_scan_strided<T, Op, BLOCK>(in + k * seg.pitch, out + k * seg.pitch, seg.length(k), seg.step, op,
+                                             identity);
 }
 
 //: Below this many residue classes the one-thread-per-class kernel cannot fill the device, and the
@@ -164,40 +178,50 @@ __global__ void strided_blocked_kernel(const T* __restrict__ in, T* __restrict__
 //: by measurement, not a measured optimum.
 constexpr long kBlockedBelow = 4096;
 constexpr int kBlockThreads = 256;
-//: Elements of one class one block scans: 16 per thread, enough to amortise a block's launch and
-//: its carry, few enough that a class of 1e8 elements still splits into thousands of blocks.
+//: Elements of one scan one block covers: 16 per thread, enough to amortise a block's launch and its
+//: carry, few enough that a scan of 1e8 elements still splits into thousands of blocks.
 constexpr long kChunkElements = 16L * kBlockThreads;
 
-//: The ``s`` residue-class scans of ``in[0:n]`` under ``op`` (``identity`` is ``op``'s identity), on
-//: ``stream``. Returns the first launch or allocation error.
+//: The ``seg.count`` scans of ``seg`` under ``op`` (``identity`` is ``op``'s identity), on ``stream``.
+//: Scan 0 is the longest. Returns the first launch or allocation error.
 template <typename T, typename Op>
-inline gpuError_t strided_inclusive(const T* in, T* out, long n, long s, Op op, T identity, gpuStream_t stream) {
-  if (s <= 0 || n <= 0) return gpuSuccess;
-  if (s >= kBlockedBelow) {
-    const long blocks = (s + kBlockThreads - 1) / kBlockThreads;
-    strided_per_class_kernel<T, Op><<<dim3((unsigned)blocks), dim3(kBlockThreads), 0, stream>>>(in, out, n, s, op);
+inline gpuError_t segments_inclusive(const T* in, T* out, Segments seg, Op op, T identity, gpuStream_t stream) {
+  if (seg.count <= 0 || seg.n <= 0) return gpuSuccess;
+  if (seg.pitch == 1 && seg.count >= kBlockedBelow) {
+    // Many interleaved classes: one thread each, neighbouring threads on neighbouring elements.
+    const long blocks = (seg.count + kBlockThreads - 1) / kBlockThreads;
+    strided_per_class_kernel<T, Op><<<dim3((unsigned)blocks), dim3(kBlockThreads), 0, stream>>>(in, out, seg.n,
+                                                                                               seg.step, op);
     return gpuGetLastError();
   }
-  const long longest = (n + s - 1) / s;  // class 0 is the longest
-  const long chunks = (longest + kChunkElements - 1) / kChunkElements;
+  const long chunks = (seg.length(0) + kChunkElements - 1) / kChunkElements;
   if (chunks <= 1) {
-    // One chunk per class: a block scans its class outright, with nothing to carry in.
-    strided_blocked_kernel<T, Op, kBlockThreads><<<dim3((unsigned)s), dim3(kBlockThreads), 0, stream>>>(
-        in, out, n, s, op, identity);
+    segment_scan_kernel<T, Op, kBlockThreads><<<dim3((unsigned)seg.count), dim3(kBlockThreads), 0, stream>>>(
+        in, out, seg, op, identity);
     return gpuGetLastError();
   }
   gpuError_t status = gpuSuccess;
   T* totals = static_cast<T*>(::dace::cub::get_scratch<::dace::cub::ScanTag>(
-      (std::size_t)(chunks * s) * sizeof(T), stream, &status));
+      (std::size_t)(chunks * seg.count) * sizeof(T), stream, &status));
   if (totals == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
-  const dim3 grid((unsigned)(chunks * s));
-  strided_chunk_totals_kernel<T, Op, kBlockThreads><<<grid, dim3(kBlockThreads), 0, stream>>>(
-      in, totals, n, s, kChunkElements, op, identity);
-  strided_blocked_kernel<T, Op, kBlockThreads><<<dim3((unsigned)s), dim3(kBlockThreads), 0, stream>>>(
-      totals, totals, chunks * s, s, op, identity);
-  strided_chunk_scan_kernel<T, Op, kBlockThreads><<<grid, dim3(kBlockThreads), 0, stream>>>(
-      in, out, totals, n, s, kChunkElements, op, identity);
+  const dim3 grid((unsigned)(chunks * seg.count));
+  chunk_totals_kernel<T, Op, kBlockThreads><<<grid, dim3(kBlockThreads), 0, stream>>>(in, totals, seg, kChunkElements,
+                                                                                      op, identity);
+  const Segments of_totals{chunks * seg.count, seg.count, 1, seg.count, chunks};
+  segment_scan_kernel<T, Op, kBlockThreads><<<dim3((unsigned)seg.count), dim3(kBlockThreads), 0, stream>>>(
+      totals, totals, of_totals, op, identity);
+  chunk_scan_kernel<T, Op, kBlockThreads><<<grid, dim3(kBlockThreads), 0, stream>>>(in, out, totals, seg,
+                                                                                    kChunkElements, op, identity);
   return gpuGetLastError();
+}
+
+//: The residue classes of ``in[0:n]`` mod ``s``.
+inline Segments residue_classes(long n, long s) { return Segments{n, s, 1, s, n}; }
+
+//: ``rows`` consecutive equal rows of ``in[0:n]``.
+inline Segments rows_of(long n, long rows) {
+  const long length = rows > 0 ? n / rows : 0;
+  return Segments{n, rows, length, 1, length};
 }
 
 //: The identity of ``min``: infinity where the type has one, so an infinite element is not
@@ -217,22 +241,42 @@ constexpr T max_identity() {
 
 template <typename T>
 inline gpuError_t strided_inclusive_sum(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::strided_inclusive(in, out, n, s, detail::ScanSum<T>(), T(0), stream);
+  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanSum<T>(), T(0), stream);
+}
+
+template <typename T>
+inline gpuError_t segmented_inclusive_sum(const T* in, T* out, long n, long rows, gpuStream_t stream) {
+  return detail::segments_inclusive(in, out, detail::rows_of(n, rows), detail::ScanSum<T>(), T(0), stream);
 }
 
 template <typename T>
 inline gpuError_t strided_inclusive_product(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::strided_inclusive(in, out, n, s, detail::ScanProduct<T>(), T(1), stream);
+  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanProduct<T>(), T(1), stream);
+}
+
+template <typename T>
+inline gpuError_t segmented_inclusive_product(const T* in, T* out, long n, long rows, gpuStream_t stream) {
+  return detail::segments_inclusive(in, out, detail::rows_of(n, rows), detail::ScanProduct<T>(), T(1), stream);
 }
 
 template <typename T>
 inline gpuError_t strided_inclusive_min(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::strided_inclusive(in, out, n, s, detail::ScanMin<T>(), detail::min_identity<T>(), stream);
+  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanMin<T>(), detail::min_identity<T>(), stream);
+}
+
+template <typename T>
+inline gpuError_t segmented_inclusive_min(const T* in, T* out, long n, long rows, gpuStream_t stream) {
+  return detail::segments_inclusive(in, out, detail::rows_of(n, rows), detail::ScanMin<T>(), detail::min_identity<T>(), stream);
 }
 
 template <typename T>
 inline gpuError_t strided_inclusive_max(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::strided_inclusive(in, out, n, s, detail::ScanMax<T>(), detail::max_identity<T>(), stream);
+  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanMax<T>(), detail::max_identity<T>(), stream);
+}
+
+template <typename T>
+inline gpuError_t segmented_inclusive_max(const T* in, T* out, long n, long rows, gpuStream_t stream) {
+  return detail::segments_inclusive(in, out, detail::rows_of(n, rows), detail::ScanMax<T>(), detail::max_identity<T>(), stream);
 }
 
 }  // namespace cuda_scan

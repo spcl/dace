@@ -127,7 +127,7 @@ def test_the_collective_header_declares_the_function():
     text = header.read_text()
     assert '__device__ void block_inclusive_scan_strided' in text
     # The residue-class kernel must go through the same collective, or the two drift apart.
-    assert 'block_inclusive_scan_strided<T, Op, BLOCK>(in + k, out + k, m, s, op, identity);' in text
+    assert 'block_inclusive_scan_strided<T, Op, BLOCK>(in + k * seg.pitch, out + k * seg.pitch' in text
 
 
 if __name__ == '__main__':

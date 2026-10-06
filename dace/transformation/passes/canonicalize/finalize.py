@@ -44,6 +44,7 @@ from dace.transformation.passes.cpu_specialization.hoist_parallel_region import 
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
+from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -503,6 +504,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     """
     Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
     run_structural_cleanup(sdfg)
+    # Before the offload reads a map around a device-wide scan as a host loop of launches.
+    BatchRowScans().apply_pass(sdfg, {})
     expand_gathered_dots(sdfg)
     recompute_fuse_for_gpu(sdfg)
     apply_gpu_storage(sdfg)
