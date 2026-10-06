@@ -6,11 +6,11 @@ The legacy generator declares an allocated array and then assigns the allocation
 statements landing in two streams::
 
     double *tmp;
-    tmp = new (std::align_val_t(64)) double[N];
+    tmp = dace::aligned_new_array<double>(N, 64);
 
 The readable generator fuses them into a single definition carrying a restrict qualifier::
 
-    double* __restrict__ tmp = new (std::align_val_t(64)) double[N];
+    double* __restrict__ tmp = dace::aligned_new_array<double>(N, 64);
 
 Fusing is only a textual merge of two writes, so it is sound exactly when both land in the SAME
 scope. DaCe deliberately separates them (a DECLARATION may be hoisted to an outer scope while the
@@ -121,10 +121,10 @@ def code_for(build, name, implementation):
 
 
 #: The fused definition: ``<type>* __restrict__ <name> = new <type> DACE_ALIGN(64)[<count>];``
-FUSED = re.compile(r'double\*\s+__restrict__\s+tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[')
+FUSED = re.compile(r'double\*\s+__restrict__\s+tmp\s*=\s*dace::aligned_new_array<double>\(')
 #: The legacy split pair.
 SPLIT_DECL = re.compile(r'double\s*\*\s*tmp\s*;')
-SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[')
+SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*dace::aligned_new_array<double>\(')
 
 
 def test_fused_definition_with_restrict(require_experimental):
@@ -150,7 +150,7 @@ def test_persistent_lifetime_stays_split(require_experimental):
     declaration and the allocation two different streams, so it must NOT be fused into a local
     definition (which would shadow the member and leave it unallocated)."""
     code = code_for(persistent_transient_sdfg, 'fused_persistent', EXPERIMENTAL)
-    assert re.search(r'__state->[\w]*tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
+    assert re.search(r'__state->[\w]*tmp\s*=\s*dace::aligned_new_array<double>\(', code), \
         f'expected the state-struct member to keep the split assignment:\n{code}'
     assert not FUSED.search(code), f'a state-struct member must not be fused into a local definition:\n{code}'
 
@@ -159,7 +159,7 @@ def test_may_alias_drops_restrict(require_experimental):
     """``may_alias`` marks data deliberately reachable through another pointer: still fused, but the
     no-alias promise must not be made (mirrors ``Array.as_arg``)."""
     code = code_for(may_alias_transient_sdfg, 'fused_may_alias', EXPERIMENTAL)
-    assert re.search(r'double\*\s+tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
+    assert re.search(r'double\*\s+tmp\s*=\s*dace::aligned_new_array<double>\(', code), \
         f'expected a fused definition:\n{code}'
     assert '__restrict__ tmp' not in code, f'restrict must be dropped for a may_alias array:\n{code}'
 
@@ -175,7 +175,7 @@ def test_constant_extent_is_fused(require_experimental):
     ``write_once_heap_sdfg`` allocates ``s`` with a constant extent of 2.
     """
     code = code_for(write_once_heap_sdfg, 'fused_const_extent', EXPERIMENTAL)
-    assert re.search(r'double\*\s+__restrict__\s+s\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
+    assert re.search(r'double\*\s+__restrict__\s+s\s*=\s*dace::aligned_new_array<double>\(', code), \
         f'expected a fused definition for a constant extent:\n{code}'
     assert not re.search(r'double\s*\*\s*s\s*;', code), f'the declaration was not fused away:\n{code}'
 

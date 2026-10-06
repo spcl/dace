@@ -12,7 +12,7 @@ N = 16
 
 @dace.program
 def mixed_copies(A: dace.float64[N], B: dace.float64[N], sc_in: dace.float64[1], sc_out: dace.float64[1]):
-    B[:] = A  # contiguous, same-layout, multi-element copy -> memcpy when lifted
+    B[:] = A  # contiguous, same-layout, multi-element copy -> one contiguous copy call when lifted
     sc_out[:] = sc_in  # single-element copy -> '=' tasklet when lifted
 
 
@@ -26,11 +26,12 @@ def generate(implementation: str, explicit_copy: bool) -> str:
 
 def test_readable_always_lowers():
     """ The readable generator requires the lowering, so the knob has no effect on it: either value
-    removes ``dace::CopyND`` and lowers the contiguous copy to ``memcpy``. """
+    removes ``dace::CopyND`` and lowers the contiguous copy to one ``dace::CopyImpl`` call (main's contiguous
+    CPU copy, which copies a non-trivially-copyable type element by element). """
     for value in (True, False):
         code = generate('experimental_readable', value)
         assert 'dace::CopyND' not in code, f'readable must lower copies regardless of the knob (got {value})'
-        assert 'memcpy' in code, 'the contiguous copy should lower to memcpy'
+        assert 'dace::CopyImpl<' in code, 'the contiguous copy should lower to one contiguous copy call'
 
 
 def test_legacy_honours_the_flag_and_defaults_on():
@@ -43,7 +44,7 @@ def test_legacy_honours_the_flag_and_defaults_on():
     """
     on = generate('legacy', True)
     assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind on legacy'
-    assert 'memcpy' in on, 'the contiguous copy should lower to memcpy on legacy too'
+    assert 'dace::CopyImpl<' in on, 'the contiguous copy should lower to one contiguous copy call on legacy too'
     off = generate('legacy', False)
     assert 'dace::CopyND' in off, 'off should keep the implicit CopyND lowering'
     with set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
