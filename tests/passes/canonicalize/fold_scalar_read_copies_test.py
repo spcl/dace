@@ -124,7 +124,7 @@ def test_a_scalar_read_again_in_another_state_stays():
 
 
 def result_copy_beside_a_reader(ordered: bool) -> dace.SDFG:
-    """``t -> r -> assign -> A[0]`` beside ``A[0] -> peek -> B[0]``; with ``ordered`` the reader runs first."""
+    """``t -> r -> A[0]`` beside ``A[0] -> peek -> B[0]``; with ``ordered`` the reader runs first."""
     sdfg = dace.SDFG('result_copy_beside_a_reader' + ('_ordered' if ordered else ''))
     sdfg.add_array('A', [1], dace.float64)
     sdfg.add_array('B', [1], dace.float64)
@@ -133,9 +133,7 @@ def result_copy_beside_a_reader(ordered: bool) -> dace.SDFG:
     produce = state.add_tasklet('produce', {}, {'o'}, 'o = 3.0')
     r = state.add_access('r')
     state.add_edge(produce, 'o', r, None, dace.Memlet('r[0]'))
-    assign = state.add_tasklet('assign', {'x'}, {'y'}, 'y = x')
-    state.add_edge(r, None, assign, 'x', dace.Memlet('r[0]'))
-    state.add_edge(assign, 'y', state.add_write('A'), None, dace.Memlet('A[0]'))
+    state.add_edge(r, None, state.add_write('A'), None, dace.Memlet('r[0] -> [0]'))
     peek = state.add_tasklet('peek', {'x'}, {'y'}, 'y = x')
     state.add_edge(state.add_read('A'), None, peek, 'x', dace.Memlet('A[0]'))
     b_node = state.add_write('B')
@@ -154,7 +152,7 @@ def test_a_result_copy_whose_reader_runs_first_folds():
     sdfg = result_copy_beside_a_reader(ordered=True)
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert not any(isinstance(node, nodes.Tasklet) and node.label == 'assign' for node in sdfg.start_state.nodes())
+    assert 'r' not in {node.data for node in sdfg.start_state.data_nodes()}
 
 
 if __name__ == '__main__':

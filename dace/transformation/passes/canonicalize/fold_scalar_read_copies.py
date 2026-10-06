@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fold the frontend's scalar copies into direct tasklet accesses: reads (``A[i] -> A_index -> tasklet``)
-and results (``tasklet -> result -> assign tasklet -> A[i]``).
+and results (``tasklet -> result -> A[i]``, the copy ``TrivialTaskletElimination`` leaves of an assign tasklet).
 
 The Python frontend reads an array element into a transient Scalar before a tasklet uses it. The copy is a
 SNAPSHOT: the tasklet sees ``A[i]`` as it was when the copy ran. Reading ``A[i]`` directly instead is the
@@ -75,33 +75,28 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
     state.remove_node(scalar)
 
 
-def assign_target(state: SDFGState, scalar: nodes.AccessNode) -> Optional[Any]:
-    """The out-edge of the assign tasklet ``y = x`` that is ``scalar``'s only reader, if it is one."""
-    readers = state.out_edges(scalar)
-    if len(readers) != 1 or not isinstance(readers[0].dst, nodes.Tasklet):
-        return None
-    tasklet = readers[0].dst
-    if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1 or state.out_degree(tasklet) != 1:
-        return None
-    out_conn, in_conn = next(iter(tasklet.out_connectors)), next(iter(tasklet.in_connectors))
-    if tasklet.code.as_string.strip() != f'{out_conn} = {in_conn}':
-        return None
-    target = state.out_edges(tasklet)[0]
-    return target if isinstance(target.dst, nodes.AccessNode) and target.data.wcr is None else None
-
-
 def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str, int]) -> Optional[Any]:
-    """The assign tasklet's edge into the array if the result scalar ``produce`` fills may be folded away."""
+    """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away.
+
+    ``TrivialTaskletElimination`` has already turned the frontend's ``y = x`` assign tasklet into that copy, so
+    the shape is ``tasklet -> result -> A[i]``.
+    """
     scalar = produce.dst
     desc = sdfg.arrays[scalar.data]
     if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 1):
         return None
     if not isinstance(produce.src, nodes.Tasklet) or state.in_degree(scalar) != 1 or produce.data.wcr is not None:
         return None
-    target = assign_target(state, scalar)
-    if target is None or sdfg.arrays[target.dst.data].dtype != desc.dtype:
+    if state.out_degree(scalar) != 1:
         return None
-    if symbolic.equal(target.data.subset.num_elements(), 1) is not True:
+    target = state.out_edges(scalar)[0]
+    if not isinstance(target.dst, nodes.AccessNode) or target.data.wcr is not None or target.data.is_empty():
+        return None
+    array = sdfg.arrays[target.dst.data]
+    if isinstance(array, (data.Scalar, data.Stream)) or array.dtype != desc.dtype:
+        return None
+    subset = write_subset(target)
+    if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
         return None
     before = reachable(state, produce.src, forward=False)
     after = reachable(state, target.dst)
@@ -111,12 +106,17 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str,
     return target
 
 
+def write_subset(copy: Any) -> Optional[Any]:
+    """The subset of the destination array a scalar-to-array copy edge writes."""
+    if copy.data.data == copy.dst.data:
+        return copy.data.subset
+    return copy.data.other_subset
+
+
 def fold_write(state: SDFGState, produce: Any, target: Any) -> None:
-    """Let the producing tasklet write the array element itself; drop the scalar and the assign tasklet."""
-    assign = target.src
+    """Let the producing tasklet write the array element itself; drop the result scalar."""
     state.add_edge(produce.src, produce.src_conn, target.dst, target.dst_conn,
-                   Memlet(data=target.data.data, subset=target.data.subset))
-    state.remove_node(assign)
+                   Memlet(data=target.dst.data, subset=write_subset(target)))
     state.remove_node(produce.dst)
 
 
