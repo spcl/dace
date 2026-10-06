@@ -71,21 +71,35 @@ def get_access_subsets(
     access_ranges: Dict[str, dace.subsets.Range] = {}
 
     for tasklet in tasklets:
-        # reads
         for edge in state.in_edges(tasklet):
-            memlet = edge.data
-            if memlet.is_empty() or memlet.data is None:
-                continue
-            _union_into(access_ranges, memlet.data, memlet.subset)
-
-        # writes
+            union_access(state, access_ranges, scalar_copy_source(state, edge))
         for edge in state.out_edges(tasklet):
-            memlet = edge.data
-            if memlet.is_empty() or memlet.data is None:
-                continue
-            _union_into(access_ranges, memlet.data, memlet.subset)
+            union_access(state, access_ranges, edge.data)
 
     return access_ranges
+
+
+def is_register(sdfg: dace.SDFG, name: str) -> bool:
+    """Whether ``name`` is a transient scalar: a value held in a register, not memory traffic."""
+    desc = sdfg.arrays.get(name)
+    return isinstance(desc, dace.data.Scalar) and desc.transient
+
+
+def scalar_copy_source(state: dace.SDFGState, edge) -> dace.Memlet:
+    """The memlet a tasklet input really reads: the frontend reads ``A[i]`` into a transient scalar first
+    (``A[i] -> A_index -> tasklet``), and the element of ``A`` is the access that costs memory traffic."""
+    node = edge.src
+    if isinstance(node, dace.nodes.AccessNode) and is_register(state.sdfg, node.data):
+        feeding = state.in_edges(node)
+        if len(feeding) == 1 and not feeding[0].data.is_empty():
+            return feeding[0].data
+    return edge.data
+
+
+def union_access(state: dace.SDFGState, ranges: Dict[str, dace.subsets.Range], memlet: dace.Memlet) -> None:
+    if memlet.is_empty() or memlet.data is None or is_register(state.sdfg, memlet.data):
+        return
+    _union_into(ranges, memlet.data, memlet.subset)
 
 
 def _union_into(
