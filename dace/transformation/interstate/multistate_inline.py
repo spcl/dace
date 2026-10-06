@@ -313,18 +313,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # the parent sees ``inner_K = outer_expr`` as a normal iedge
         # assignment. Inner symbols absent from the outer scope get
         # added to the outer SDFG's symbol table with their inner
-        # type, preserving the strict-typing contract.
+        # type, preserving the strict-typing contract. A constant value
+        # (``{'M': 20}``) is substituted instead: there is no expression to
+        # propagate, and the inlined descriptors become constant-sized.
         identity_mapping: Dict[Any, Any] = {}
+        constant_mapping: Dict[Any, Any] = {}
         non_identity_mapping: Dict[str, str] = {}
         for k, v in nsdfg_node.symbol_mapping.items():
             if str(k) == str(v):
                 identity_mapping[k] = v
+            elif not symbolic.issymbolic(v):
+                constant_mapping[k] = v
             else:
                 non_identity_mapping[str(k)] = symbolic.symstr(v)
         # Two-step replacement (N -> __dacesym_N --> map[N]) for any
         # identity entries we want safe_replace's clash-handling for.
-        if identity_mapping:
-            symbolic.safe_replace(identity_mapping, nsdfg.replace_dict)
+        if identity_mapping or constant_mapping:
+            symbolic.safe_replace({**identity_mapping, **constant_mapping}, nsdfg.replace_dict)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
