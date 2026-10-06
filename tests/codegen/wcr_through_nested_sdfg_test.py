@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
 
@@ -73,6 +74,7 @@ def _build_wcr_nsdfg_sdfg(n: int) -> dace.SDFG:
                           src_conn='_out',
                           memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
 
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -156,6 +158,7 @@ def _build_wcr_via_private_scalar_sdfg(n: int) -> dace.SDFG:
                           map_exit,
                           acc_write,
                           memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
