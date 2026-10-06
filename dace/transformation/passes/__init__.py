@@ -22,6 +22,7 @@ from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
 from .offset_loop_and_maps import OffsetLoopsAndMaps
 from .outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
+from .outline_to_external_calls import OutlineToExternalCalls, outline_to_external_calls
 from .eliminate_branches import EliminateBranches
 from .util import available_passes
 from .canonicalize import CanonicalizationPipeline, canonicalize

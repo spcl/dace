@@ -254,18 +254,6 @@ required:
                 description: >
                     CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
                     the optimization level; ``args`` add to it.
-            build_mode:
-                type: str
-                default: cmake
-                title: Build system
-                description: >
-                    How generated code is compiled. "cmake" (default) writes a
-                    CMakeLists project and runs cmake configure + build. "native"
-                    emits the g++/nvcc/link commands directly and runs them via
-                    subprocess, skipping cmake configure overhead. "native" is
-                    Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
-                    anything it cannot resolve without cmake.
-
             static_archive:
                 type: bool
                 default: false
@@ -277,8 +265,7 @@ required:
                     still loads and runs exactly as before -- so this only ADDS an
                     artifact. Used to link an offloaded loop-nest into a parent
                     SDFG's shared library as a static member instead of a second
-                    dlopen. Off by default; supported in both ``native`` and
-                    ``cmake`` build modes.
+                    dlopen. Off by default.
 
 
             allow_shadowing:
