@@ -948,6 +948,13 @@ class KernelSpec:
 
         cudaCodeGen._in_device_code = restore_in_device_code
 
+        # A kernel created after AddThreadBlockMaps (GridStrideKernels' device-sized map) is inferred here; entries
+        # computed in preprocess, which know the inserted thread-block maps, take precedence.
+        if kernel_map_entry not in cudaCodeGen._kernel_dimensions_map:
+            from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
+            inferred = InferGPUGridAndBlockSize().infer(kernel_parent_state.sdfg, set()) or {}
+            if kernel_map_entry in inferred:
+                cudaCodeGen._kernel_dimensions_map[kernel_map_entry] = inferred[kernel_map_entry]
         self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
         # Without a thread-block map, a kernel's own map spans the threads rather than the blocks
         self.per_thread: bool = not any(
