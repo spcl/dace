@@ -87,6 +87,8 @@ def copy_is_one_memcpy(node, state) -> bool:
     :returns: ``True`` if ``MemcpyCPU`` applies.
     """
     inp, in_subset, out, out_subset = copy_endpoints(node, state)
+    if inp.dtype != out.dtype:
+        return False
     if in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1:
         return False
     if len(inp.shape) != len(out.shape):
