@@ -27,6 +27,7 @@ import pytest
 import dace
 from dace import dtypes
 from dace.sdfg import nodes as nd
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -261,6 +262,7 @@ def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(monkeypatch):
     entry, exit_node = body.add_map('m', {'i': '0:N'}, schedule=dtypes.ScheduleType.CPU_Multicore)
     body.add_nedge(entry, nsdfg, dace.Memlet())
     body.add_memlet_path(nsdfg, exit_node, body.add_access('a'), src_conn='o', memlet=dace.Memlet('a[i]'))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
     resets = spy_on_resets(monkeypatch)
