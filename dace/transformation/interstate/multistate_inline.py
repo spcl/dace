@@ -19,14 +19,16 @@ from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock, 
 
 
 def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
-    """Whether two descriptors carry the same shape and the same strides.
+    """Whether two descriptors carry the same shape, strides and offset.
 
     ``Scalar`` reports strides as a list and ``Array`` as a tuple, and ``same_value`` counts the
     sequence type -- so a ``Scalar`` facing a length-1 ``Array``, the ordinary nested-SDFG boundary,
-    would refuse the inline over a container type. Compare by value.
+    would refuse the inline over a container type. Compare by value. A connector keeping an offset of
+    its own (one-based indices) addresses the container in another index space than the parent.
     """
     return (symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
-            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides)))
+            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides))
+            and symbolic.same_value(tuple(outer_desc.offset), tuple(inner_desc.offset)))
 
 
 def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:

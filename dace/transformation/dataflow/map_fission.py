@@ -149,6 +149,18 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
+            # A view of a connector container selects its window with the outer map's parameters; the fissioned maps
+            # would leave that view outside them, binding the whole container instead of one iteration's window.
+            for st in nsdfg_node.sdfg.states():
+                for view in st.data_nodes():
+                    if not isinstance(view.desc(nsdfg_node.sdfg), dt.View):
+                        continue
+                    view_edge = sdutil.get_view_edge(st, view)
+                    if (view_edge is not None and not view_edge.data.is_empty()
+                            and set(map_node.map.params) & {str(s)
+                                                            for s in view_edge.data.free_symbols}):
+                        return False
+
             # Reject if any interstate edge inside the nested SDFG has an
             # assignment that depends on the map iterator, either directly or
             # through a nested-SDFG input connector whose incoming memlet
@@ -684,13 +696,6 @@ class MapFission(transformation.SingleStateTransformation):
                                     else:
                                         e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
-        # A connector selecting one element of an augmented container becomes a view of it
-        for state in parent.states():
-            for node in state.nodes():
-                if (isinstance(node, nodes.NestedSDFG)
-                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
-                    node.integrate_into_parent()
-
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
@@ -717,6 +722,14 @@ class MapFission(transformation.SingleStateTransformation):
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
+
+        # A connector selecting one element of an augmented container becomes a view of it. Integration resolves the
+        # symbols defined at each node, which needs well-formed scopes: the outer map must be gone first
+        for state in parent.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
+                    node.integrate_into_parent()
 
         # NOTE: It is better to manually call memlet propagation here to ensure that all subsets are properly updated.
         # This can solve issues when, e.g., applying MapFission through `SDFG.apply_transformations_repeated`.

@@ -14,6 +14,7 @@ equivalence against a pure-numpy oracle and asserts that the recursive
 import dace
 import numpy as np
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import MapFission
 
 _E = dace.symbol('E')
@@ -134,6 +135,7 @@ def test_nested_sdfg_multistate_fission():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     state.add_memlet_path(rnode, me, nsdfg_node, dst_conn='a', memlet=dace.Memlet.simple('A', 'i'))
     state.add_memlet_path(nsdfg_node, mx, wnode, src_conn='b', memlet=dace.Memlet.simple('A', 'i'))
+    convert_legacy_nested_sdfgs(sdfg)
 
     sdfg.validate()
 
@@ -170,19 +172,19 @@ def test_multidim_gather_fission():
 
     s0 = nsdfg.add_state()
     rd0 = s0.add_read('w0')
-    tk0 = s0.add_tasklet('scale0', {'inp'}, {'out'}, 'out = 1.25 * inp')
+    tk0 = s0.add_tasklet('scale0', {'inp'}, {'res'}, 'res = 1.25 * inp')
     wr0 = s0.add_write('tmp')
     s0.add_edge(rd0, None, tk0, 'inp', dace.Memlet.simple('w0', '0'))
-    s0.add_edge(tk0, 'out', wr0, None, dace.Memlet.simple('tmp', '0'))
+    s0.add_edge(tk0, 'res', wr0, None, dace.Memlet.simple('tmp', '0'))
 
     s1 = nsdfg.add_state()
     rt = s1.add_read('tmp')
     rw1 = s1.add_read('w1')
-    tk1 = s1.add_tasklet('combine', {'a', 'b'}, {'out'}, 'out = a - 0.75 * b')
+    tk1 = s1.add_tasklet('combine', {'a', 'b'}, {'res'}, 'res = a - 0.75 * b')
     wr = s1.add_write('r')
     s1.add_edge(rt, None, tk1, 'a', dace.Memlet.simple('tmp', '0'))
     s1.add_edge(rw1, None, tk1, 'b', dace.Memlet.simple('w1', '0'))
-    s1.add_edge(tk1, 'out', wr, None, dace.Memlet.simple('r', '0'))
+    s1.add_edge(tk1, 'res', wr, None, dace.Memlet.simple('r', '0'))
 
     nsdfg.add_edge(s0, s1, dace.InterstateEdge())
 
@@ -216,6 +218,7 @@ def test_multidim_gather_fission():
     state.add_edge(gw0, None, nsdfg_node, 'w0', dace.Memlet.simple('gw0', '0'))
     state.add_edge(gw1, None, nsdfg_node, 'w1', dace.Memlet.simple('gw1', '0'))
     state.add_memlet_path(nsdfg_node, mx, onode, src_conn='r', memlet=dace.Memlet('out[e, k]'))
+    convert_legacy_nested_sdfgs(sdfg)
 
     sdfg.validate()
 
