@@ -177,11 +177,12 @@ class InsertExplicitCopies(ppl.Pass):
         """Renames data named like a copy node's connectors, which a connector may not share a name with.
 
         An expanded and inlined copy leaves its wrapper views behind under those names (``_cpy_in``), so a copy
-        inserted next to them would fail validation.
+        inserted next to them would fail validation. Only those transients move: the wrapper of a copy expanded
+        but not inlined binds its connectors under the same names, and a renamed one is bound to nothing.
         """
         taken = [
             name for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
-            if name in sdfg.arrays
+            if name in sdfg.arrays and sdfg.arrays[name].transient
         ]
         if taken:
             sdfg.replace_dict({name: sdfg.find_new_name_avoiding_connectors(name.lstrip('_')) for name in taken})
