@@ -24,12 +24,13 @@ import pytest
 
 import dace
 from dace import cpf_lowering
-from dace.codegen.cpf import render
+from dace.codegen.cpf import CONTRACT_LINES, render
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import (SEQUENTIAL_PINNED, AnnotateLoopKinds,
-                                                                         proven_carrying_access)
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (CONFLICT_MEANING, NEVER_EXAMINED, PARALLEL,
+                                                                         SEQUENTIAL_PINNED, SEQUENTIAL_PROVEN, UNSURE,
+                                                                         AnnotateLoopKinds, proven_carrying_access)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 
@@ -58,6 +59,12 @@ def map_entries(sdfg: dace.SDFG):
 
 def comment_lines(code: str):
     return [line.strip() for line in code.splitlines() if line.strip().startswith('//')]
+
+
+def test_the_rendering_states_which_verdicts_are_settled_and_which_are_open():
+    """Proven verdicts need no more reasoning, so the head of the unit says so once, before any loop."""
+    lines = render(scaling_sdfg('cpf_contract')).code.splitlines()
+    assert lines[1:1 + len(CONTRACT_LINES)] == CONTRACT_LINES
 
 
 def test_a_map_hint_is_rendered_one_comment_line_per_line():
@@ -183,7 +190,7 @@ def test_ordinary_codegen_carries_no_hint():
     assert 'traded a tiled map for a flat one.' not in ordinary
 
 
-# Naming what every loop is: parallel, sequential-and-proven, sequential-and-undecided, wavefront.
+# Naming what every loop is: parallel, sequential (carried or pinned), unsure, and the wavefront roles.
 
 
 def loops_of(sdfg: dace.SDFG):
@@ -274,7 +281,7 @@ def test_a_parallel_map_says_it_is_parallel():
     """A Map renders as a plain ``for``. Without the comment nothing in the text says the order
     is free, which is the first thing a reader specializing the code needs to know."""
     rendered = comment_lines(named(scaling_sdfg('cpf_kind_parallel')))
-    assert any(line.startswith('// parallel -- the iterations are independent') for line in rendered)
+    assert '// ' + PARALLEL.splitlines()[0] in rendered
 
 
 def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
@@ -285,8 +292,8 @@ def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     assert proofs, rendered
     # The hint carries the ACCESS that carries the dependence, which is what a reader acts on.
     assert 'b[' in proofs[0], proofs
-    # The row axis is proven; nothing here is merely undecided.
-    assert not [line for line in rendered if line.startswith('// undecided')]
+    # The row axis is proven; nothing here is merely unsure.
+    assert not [line for line in rendered if line.startswith('// unsure')]
 
 
 def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
@@ -296,28 +303,21 @@ def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
     anything about data. Calling that a carried dependence would be a claim the pipeline never
     made, and would send a reader looking for a recurrence that is not there.
     """
-    rendered = comment_lines(named(breaking_sdfg('cpf_kind_undecided')))
-    undecided = [line for line in rendered if line.startswith('// undecided -- not proven either way')]
-    assert undecided, rendered
-    # The refusal names WHERE the test stopped, which is what separates undecided from proven.
-    assert 'Break' in undecided[0], undecided
-    # "carried" is the proven wording, and an undecided loop must never borrow it.
+    rendered = comment_lines(named(breaking_sdfg('cpf_kind_unsure')))
+    unsure = [line for line in rendered if line.startswith('// unsure -- ')]
+    assert unsure, rendered
+    # The refusal names WHERE the test stopped, which is what separates unsure from proven.
+    assert 'Break' in unsure[0], unsure
+    # "carried" is the proven wording, and an unsure loop must never borrow it.
     assert not [line for line in rendered if line.startswith('// sequential -- carried:')]
 
 
 def test_a_loop_that_was_never_examined_says_exactly_that():
-    """The third sequential wording, and the most easily conflated with the other two.
-
-    A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
-    "Nothing is known" and "the test declined" are both weaker than a proof, but they are weaker
-    in different places, and only the loop itself can tell a reader where to look next.
-    """
+    """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
+    That is as open as a declined test, so it is ``unsure`` too, with the reason saying why."""
     rendered = comment_lines(named(unexamined_sdfg('cpf_kind_unexamined')))
-    assert any(line.startswith('// unclassified -- never examined for dependences') for line in rendered)
-    # Nothing was asked, so neither of the two wordings that quote a reason may appear.
-    assert not [
-        line for line in rendered if line.startswith('// sequential -- carried:') or line.startswith('// undecided --')
-    ]
+    assert '// ' + UNSURE.format(reason=NEVER_EXAMINED).splitlines()[0] in rendered, rendered
+    assert not [line for line in rendered if line.startswith('// sequential -- carried:')]
 
 
 def test_a_wavefront_names_its_diagonal_and_its_front():
@@ -326,9 +326,9 @@ def test_a_wavefront_names_its_diagonal_and_its_front():
     rendered = comment_lines(named(skewed_sdfg('cpf_kind_wavefront', tile=0)))
     # The skew that produced the wavefront is named, since the rewrite renames the axes to t/p and
     # a reader cannot recover it from the loop.
-    diagonal = [line for line in rendered if line.startswith('// wavefront diagonal (t = ')]
-    assert diagonal and diagonal[0].endswith('-- sequential: the skew put every dependence on this axis'), rendered
-    assert any(line.startswith('// wavefront front (t = ') and '-- parallel' in line for line in rendered)
+    diagonal = [line for line in rendered if line.startswith('// sequential -- wavefront diagonal (t = ')]
+    assert diagonal and diagonal[0].endswith(': the skew put every dependence on this axis'), rendered
+    assert any(line.startswith('// parallel -- wavefront front (t = ') for line in rendered)
     # A wavefront is a trade like any other, so it states the alternative and the device it pays on.
     assert any(line.startswith('// alternative: the unskewed nest') for line in rendered)
 
@@ -338,11 +338,12 @@ def test_a_tiled_wavefront_names_all_three_of_its_axes():
     parallel one -- the tile column, not the diagonal above it or the interior below."""
     rendered = comment_lines(named(skewed_sdfg('cpf_kind_wavefront_tiled', tile=32)))
     # Each axis names the tile it belongs to; the diagonal names the skew as well.
-    assert any(line.startswith('// wavefront tile diagonal (t = ') and '[32x32]' in line for line in rendered)
-    assert any(line.startswith('// wavefront tile column [32x32] -- parallel') for line in rendered)
-    assert any(line.startswith('// wavefront inner tile [32x32] -- sequential') for line in rendered)
+    assert any(
+        line.startswith('// sequential -- wavefront tile diagonal (t = ') and '[32x32]' in line for line in rendered)
+    assert any(line.startswith('// parallel -- wavefront tile column [32x32]') for line in rendered)
+    assert any(line.startswith('// sequential -- inner tile of a wavefront [32x32]') for line in rendered)
     # The tiled form is a different trade from the untiled one and must not borrow its wording.
-    assert not any(line.startswith('// wavefront diagonal') for line in rendered)
+    assert not any(line.startswith('// sequential -- wavefront diagonal') for line in rendered)
 
 
 def test_naming_the_loops_does_not_move_a_line_of_code():
@@ -389,7 +390,7 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
     sdfg = carried_sdfg('cpf_kind_pipeline')
     canonicalize(sdfg)
     rendered = comment_lines(render(sdfg).code)
-    assert any(line.startswith('// parallel -- the iterations are independent') for line in rendered)
+    assert '// ' + PARALLEL.splitlines()[0] in rendered, rendered
     assert any(line.startswith('// sequential -- carried:') for line in rendered)
 
 
@@ -408,7 +409,7 @@ def test_a_map_a_library_expansion_leaves_is_labelled():
     sdfg.validate()
     rendered = comment_lines(render(sdfg).code)
     assert '// reduction over the given axes with the given operator' in rendered, rendered
-    assert '// parallel -- the iterations are independent' in rendered, rendered
+    assert '// ' + PARALLEL.splitlines()[0] in rendered, rendered
 
 
 def test_a_map_codegen_lowers_a_copy_into_is_labelled():
@@ -422,7 +423,7 @@ def test_a_map_codegen_lowers_a_copy_into_is_labelled():
     code = render(sdfg).code
     lines = [line.strip() for line in code.splitlines()]
     pragma = next(index for index, line in enumerate(lines) if line.startswith('#pragma omp parallel for'))
-    assert lines[pragma - 1] == '// parallel -- the iterations are independent', code
+    assert lines[pragma - 2:pragma] == ['// ' + line for line in PARALLEL.splitlines()], code
 
 
 def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
@@ -444,10 +445,11 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
 
     sdfg = guarded_columns.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
-    hints = [loop.specialization_hint for loop in loops_of(sdfg)]
+    hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert hints[0].startswith('sequential -- carried: RAW on aa['), hints
-    assert hints[0].endswith(' - 1, _loop_it_0]'), hints
+    assert hints[0][0].startswith('sequential -- carried: RAW on aa['), hints
+    assert hints[0][0].endswith(' - 1, _loop_it_0]'), hints
+    assert hints[0][1].startswith('settled: proven, ' + CONFLICT_MEANING['RAW']), hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -460,7 +462,8 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
 
     sdfg = ahead.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
-    assert [loop.specialization_hint for loop in loops_of(sdfg)] == ['sequential -- carried: WAR on a[i + 1]']
+    assert [loop.specialization_hint for loop in loops_of(sdfg)
+            ] == [SEQUENTIAL_PROVEN.format(reason='WAR on a[i + 1]', why=CONFLICT_MEANING['WAR'])]
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
@@ -490,7 +493,7 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
     for loop in loops:
         loop.pinned_sequential = True
     code = named(sdfg)
-    assert '// ' + SEQUENTIAL_PINNED in [line.strip() for line in code.splitlines()], code
+    assert '// ' + SEQUENTIAL_PINNED.splitlines()[0] in [line.strip() for line in code.splitlines()], code
     assert '#pragma omp' not in code
     assert not any(line.startswith('// parallel --') for line in comment_lines(code))
 

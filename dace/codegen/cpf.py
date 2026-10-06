@@ -931,7 +931,7 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    lines = ['// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime.']
+    lines = ['// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime.'] + CONTRACT_LINES
     lines += [f'#include {header}' for header in headers]
     if dialect is cpf_lowering.Dialect.STANDALONE_C:
         lines.append(cpf_lowering.C_UNDEF_LINE)
@@ -949,6 +949,14 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     lines.append('')
     return '\n'.join(lines)
 
+
+#: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
+CONTRACT_LINES = [
+    '// Already parallelized, with basic heuristics applied. Every loop names its class first:',
+    '//   parallel, sequential -- settled; their parallelism needs no further reasoning.',
+    '//   unsure               -- open; the only loops whose parallelism is worth reasoning about.',
+    '// Spend the effort on heuristic optimizations and restructuring.',
+]
 
 #: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on
 #: the emitted text before it is handed back: every one of these is a construct that BUILDS inside
