@@ -36,7 +36,7 @@ SDFG entry. It is marked ``side_effects = True`` so the terminal
 no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Collection, Dict, List, Optional, Set
 
 import sympy
 
@@ -50,8 +50,9 @@ from dace.sdfg.state import ControlFlowBlock
 from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def names_still_plain(sdfg: SDFG) -> Dict[str, None]:
-    """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``.
+def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> Dict[str, None]:
+    """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``, or, for a name in
+    ``positive``, without ``positive=True``.
 
     ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
     set earlier, so asking it whether a name is nonnegative always answers ``None``. The assumption
@@ -69,9 +70,11 @@ def names_still_plain(sdfg: SDFG) -> Dict[str, None]:
     forever.
 
     :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
+    :param positive: Names whose assumption is ``positive=True`` rather than ``nonnegative=True``.
     :returns: The symbol names seen without the assumption, membership-checked only.
     """
-    return dict.fromkeys(str(s) for s in sized_symbols(sdfg) if not s.is_nonnegative)
+    return dict.fromkeys(
+        str(s) for s in sized_symbols(sdfg) if not (s.is_positive if s.name in positive else s.is_nonnegative))
 
 
 def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
@@ -116,9 +119,12 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     :returns: the number of symbols updated, or ``None`` if none.
     """
     updated = 0
+    # A name declared positive anywhere keeps that (stronger) assumption everywhere: respelling it merely nonnegative
+    # in one SDFG makes it a different sympy symbol from the positive spelling a nested SDFG keeps.
+    positive = {s.name for g in sdfg.all_sdfgs_recursive() for s in sized_symbols(g) if s.is_positive}
     for g in sdfg.all_sdfgs_recursive():
         repl = {}
-        plain = names_still_plain(g)
+        plain = names_still_plain(g, positive)
         # ``free_symbols``, NOT the argument set: a nested SDFG's size symbol often enters only
         # through descriptor shapes and the symbol mapping, so it is absent from
         # ``used_symbols(all_symbols=False)`` -- and an unstamped nested spelling makes a second
@@ -134,7 +140,8 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
                 continue
             if name not in plain:
                 continue
-            repl[name] = symbolic.symbol(name, dtype=dtype, nonnegative=True)
+            assumption = {'positive': True} if name in positive else {'nonnegative': True}
+            repl[name] = symbolic.symbol(name, dtype=dtype, **assumption)
         if repl:
             g.replace_dict(repl)
             updated += len(repl)

@@ -197,6 +197,29 @@ def test_reassumes_a_map_bound_that_was_rebuilt_plain():
     assert set_symbol_nonnegative_assumptions(sdfg) is None
 
 
+def test_a_positive_size_stays_positive_beside_a_plain_spelling():
+    """``positive=True`` is a different sympy symbol from ``nonnegative=True``. A plain spelling of a positive size in the
+    outer SDFG must not respell it merely nonnegative there while the nested SDFG keeps it positive: the connector
+    descriptors would stop being equivalent (fuse_move_ifs, scatter_accum_dup, segment_reduce_ragged)."""
+    size = dace.symbol('P', dace.int64, positive=True)
+    inner = dace.SDFG('positive_inner')
+    inner.add_symbol('P', dace.int64)
+    inner.add_array('x', [size], dace.float64)
+    inner.add_state()
+    sdfg = dace.SDFG('positive_outer')
+    sdfg.add_symbol('P', dace.int64)
+    sdfg.add_array('x', [size], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {'x'}, set(), {'P': size})
+    state.add_edge(state.add_read('x'), None, node, 'x', dace.Memlet.from_array('x', sdfg.arrays['x']))
+    # The plain spelling a re-parsed bound leaves behind.
+    state.add_mapped_tasklet('touch', {'i': '0:P'}, {'a': dace.Memlet('x[i]')}, 'pass', {}, external_edges=True)
+    assert set_symbol_nonnegative_assumptions(sdfg)
+    sdfg.validate()
+    assert all(s.is_positive for g in sdfg.all_sdfgs_recursive() for d in g.arrays.values()
+               for s in d.shape[0].free_symbols)
+
+
 def test_guard_leads_the_block_list_on_every_canonicalize():
     """The guard is the start block, and it must also be block 0 of the list ``nodes()``
     reports. That list is insertion order, so the guard -- emitted by the terminal stage --
@@ -330,6 +353,7 @@ if __name__ == '__main__':
     test_second_canonicalize_keeps_the_guard_its_own_block()
     test_map_bounds_keep_the_assumption_across_a_second_canonicalize()
     test_reassumes_a_map_bound_that_was_rebuilt_plain()
+    test_a_positive_size_stays_positive_beside_a_plain_spelling()
     test_guard_leads_the_block_list_on_every_canonicalize()
     test_repositioning_alone_is_reported_as_a_change()
     test_guard_aborts_on_negative_symbol()
