@@ -146,6 +146,12 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
                     if vsym in subsdict and str(k) == str(vsym):
                         n.sdfg.replace_dict({str(k): repldict[str(vsym)]})
                         new_mapping[k] = vsym
+                        # The bounds and step now read inside, so the node maps their symbols too.
+                        for name in map(str, subsdict[vsym].free_symbols):
+                            if name not in n.symbol_mapping and name not in new_mapping:
+                                new_mapping[name] = dace.symbolic.pystr_to_symbolic(name)
+                                if name not in n.sdfg.symbols:
+                                    n.sdfg.add_symbol(name, state.symbols_defined_at(n)[name])
                         continue
                     new_mapping[k] = vsym.subs(subsdict)
                 n.symbol_mapping = new_mapping
