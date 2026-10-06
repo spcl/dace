@@ -309,6 +309,33 @@ def test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets():
     assert not unexplained, f'a name left an enclosing set without being internalized: {unexplained}'
 
 
+GATHER_SUM_LEN = dace.symbol('GATHER_SUM_LEN')
+
+
+@dace.program
+def gathered_sum(a: dace.float64[GATHER_SUM_LEN], b: dace.float64[GATHER_SUM_LEN], ip: dace.int32[GATHER_SUM_LEN],
+                 out: dace.float64[1]):
+    total = 0.0
+    for i in range(GATHER_SUM_LEN):
+        total = total + a[i] * b[ip[i]]
+    out[0] = total
+
+
+def test_a_lifted_gather_reduction_keeps_its_accumulator():
+    """s4115: re-propagating the lifted reduction's nested body lost the sum (it came back 0)."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = gathered_sum.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    finalize_for_target(sdfg, 'cpu', validate=True)
+    rng = np.random.default_rng(0)
+    a, b = rng.random(64), rng.random(64)
+    ip = rng.integers(0, 64, 64).astype(np.int32)
+    out = np.zeros(1)
+    sdfg(a=a, b=b, ip=ip, out=out, GATHER_SUM_LEN=64)
+    assert np.isclose(out[0], np.sum(a * b[ip])), (out[0], np.sum(a * b[ip]))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 
@@ -930,3 +957,4 @@ def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
     A, idx, C = np.random.rand(20), np.random.randint(0, 20, 20).astype(np.int64), np.zeros(20)
     sdfg(A=A, idx=idx, C=C, GATHER_LEN=20)
     assert np.allclose(C, 2 * A[idx])
+    test_a_lifted_gather_reduction_keeps_its_accumulator()

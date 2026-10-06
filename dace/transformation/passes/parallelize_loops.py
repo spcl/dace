@@ -160,6 +160,19 @@ def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
     return (sdfg_level, depth)
 
 
+def writes_through_wcr(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether the scope of ``entry`` writes anything through a WCR edge, nested SDFGs included."""
+    for node in state.scope_subgraph(entry).nodes():
+        for edge in state.out_edges(node):
+            if edge.data.wcr is not None:
+                return True
+        if isinstance(node, nodes.NestedSDFG):
+            for inner in node.sdfg.all_sdfgs_recursive():
+                if any(e.data.wcr is not None for st in inner.states() for e in st.edges()):
+                    return True
+    return False
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ParallelizeLoops(ppl.Pass):
@@ -310,7 +323,10 @@ class ParallelizeLoops(ppl.Pass):
                     # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
                     rb, _, rs = node.map.range[0]
                     node.map.range = subsets.Range([(rb, last, rs)])
-            if lifted:
+            # A reduction (a WCR edge anywhere in the lifted scope) keeps LoopToMap's whole-array connection: re-propagated,
+            # its nested body's sum lost its accumulator (s4115 summed to 0).
+            reduces = any(writes_through_wcr(state, node) for node in lifted)
+            if lifted and not reduces:
                 # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
                 # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
                 # cost stays independent of ``propagate``.
