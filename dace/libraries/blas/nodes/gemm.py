@@ -951,17 +951,23 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     host_or_device_connectors = frozenset({'_alpha', '_beta'})
 
     # Object fields
-    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
-    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
     alpha = properties.Property(allow_none=False,
                                 default=1,
+                                category="Semantics",
                                 desc="A scalar which will be multiplied with A @ B before adding C")
     beta = properties.Property(allow_none=False,
                                default=0,
+                               category="Semantics",
                                desc="A scalar which will be multiplied with C before adding C")
-    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _c in connector when beta != 0")
+    cin = properties.Property(dtype=bool,
+                              default=True,
+                              category="Semantics",
+                              desc="Whether to have a _c in connector when beta != 0")
     alpha_input = properties.Property(dtype=bool,
                                       default=False,
+                                      category="Semantics",
                                       desc="Whether alpha is supplied at runtime through an '_alpha' scalar "
                                       "connector (composed multiplicatively with the 'alpha' property). The GPU "
                                       "expansion selects the cuBLAS pointer mode by the connector's storage: a "
@@ -969,19 +975,25 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                                       "pointer mode. A host scalar is never promoted to the GPU.")
     beta_input = properties.Property(dtype=bool,
                                      default=False,
+                                     category="Semantics",
                                      desc="Whether beta is supplied at runtime through a '_beta' scalar connector "
                                      "(composed multiplicatively with the 'beta' property); forces C to be read. "
                                      "Same host/device pointer-mode selection as alpha_input.")
     algorithm = properties.Property(dtype=str,
                                     allow_none=True,
                                     default=None,
+                                    category="Code Generation",
                                     desc="If applicable, chooses the vendor-provided implementation "
                                     "(algorithm) for the multiplication")
     accumulator_type = properties.TypeClassProperty(
-        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication")
+        default=None,
+        allow_none=True,
+        category="Semantics",
+        desc="Accumulator or intermediate storage type used in multiplication")
     compute_type = properties.Property(default=None,
                                        dtype=str,
                                        allow_none=True,
+                                       category="Code Generation",
                                        desc="If applicable, overrides computation type (CUBLAS-specific, see "
                                        "``cublasComputeType_t``)")
 

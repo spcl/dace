@@ -49,13 +49,18 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
     skip_library_nodes = properties.Property(dtype=bool,
                                              default=False,
+                                             category='Applicability',
                                              desc='If True, does not remove library nodes if their results are unused. '
                                              'Otherwise removes library nodes without side effects.')
     remove_persistent_memory = properties.Property(
-        dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead')
+        dtype=bool,
+        default=False,
+        category='Applicability',
+        desc='If True, marks code with Persistent allocation lifetime as dead')
     converge_self_reaching_states = properties.Property(
         dtype=bool,
         default=False,
+        category='Applicability',
         desc='If True, a state that reaches itself (a loop body) is re-examined against its refreshed read set '
         'until no node dies, instead of leaving each exposed dead link to the next pipeline round.')
 

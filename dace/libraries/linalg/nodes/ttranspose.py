@@ -384,9 +384,12 @@ class TensorTranspose(nodes.LibraryNode):
     }
     default_implementation = 'pure'
 
-    axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
-    alpha = properties.Property(dtype=Number, default=1, desc="Input tensor scaling factor")
-    beta = properties.Property(dtype=Number, default=0, desc="Output tensor scaling factor")
+    axes = properties.ListProperty(element_type=int,
+                                   default=[],
+                                   category="Semantics",
+                                   desc="Permutation of input tensor's modes")
+    alpha = properties.Property(dtype=Number, default=1, category="Semantics", desc="Input tensor scaling factor")
+    beta = properties.Property(dtype=Number, default=0, category="Semantics", desc="Output tensor scaling factor")
 
     def __init__(self, name, axes=[], alpha=1, beta=0, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_tensor"}, outputs={"_out_tensor"}, **kwargs)

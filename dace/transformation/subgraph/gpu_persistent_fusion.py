@@ -46,12 +46,14 @@ class GPUPersistentKernel(SubgraphTransformation):
     """
 
     validate = Property(
+        category='Diagnostics',
         desc="Validate the sdfg and the nested sdfg",
         dtype=bool,
         default=False,
     )
 
     include_in_assignment = Property(
+        category='Parameters',
         desc="Wether to include global variable assignments of the edge going "
         "into the kernel inside the kernel or have it happen on the "
         "outside. If the assignment is needed in the kernel, it needs to "
@@ -61,6 +63,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     )
 
     kernel_prefix = Property(
+        category='Parameters',
         desc="Name of the kernel. If no value is given the kerenl will be "
         "refrenced as `kernel`, if a value is given the kernel will be "
         "named `<kernel_prefix>_kernel`. This is useful if multiple "

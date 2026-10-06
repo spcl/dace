@@ -24,6 +24,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
     no_init = Property(dtype=bool,
                        default=False,
+                       category='Parameters',
                        desc='If enabled, does not create initialization states '
                        'for reduce nodes with identity')
 

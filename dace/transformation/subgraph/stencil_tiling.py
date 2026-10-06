@@ -44,17 +44,24 @@ class StencilTiling(transformation.SubgraphTransformation):
     """
 
     # Properties
-    debug = Property(desc="Debug mode", dtype=bool, default=False)
+    debug = Property(category='Diagnostics', desc="Debug mode", dtype=bool, default=False)
 
-    prefix = Property(dtype=str, default="stencil", desc="Prefix for new inner tiled range symbols")
+    prefix = Property(dtype=str,
+                      default="stencil",
+                      category='Parameters',
+                      desc="Prefix for new inner tiled range symbols")
 
-    strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Tile stride")
+    strides = ShapeProperty(dtype=tuple, default=(1, ), category='Parameters', desc="Tile stride")
 
     schedule = Property(dtype=dace.dtypes.ScheduleType,
                         default=dace.dtypes.ScheduleType.Default,
+                        category='Scheduling',
                         desc="Dace.Dtypes.ScheduleType of Inner Maps")
 
-    unroll_loops = Property(desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False)
+    unroll_loops = Property(category='Scheduling',
+                            desc="Unroll Inner Loops if they have Size > 1",
+                            dtype=bool,
+                            default=False)
 
     @staticmethod
     def coverage_dicts(sdfg, graph, map_entry, outer_range=True):

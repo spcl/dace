@@ -287,7 +287,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
-    overwrite = dace.properties.Property(dtype=bool, default=False)
+    overwrite = dace.properties.Property(dtype=bool, default=False, category='Semantics')
 
     # Object fields
     def __init__(self, name, *args, **kwargs):

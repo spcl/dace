@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for library node expansions: CopyLibraryNode, FillLibraryNode and the ``'Auto'`` dispatch."""
+"""Shared helpers for the standard library node expansions."""
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import dace

@@ -40,10 +40,13 @@ class FFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
     axes = properties.ListProperty(element_type=int,
                                    allow_none=True,
                                    default=None,
+                                   category='Semantics',
                                    desc='Axes transformed in order (0..rank-1); unlisted axes are batch dimensions. '
                                    '``None`` means every axis.')
 
@@ -59,10 +62,13 @@ class IFFT(nodes.LibraryNode):
     implementations = {}
     default_implementation = 'pure'
 
-    factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
+    factor = properties.SymbolicProperty(category='Semantics',
+                                         desc='Coefficient to multiply outputs. Used for normalization',
+                                         default=1.0)
     axes = properties.ListProperty(element_type=int,
                                    allow_none=True,
                                    default=None,
+                                   category='Semantics',
                                    desc='Axes transformed in order (0..rank-1); unlisted axes are batch dimensions. '
                                    '``None`` means every axis.')
 

@@ -119,18 +119,26 @@ class StreamingMemory(xf.SingleStateTransformation):
     entry = xf.PatternNode(nodes.EntryNode)
     exit = xf.PatternNode(nodes.ExitNode)
 
-    buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
+    buffer_size = properties.Property(dtype=int,
+                                      default=1,
+                                      category='Memory',
+                                      desc='Set buffer size for the newly-created stream')
 
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
+                                      category='Memory',
                                       desc='Set storage type for the newly-created stream',
                                       default=dtypes.StorageType.Default)
 
     use_memory_buffering = properties.Property(dtype=bool,
                                                default=False,
+                                               category='Memory',
                                                desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
-        dtype=int, default=64, desc='Set bytes read/written from memory if memory buffering is enabled.')
+        dtype=int,
+        default=64,
+        category='Memory',
+        desc='Set bytes read/written from memory if memory buffering is enabled.')
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -590,9 +598,13 @@ class StreamingComposition(xf.SingleStateTransformation):
     access = xf.PatternNode(nodes.AccessNode)
     second = xf.PatternNode(nodes.Node)
 
-    buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
+    buffer_size = properties.Property(dtype=int,
+                                      default=1,
+                                      category='Memory',
+                                      desc='Set buffer size for the newly-created stream')
 
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
+                                      category='Memory',
                                       desc='Set storage type for the newly-created stream',
                                       default=dtypes.StorageType.Default)
 

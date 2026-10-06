@@ -43,7 +43,10 @@ class StreamTransient(transformation.SingleStateTransformation):
         transient then acts as a local buffer.
     """
 
-    with_buffer = Property(dtype=bool, default=True, desc="Use an intermediate buffer for accumulation")
+    with_buffer = Property(dtype=bool,
+                           default=True,
+                           category='Memory',
+                           desc="Use an intermediate buffer for accumulation")
 
     tasklet = transformation.PatternNode(nodes.Tasklet)
     map_exit = transformation.PatternNode(nodes.MapExit)
@@ -129,11 +132,12 @@ class AccumulateTransient(transformation.SingleStateTransformation):
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
     array = Property(dtype=str,
+                     category='Parameters',
                      desc="Array to create local storage for (if empty, first available)",
                      default=None,
                      allow_none=True)
 
-    identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
+    identity = SymbolicProperty(category='Parameters', desc="Identity value to set", default=None, allow_none=True)
 
     @classmethod
     def expressions(cls):

@@ -58,9 +58,10 @@ class WarpTiling(xf.SingleStateTransformation):
     within the given map, the transformation adds warp reductions to the tiles.
     """
 
-    warp_size = properties.Property(dtype=int, default=32, desc='Hardware warp size')
+    warp_size = properties.Property(dtype=int, default=32, category='Scheduling', desc='Hardware warp size')
     replicate_maps = properties.Property(dtype=bool,
                                          default=True,
+                                         category='Parameters',
                                          desc='Replicate tiled maps that lead to multiple other tiled maps')
 
     mapentry = xf.PatternNode(nodes.MapEntry)

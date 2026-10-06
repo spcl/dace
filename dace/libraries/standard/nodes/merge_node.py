@@ -6,13 +6,12 @@ import dace
 from dace import library, nodes
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
-from typing import List
 
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """One map doing the per-element select."""
-    environments: List[type] = []
+    environments = []
 
     @classmethod
     def expansion(cls, node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):

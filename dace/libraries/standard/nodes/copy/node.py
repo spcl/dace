@@ -35,6 +35,7 @@ class CopyLibraryNode(nodes.LibraryNode):
 
     sync = properties.Property(dtype=bool,
                                default=True,
+                               category='Scheduling',
                                desc='Emit the trailing __syncthreads() after the SharedMemoryCollective '
                                'copy (default True). A pass chaining several staged copies clears it on '
                                'all but the last so the chain costs one barrier.')

@@ -23,6 +23,7 @@ class TransientReuse(ppl.Pass):
     verbose = properties.Property(
         dtype=bool,
         default=False,
+        category="Diagnostics",
         desc="Print information about the memory reduction.",
     )
 

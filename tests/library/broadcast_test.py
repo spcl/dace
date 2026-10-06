@@ -124,36 +124,27 @@ def test_the_destination_type_converts():
 
 def test_broadcast_to_in_a_program():
 
-    rng = np.random.default_rng(42)
-
     @dace.program
-    def program_broadcast_to_in_a_program(a: dace.float64[3, 1], out: dace.float64[3, 4]):
+    def program(a: dace.float64[3, 1], out: dace.float64[3, 4]):
         out[:] = np.broadcast_to(a, (3, 4))
 
-    assert len([
-        n for n, _ in program_broadcast_to_in_a_program.to_sdfg(simplify=False).all_nodes_recursive()
-        if isinstance(n, Broadcast)
-    ]) == 1
-    a = rng.standard_normal((3, 1))
+    assert len([n for n, _ in program.to_sdfg(simplify=False).all_nodes_recursive() if isinstance(n, Broadcast)]) == 1
+    a = np.random.randn(3, 1)
     out = np.zeros((3, 4))
-    program_broadcast_to_in_a_program(a=a, out=out)
+    program(a=a, out=out)
     np.testing.assert_array_equal(out, np.broadcast_to(a, (3, 4)))
 
 
 def test_the_library_call_in_a_program_keeps_its_dim():
 
     @dace.program
-    def program_the_library_call_in_a_program_keeps_its_dim(a: dace.float64[3], out: dace.float64[3, 4]):
+    def program(a: dace.float64[3], out: dace.float64[3, 4]):
         dace.libraries.standard.broadcast(a, out, dim=2)
 
-    assert [
-        n.dim
-        for n, _ in program_the_library_call_in_a_program_keeps_its_dim.to_sdfg(simplify=False).all_nodes_recursive()
-        if isinstance(n, Broadcast)
-    ] == [2]
+    assert [n.dim for n, _ in program.to_sdfg(simplify=False).all_nodes_recursive() if isinstance(n, Broadcast)] == [2]
     a = np.arange(3.0)
     out = np.zeros((3, 4))
-    program_the_library_call_in_a_program_keeps_its_dim(a=a, out=out)
+    program(a=a, out=out)
     np.testing.assert_array_equal(out, spread(a, 2, 4))
 
 

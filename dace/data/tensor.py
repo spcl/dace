@@ -191,8 +191,8 @@ class TensorIndexDense(TensorIndex):
     index structure beyond the corresponding dimension size.
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool)
+    _ordered = Property(dtype=bool, default=False, category='Memory')
+    _unique = Property(dtype=bool, category='Memory')
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -258,9 +258,9 @@ class TensorIndexCompressed(TensorIndex):
     array that holds the child coordinates corresponding the parent.
     """
 
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _full = Property(dtype=bool, default=False, category='Memory')
+    _ordered = Property(dtype=bool, default=False, category='Memory')
+    _unique = Property(dtype=bool, default=False, category='Memory')
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -332,9 +332,9 @@ class TensorIndexSingleton(TensorIndex):
     coordinate but the first is encoded in this manner.
     """
 
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _full = Property(dtype=bool, default=False, category='Memory')
+    _ordered = Property(dtype=bool, default=False, category='Memory')
+    _unique = Property(dtype=bool, default=False, category='Memory')
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -406,8 +406,8 @@ class TensorIndexRange(TensorIndex):
     range of coordinates between max(0, -offset[i]) and min(N, M - offset[i]).
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _ordered = Property(dtype=bool, default=False, category='Memory')
+    _unique = Property(dtype=bool, default=False, category='Memory')
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -474,8 +474,8 @@ class TensorIndexOffset(TensorIndex):
     coordinate j = i + offset[k].
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _ordered = Property(dtype=bool, default=False, category='Memory')
+    _unique = Property(dtype=bool, default=False, category='Memory')
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -541,11 +541,11 @@ class Tensor(Structure):
     This abstraction is based on [https://doi.org/10.1145/3276493].
     """
 
-    value_dtype = TypeClassProperty(default=dtypes.int32)
-    tensor_shape = ShapeProperty(default=[])
-    indices = ListProperty(element_type=TensorIndex)
-    index_ordering = ListProperty(element_type=symbolic.SymExpr)
-    value_count = SymbolicProperty(default=0)
+    value_dtype = TypeClassProperty(default=dtypes.int32, category='General')
+    tensor_shape = ShapeProperty(default=[], category='General')
+    indices = ListProperty(element_type=TensorIndex, category='Memory')
+    index_ordering = ListProperty(element_type=symbolic.SymExpr, category='Memory')
+    value_count = SymbolicProperty(default=0, category='Memory')
 
     def __init__(self,
                  value_dtype: dtypes.typeclass,

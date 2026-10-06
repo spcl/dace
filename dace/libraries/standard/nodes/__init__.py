@@ -11,6 +11,7 @@ from .norm2 import Norm2
 from .fill import FillLibraryNode
 from .merge_node import MergeLibraryNode
 from .gearbox import Gearbox
+from .merge_node import MergeLibraryNode
 from .reduce import Reduce
 from .arg_reduce import ArgReduce
 from .find_first import FindFirst

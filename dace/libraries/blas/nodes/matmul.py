@@ -325,9 +325,11 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
 
     alpha = properties.Property(allow_none=False,
                                 default=1,
+                                category="Semantics",
                                 desc="A scalar which will be multiplied with A @ B before adding C")
     beta = properties.Property(allow_none=False,
                                default=0,
+                               category="Semantics",
                                desc="A scalar which will be multiplied with C before adding C")
     transA = properties.Property(dtype=bool, default=False, desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, default=False, desc="Whether to transpose B before multiplying")

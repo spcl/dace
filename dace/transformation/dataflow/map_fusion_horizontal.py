@@ -66,27 +66,32 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
     only_if_common_ancestor = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` restrict parallel Map fusion to maps that have a direct common ancestor.",
     )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 

@@ -24,7 +24,10 @@ class FillLibraryNode(nodes.LibraryNode):
     VALUE_CONNECTOR_NAME = "_fill_val"
 
     # dtype=None takes any Python constant; numpy scalars are normalized by Property.__set__.
-    value = properties.Property(dtype=None, default=0, desc='The constant written over the subset.')
+    value = properties.Property(dtype=None,
+                                default=0,
+                                category='Semantics',
+                                desc='The constant written over the subset.')
 
     def __init__(self, name: str, *args, value=0, **kwargs):
         # Dotted structure-member data names reach here through the callers that build the label;

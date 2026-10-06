@@ -4,16 +4,13 @@ from dace import SDFG, SDFGState, library, memlet as mm, nodes, properties
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation
-from typing import List, TYPE_CHECKING
-if TYPE_CHECKING:
-    from dace.frontend.python.newast import ProgramVisitor
 
 
 @library.expansion
 class ExpandBroadcastPure(ExpandTransformation):
     """One map writing each output element from the source element it broadcasts from."""
 
-    environments: List[type] = []
+    environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
