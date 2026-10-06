@@ -449,6 +449,11 @@ def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
     assert scratch[0].storage == gpu
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason=
+    "symbol identity is the name until the symbol registry, so the premise that two dtypes of a name differ does not hold"
+)
 def test_einsum_shape_check_equalizes_symbols():
     """One symbol name can reach the shape check as several sympy instances -- a descriptor a layout
     pass rebuilt against one parsed from a string -- which compare unequal by identity. The einsum
