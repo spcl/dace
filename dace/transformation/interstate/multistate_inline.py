@@ -378,20 +378,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # A tasklet connector may not share its name with a container (validation rejects it). The inlined
         # tasklets join the parent's, so one whose connector names a parent container is renamed (connector
-        # and code, as ``replace_dict`` does), and no inlined transient takes a name either set of tasklets uses.
-        nested_connectors = tasklet_connector_names(nsdfg)
-        clashing = sorted(name for name in nested_connectors
-                          if name in sdfg.arrays or name in outer_symbols or name in sdfg.constants)
-        if clashing:
-            taken = (set(sdfg.arrays) | set(outer_symbols) | set(sdfg.constants) | set(nsdfg.arrays)
-                     | nested_connectors | tasklet_connector_names(sdfg))
-            moved = {}
-            for name in clashing:
-                moved[name] = data.find_new_name(name, taken)
-                taken.add(moved[name])
-            nsdfg.replace_dict(moved)
-            nested_connectors = tasklet_connector_names(nsdfg)
-        connectors = tasklet_connector_names(sdfg) | nested_connectors
+        # and code only: a nested container of the same name keeps it), and no inlined transient takes a name
+        # either set of tasklets uses.
+        _disambiguate_code_connectors(nsdfg,
+                                      set(sdfg.arrays) | set(nsdfg.arrays) | set(outer_symbols) | set(sdfg.constants))
+        connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
 
         # Mapping from nested transient name to top-level name
         transients: Dict[str, str] = {}
