@@ -1171,6 +1171,7 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
     """
     in_conns = set(nsdfg_node.in_connectors.keys())
     idx_conns: Set[str] = set()
+    index_symbols: Set[str] = set()
     for st in nsdfg_node.sdfg.states():
         for dn in st.data_nodes():
             if dn.data != out_conn:
@@ -1178,7 +1179,21 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
             for e in st.in_edges(dn):
                 if e.data is None or e.data.subset is None:
                     continue
-                idx_conns |= {str(sym) for sym in e.data.subset.free_symbols if str(sym) in in_conns}
+                names = {str(sym) for sym in e.data.subset.free_symbols}
+                idx_conns |= names & in_conns
+                index_symbols |= names - in_conns
+    # A connector that is the whole outer array (No-View) is read on an interstate edge, ``k := idx[i]``, and the
+    # write subset names ``k``.
+    for edge in nsdfg_node.sdfg.all_interstate_edges():
+        for lhs, rhs in edge.data.assignments.items():
+            if lhs not in index_symbols:
+                continue
+            try:
+                tree = ast.parse(str(rhs), mode='eval').body
+            except SyntaxError:
+                continue
+            if isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id in in_conns:
+                idx_conns.add(tree.value.id)
     return idx_conns
 
 
