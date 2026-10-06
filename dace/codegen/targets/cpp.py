@@ -3,6 +3,7 @@
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
 """
+import copy
 import ast
 import functools
 import itertools
@@ -768,8 +769,8 @@ def nested_write_target(inner_sdfg: SDFG, nsdfg: nodes.NestedSDFG, name: str, in
 
     * every write to ``name`` anywhere in the body (a nested SDFG's write included) targets the
       same ``inner_subset``, so no other write in the body can meet another iteration's;
-    * the inner array steps through memory like the outer one (same rank, same strides after the
-      symbol mapping) and the window has unit steps, so inner index ``i`` is outer ``min + i``;
+    * the inner array steps through memory like the outer one (same rank, strides and offset after the
+      symbol mapping), so inner index ``i`` is outer ``i``;
     * every symbol in ``inner_subset`` is handed in through the symbol mapping and is not
       reassigned inside the body, so it holds the value the outer map sees.
 
@@ -814,7 +815,11 @@ def nested_write_target(inner_sdfg: SDFG, nsdfg: nodes.NestedSDFG, name: str, in
                     continue
                 if wedge.data.get_dst_subset(wedge, state) != inner_subset:
                     return None
-    translated = mmlt.Memlet(data=outer_edge.data.data, subset=inner_subset.offset_new(window, False))
+    # The connector is the outer container (nested SDFG contract), so inner indices are outer ones; a connector
+    # keeping an offset of its own addresses another index space, which is not translated here.
+    if list(inner_sdfg.arrays[name].offset) != list(parent_sdfg.arrays[outer_edge.data.data].offset):
+        return None
+    translated = mmlt.Memlet(data=outer_edge.data.data, subset=copy.deepcopy(inner_subset))
     translated.replace(nsdfg.symbol_mapping)
     return translated.subset
 
