@@ -71,6 +71,24 @@ def test_the_renamed_view_chain_computes_what_numpy_computes():
     assert np.array_equal(out, x), out
 
 
+@dace.program
+def clipped_by_the_peak(a: dace.float64[N], out: dace.float64[N]):
+    out[:] = np.maximum(a, float(a.max()) * 0.5)
+
+
+def test_a_reduction_result_is_not_named_after_the_function_it_shadows():
+    """``a.max()`` names its result after the method; a container called ``max`` would shadow the
+    ``max(...)`` the elementwise maximum calls in the generated code."""
+    from dace.frontend.python.newast import FORBIDDEN_ARRAY_NAMES
+    sdfg = clipped_by_the_peak.to_sdfg(simplify=False)
+    assert not FORBIDDEN_ARRAY_NAMES & set(sdfg.arrays), sorted(FORBIDDEN_ARRAY_NAMES & set(sdfg.arrays))
+    a = np.random.default_rng(0).random(8)
+    out = np.zeros(8)
+    clipped_by_the_peak(a, out, N=8)
+    assert np.allclose(out, np.maximum(a, a.max() * 0.5))
+
+
 if __name__ == '__main__':
     test_reshaped_views_carry_their_python_names_after_parsing()
     test_the_renamed_view_chain_computes_what_numpy_computes()
+    test_a_reduction_result_is_not_named_after_the_function_it_shadows()

@@ -127,6 +127,16 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None
             node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
+def tasklet_connector_names(sdfg: SDFG) -> Set[str]:
+    """The connector names of every tasklet in ``sdfg``'s own namespace (not inside nested SDFGs)."""
+    return {
+        conn
+        for state in sdfg.states()
+        for node in state.nodes() if isinstance(node, nodes.Tasklet)
+        for conn in node.in_connectors.keys() | node.out_connectors.keys()
+    }
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
@@ -366,6 +376,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Collect and modify access nodes as necessary
 
+        # A tasklet connector may not share its name with a container (validation rejects it). The inlined
+        # tasklets join the parent's, so one whose connector names a parent container is renamed (connector
+        # and code, as ``replace_dict`` does), and no inlined transient takes a name either set of tasklets uses.
+        nested_connectors = tasklet_connector_names(nsdfg)
+        clashing = sorted(name for name in nested_connectors
+                          if name in sdfg.arrays or name in outer_symbols or name in sdfg.constants)
+        if clashing:
+            taken = (set(sdfg.arrays) | set(outer_symbols) | set(sdfg.constants) | set(nsdfg.arrays)
+                     | nested_connectors | tasklet_connector_names(sdfg))
+            moved = {}
+            for name in clashing:
+                moved[name] = data.find_new_name(name, taken)
+                taken.add(moved[name])
+            nsdfg.replace_dict(moved)
+            nested_connectors = tasklet_connector_names(nsdfg)
+        connectors = tasklet_connector_names(sdfg) | nested_connectors
+
         # Mapping from nested transient name to top-level name
         transients: Dict[str, str] = {}
 
@@ -377,8 +404,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
-                            new_name = f'{nsdfg.label}_{node.data}'
+                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants
+                                or new_name in connectors):
+                            new_name = data.find_new_name(f'{nsdfg.label}_{node.data}', connectors)
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
@@ -390,8 +418,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         datadesc = nsdfg.arrays[edge.data.data]
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
-                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
-                                new_name = f'{nsdfg.label}_{edge.data.data}'
+                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants
+                                    or new_name in connectors):
+                                new_name = data.find_new_name(f'{nsdfg.label}_{edge.data.data}', connectors)
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                             transients[edge.data.data] = name

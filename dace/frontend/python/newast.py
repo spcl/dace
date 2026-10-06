@@ -158,7 +158,16 @@ class SkipCall(Exception):
 
 
 # Array names that sympy and other python dependencies cannot accept
-FORBIDDEN_ARRAY_NAMES = set(symbolic._sympy_clash.keys())
+#: Names no container may take: sympy's clashing names, and every function DaCe's symbolic expressions and
+#: tasklets call by bare name -- a container ``max`` shadows the ``max(...)`` the generated code calls.
+FORBIDDEN_ARRAY_NAMES = (
+    set(symbolic._sympy_clash.keys())
+    | {name
+       for name, value in vars(symbolic).items() if isinstance(value, type) and issubclass(value, sympy.Function)}
+    | {
+        'Abs', 'Max', 'Min', 'Mod', 'abs', 'ceil', 'cos', 'exp', 'floor', 'log', 'max', 'min', 'pow', 'round', 'sign',
+        'sin', 'sqrt', 'tan'
+    })
 
 augassign_ops = {
     'Add': '+',
@@ -1391,6 +1400,12 @@ class ProgramVisitor(ExtNodeVisitor):
         return result
 
     def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+        """:meth:`target_name_candidate`, unless that is a name no container may take (``max`` for ``a.max()``):
+        then that name with ``_value`` appended."""
+        name = self.target_name_candidate(output_index, default)
+        return f'{name}_value' if name in FORBIDDEN_ARRAY_NAMES else name
+
+    def target_name_candidate(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         """
         A heuristic that returns a human-readable name of the current assignment target or expression,
         in a way that is closest to the original Python code.
