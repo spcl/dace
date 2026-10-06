@@ -255,9 +255,12 @@ class NormalizeWCR(ppl.Pass):
         if op is None:
             return False
 
-        # (b) The NestedSDFG -> MapExit edge for `oc` must be plain (no WCR yet).
+        # (b) The NestedSDFG -> MapExit edge for `oc` is plain, or carries the body's own WCR, which the frontend
+        # surfaces onto the boundary of a nested SDFG writing its connector through a WCR.
         out_edge = next((oe for oe in state.out_edges(nsdfg) if oe.src_conn == oc), None)
-        if out_edge is None or out_edge.data.wcr is not None or not isinstance(out_edge.dst, nodes.MapExit):
+        if out_edge is None or not isinstance(out_edge.dst, nodes.MapExit):
+            return False
+        if out_edge.data.wcr is not None and _op_from_wcr(out_edge.data.wcr) != op:
             return False
 
         # (c) The map-level private buffer mirrors `oc`'s inner descriptor. If that
