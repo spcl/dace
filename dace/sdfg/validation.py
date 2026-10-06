@@ -210,8 +210,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
-    # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    # Check for interstate edges that write to scalars or arrays. Per region: this runs once per region, so
+    # passing the SDFG re-checked its edges every time and never checked a nested region's own
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
