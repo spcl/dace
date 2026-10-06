@@ -6,13 +6,15 @@
 #include <new>
 #include <type_traits>
 
+#include "types.h"
+
 namespace dace
 {
     // Aligned heap arrays. The aligned ``operator delete[]`` runs no destructors, so only trivially
     // destructible types are allocated aligned; all others use plain ``new[]`` / ``delete[]``.
 
     template <typename T>
-    T *aligned_new_array(std::size_t size, std::size_t alignment)
+    DACE_HDFI T *aligned_new_array(std::size_t size, std::size_t alignment)
     {
 #if defined(__cpp_aligned_new)
         // Compiler supports aligned new (C++17 feature)
@@ -28,7 +30,7 @@ namespace dace
     }
 
     template <typename T>
-    void aligned_delete_array(T *ptr, std::size_t alignment)
+    DACE_HDFI void aligned_delete_array(T *ptr, std::size_t alignment)
     {
 #if defined(__cpp_aligned_new)
         // Compiler supports aligned new (C++17 feature)
