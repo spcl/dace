@@ -457,6 +457,18 @@ def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
     assert node.implementation in (None, 'Auto')
 
 
+def test_converting_re_entered_copy_is_not_memcpy():
+    """A converting copy is a cast, so a ``memcpy`` cannot do it: the values must be converted."""
+    sdfg, _ = transfer_sdfg('converting_copy_in_loop', 'N', 'copy')
+    sdfg.arrays['dst'].dtype = dace.float32
+    SpecializeCpuTransfers().apply_pass(sdfg, {})
+
+    src = np.arange(1, 9, dtype=np.float64)
+    dst = np.zeros(8, dtype=np.float32)
+    sdfg(src=src, dst=dst, N=8)
+    np.testing.assert_array_equal(dst, src)
+
+
 def test_each_distinct_trip_count_is_asked_once():
     """Maps sharing a trip count share one sympy verdict, and every map still gets its own decision."""
     from unittest import mock
