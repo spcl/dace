@@ -31,6 +31,17 @@ def _restate(expr: Any, replacements: Optional[Dict[str, sp.Basic]]) -> Any:
     return symbolic.replace_symbols(expr, replacements)
 
 
+def same_extent(first: Any, second: Any) -> bool:
+    """Whether two extents are one value. One extent can reach a descriptor through an annotation and through a
+    symbol mapping in two spellings -- ``//`` as ``__int_floor`` or ``int_floor``, a symbol with or without the
+    assumptions it was declared with -- which plain ``==`` keeps apart; ``symbolic.equal`` compares by name."""
+    if first == second:
+        return True
+    if not isinstance(first, sp.Basic) or not isinstance(second, sp.Basic):
+        return False
+    return symbolic.equal(first, second) is True
+
+
 # Backward compatibility alias
 _prod = prod
 
@@ -830,12 +841,12 @@ class Array(Data):
         # Test shape
         for dim, otherdim in zip(shape, other.shape):
             # Any other case (constant vs. constant), check for equality
-            if otherdim != dim:
+            if not same_extent(otherdim, dim):
                 return False
 
         # Test strides
         for stride, otherstride in zip(self.strides, other.strides):
-            if otherstride != _restate(stride, replacements):
+            if not same_extent(otherstride, _restate(stride, replacements)):
                 return False
 
         return True
