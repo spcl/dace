@@ -5,7 +5,7 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import convert_map_to_loop
+from dace.sdfg.analysis.schedule_tree.passes import convert_map_to_loop, merge_consecutive_loops
 
 H = dace.symbol('H')
 W = dace.symbol('W')
@@ -188,6 +188,64 @@ def test_dynamic_input_name_clash_keeps_map():
     assert [type(c) for c in outer.children] == [tn.DynScopeCopyNode, tn.DynScopeCopyNode, tn.MapScope]
 
 
+def test_merge_consecutive_converted_maps():
+
+    @dace.program
+    def two_maps(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
+        for i in dace.map[0:20]:
+            B[i] = A[i] + 1.0
+        for i in dace.map[0:20]:
+            C[i] = B[i] + 1.0
+
+    stree = two_maps.to_sdfg().as_schedule_tree()
+    assert convert_map_to_loop(stree) == 2
+    assert merge_consecutive_loops(stree, iterator="j") == 0
+    assert merge_consecutive_loops(stree, iterator="i") == 1
+    assert len(_nodes(stree, tn.ForScope)) == 1
+    tn.validate_children_and_parents_align(stree, root=True)
+
+    rng = np.random.default_rng(0)
+    a = rng.random(20)
+    b, c = np.zeros(20), np.zeros(20)
+    _run(stree, A=a, B=b, C=c)
+    assert np.allclose(b, a + 1.0)
+    assert np.allclose(c, a + 2.0)
+
+
+def test_over_merge_different_size_loops():
+
+    @dace.program
+    def shifted_maps(A: dace.float64[13], B: dace.float64[13], C: dace.float64[13]):
+        for i in dace.map[0:10]:
+            B[i] = A[i] + 1.0
+        for i in dace.map[2:13]:
+            C[i] = A[i] + 2.0
+
+    stree = shifted_maps.to_sdfg().as_schedule_tree()
+    assert convert_map_to_loop(stree) == 2
+    assert merge_consecutive_loops(stree, over_merge=True, iterator="i") == 1
+    assert len(_nodes(stree, tn.ForScope)) == 1
+    tn.validate_children_and_parents_align(stree, root=True)
+
+    a = np.arange(13, dtype=np.float64)
+    b, c = np.zeros(13), np.zeros(13)
+    _run(stree, A=a, B=b, C=c)
+    assert np.allclose(b, np.r_[a[:10] + 1.0, np.zeros(3)])
+    assert np.allclose(c, np.r_[np.zeros(2), a[2:] + 2.0])
+
+
+def test_merge_does_not_combine_opposite_directions():
+    sdfg = dace.SDFG("opposite_loop_directions")
+    sdfg.add_state(is_start_block=True)
+    stree = sdfg.as_schedule_tree()
+    forward = dace.sdfg.state.LoopRegion("forward", "i < 4", "i", "i = 0", "i = i + 1")
+    backward = dace.sdfg.state.LoopRegion("backward", "i >= 0", "i", "i = 3", "i = i - 1")
+    stree.add_children([tn.ForScope(loop=forward, children=[]), tn.ForScope(loop=backward, children=[])])
+
+    assert merge_consecutive_loops(stree) == 0
+    assert len(stree.children) == 2
+
+
 if __name__ == '__main__':
     test_one_dimensional_map()
     test_multidimensional_map()
@@ -196,3 +254,6 @@ if __name__ == '__main__':
     test_dynamic_map_range()
     test_dynamic_map_range_from_scalar()
     test_dynamic_input_name_clash_keeps_map()
+    test_merge_consecutive_converted_maps()
+    test_over_merge_different_size_loops()
+    test_merge_does_not_combine_opposite_directions()
