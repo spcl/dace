@@ -6,10 +6,14 @@ read into a ``__sym_`` symbol on an interstate edge and substituted into the sha
 descriptor in place so it can still be read or reassigned. Each shape captures its own symbol, so
 two arrays sized from the same reused name keep their own extents.
 """
+import ast
+import types
+
 import numpy as np
 import pytest
 
 import dace
+from dace.frontend.python.newast import ProgramVisitor
 
 N = dace.symbol('N')
 
@@ -293,7 +297,20 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
     assert np.allclose(out, expected), out
 
 
+def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
+    """A name the preprocessing builds may lack ``ctx`` (on Python 3.12 the attribute is missing), and it is still a
+    write: the loop must drop that size's shape version, and keep the one of a size it only reads."""
+    target = ast.Name(id='n')
+    del target.ctx
+    loop = ast.parse('for i in range(m):\n    n = n + 1').body[0]
+    loop.body[0].targets = [target]
+    visitor = types.SimpleNamespace(shape_promotions={'n': 'n_version', 'm': 'm_version'}, variables={})
+    ProgramVisitor.drop_shape_versions_written_in(visitor, loop)
+    assert visitor.shape_promotions == {'m': 'm_version'}
+
+
 if __name__ == '__main__':
+    test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_slice_bounded_by_a_size_shares_its_extent()
