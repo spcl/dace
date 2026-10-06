@@ -55,12 +55,6 @@ def test_ipow_survives_property_json_roundtrip_and_folds():
     assert int(symbolic.evaluate(back, {P: 4})) == 64 * 16
 
 
-def test_ipow_is_integer_and_positive():
-    R, K = (symbolic.symbol(s, positive=True, integer=True) for s in ('R', 'K'))
-    assert ipow(R, K).is_integer is True
-    assert ipow(R, K).is_positive is True
-
-
 def test_ipow_folds_constant_power():
     assert ipow(sympy.Integer(2), sympy.Integer(10)) == 1024
 
@@ -134,6 +128,8 @@ def test_relaxes_under_dynamic_map_symbol():
     N = dace.symbol('N', positive=True, integer=True)
 
     sdfg = dace.SDFG('dyn')
+    sdfg.add_symbol(R)
+    sdfg.add_symbol(N)
     sdfg.add_array('x', [R**N], dace.float64)
     sdfg.add_array('bound', [1], dace.int64)
     state = sdfg.add_state()
@@ -175,6 +171,8 @@ def test_end_to_end_complex_power_shape_compiles():
     K = dace.symbol('K', positive=True, integer=True)
 
     sdfg = dace.SDFG('power_shape')
+    sdfg.add_symbol(R)
+    sdfg.add_symbol(K)
     sdfg.add_array('x', [R**K], dace.complex128)
     state = sdfg.add_state()
     state.add_mapped_tasklet('scale',
@@ -303,7 +301,9 @@ def test_loop_condition_off_by_one_not_relaxed():
 
     def build(cond):
         sdfg = dace.SDFG('cond')
-        sdfg.add_array('x', [R**K], dace.float64)  # shape carries K -> pass knows K is a positive int
+        sdfg.add_symbol(R)
+        sdfg.add_symbol(K)  # declared positive, so the pass knows K is a positive int
+        sdfg.add_array('x', [R**K], dace.float64)
         loop = LoopRegion('L', condition_expr=cond, loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
         sdfg.add_node(loop, is_start_block=True)
         loop.add_state('body', is_start_block=True)
@@ -334,7 +334,6 @@ if __name__ == '__main__':
     test_ipow_lowers_to_cpp_ipow()
     test_ipow_roundtrips_through_serialization()
     test_ipow_survives_property_json_roundtrip_and_folds()
-    test_ipow_is_integer_and_positive()
     test_ipow_folds_constant_power()
     test_interval_proves_radix_decomposition()
     test_interval_refuses_unbounded_iterator()

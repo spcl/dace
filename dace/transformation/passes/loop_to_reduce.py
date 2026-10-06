@@ -98,12 +98,12 @@ class LoopToReduce(ppl.Pass):
         return count or None
 
 
-def _one_elem(subset) -> Optional[int]:
+def _one_elem(subset, facts: symbolic.Facts) -> Optional[int]:
     """Integer number of elements in ``subset``, or ``None`` if non-constant."""
     if subset is None:
         return None
     try:
-        s = symbolic.simplify(subset.num_elements())
+        s = symbolic.simplify(subset.num_elements(), facts)
     except Exception:
         return None
     return int(s) if s.is_Integer else None
@@ -129,7 +129,8 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
     return scalar_like(da) and scalar_like(db)
 
 
-def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
+def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end,
+                      facts: symbolic.Facts) -> Optional[subsets.Range]:
     """Widen ``subset`` -- which uses ``loop_var`` linearly -- over the
     iteration range ``[start, end]``."""
     if not isinstance(subset, subsets.Range):
@@ -138,10 +139,10 @@ def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
             return None
-        offset = symbolic.simplify(rb - loop_var)
+        offset = symbolic.simplify(rb - loop_var, facts)
         if offset.has(loop_var):
             return None
-        ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
+        ranges.append((symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), 1))
     return subsets.Range(ranges)
 
 
@@ -175,8 +176,8 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start,
-                         end) -> Optional["_Reduction"]:
+def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end,
+                         facts: symbolic.Facts) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-interstate-edge "any"/"all".
 
     Body = ``ConditionalBlock`` with one branch, guard ``arr[<subs>] <cmp> C``
@@ -238,7 +239,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
                 return None
             axis_for_iter = i
             try:
-                off = symbolic.simplify(a - loop_var_sym)
+                off = symbolic.simplify(a - loop_var_sym, facts)
             except Exception:
                 return None
             if off.has(loop_var_sym):
@@ -250,7 +251,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     ranges = []
     for i, a in enumerate(sym_args):
         if i == axis_for_iter:
-            ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
+            ranges.append((symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), 1))
         else:
             ranges.append((a, a, 1))
     return _Reduction(
@@ -270,6 +271,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None or stride != 1:
         return None
+    facts = sdfg.facts()
 
     blocks = loop.nodes()
     loop_var = loop.loop_variable
@@ -326,7 +328,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         if accum not in sdfg.arrays:
             return None
         write_subset = write_edge.data.subset
-        if _one_elem(write_subset) != 1 or _uses(write_subset, loop_var_sym):
+        if _one_elem(write_subset, facts) != 1 or _uses(write_subset, loop_var_sym):
             return None
 
         # Resolve each tasklet input.
@@ -341,7 +343,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             if desc.transient and len(state.in_edges(src)) == 1 and len(state.out_edges(src)) == 1:
                 pred = state.in_edges(src)[0]
                 if (not isinstance(pred.src, nodes.AccessNode) or pred.data is None or pred.data.subset is None
-                        or _one_elem(e.data.subset) != _one_elem(pred.data.subset)):
+                        or _one_elem(e.data.subset, facts) != _one_elem(pred.data.subset, facts)):
                     return None
                 resolved.append((pred.src.data, _copy.deepcopy(pred.data.subset)))
             else:
@@ -354,13 +356,13 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif _one_elem(sub) == 1 and ((name == accum and sub == write_subset) or
-                                          (name != accum and _scalar_equiv(sdfg, name, accum))):
+            elif _one_elem(sub, facts) == 1 and ((name == accum and sub == write_subset) or
+                                                 (name != accum and _scalar_equiv(sdfg, name, accum))):
                 accum_ok = True
         if not accum_ok or array is None or array == accum:
             return None
 
-        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end)
+        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, facts)
         if expanded is None:
             return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
@@ -436,7 +438,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             # if the guard array happens to hold only 0/1 values, which the
             # pass cannot verify statically.
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
-                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end)
+                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end, facts)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
             if not (isinstance(expr, Subscript) and symbolic.arrays(expr) & sdfg.arrays.keys()):
                 return None
@@ -449,7 +451,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         # ``Subscript`` carries the head plus indices, so a 1-D access has two args.
         if len(sdfg.arrays[array].shape) != 1 or len(arr_call.args) != 2:
             return None
-        offset = symbolic.simplify(arr_call.args[1] - loop_var_sym)
+        offset = symbolic.simplify(arr_call.args[1] - loop_var_sym, facts)
         if offset.has(loop_var_sym):
             return None
 
@@ -458,7 +460,8 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             accum=target,
             accum_subset=subsets.Range([(0, 0, 1)]),
             array=array,
-            array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1)]),
+            array_subset=subsets.Range([(symbolic.simplify(start + offset,
+                                                           facts), symbolic.simplify(end + offset, facts), 1)]),
         )
 
     return None

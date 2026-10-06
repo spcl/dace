@@ -52,17 +52,18 @@ def collapse_shape_and_strides(
     return collapsed_shape, collapsed_strides
 
 
-def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
+def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType, facts: dace.symbolic.Facts) -> bool:
     """False only when ``num_elements`` is a compile-time constant below
     ``compiler.cpu.parallel_transfer_min_elements``; a symbolic (unknown-at-compile-time) size
     is assumed large and takes the parallel path too.
 
     :param num_elements: total contiguous element count (constant or symbolic).
+    :param facts: What is known about the symbols of ``num_elements``.
     :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
     """
     threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
     try:
-        return int(dace.symbolic.simplify(num_elements)) >= threshold
+        return int(dace.symbolic.simplify(num_elements, facts)) >= threshold
     except (TypeError, ValueError):
         return True
 

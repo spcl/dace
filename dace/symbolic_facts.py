@@ -63,13 +63,17 @@ class Facts:
     """
     Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every
     proof; ``Facts.none()`` assumes nothing. The relations are solved once, on construction, into ``substitution``,
-    which rewrites a symbol as an expression of nonnegative slack variables; ``nonzero`` keeps the ``!=`` facts.
+    which rewrites a symbol as an expression of nonnegative slack variables; ``slacks`` gives each slack as the difference
+    of its relation, ``residuals`` the bounds (expressions ``>= 0``) of slacks solved away, and ``nonzero`` keeps the
+    ``!=`` facts.
     """
-    __slots__ = ('relations', 'integers', 'substitution', 'nonzero')
+    __slots__ = ('relations', 'integers', 'substitution', 'slacks', 'residuals', 'nonzero')
 
     relations: tuple[Relation, ...]
     integers: frozenset[str]
     substitution: dict[sympy.Symbol, sympy.Expr]
+    slacks: dict[sympy.Dummy, sympy.Expr]
+    residuals: tuple[sympy.Expr, ...]
     nonzero: tuple[sympy.Expr, ...]
 
     def __init__(self, relations: Iterable[Relation], integers: frozenset[str]) -> None:
@@ -78,7 +82,7 @@ class Facts:
             sorted(dict.fromkeys(relations),
                    key=lambda relation: (relation.kind.name, str(relation.lhs), str(relation.rhs))))
         self.integers = integers
-        self.substitution = eliminate(self.relations, integers)
+        self.substitution, self.slacks, self.residuals = eliminate(self.relations, integers)
         self.nonzero = tuple(
             reduced(relation, integers, self.substitution) for relation in self.relations
             if relation.kind is RelationKind.NE)
@@ -86,6 +90,19 @@ class Facts:
     @classmethod
     def none(cls) -> 'Facts':
         return cls((), frozenset())
+
+    def assumptions(self, name: str) -> dict[str, bool]:
+        """ The SymPy assumptions the facts prove for the symbol ``name``: integrality from its dtype, and a sign. """
+        assumed = {'integer': True} if name in self.integers else {'real': True}
+        free, zero = sympy.Symbol(name), sympy.Integer(0)
+        for kind, lhs, rhs, sign in ((RelationKind.LT, zero, free, 'positive'), (RelationKind.LE, zero, free,
+                                                                                 'nonnegative'),
+                                     (RelationKind.LT, free, zero, 'negative'), (RelationKind.LE, free, zero,
+                                                                                 'nonpositive')):
+            if ask(Relation(kind, lhs, rhs), self) is Truth.TRUE:
+                assumed[sign] = True
+                break
+        return assumed
 
 
 def relation_names(relation: Relation) -> set[str]:
@@ -100,6 +117,14 @@ def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:
             free: sympy.Symbol(free.name, integer=free.name in integers or None)
             for free in expr.free_symbols if isinstance(free, sympy.Symbol)
         }))
+
+
+def linear_slacks(difference: sympy.Expr) -> list[sympy.Dummy]:
+    """ The slacks ``difference`` is linear in, with a numeric coefficient, in creation order. """
+    return sorted((free for free in difference.free_symbols
+                   if isinstance(free, sympy.Dummy) and cast(sympy.Expr, difference.coeff(free)).is_number and (
+                       poly := difference.as_poly(free)) is not None and poly.degree() == 1),
+                  key=lambda free: free.dummy_index)
 
 
 def linear_symbols(difference: sympy.Expr) -> list[sympy.Symbol]:
@@ -134,12 +159,18 @@ def split_extrema(relation: Relation) -> list[Relation]:
     return [relation]
 
 
-def eliminate(relations: Iterable[Relation], integers: frozenset[str]) -> dict[sympy.Symbol, sympy.Expr]:
+def eliminate(
+    relations: Iterable[Relation], integers: frozenset[str]
+) -> tuple[dict[sympy.Symbol, sympy.Expr], dict[sympy.Dummy, sympy.Expr], tuple[sympy.Expr, ...]]:
     """
     Solves each relation, rewritten as ``e >= 0`` (or ``e == 0``), for one of its symbols as ``e = slack`` with a
-    nonnegative slack (zero for an equality), and substitutes the result into the rest.
+    nonnegative slack (zero for an equality), and substitutes the result into the rest. A relation over slacks only
+    is solved for a slack, whose own bound is kept as a residual. Also returns each slack as ``e`` over the original
+    symbols, and the residuals (expressions ``>= 0``).
     """
     substitution: dict[sympy.Symbol, sympy.Expr] = {}
+    slacks: dict[sympy.Dummy, sympy.Expr] = {}
+    residuals: list[sympy.Expr] = []
     for relation in (split for relation in relations for split in split_extrema(relation)):
         # SymPy rewrites a ``Mod`` it is substituted into by Python's rounding (``Mod(x + 2, 2)`` is ``Mod(x, 2)``),
         # which C's ``%`` does not share; leaving such a fact out only proves less
@@ -147,21 +178,30 @@ def eliminate(relations: Iterable[Relation], integers: frozenset[str]) -> dict[s
                 sympy.sympify(side).atoms(sympy.Mod) for side in (relation.lhs, relation.rhs)):
             continue
         difference = reduced(relation, integers, substitution)
+        original = with_integers(cast(sympy.Expr, sympy.sympify(relation.rhs - relation.lhs)), integers)
         if relation.kind is RelationKind.LT and difference.is_integer:
             difference -= 1
+            original -= 1
         if difference.is_negative or (relation.kind is RelationKind.EQ and difference.is_nonzero):
             raise InconsistentAssumptionsError('relations', [f'{relation.lhs} {relation.kind.name} {relation.rhs}'])
-        linear = linear_symbols(difference)
+        # A relation over slacks only constrains earlier relations; solving it for a slack keeps it, and forgetting
+        # that slack's own bound only proves less
+        linear = linear_symbols(difference) or linear_slacks(difference)
         if not linear:
             continue
         target = linear[-1]
         coefficient = cast(sympy.Expr, difference.coeff(target))  # numeric, checked by linear_symbols
         slack = sympy.Integer(0) if relation.kind is RelationKind.EQ else sympy.Dummy(
             'slack', integer=difference.is_integer, nonnegative=True)
+        if isinstance(slack, sympy.Dummy):
+            slacks[slack] = original
         solved = sympy.expand((slack - (difference - coefficient * target)) / coefficient)
         substitution = {name: sympy.expand(value.xreplace({target: solved})) for name, value in substitution.items()}
+        residuals = [sympy.expand(residual.xreplace({target: solved})) for residual in residuals]
+        if isinstance(target, sympy.Dummy):
+            residuals.append(solved)
         substitution[target] = solved
-    return substitution
+    return substitution, slacks, tuple(residuals)
 
 
 def reduced(relation: Relation, integers: frozenset[str], substitution: dict[sympy.Symbol, sympy.Expr]) -> sympy.Expr:
@@ -298,9 +338,12 @@ def ask(query: Relation, facts: Facts) -> Truth:
         answer = difference.is_nonzero or (difference in facts.nonzero or -difference in facts.nonzero or None)
     else:
         strict = query.kind is RelationKind.LT
-        if proves_sign(difference, divisions, strict):
+        # A difference that is at least a residual (or nothing) has the residual's sign
+        if any(proves_sign(difference - residual, divisions, strict) for residual in (0, *facts.residuals)):
             return Truth.TRUE
-        return Truth.FALSE if proves_sign(-difference, divisions, not strict) else Truth.UNKNOWN
+        if any(proves_sign(-difference - residual, divisions, not strict) for residual in (0, *facts.residuals)):
+            return Truth.FALSE
+        return Truth.UNKNOWN
     if answer is None:
         return Truth.UNKNOWN
     return Truth.TRUE if answer else Truth.FALSE

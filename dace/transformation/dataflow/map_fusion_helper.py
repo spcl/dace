@@ -11,7 +11,6 @@ from dace.transformation import helpers
 def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
-    simplify_ranges: bool = False,
 ) -> Optional[Dict[str, str]]:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -27,7 +26,6 @@ def find_parameter_remapping(
 
     :param first_map: The first map (these parameters will be replaced).
     :param second_map: The second map, these parameters acts as source.
-    :param simplify_ranges: Perform simplification on the range expressions.
 
     :note: This function currently fails if the renaming is not unique. Consider the
         case were the first map has the structure `for i, j in map[0:20, 0:20]` and it
@@ -50,17 +48,12 @@ def find_parameter_remapping(
     if len(first_params) != len(second_params):
         return None
 
-    if simplify_ranges:
-        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))  # noqa: E731 [lambda-assignment]
-    else:
-        simp = lambda e: e  # noqa: E731 [lambda-assignment]
-
     first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
+        param: tuple(rng)
         for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
+        param: tuple(rng)
         for param, rng in zip(second_params, second_map.range)
     }
 

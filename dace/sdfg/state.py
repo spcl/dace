@@ -3867,6 +3867,7 @@ class LoopRegion(ControlFlowRegion):
                                updated in-place.
         :note: ``border_memlets`` mapping is updated in-place.
         """
+        facts = self.sdfg.facts()
         # Avoid cyclic import
         from dace.transformation.passes.analysis import loop_analysis
 
@@ -3894,9 +3895,9 @@ class LoopRegion(ControlFlowRegion):
 
         def _range_is_definitely_empty(start, stop) -> bool:
             """Returns True only when the remaining inverted-loop range is provably empty."""
-            simplified_start = symbolic.simplify(start)
-            simplified_stop = symbolic.simplify(stop)
-            simplified_stride = symbolic.simplify(stride)
+            simplified_start = symbolic.simplify(start, facts)
+            simplified_stop = symbolic.simplify(stop, facts)
+            simplified_stride = symbolic.simplify(stride, facts)
             if any(
                     getattr(expr, 'free_symbols', set())
                     for expr in (simplified_start, simplified_stop, simplified_stride)):
@@ -3934,11 +3935,11 @@ class LoopRegion(ControlFlowRegion):
         _propagate_range(init, init, first_iteration_memlets)
 
         remaining_iterations_memlets = sdprop._make_border_memlets(border_memlets)
-        remaining_start = symbolic.simplify(init + stride)
+        remaining_start = symbolic.simplify(init + stride, facts)
         # For inverted loops with update-before-condition disabled, the body can
         # execute once at ``end + stride`` before the termination condition is
         # observed, so the propagated range must include that final iteration.
-        remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride)
+        remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride, facts)
         if not _range_is_definitely_empty(remaining_start, remaining_end):
             _propagate_range(remaining_start, remaining_end, remaining_iterations_memlets)
 

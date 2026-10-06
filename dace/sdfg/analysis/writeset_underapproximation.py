@@ -298,10 +298,10 @@ class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
         result_skip = self.multiplier * node_rs
         result_tile = 1
 
-        result_begin = simplify(result_begin)
-        result_end = simplify(result_end)
-        result_skip = simplify(result_skip)
-        result_tile = simplify(result_tile)
+        result_begin = simplify(result_begin, symbolic.Facts.none())
+        result_end = simplify(result_end, symbolic.Facts.none())
+        result_skip = simplify(result_skip, symbolic.Facts.none())
+        result_tile = simplify(result_tile, symbolic.Facts.none())
 
         return (result_begin, result_end, result_skip, result_tile)
 

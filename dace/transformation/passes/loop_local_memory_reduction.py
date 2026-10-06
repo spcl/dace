@@ -435,8 +435,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The offset b must be multiple of a if a != 0.
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices
-                          for i in il if i[0] != 0):
+        if a != 0 and any(not symbolic.is_multiple(i[1], a)
+                          for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0):
             return
 
         # All constants (a == 0) must be in the same dimension.

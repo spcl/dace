@@ -49,8 +49,8 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
             return 'CUDA'
         # Contiguous CPU/Default/Register destination with a dynamic <=32-bit value.
         allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
-        if out.storage in allowed and not (is_parallel_cpu_transfer_size(out_subset.num_elements())
-                                           and not is_in_parallel_scope(node, parent_state)):
+        if out.storage in allowed and not (is_parallel_cpu_transfer_size(
+                out_subset.num_elements(), parent_state.sdfg.facts()) and not is_in_parallel_scope(node, parent_state)):
             return 'CPU'
         return 'pure'
 
@@ -64,7 +64,7 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
     # count is assumed big. Inside a parallel map the element map is sequentialized anyway, so the
     # single call wins there at any size.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
-    if (out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements())
+    if (out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements(), parent_state.sdfg.facts())
             and not is_in_parallel_scope(node, parent_state)):
         return 'pure'
     return 'CPU'

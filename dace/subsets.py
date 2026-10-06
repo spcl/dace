@@ -450,15 +450,15 @@ class Range(Subset):
                     # Single index (e.g., ``i:i+1``): ``ceiling((i + 1 - i) / 1)`` is always one
                     result.append(sp.S.One)
                 else:
-                    result.append(ts * sp.ceiling((iMax + off - iMin) / step))
+                    result.append(ts * symbolic.ceiling_div(iMax + off - iMin, step))
             return result
 
     def size_exact(self):
         """ Returns the number of elements in each dimension. """
         return [
-            ts * sp.ceiling(((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                             (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                            (step.expr if isinstance(step, symbolic.SymExpr) else step))
+            ts * symbolic.ceiling_div(((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                                       (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)),
+                                      (step.expr if isinstance(step, symbolic.SymExpr) else step))
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
 

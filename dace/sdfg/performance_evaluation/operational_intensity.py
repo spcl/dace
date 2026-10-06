@@ -10,7 +10,7 @@ from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
+from dace.symbolic import Predicate, pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
 
@@ -87,7 +87,7 @@ def symeval(val, symbols):
     """
     first_replacement = {pystr_to_symbolic(k): pystr_to_symbolic('__REPLSYM_' + k) for k in symbols.keys()}
     second_replacement = {pystr_to_symbolic('__REPLSYM_' + k): v for k, v in symbols.items()}
-    return simplify(val.subs(first_replacement).subs(second_replacement))
+    return val.subs(first_replacement).subs(second_replacement)
 
 
 def evaluate_symbols(base, new):
@@ -298,8 +298,8 @@ def scope_misses(state: SDFGState,
         elif isinstance(node, nd.LibraryNode):
             # add a symbol to the top level sdfg, such that the user can define it in the extension
             top_level_sdfg = state.parent
-            top_level_sdfg.add_symbol(f'{node.name}_misses', dtypes.int64)
-            lib_node_misses = symbol(f'{node.name}_misses', positive=True)
+            top_level_sdfg.add_symbol(f'{node.name}_misses', dtypes.int64, predicates=frozenset({Predicate.POSITIVE}))
+            lib_node_misses = symbol(f'{node.name}_misses')
             lib_node_misses = lib_node_misses.subs(mapping)
             scope_misses += lib_node_misses
             update_map(op_in_map, get_uuid(node, state), lib_node_misses)
@@ -661,7 +661,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             for k, v in cache_miss_measurements.items():
 
                 final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
-                op_in_map[k] = simplify(sympy_f * L)
+                op_in_map[k] = simplify(sympy_f * L, sdfg.facts())
                 sympy_fs[k] = sympy_f
                 if k == get_uuid(sdfg):
                     # compute MAPE on total SDFG

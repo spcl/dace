@@ -1236,7 +1236,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
 
                     # Calculate the number of loop executions.
                     # This resolves ranges based on the order of iteration variables from surrounding loops.
-                    loop_executions = sympy.ceiling(((stop + 1) - start) / stride)
+                    loop_executions = symbolic.ceiling_div((stop + 1) - start, stride)
                     for outer_itvar_string in itvar_stack:
                         outer_range = region.ranges[outer_itvar_string]
                         outer_start = outer_range[0][0]
@@ -1244,7 +1244,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
                         exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
-                        sum_rng = (outer_itvar, 0, sympy.ceiling((outer_stop - outer_start) / outer_stride))
+                        sum_rng = (outer_itvar, 0, symbolic.ceiling_div(outer_stop - outer_start, outer_stride))
                         loop_executions = sympy.Sum(exec_repl, sum_rng)
                     starting_execs = loop_executions.doit()
                     starting_dynamic = region.dynamic_executions

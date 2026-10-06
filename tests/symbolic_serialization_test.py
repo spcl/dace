@@ -149,28 +149,18 @@ def test_symbol_serializes_as_its_bare_name():
         assert symbolic.serialize_symbolic(sym + 1) == '1 + $i'
 
 
-def test_symbol_dtype_is_part_of_identity():
-    """SymPy's equality, hashing and constructor caches key on ``_hashable_content``. With the dtype left out of it,
-    an expression built around a default-typed symbol is handed back from the cache for the same-name symbol of
-    another dtype, so the typed expression silently loses its dtype."""
+def test_symbol_identity_is_its_name():
+    """A symbol is its name: declarations of the same name with other dtypes or assumptions are the same symbol, so
+    expressions built from either cancel and a string round trip gives the symbol back."""
     default = symbolic.symbol('dtype_alias_sym')
-    typed = symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
+    typed = symbolic.symbol('dtype_alias_sym', dtype=dace.int64, positive=True)
 
-    assert default != typed
-    assert hash(default) != hash(typed)
-    assert default == symbolic.symbol('dtype_alias_sym')
-    assert typed == symbolic.symbol('dtype_alias_sym', dtype=dace.int64)
-
-    # Prime SymPy's constructor caches with the default-typed symbol first
-    default_expr = default + 2
-    typed_expr = typed + 2
-    assert default_expr != typed_expr
-    assert [s.dtype for s in typed_expr.free_symbols] == [dace.int64]
-
-    assert symbolic.serialize_symbolic(typed_expr) == '2 + $dtype_alias_sym'
-
-    # Substitution remains name-based across dtypes
-    assert typed_expr.subs(default, 3) == 5
+    assert default == typed
+    assert hash(default) == hash(typed)
+    assert typed - default == 0
+    assert symbolic.pystr_to_symbolic('dtype_alias_sym') == typed
+    assert symbolic.serialize_symbolic(typed + 2) == '2 + $dtype_alias_sym'
+    assert symbolic.deserialize_symbolic(symbolic.serialize_symbolic(typed + 2)) == default + 2
 
 
 def test_rational_addition_roundtrip_preserves_serialization():
@@ -523,13 +513,12 @@ def test_add_order_independent_of_arg_order():
         sympy.Add(t2, t1, evaluate=False)))
 
 
-def test_integer_symbol_assumptions_preserved():
-    """No extra explicit assumptions (e.g. commutative) may leak in on reparse."""
+def test_reparsed_symbols_carry_no_extra_assumptions():
+    """No assumption may leak in on reparse: a symbol is real and nothing else, whatever was declared for it."""
     expr = _max_of_integers()
-    # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     assert sympy.srepr(reparsed) == sympy.srepr(expr)
-    assert all(s.is_integer for s in reparsed.free_symbols)
+    assert all(s.assumptions0 == symbolic.symbol(s.name).assumptions0 for s in reparsed.free_symbols)
 
 
 def test_sdfg_json_roundtrip_is_fixed_point():
@@ -585,18 +574,18 @@ def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
 
 def test_ceiling_of_roundtripped_floor_division_simplifies():
     """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
-    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
-    because the round-tripped ``__int_floor`` still carries ``is_integer=True``
-    and sympy's ``ceiling._eval`` returns a known-integer argument unchanged."""
+    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip:
+    the round-tripped ``__int_floor`` is still integer, and ``c`` is an integer
+    by the facts the expression is simplified under."""
     # ``symbol // 2`` is SymPy's ``floor`` (only ``SymExpr`` defines ``__floordiv__``), which is
     # integer on its own; the operator class only appears when the expression is parsed.
     expr = symbolic.pystr_to_symbolic('upper_i // 2 - lower_i')
     assert any(type(f).__name__ == '__int_floor' for f in expr.atoms(sympy.Function))
 
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
-    ceiling_of_restored = sympy.ceiling(restored)
+    integers = symbolic.Facts((), frozenset({'upper_i', 'lower_i'}))
 
-    assert ceiling_of_restored == restored
+    assert symbolic.simplify(sympy.ceiling(restored), integers) == restored
 
 
 def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():

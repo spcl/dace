@@ -1058,9 +1058,7 @@ class SDFG(ControlFlowRegion):
         """
         if isinstance(name, symbolic.symbol):
             # The assumptions given at declaration, not the ones SymPy derives from them
-            declared = name._assumptions_orig
-            predicates = frozenset(predicate for predicate in symbolic.Predicate
-                                   if declared.get(predicate.name.lower()))
+            predicates = symbolic.declared_predicates(name)
             name, stype = name.name, name.dtype
         dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
         if not isinstance(dtype, dtypes.typeclass):
@@ -2383,10 +2381,17 @@ class SDFG(ControlFlowRegion):
             # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | bound_names
             scoped.update(name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments)
-            for sym in desc.free_symbols:
+            # Declared by name only: a symbol object inside an expression may be any symbol of that name (SymPy caches
+            # by name), so its own declaration is not this SDFG's. A dimension that is a single symbol is an extent,
+            # so that symbol is nonnegative.
+            extents = {str(dim) for dim in getattr(desc, 'shape', ()) if isinstance(dim, symbolic.symbol)}
+            for sym in sorted(desc.free_symbols, key=str):
                 if (isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
                         and sym.name not in scoped):
-                    sdfg.add_symbol(sym)  # the symbol's declared facts come with it
+                    sdfg.add_symbol(
+                        sym.name,
+                        symbolic.DEFAULT_SYMBOL_TYPE,
+                        predicates=frozenset({symbolic.Predicate.NONNEGATIVE}) if sym.name in extents else frozenset())
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

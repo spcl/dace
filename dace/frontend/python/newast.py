@@ -693,6 +693,13 @@ def add_indirection_subgraph(sdfg: SDFG,
     return tmp_name
 
 
+def declare_program_symbol(sdfg: SDFG, declared: symbolic.symbol) -> None:
+    """ Declares a symbol of the program itself (one of its globals) with what it was declared with, unless the SDFG
+    declares it already or a loop or map scope binds it. """
+    if declared.name not in sdfg.symbols and declared.name not in scope_bound_names(sdfg):
+        sdfg.add_symbol(declared)
+
+
 def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
     """ Declares a symbol the program reads on the SDFG, unless a loop or map scope of the SDFG binds it. """
     if name not in sdfg.symbols and name not in scope_bound_names(sdfg):
@@ -1039,12 +1046,13 @@ class ProgramVisitor(ExtNodeVisitor):
         # Entry point to the program
         # self.program = None
         self.sdfg = SDFG(self.name)
+        # The program's own symbols (its globals) carry their declarations; a symbol inside an expression does not
+        for name in sorted({str(sym) for desc in scope_arrays.values() for sym in desc.free_symbols}):
+            declared = self.globals.get(name)
+            if isinstance(declared, symbolic.symbol):
+                self.sdfg.add_symbol(declared)
         for k, v in scope_arrays.items():
             self.sdfg.add_datadesc(k, copy.deepcopy(v))
-        for arr in self.sdfg.arrays.values():
-            for sym in arr.free_symbols:
-                if sym.name not in self.sdfg.symbols:
-                    self.sdfg.add_symbol(sym.name, sym.dtype)
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
@@ -2322,7 +2330,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if sym.name not in self.sdfg.symbols:
                     if (sym.name in self.globals and isinstance(self.globals[sym.name], symbolic.symbol)):
-                        declare_read_symbol(self.sdfg, sym.name, self.globals[sym.name].dtype)
+                        declare_program_symbol(self.sdfg, self.globals[sym.name])
                     elif sym.name in self.closure.callbacks:
                         declare_read_symbol(self.sdfg, sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
@@ -5021,7 +5029,7 @@ class ProgramVisitor(ExtNodeVisitor):
             result = inner_eval_ast(self.globals, node)
             # If a symbol, add to symbols
             if isinstance(result, symbolic.symbol):
-                declare_read_symbol(self.sdfg, result.name, result.dtype)
+                declare_program_symbol(self.sdfg, result)
             return result
 
         if name in self.closure.callbacks:
@@ -5327,7 +5335,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     # because Range.size() uses the ceiling method and that way we avoid
                     # false negatives when testing the equality of data shapes.
                     # re = re // rs
-                    re = sympy.ceiling((re + 1) / rs) - 1
+                    re = symbolic.ceiling_div(re + 1, rs) - 1
                     strides[i] *= rs
                     rs = 1
                 other_subset.ranges[i] = (rb, re, rs)

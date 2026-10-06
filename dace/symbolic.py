@@ -87,32 +87,34 @@ class symbol(sympy.Symbol):
 
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
+        if dtype in (dtypes.complex64, dtypes.complex128):
+            raise TypeError(f'Symbol "{name}" cannot be complex: symbols are real scalars')
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
 
-        # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
-        # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
-        assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
-        if 'integer' not in assumptions and numpy.any(is_integer):
-            assumptions['integer'] = True
-        # Using __xnew__ as the regular __new__ is cached, which leads
-        # to modifying different references of symbols with the same name.
-        self = sympy.Symbol.__xnew__(cls, name, **assumptions)
+        # A symbol is its name: SymPy sees the same assumption on every symbol (a scalar, so real), so equal names are
+        # equal symbols everywhere. The declared facts travel with this object only to its declaration
+        # (``SDFG.add_symbol``); integrality and signs come from the facts where an expression is simplified.
+        declared = {k: v for k, v in assumptions.items() if k != 'commutative'}
+        if 'integer' not in declared and numpy.any(is_integer):
+            declared['integer'] = True
+        self = sympy.Symbol.__xnew__(cls, name, real=True)
+        self._declared = declared
 
         self.dtype = dtype
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
+        return {'dtype': self.dtype, '_declared': self._declared, '_constraints': self._constraints}
 
     def _hashable_content(self):
         # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
         # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
         # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
         # comparing these tuples element-wise, and typeclasses define equality but no ordering.
-        return super()._hashable_content() + (self.dtype.ctype, )
+        return super()._hashable_content()
 
     def _eval_subs(self, old, new):
         """
@@ -183,6 +185,12 @@ class symbol(sympy.Symbol):
         def __neg__(self) -> sympy.Expr: ...
         def __pos__(self) -> sympy.Expr: ...
         # yapf: enable
+
+
+def declared_predicates(declared: symbol) -> FrozenSet[Predicate]:
+    """ The sign predicates a symbol object was created with. Only for the creator's own objects (the frontend's
+    program symbols): an object found inside an expression may be any symbol of its name. """
+    return frozenset(predicate for predicate in Predicate if declared._declared.get(predicate.name.lower()))
 
 
 class UndefinedSymbol(symbol):
@@ -715,7 +723,8 @@ def is_multiple(value: Union[SymbolicType, int], alignment: Union[SymbolicType, 
     if isinstance(alignment, SymExpr):
         alignment = alignment.expr
     if issymbolic(value) or issymbolic(alignment):
-        return sympy.Mod(value, alignment) == 0
+        # Multiples are of integers, so the symbols are integers here
+        return sympy.Mod(_as_integers(sympy.sympify(value)), _as_integers(sympy.sympify(alignment))) == 0
     return int(value) % int(alignment) == 0
 
 
@@ -1003,6 +1012,26 @@ def sympy_numeric_fix(expr):
     return expr
 
 
+def _as_integers(expr: sympy.Expr) -> sympy.Expr:
+    """ ``expr`` over integer symbols of the same names, for operands that are integers by definition. """
+    return expr.xreplace(
+        {s: sympy.Symbol(s.name, integer=True)
+         for s in expr.free_symbols if isinstance(s, sympy.Symbol)})
+
+
+def _integral(quotient: sympy.Expr) -> bool:
+    """ Whether a quotient of integer division operands is an integer: the operands are integers by definition. """
+    return _as_integers(quotient).is_integer is True
+
+
+def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
+    """ ``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range. """
+    if step == 1:
+        return numerator
+    quotient = numerator / step
+    return quotient if _integral(quotient) else sympy.ceiling(quotient)
+
+
 class int_floor(sympy.Function):
 
     @classmethod
@@ -1024,7 +1053,7 @@ class int_floor(sympy.Function):
             # Exact division is not a rounding operation at all -- return the quotient itself, so the
             # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
             quotient = x / y
-            if quotient.is_integer:
+            if _integral(quotient):
                 return quotient
 
     def _eval_is_integer(self):
@@ -1058,7 +1087,7 @@ class int_ceil(sympy.Function):
                 return x
             # Exact division has nothing to round up, so it is just the quotient.
             quotient = x / y
-            if quotient.is_integer:
+            if _integral(quotient):
                 return quotient
 
     def _eval_is_integer(self):
@@ -2368,8 +2397,37 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
 
 
 @lru_cache(maxsize=2048, typed=True)
-def simplify(expr: SymbolicType) -> SymbolicType:
-    return sympy.simplify(expr)
+def _fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
+    """ ``expr`` with every argument of a ``Min``/``Max`` that the facts prove is not the extremum dropped. """
+
+    def fold(extremum: sympy.Expr) -> sympy.Expr:
+        # For a Max, an argument is dominated by one at least as large; for a Min, by one at most as large
+        def dominated(arg: sympy.Expr, by: sympy.Expr) -> bool:
+            return provably_le(arg, by, facts) if isinstance(extremum, sympy.Max) else provably_le(by, arg, facts)
+
+        kept: list[sympy.Expr] = []
+        for arg in extremum.args:
+            if not any(dominated(arg, other) for other in kept):
+                kept = [other for other in kept if not dominated(other, arg)] + [arg]
+        return extremum.func(*kept)
+
+    return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
+
+
+def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
+    """ Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
+    (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
+    is written back in the original symbols (``s = N - 5``). """
+    expr = _fold_extrema(sympy.sympify(expr), facts)
+    names = {s.name: s for s in expr.free_symbols if isinstance(s, symbol)}
+    solved = {str(target): value for target, value in facts.substitution.items()}
+    rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
+    plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
+    assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
+    result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
+    return result.xreplace(
+        {s: names.get(s.name, symbol(s.name))
+         for s in result.free_symbols if isinstance(s, sympy.Symbol)})
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
