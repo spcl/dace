@@ -2838,8 +2838,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 o.data = self.scope_vars[o.data]
         return node, inputs, outputs
 
-    def _indirect_index_group(self, node: ast.AST, aname: str,
-                              indirect_indices: Dict[int, str]) -> Tuple[str, Tuple, Dict[int, str]]:
+    def indirect_index_group(self, node: ast.AST, aname: str,
+                             indirect_indices: Dict[int, str]) -> Tuple[str, Tuple, Dict[int, str]]:
         """
         Computes the shared iteration of the index arrays of a store. numpy broadcasts them against
         ONE iteration space, so all indexed dimensions take a single map parameter; a parameter each
@@ -2863,7 +2863,7 @@ class ProgramVisitor(ExtNodeVisitor):
         reads = {dim: ('0' if self.sdfg.arrays[a].shape[0] == 1 else param) for dim, a in indirect_indices.items()}
         return param, (0, extent - 1, 1), reads
 
-    def _indirect_index_footprint(self, aname: str, subset: subsets.Range, dim: int) -> Tuple:
+    def indirect_index_footprint(self, aname: str, subset: subsets.Range, dim: int) -> Tuple:
         """
         Computes the memlet range of an indexed dimension of a store. The write can land anywhere in
         that dimension, so the memlet covers all of it. An index array's length is the extent of the
@@ -2939,7 +2939,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Append indirect indices to input memlets as necessary
         adv_param, adv_range = None, None
         if indirect_indices:
-            adv_param, adv_range, adv_reads = self._indirect_index_group(node, target_name, indirect_indices)
+            adv_param, adv_range, adv_reads = self.indirect_index_group(node, target_name, indirect_indices)
             outind = []
             for i in sorted(indirect_indices):
                 indarr = indirect_indices[i]
@@ -3018,7 +3018,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     if indirect_indices:
                         for i in indirect_indices:
-                            out_memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
+                            out_memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)
                         map_range[adv_param] = adv_range
 
                     if op:
@@ -3061,7 +3061,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if indirect_indices:
                     for i in indirect_indices:
-                        memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
+                        memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)
                         if f'__i{i}' != adv_param:
                             map_range.pop(f'__i{i}', None)
                     map_range[adv_param] = adv_range
@@ -3114,7 +3114,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if boolarr is not None:
                 out_memlet.dynamic = True
             for i in indirect_indices:
-                out_memlet.subset[i] = self._indirect_index_footprint(target_name, target_subset, i)
+                out_memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)
             for cname, memlet in input_memlets.items():
                 r = state.add_read(memlet.data)
                 state.add_edge(r, None, tasklet, cname, memlet)
@@ -3202,7 +3202,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Append indirect indices to input memlets as necessary
         adv_param, adv_range = None, None
         if indirect_indices:
-            adv_param, adv_range, adv_reads = self._indirect_index_group(node, wtarget_name, indirect_indices)
+            adv_param, adv_range, adv_reads = self.indirect_index_group(node, wtarget_name, indirect_indices)
             outind = []
             for i in sorted(indirect_indices):
                 indarr = indirect_indices[i]
@@ -3255,9 +3255,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Handle indirect indices
                     in1_suffix = []
                     for i in sorted(indirect_indices):
-                        in1_memlet.subset[i] = self._indirect_index_footprint(rtarget_name, rtarget_subset, i)
+                        in1_memlet.subset[i] = self.indirect_index_footprint(rtarget_name, rtarget_subset, i)
                         in1_suffix.append(f'__ind_{i}')
-                        out_memlet.subset[i] = self._indirect_index_footprint(wtarget_name, wtarget_subset, i)
+                        out_memlet.subset[i] = self.indirect_index_footprint(wtarget_name, wtarget_subset, i)
                     if indirect_indices:
                         map_range[adv_param] = adv_range
                         in1_suffix = '[' + ', '.join(in1_suffix) + ']'
@@ -3302,8 +3302,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Handle indirect indices
                 if indirect_indices:
                     for i in indirect_indices:
-                        in1_memlet.subset[i] = self._indirect_index_footprint(rtarget_name, rtarget_subset, i)
-                        out_memlet.subset[i] = self._indirect_index_footprint(wtarget_name, wtarget_subset, i)
+                        in1_memlet.subset[i] = self.indirect_index_footprint(rtarget_name, rtarget_subset, i)
+                        out_memlet.subset[i] = self.indirect_index_footprint(wtarget_name, wtarget_subset, i)
                         if f'__i{i}' != adv_param:
                             map_range.pop(f'__i{i}', None)
                     map_range[adv_param] = adv_range
@@ -3849,7 +3849,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # ONE axis of the indexing result, so only the first indexed dimension carries that
             # extent; the rest keep the array's own, which is what the write can reach.
             if indirect_indices:
-                _, adv_rng, _ = self._indirect_index_group(node, new_name, indirect_indices)
+                adv_rng = self.indirect_index_group(node, new_name, indirect_indices)[1]
                 new_rng[min(indirect_indices)] = adv_rng
 
             # Self-copy check
