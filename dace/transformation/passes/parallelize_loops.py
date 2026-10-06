@@ -10,7 +10,7 @@ from dace import properties, subsets, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -299,15 +299,22 @@ class ParallelizeLoops(ppl.Pass):
         end, last = loop_analysis.get_loop_end(loop), last_iteration(loop)
         itervar = loop.loop_variable
         xform.apply(graph, sd)
-        if last is not None and last != end:
-            # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
-            # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
-            for state in graph.states():
-                for node in state.nodes():
-                    if isinstance(node, nodes.MapEntry) and node.map.params == [itervar
-                                                                                ] and node.map.range[0][1] == end:
-                        rb, _, rs = node.map.range[0]
-                        node.map.range = subsets.Range([(rb, last, rs)])
+        for state in graph.states():
+            lifted = [
+                node for node in state.nodes()
+                if isinstance(node, nodes.MapEntry) and node.map.params == [itervar] and node.map.range[0][1] == end
+            ]
+            for node in lifted:
+                if last is not None and last != end:
+                    # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
+                    # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
+                    rb, _, rs = node.map.range[0]
+                    node.map.range = subsets.Range([(rb, last, rs)])
+            if lifted:
+                # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
+                # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
+                # cost stays independent of ``propagate``.
+                propagate_memlets_state(sd, state)
         return True
 
     def finish(self, sdfg: SDFG) -> None:

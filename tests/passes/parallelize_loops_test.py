@@ -903,3 +903,30 @@ def test_a_strided_lift_ends_at_its_last_iterate():
     expected = a + b
     sdfg(a=a, b=b, NBLK=5)
     assert np.allclose(a, expected)
+
+
+GATHER_LEN = dace.symbol('GATHER_LEN')
+
+
+@dace.program
+def gather_then_scale(A: dace.float64[GATHER_LEN], idx: dace.int64[GATHER_LEN], C: dace.float64[GATHER_LEN]):
+    gathered = np.empty_like(A)
+    for k in dace.map[0:GATHER_LEN]:
+        gathered[k] = A[idx[k]]
+    for k in dace.map[0:GATHER_LEN]:
+        C[k] = gathered[k] * 2.0
+
+
+def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
+    """Canonicalize turns the gather map into a loop and back; the lifted body's nested SDFG must keep its
+    per-iteration ``gathered[k]`` connector, or fusion sees all of it written and keeps two kernels."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = gather_then_scale.to_sdfg(simplify=True)
+    canonicalize(sdfg, target='cpu', validate_all=False)
+    top_maps = [
+        n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry) and s.entry_node(n) is None
+    ]
+    assert len(top_maps) == 1, len(top_maps)
+    A, idx, C = np.random.rand(20), np.random.randint(0, 20, 20).astype(np.int64), np.zeros(20)
+    sdfg(A=A, idx=idx, C=C, GATHER_LEN=20)
+    assert np.allclose(C, 2 * A[idx])
