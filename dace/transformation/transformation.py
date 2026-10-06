@@ -722,9 +722,11 @@ class ExpandTransformation(PatternTransformation):
         node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
+            # Connector names only: a type inferred for the library node (a scalar for a one-element
+            # memlet) no longer holds once the connector stands for the whole container it is connected to
             expansion = state.add_nested_sdfg(expansion,
-                                              node.in_connectors,
-                                              node.out_connectors,
+                                              set(node.in_connectors),
+                                              set(node.out_connectors),
                                               name=node.name,
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, nd.CodeNode):
