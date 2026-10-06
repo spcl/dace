@@ -15,6 +15,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, FrozenSet, Set, Optional
 from dace import data as dt
+from dace.sdfg import nodes
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.symbolic import pystr_to_symbolic
@@ -167,6 +168,18 @@ def loop_bound_symbols(loop: LoopRegion) -> Set[str]:
         bound |= assign_targets(blk.init_statement)
         bound |= assign_targets(blk.update_statement)
     return bound
+
+
+def nested_sdfg_shape_symbols(state: SDFGState) -> Set[str]:
+    """Symbols in the descriptors of the containers connected to the nested SDFGs of ``state``."""
+    names: Set[str] = set()
+    for node in state.nodes():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
+            if not edge.data.is_empty():
+                names |= {str(s) for s in state.sdfg.arrays[edge.data.data].free_symbols}
+    return names
 
 
 def reads_data(value, owner: SDFG) -> bool:
@@ -566,9 +579,12 @@ class SymbolPropagation(ppl.Pass):
         # code or a subset stops being a read: the connector is pruned, ``used_symbols`` reports a
         # free symbol and ``arglist`` raises ``KeyError``, or inlining renames the container away.
         # Interstate edges and region meta code carry read memlets, so they stay allowed.
+        # A nested SDFG's symbol mapping must keep matching the shapes of the containers connected to it, and those
+        # shapes live at SDFG scope, which a state substitution does not reach.
         state_subs = new_in_syms
         if isinstance(cfg_blk, SDFGState):
-            state_subs = {s: v for s, v in new_in_syms.items() if not reads_data(v, cfg_blk.sdfg)}
+            pinned = nested_sdfg_shape_symbols(cfg_blk)
+            state_subs = {s: v for s, v in new_in_syms.items() if s not in pinned and not reads_data(v, cfg_blk.sdfg)}
 
         changed = True
         iters = 0
