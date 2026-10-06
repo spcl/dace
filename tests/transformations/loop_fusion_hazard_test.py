@@ -41,6 +41,7 @@ import pytest
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -306,6 +307,7 @@ def build_inout_split_loop_form_unified_names() -> dace.SDFG:
     second_exit.add_out_connector("OUT_B")
     state2.add_edge(consumer, "o", second_exit, "IN_B", dace.Memlet(data="B", subset="i"))
     state2.add_edge(second_exit, "OUT_B", state2.add_access("B"), None, dace.Memlet(data="B", subset=f"0:{N}"))
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return convert_maps_to_loops(sdfg)
 
