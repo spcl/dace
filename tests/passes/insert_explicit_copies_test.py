@@ -1525,7 +1525,31 @@ def test_a_stage_in_of_a_container_into_itself_is_not_a_copy():
     np.testing.assert_array_equal(B, 3.0 + np.arange(_N_STAGE))
 
 
+def test_a_copy_lifted_beside_a_view_named_like_its_connector_validates():
+    """An expanded and inlined copy leaves its wrapper views behind under the copy connector names; a copy
+    lifted next to them must not share a name with them."""
+    sdfg = dace.SDFG('copy_beside_cpy_named_data')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+    sdfg.add_array(CopyLibraryNode.INPUT_CONNECTOR_NAME, [8], dace.float64, transient=True)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read('a'), state.add_access(CopyLibraryNode.INPUT_CONNECTOR_NAME), Memlet('a[0:8]'))
+    state.add_nedge(state.add_access(CopyLibraryNode.INPUT_CONNECTOR_NAME), state.add_write('b'),
+                    Memlet(f'{CopyLibraryNode.INPUT_CONNECTOR_NAME}[0:8]'))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert CopyLibraryNode.INPUT_CONNECTOR_NAME not in sdfg.arrays
+    assert _count_copy_nodes(sdfg) == 2
+    sdfg.validate()
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(a=a, b=b)
+    assert np.array_equal(a, b)
+
+
 if __name__ == '__main__':
+    test_a_copy_lifted_beside_a_view_named_like_its_connector_validates()
     test_insert_cpu_to_cpu_1d()
     test_insert_cpu_to_cpu_2d_slice()
     for sdfg_name, memlet in [("insert_other_dst", Memlet(data="B", subset="0:8", other_subset="2:10")),

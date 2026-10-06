@@ -166,10 +166,25 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
+            self.free_copy_connector_names(nsdfg)
             for state in nsdfg.states():
                 count += self._replace_direct_copies(state)
                 count += self._replace_map_staging_copies(state)
         return count if count > 0 else None
+
+    @classmethod
+    def free_copy_connector_names(cls, sdfg: SDFG) -> None:
+        """Renames data named like a copy node's connectors, which a connector may not share a name with.
+
+        An expanded and inlined copy leaves its wrapper views behind under those names (``_cpy_in``), so a copy
+        inserted next to them would fail validation.
+        """
+        taken = [
+            name for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
+            if name in sdfg.arrays
+        ]
+        if taken:
+            sdfg.replace_dict({name: sdfg.find_new_name_avoiding_connectors(name.lstrip('_')) for name in taken})
 
     def _replace_direct_copies(self, state: SDFGState) -> int:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.
