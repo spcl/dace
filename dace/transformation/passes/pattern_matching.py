@@ -30,30 +30,37 @@ class PatternMatchAndApply(ppl.Pass):
 
     transformations = properties.ListProperty(element_type=xf.PatternTransformation,
                                               default=[],
+                                              category='Parameters',
                                               desc='The list of transformations to apply')
 
     permissive = properties.Property(
         dtype=bool,
         default=False,
+        category='Applicability',
         desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
     validate = properties.Property(dtype=bool,
                                    default=True,
+                                   category='Diagnostics',
                                    desc='If True, validates the SDFG after all transformations have been applied.')
     validate_all = properties.Property(dtype=bool,
                                        default=False,
+                                       category='Diagnostics',
                                        desc='If True, validates the SDFG after each transformation applies.')
     states = properties.ListProperty(element_type=SDFGState,
                                      default=None,
                                      allow_none=True,
+                                     category='Applicability',
                                      desc='If not None, only applies transformations to the given states.')
 
     print_report = properties.Property(dtype=bool,
                                        default=None,
                                        allow_none=True,
+                                       category='Diagnostics',
                                        desc='Whether to show debug prints (or None to use configuration file).')
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
+                                   category='Diagnostics',
                                    desc='Whether to show progress printouts (or None to use configuration file).')
 
     def __init__(self,
@@ -154,6 +161,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
     order_by_transformation = properties.Property(dtype=bool,
                                                   default=False,
+                                                  category='Parameters',
                                                   desc='Whether or not to order by transformation.')
 
     def __init__(self,

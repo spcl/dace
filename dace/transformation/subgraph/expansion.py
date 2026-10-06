@@ -43,20 +43,25 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     """
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=False)
+    debug = Property(dtype=bool, category='Diagnostics', desc="Debug Mode", default=False)
     sequential_innermaps = Property(dtype=bool,
+                                    category='Scheduling',
                                     desc="Make all inner maps that are"
                                     "created during expansion sequential",
                                     default=False)
 
     check_contiguity = Property(dtype=bool,
+                                category='Applicability',
                                 desc="Don't allow expansion if last (contiguous)"
                                 "dimension is partially split",
                                 default=False)
 
-    permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
+    permutation_only = Property(dtype=bool,
+                                category='Applicability',
+                                desc="Only allow permutations without inner splits",
+                                default=False)
 
-    allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
+    allow_offset = Property(dtype=bool, category='Parameters', desc="Offset ranges to zero", default=True)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         # get lowest scope maps of subgraph

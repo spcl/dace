@@ -66,16 +66,28 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
     validate = properties.Property(dtype=bool,
                                    default=False,
+                                   category='Diagnostics',
                                    desc='Whether to validate the SDFG at the end of the pipeline.')
-    validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
-    skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
-    verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
+    validate_all = properties.Property(dtype=bool,
+                                       default=False,
+                                       category='Diagnostics',
+                                       desc='Whether to validate the SDFG after each pass.')
+    skip = properties.SetProperty(element_type=str,
+                                  default=set(),
+                                  category='Applicability',
+                                  desc='Set of pass names to skip.')
+    verbose = properties.Property(dtype=bool,
+                                  default=False,
+                                  category='Diagnostics',
+                                  desc='Whether to print reports after every pass.')
 
     no_inline_function_call_regions = properties.Property(dtype=bool,
                                                           default=False,
+                                                          category='Applicability',
                                                           desc='Whether to prevent inlining function call regions.')
     no_inline_named_regions = properties.Property(dtype=bool,
                                                   default=False,
+                                                  category='Applicability',
                                                   desc='Whether to prevent inlining named control flow regions.')
 
     def __init__(self,

@@ -31,7 +31,7 @@ class SVEVectorization(transformation.SingleStateTransformation):
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    vec_len = SymbolicProperty(desc="Vector length", default=util.SVE_LEN)
+    vec_len = SymbolicProperty(category="Parameters", desc="Vector length", default=util.SVE_LEN)
 
     @classmethod
     def expressions(cls):

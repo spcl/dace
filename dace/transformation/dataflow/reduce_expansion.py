@@ -33,15 +33,22 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     reduce = transformation.PatternNode(stdlib.Reduce)
 
-    debug = Property(desc="Debug Info", dtype=bool, default=False)
+    debug = Property(category='Diagnostics', desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient"
-                                   "in registers", dtype=bool, default=False)
+    create_in_transient = Property(category='Memory',
+                                   desc="Create local in-transient"
+                                   "in registers",
+                                   dtype=bool,
+                                   default=False)
 
-    create_out_transient = Property(desc="Create local out-transient"
-                                    "in registers", dtype=bool, default=False)
+    create_out_transient = Property(category='Memory',
+                                    desc="Create local out-transient"
+                                    "in registers",
+                                    dtype=bool,
+                                    default=False)
 
-    reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
+    reduce_implementation = Property(category='Code Generation',
+                                     desc="Reduce implementation of inner reduce. If specified,"
                                      "overrides any existing implementations",
                                      dtype=str,
                                      default=None,

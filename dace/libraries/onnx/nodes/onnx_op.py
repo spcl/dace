@@ -40,11 +40,12 @@ class ONNXOp(nd.LibraryNode):
     default_backward_implementation = None
 
     # Object fields
-    schema = Property(dtype=ONNXSchema, desc="The operator's ONNX OpSchema", allow_none=True)
+    schema = Property(dtype=ONNXSchema, category="Frontend", desc="The operator's ONNX OpSchema", allow_none=True)
 
     backward_implementation = Property(
         dtype=str,
         allow_none=True,
+        category="Code Generation",
         desc="Which implementation this library node will expand into in the backward pass.")
 
     def iter_outputs_in_onnx_order(self, state: SDFGState) -> List[MultiConnectorEdge]:

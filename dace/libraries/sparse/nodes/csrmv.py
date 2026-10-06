@@ -512,9 +512,11 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
     # Object fields
     alpha = properties.Property(allow_none=False,
                                 default=1,
+                                category="Semantics",
                                 desc="A scalar which will be multiplied with A @ B before adding C")
     beta = properties.Property(allow_none=False,
                                default=0,
+                               category="Semantics",
                                desc="A scalar which will be multiplied with C before adding it")
 
     def __init__(self, name, location=None, alpha=1, beta=0):

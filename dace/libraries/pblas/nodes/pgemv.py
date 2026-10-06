@@ -148,9 +148,9 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
-    transa = dace.properties.Property(dtype=str, default='N')
-    m = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    transa = dace.properties.Property(dtype=str, default='N', category='Semantics')
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
 
     def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)

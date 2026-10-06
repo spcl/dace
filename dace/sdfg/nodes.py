@@ -78,11 +78,13 @@ class Node(object):
 
     in_connectors = DictProperty(key_type=str,
                                  value_type=dtypes.typeclass,
+                                 category='General',
                                  desc="A set of input connectors for this node.")
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
+                                  category='General',
                                   desc="A set of output connectors for this node.")
-    guid = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False, category='(Debug)')
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -338,14 +340,16 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo = DebugInfoProperty(allow_none=True)
-    data = DataProperty(desc="Data (array, stream, scalar) to access")
+    setzero = Property(dtype=bool, category='Memory', desc="Initialize to zero", default=False)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
+    data = DataProperty(category='General', desc="Data (array, stream, scalar) to access")
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                              category='Instrumentation',
                               desc="Instrument data contents at this access",
                               default=dtypes.DataInstrumentationType.No_Instrumentation)
-    instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
+    instrument_condition = CodeProperty(category='Instrumentation',
+                                        desc="Condition under which to trigger the instrumentation",
                                         default=CodeBlock("1", language=dtypes.Language.CPP))
 
     def __init__(self, data, debuginfo=None):
@@ -425,13 +429,15 @@ class CodeNode(Node):
         dependencies. May either be a tasklet or a nested SDFG, and
         denoted by an octagonal shape. """
 
-    label = Property(dtype=str, desc="Name of the CodeNode")
+    label = Property(dtype=str, category='General', desc="Name of the CodeNode")
     location = DictProperty(key_type=str,
                             value_type=str,
+                            category='Scheduling',
                             desc='Full storage location identifier (e.g., rank, GPU ID). Values are always stored and '
                             'serialized as strings, which may encode a constant (e.g., "0"), a symbolic expression '
                             '(e.g., "N - 1"), or a range in subset notation (e.g., "0:N"); consumers parse them.')
     environments = SetProperty(str,
+                               category='Code Generation',
                                desc="Environments required by CMake to build and run this code node.",
                                default=set())
 
@@ -459,27 +465,35 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
-    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
-    code_global = CodeProperty(desc="Global scope code needed for tasklet execution",
+    code = CodeProperty(category='Semantics', desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(element_type=str,
+                                category='Code Generation',
+                                desc="Fields that are added to the global state")
+    code_global = CodeProperty(category='Code Generation',
+                               desc="Global scope code needed for tasklet execution",
                                default=CodeBlock("", dtypes.Language.CPP))
-    code_init = CodeProperty(desc="Extra code that is called on DaCe runtime initialization",
+    code_init = CodeProperty(category='Code Generation',
+                             desc="Extra code that is called on DaCe runtime initialization",
                              default=CodeBlock("", dtypes.Language.CPP))
-    code_exit = CodeProperty(desc="Extra code that is called on DaCe runtime cleanup",
+    code_exit = CodeProperty(category='Code Generation',
+                             desc="Extra code that is called on DaCe runtime cleanup",
                              default=CodeBlock("", dtypes.Language.CPP))
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
     side_effects = Property(dtype=bool,
                             allow_none=True,
                             default=None,
+                            category='Semantics',
                             desc='If True, this tasklet calls a function that may have '
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
     ignored_symbols = SetProperty(element_type=str,
+                                  category='Semantics',
                                   desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
                                   'tasklets, where only string analysis is possible; and to skip globals in Python '
@@ -641,28 +655,35 @@ class NestedSDFG(CodeNode):
     """
 
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
+    sdfg = SDFGReferenceProperty(category='General', desc="The SDFG", allow_none=True)
     ext_sdfg_path = Property(dtype=str,
                              default=None,
                              allow_none=True,
+                             category='General',
                              desc='Path to a file containing the SDFG for this nested SDFG')
     symbol_mapping = DictProperty(key_type=str,
                                   value_type=sp.Basic,
+                                  category='General',
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
+    is_collapsed = Property(dtype=bool,
+                            category='General',
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
     no_inline = Property(dtype=bool,
+                         category='General',
                          desc="If True, this nested SDFG will not be inlined during "
                          "simplification",
                          default=False)
 
-    unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+    unique_name = Property(dtype=str, category='Code Generation', desc="Unique name of the SDFG", default="")
 
     def __init__(self,
                  label,
@@ -1121,45 +1142,61 @@ class Map(object):
     """
 
     # List of (editable) properties
-    label = Property(dtype=str, desc="Label of the map")
-    params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
-    schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
-    unroll = Property(dtype=bool, desc="Map unrolling")
+    label = Property(dtype=str, category='General', desc="Label of the map")
+    params = ListProperty(element_type=str, category='Semantics', desc="Mapped parameters")
+    range = RangeProperty(category='Semantics', desc="Ranges of map parameters", default=sbs.Range([]))
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            category='Scheduling',
+                            desc="Map schedule",
+                            default=dtypes.ScheduleType.Default)
+    unroll = Property(dtype=bool, category='Scheduling', desc="Map unrolling")
     unroll_factor = Property(dtype=int,
                              allow_none=True,
                              default=0,
+                             category='Scheduling',
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
-    collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    collapse = Property(dtype=int,
+                        default=1,
+                        category='Scheduling',
+                        desc="How many dimensions to collapse into the parallel range")
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
+    is_collapsed = Property(dtype=bool,
+                            category='General',
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
     omp_num_threads = Property(dtype=int,
                                default=0,
+                               category='Scheduling',
                                desc="Number of OpenMP threads executing the Map",
                                serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
+                                category='Scheduling',
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_chunk_size = Property(dtype=int,
                               default=0,
+                              category='Scheduling',
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
                                   allow_none=True,
+                                  category='Scheduling',
                                   desc="GPU kernel block size",
                                   serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_launch_bounds = Property(dtype=str,
                                  default="0",
+                                 category='Code Generation',
                                  desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
@@ -1167,19 +1204,25 @@ class Map(object):
 
     gpu_min_warps_per_eu = Property(dtype=int,
                                     default=0,
+                                    category='Code Generation',
                                     desc="Minimum number of warps per execution unit for GPU kernel",
                                     serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_maxnreg = Property(dtype=int,
                            default=0,
+                           category='Code Generation',
                            desc="Maximum number of registers per thread for GPU kernel",
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
-    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+    gpu_force_syncthreads = Property(dtype=bool,
+                                     category='Scheduling',
+                                     desc="Force a call to the __syncthreads for the map",
+                                     default=False)
 
     allow_chiplet_threadblock_distribution = Property(
         dtype=bool,
         default=True,
+        category='Scheduling',
         desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
         "(see the `compiler.cuda.chiplet_number` configuration entry)",
         serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
@@ -1401,16 +1444,26 @@ class Consume(object):
         stream until a given quiescence condition is reached. """
 
     # Properties
-    label = Property(dtype=str, desc="Name of the consume node")
-    pe_index = Property(dtype=str, desc="Processing element identifier")
-    num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
-    condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
-    schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
-    chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    label = Property(dtype=str, category='General', desc="Name of the consume node")
+    pe_index = Property(dtype=str, category='Semantics', desc="Processing element identifier")
+    num_pes = SymbolicProperty(category='Scheduling', desc="Number of processing elements", default=1)
+    condition = CodeProperty(category='Semantics', desc="Quiescence condition", allow_none=True, default=None)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            category='Scheduling',
+                            desc="Consume schedule",
+                            default=dtypes.ScheduleType.Default)
+    chunksize = Property(dtype=int,
+                         category='Scheduling',
+                         desc="Maximal size of elements to consume at a time",
+                         default=1)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
+    is_collapsed = Property(dtype=bool,
+                            category='General',
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
@@ -1468,19 +1521,22 @@ def full_class_path(cls_or_obj: Union[type, object]):
 @make_properties
 class LibraryNode(CodeNode):
 
-    name = Property(dtype=str, desc="Name of node")
+    name = Property(dtype=str, category='General', desc="Name of node")
     implementation = LibraryImplementationProperty(dtype=str,
                                                    allow_none=True,
+                                                   category='Code Generation',
                                                    desc=("Which implementation this library node will expand into."
                                                          "Must match a key in the list of possible implementations."))
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            category='Scheduling',
                             desc="If set, determines the default device mapping of "
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category='Frontend')
     # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
     # node, and expansion carries this onto whatever the node expands into.
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              category='Instrumentation',
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 

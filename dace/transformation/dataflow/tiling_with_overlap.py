@@ -18,8 +18,8 @@ class MapTilingWithOverlap(MapTiling):
     """
 
     # Properties
-    lower_overlap = ShapeProperty(dtype=tuple, default=None, desc="Lower overlap per dimension")
-    upper_overlap = ShapeProperty(dtype=tuple, default=None, desc="Upper overlap per dimension")
+    lower_overlap = ShapeProperty(dtype=tuple, default=None, category="Parameters", desc="Lower overlap per dimension")
+    upper_overlap = ShapeProperty(dtype=tuple, default=None, category="Parameters", desc="Upper overlap per dimension")
 
     def apply(self, graph, sdfg):
         if len(self.lower_overlap) == 0:

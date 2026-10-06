@@ -1100,7 +1100,10 @@ class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 
-    promote_global_trans = Property(dtype=bool, default=False, desc="Promotes transients to be allocated once")
+    promote_global_trans = Property(dtype=bool,
+                                    default=False,
+                                    category='Memory',
+                                    desc="Promotes transients to be allocated once")
 
     @staticmethod
     def annotates_memlets():
