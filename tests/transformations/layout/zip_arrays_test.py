@@ -29,8 +29,14 @@ def madd(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
 
 @dace.program
 def mixed(A: dace.float64[N], K: dace.int64[N], C: dace.float64[N]):
+    # An explicit tasklet: the frontend would read the integer ``K[i]`` into a symbol inside a nested SDFG,
+    # and the struct path cannot address one field of a struct element there.
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
-        C[i] = A[i] + K[i]
+        with dace.tasklet:
+            a << A[i]
+            k << K[i]
+            c >> C[i]
+            c = a + k
 
 
 def test_zip_homogeneous_fields():
@@ -63,7 +69,12 @@ def test_zip_homogeneous_fields():
 @dace.program
 def mixed3(A: dace.float64[N], K: dace.int32[N], F: dace.float32[N], C: dace.float64[N]):
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
-        C[i] = A[i] + K[i] + F[i]
+        with dace.tasklet:
+            a << A[i]
+            k << K[i]
+            f << F[i]
+            c >> C[i]
+            c = a + k + f
 
 
 def test_zip_heterogeneous_struct_true_aos():
