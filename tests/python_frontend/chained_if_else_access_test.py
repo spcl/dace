@@ -48,7 +48,8 @@ def _assert_connector_role_matches_edges(sdfg: dace.SDFG):
     """For every tasklet and NestedSDFG in the entire SDFG, verifies:
     - no in-connector has zero incoming edges,
     - no out-connector has zero outgoing edges,
-    - no connector name is declared as both input and output,
+    - no tasklet connector name is declared as both input and output (a NestedSDFG connector that reads and
+      writes a container is both: under the No-View contract the connector is the container),
     - no edge lands on an out-connector,
     - no edge leaves an in-connector.
 
@@ -63,13 +64,14 @@ def _assert_connector_role_matches_edges(sdfg: dace.SDFG):
             continue
         in_names = set(n.in_connectors.keys())
         out_names = set(n.out_connectors.keys())
-        both = in_names & out_names
+        inout = set() if isinstance(n, dace.nodes.Tasklet) else in_names & out_names
+        both = (in_names & out_names) - inout
         assert not both, f"Node {n.label!r} has connector(s) {sorted(both)} declared as both input and output"
 
         for e in state.in_edges(n):
             if e.dst_conn is None:
                 continue
-            assert e.dst_conn not in out_names, (
+            assert e.dst_conn not in out_names - inout, (
                 f"Node {n.label!r} in state {state.label!r}: read edge lands on out-connector "
                 f"{e.dst_conn!r} (should land on an in-connector). Source: {e.src}")
             assert e.dst_conn in in_names, (
@@ -78,7 +80,7 @@ def _assert_connector_role_matches_edges(sdfg: dace.SDFG):
         for e in state.out_edges(n):
             if e.src_conn is None:
                 continue
-            assert e.src_conn not in in_names, (
+            assert e.src_conn not in in_names - inout, (
                 f"Node {n.label!r} in state {state.label!r}: write edge leaves in-connector "
                 f"{e.src_conn!r} (should leave from an out-connector). Destination: {e.dst}")
             assert e.src_conn in out_names, (
