@@ -246,10 +246,13 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
 
     # Divide a large program into functions and translation units. Last, since simplification would inline them.
     if config.Config.get_bool("compiler", "outlining", "enabled"):
+        outlining = functools.partial(config.Config.get, "compiler", "outlining")
         OutlineFunctions(
-            max_basic_blocks=config.Config.get("compiler", "outlining", "max_basic_blocks"),
-            min_basic_blocks=config.Config.get("compiler", "outlining", "min_basic_blocks"),
-            translation_units=config.Config.get("compiler", "outlining", "translation_units"),
+            max_basic_blocks=outlining("max_basic_blocks"),
+            min_basic_blocks=outlining("min_basic_blocks"),
+            max_statements=outlining("max_statements"),
+            translation_units=outlining("translation_units"),
+            min_unit_statements=outlining("min_unit_statements"),
         ).apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
