@@ -3642,6 +3642,29 @@ class ProgramVisitor(ExtNodeVisitor):
         if storage != dtypes.StorageType.Default:
             self.sdfg.arrays[results[0][0]].storage = storage
 
+    def same_view(self, first: str, second: str) -> bool:
+        """
+        Whether two data containers see the same elements in the same shape: they are one container, or views of
+        the same slice of the same data. Each subscript builds its own anonymous view, so equal slices differ by
+        name only.
+        """
+        if first == second:
+            return True
+        if first not in self.views or second not in self.views:
+            return False
+        (first_data, first_memlet), (second_data, second_memlet) = self.views[first], self.views[second]
+        arrays = self.sdfg.arrays
+        return (arrays[first].is_equivalent(arrays[second]) and first_memlet.subset == second_memlet.subset
+                and first_memlet.other_subset == second_memlet.other_subset and self.same_view(first_data, second_data))
+
+    def view_already_sees(self, name: str, result: Any) -> bool:
+        """Whether rebinding the view ``name`` to ``result`` is a no-op: ``name`` sees all of a container that sees
+        what ``result`` does."""
+        viewed, memlet = self.views[name]
+        if viewed not in self.sdfg.arrays or memlet != Memlet.from_array(viewed, self.sdfg.arrays[viewed]):
+            return False
+        return isinstance(result, str) and result in self.sdfg.arrays and self.same_view(viewed, result)
+
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
         elts = None
@@ -3754,16 +3777,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if true_name in self.views:
-                    if result in self.sdfg.arrays and self.views[true_name] == (result,
-                                                                                Memlet.from_array(
-                                                                                    result, self.sdfg.arrays[result])):
-                        continue
-                    # Re-viewing the same slice of the same array is a no-op. ``col = a[0:2]`` twice
-                    # builds a second anonymous view, so the two results differ by name while the
-                    # data they see does not; compare what each one views instead.
-                    viewed, viewed_memlet = self.views[true_name]
-                    if (viewed in self.views and result in self.views and self.views[viewed] == self.views[result]
-                            and viewed_memlet == Memlet.from_array(viewed, self.sdfg.arrays[viewed])):
+                    if self.view_already_sees(true_name, result):
                         continue
                     raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
                 if (isinstance(result, str) and result in self.sdfg.arrays
