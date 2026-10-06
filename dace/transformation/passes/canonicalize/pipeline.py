@@ -78,6 +78,7 @@ from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeT
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
@@ -263,6 +264,7 @@ class StructuralCleanup(ppl.Pass):
             ConstantPropagation(),
             RemoveUnusedSymbols(),
             SymbolDedup(),
+            FoldScalarReadCopies(),
             walk_fuse,
             EmptyStateElimination(),
             DeadStateElimination(),
