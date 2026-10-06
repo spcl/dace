@@ -4,6 +4,9 @@ import dace
 from dace import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty, make_properties)
 
+# The comments that code generation adds to map generated code back to SDFG elements
+_CODEGEN_COMMENT = re.compile(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*')
+
 
 def strip_codegen_comments(code: str) -> str:
     """
@@ -12,7 +15,7 @@ def strip_codegen_comments(code: str) -> str:
     :param code: Generated code.
     :return: The code without those comments.
     """
-    return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', code)
+    return _CODEGEN_COMMENT.sub('', code)
 
 
 @make_properties
