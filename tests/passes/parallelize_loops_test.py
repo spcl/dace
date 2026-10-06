@@ -874,3 +874,32 @@ def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) 
     ParallelizeLoops().apply_pass(sdfg, {})
     assert outer in checked, f'the enclosing iterator {outer} was never declared, so nothing was exercised'
     assert not mismatches, mismatches
+
+
+NBLK = dace.symbol('NBLK', dace.int64, positive=True)
+
+
+@dace.program
+def unrolled_by_four(a: dace.float64[4 * NBLK], b: dace.float64[4 * NBLK]):
+    for i in range(0, 4 * NBLK, 4):
+        a[i] = a[i] + b[i]
+        a[i + 1] = a[i + 1] + b[i + 1]
+        a[i + 2] = a[i + 2] + b[i + 2]
+        a[i + 3] = a[i + 3] + b[i + 3]
+
+
+def test_a_strided_lift_ends_at_its_last_iterate():
+    """``range(0, 4 * NBLK, 4)`` last runs ``i = 4 * NBLK - 4``: a map ending at the bound ``4 * NBLK - 1`` would
+    propagate ``b[i + 3]`` past the array (tsvc s351)."""
+    sdfg = unrolled_by_four.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    ranges = [
+        n.map.range[0] for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.params == ['i']
+    ]
+    assert ranges and all(dace.symbolic.evaluate(end, {'NBLK': 5}) == 16 for _, end, _ in ranges), ranges
+    sdfg.validate()
+    a, b = np.random.rand(20), np.random.rand(20)
+    expected = a + b
+    sdfg(a=a, b=b, NBLK=5)
+    assert np.allclose(a, expected)
