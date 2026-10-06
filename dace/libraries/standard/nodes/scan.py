@@ -1127,14 +1127,17 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
 
 
 def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
-    """``s`` independent residue-class scans, one device thread per class.
+    """``s`` independent residue-class scans: one device thread per class when there are many, and a
+    three-phase chunked scan (chunk totals, their scan, a seeded rescan) when there are few.
 
     ``gpucub::DeviceScan`` scans one contiguous sequence, so it cannot serve a stride: CUB has a
     segmented reduce and a segmented sort but no segmented scan, and driving the residue classes
     through ``s`` separate strided-iterator ``DeviceScan`` calls would be ``s`` kernel launches for
     the shape that produces most of them (``LoopToScan``'s composite body, where ``s`` is the inner
-    size and runs to 1e5). One launch over ``dace::cuda_scan::strided_inclusive_<op>``
-    (:file:`dace/runtime/include/dace/cuda/scan.cuh`) walks every class in parallel instead.
+    size and runs to 1e5). ``dace::cuda_scan::strided_inclusive_<op>``
+    (:file:`dace/runtime/include/dace/cuda/scan.cuh`) covers every class in a fixed number of launches
+    instead; the chunked form keeps a symbolic stride of 1..8 (tsvc's ``a[i] = a[i-K] + x[i]``) from
+    running as ``K`` blocks over the whole array.
 
     Emitted as a wrapper in the CUDA translation unit and CALLED from the host tasklet, the same
     shape :func:`affine_cuda_tasklet` and the cub path use: the kernel launch is nvcc/hipcc-only
@@ -1156,9 +1159,8 @@ def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
     sdfg.append_global_code(
         f'{prototype}\n'
         f'gpuError_t {wrapper}({params}) {{\n'
-        f'    ::dace::cuda_scan::strided_inclusive_{suffix}<{ctype}>('
+        f'    return ::dace::cuda_scan::strided_inclusive_{suffix}<{ctype}>('
         f'__sc_in, __sc_out, __sc_n, __sc_s, __sc_stream);\n'
-        f'    return gpuGetLastError();\n'
         f'}}\n', 'cuda')
     code = (f'DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, '
             f'(long)({_resolve_length(node, state, sdfg)}), (long)({sym2cpp(node.stride)}), '
