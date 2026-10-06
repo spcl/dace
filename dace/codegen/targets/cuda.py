@@ -13,7 +13,7 @@ import dace
 from dace import data as dt, Memlet
 from dace import dtypes, registry
 from dace import subsets, symbolic
-from dace.codegen import common, compiler_family, cppunparse
+from dace.codegen import common, compiler_family, cppunparse, cuda_arch
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
@@ -3052,10 +3052,9 @@ def gpu_cmake_options() -> List[str]:
 
         # Empty keeps CMake's ``native``, which resolves the local GPU. It is filled in from
         # compiler.cuda.cuda_arch, or, on a host with no GPU for native to find, from what the
-        # toolkit can still build -- see native_compiler.cuda_architectures.
-        from dace.codegen import native_compiler
-        if cuda_arch := native_compiler.cuda_architectures():
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
+        # toolkit can still build -- see cuda_arch.cuda_architectures.
+        if architectures := cuda_arch.cuda_architectures():
+            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{architectures}"')
 
         # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
         # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.

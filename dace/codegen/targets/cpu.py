@@ -3169,7 +3169,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # (C11 6.7.4p3), and every one of these bodies calls the ``<array>_idx`` helpers, which
             # the C dialect emits ``static``. gcc rejected 14 of the 38 rendered llr forms for it.
             if cpf_lowering.standalone():
-                qualifier = 'static inline '
+                # A GPU codegen prefixes its own DACE_DFI (``__device__ __forceinline__``), which already implies
+                # ``inline``; spelling it twice is "duplicate specifier in declaration" under nvcc.
+                qualifier = 'static inline ' if codegen is self else 'static '
             else:
                 qualifier = 'DACE_HIDDEN ' if do_split else ('inline ' if codegen is self else '')
             nested_stream.write(
