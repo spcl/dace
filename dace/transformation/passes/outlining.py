@@ -513,7 +513,16 @@ class OutlineFunctions(ppl.Pass):
         """
         :return: The number of functions outlined, or None if none was.
         """
-        plans = self.plan(sdfg)
+        return self.apply_plans(sdfg, self.plan(sdfg))
+
+    def apply_plans(self, sdfg: SDFG, plans: list[FunctionPlan]) -> int | None:
+        """
+        Wraps planned functions (e.g., from ``plan``, possibly inspected or edited) into function regions.
+
+        :param sdfg: The SDFG the plans were made for.
+        :param plans: The planned functions.
+        :return: The number of functions outlined, or None if none was.
+        """
         for i, plan in enumerate(plans):
             xfh.wrap_in_function_region(
                 plan.blocks,
