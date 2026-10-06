@@ -902,7 +902,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
         fname = rname(node.func)
         if fname in self.defined:
-            ftype = self.defined[fname].dtype
+            ftype = defined_type(self.defined[fname])
             if isinstance(ftype, dtypes.callback):
                 if not ftype.is_scalar_function():
                     raise DaceSyntaxError(
@@ -5212,13 +5212,15 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = None, None
 
         # Type-check operands in order to provide a clear error message
-        if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
-                                                      and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
+        if (isinstance(operand1, dtypes.pyobject)
+                or (isinstance(operand1, str) and operand1 in self.defined
+                    and isinstance(defined_type(self.defined[operand1]), dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
-        if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
-                                                      and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
+        if (isinstance(operand2, dtypes.pyobject)
+                or (isinstance(operand2, str) and operand2 in self.defined
+                    and isinstance(defined_type(self.defined[operand2]), dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')

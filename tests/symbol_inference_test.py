@@ -68,7 +68,7 @@ def test_dynamic_range_bound_types_the_map_parameter():
 
     # Parsed from a string, so the bound carries an untyped ``lo`` -- the unstable dtype.
     bound = dace.symbolic.pystr_to_symbolic('lo')
-    assert all(s.dtype is not dace.uint64 for s in bound.free_symbols)
+    assert all(s.declaration.dtype is not dace.uint64 for s in bound.free_symbols)
 
     entry, exit_node = state.add_map('m', {'i': dace.subsets.Range([(bound, 127, 1)])})
     entry.add_in_connector('lo', dace.uint64)
