@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace.codegen.targets import framecode
-from dace.codegen.targets.cpu import _use_aligned_operator_new
+from dace.codegen.targets.cpu import use_aligned_operator_new
 from dace.sdfg import infer_types
 from dace.sdfg.state import LoopRegion
 import numpy as np
@@ -18,7 +18,7 @@ def _count_heap_allocs(code: str, ctype: str) -> int:
     # ``dace::aligned_new_array<type>(...)``, earlier standards the plain form.
     # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
     probe = dace.data.Array(dace.float64, [1])
-    if _use_aligned_operator_new(probe):
+    if use_aligned_operator_new(probe):
         return code.count(f'dace::aligned_new_array<{ctype}>(')
     return len(re.findall(rf'new\s+{ctype}\b', code))
 

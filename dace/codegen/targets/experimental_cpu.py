@@ -28,7 +28,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import (CPUCodeGen, LoopCounterIndex, aligned_new_value, decl_placement, hoist_loop_decls,
                                       loop_counter_index, loop_local_counter_loop, loop_region_index_ctype,
-                                      map_schedule_is_sequential, scalar_init_style, _use_aligned_operator_new)
+                                      map_schedule_is_sequential, scalar_init_style, use_aligned_operator_new)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.ordered import OrderedSet
@@ -180,7 +180,7 @@ def c_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: Optiona
     :returns: the allocation statement.
     """
     # Explicit ``size_t`` cast: an implicit signed-to-size_t conversion is a -Wsign-conversion diagnostic.
-    if nodedesc is None or not _use_aligned_operator_new(nodedesc):
+    if nodedesc is None or not use_aligned_operator_new(nodedesc):
         return '%s = malloc(sizeof(%s) * (size_t)(%s));\n' % (alloc_name, ctype, count)
     alignment = aligned_new_value(nodedesc)
     bytes_needed = '((sizeof(%s) * (size_t)(%s) + %d) / %d) * %d' % (ctype, count, alignment - 1, alignment, alignment)
@@ -888,7 +888,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
         # A CPF unit includes no DaCe header, so it spells the aligned ``new`` itself.
         placement = ''
-        if nodedesc is not None and _use_aligned_operator_new(nodedesc):
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
             placement = ' (std::align_val_t(%d))' % aligned_new_value(nodedesc)
         return '%s = new%s %s[%s];\n' % (alloc_name, placement, ctype, count)
 
@@ -899,7 +899,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # A CPF unit includes no DaCe header, so it spells the aligned delete paired with its aligned ``new``
         # itself. The direct operator call skips destructors and relies on the new-expression emitting no array
         # cookie -- both only hold for trivially destructible element types.
-        if cpf_lowering.standalone() and is_array and nodedesc is not None and _use_aligned_operator_new(nodedesc):
+        if cpf_lowering.standalone() and is_array and nodedesc is not None and use_aligned_operator_new(nodedesc):
             return ('static_assert(std::is_trivially_destructible<%s>::value, '
                     '"aligned heap deallocation skips destructors");\n'
                     '::operator delete[](%s, std::align_val_t(%d));\n' %

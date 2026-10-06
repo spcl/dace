@@ -60,7 +60,7 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
     return int(arrsize) * nodedesc.dtype.bytes <= Config.get('compiler', 'max_stack_array_size')
 
 
-def _use_aligned_operator_new(desc: data.Data) -> bool:
+def use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
     The function considers the selected C++ standard and the `alignment` property
@@ -2722,7 +2722,7 @@ class CPUCodeGen(TargetCodeGenerator):
         which case the emitted statement is a definition. The trailing ``sdfg``/``nodedesc``/
         ``data_name`` are unused here; the readable generator overrides this to route the count
         through an ``<array>_size`` helper."""
-        if nodedesc is not None and _use_aligned_operator_new(nodedesc):
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
             return f"{alloc_name} = dace::aligned_new_array<{ctype}>({arrsize}, {aligned_new_value(nodedesc)});\n"
         return f"{alloc_name} = new {ctype}[{arrsize}];\n"
 
@@ -2730,7 +2730,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """ C++ statement freeing a CPU heap array (paired with heap_alloc_stmt). """
         if not is_array:
             return f"delete {alloc_name};\n"
-        if nodedesc is not None and _use_aligned_operator_new(nodedesc):
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
             return f"dace::aligned_delete_array({alloc_name}, {aligned_new_value(nodedesc)});\n"
         return f"delete[] {alloc_name};\n"
 
