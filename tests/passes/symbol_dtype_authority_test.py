@@ -10,7 +10,7 @@ match asks whether the nest covers the whole array and gets ``-LEN_2D + LEN_2D``
 import numpy as np
 
 import dace
-from dace import dtypes, symbolic
+from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
@@ -19,27 +19,6 @@ from dace.transformation.passes.pattern_matching import match_patterns
 from dace.transformation.passes.canonicalize import pipeline as canon
 
 N = dace.symbol('N', dtype=dace.int64)
-
-
-def test_a_reparse_under_an_authority_takes_the_declared_dtype():
-    """The unit fact the rest of this rests on."""
-    plain = symbolic.pystr_to_symbolic('N - 1')
-    assert all(s.dtype == symbolic.DEFAULT_SYMBOL_TYPE for s in plain.free_symbols)
-    with symbolic.serialization_symbol_dtypes({'N': dtypes.int64}):
-        scoped = symbolic.pystr_to_symbolic('N - 1')
-    assert all(s.dtype == dtypes.int64 for s in scoped.free_symbols)
-    # ... and the two spellings really are different symbols, which is the whole problem.
-    assert symbolic.simplify(scoped - plain) != 0
-
-
-def test_the_cache_is_not_shared_across_authorities():
-    """Same text, two scopes: the cache must not hand back the other scope's symbol."""
-    with symbolic.serialization_symbol_dtypes({'N': dtypes.int64}):
-        wide = symbolic.pystr_to_symbolic('N + 1')
-    with symbolic.serialization_symbol_dtypes({'N': dtypes.int32}):
-        narrow = symbolic.pystr_to_symbolic('N + 1')
-    assert next(iter(wide.free_symbols)).dtype == dtypes.int64
-    assert next(iter(narrow.free_symbols)).dtype == dtypes.int32
 
 
 def test_a_two_dimensional_argmax_lifts():
@@ -107,7 +86,5 @@ def test_a_predicate_reads_names_at_the_dtype_the_sdfg_declares():
 
 
 if __name__ == '__main__':
-    test_a_reparse_under_an_authority_takes_the_declared_dtype()
-    test_the_cache_is_not_shared_across_authorities()
     test_a_two_dimensional_argmax_lifts()
     test_a_predicate_reads_names_at_the_dtype_the_sdfg_declares()

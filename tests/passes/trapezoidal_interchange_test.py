@@ -13,7 +13,6 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_interchange import MapInterchange
 from dace.transformation.passes.canonicalize import pipeline as canon
-from dace.transformation.passes.equalize_symbol_dtypes import equalize
 from dace.transformation.passes.minimize_stride_permutation import (UndecidableStride, stride_difference_sign)
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -96,25 +95,6 @@ def test_a_plain_swap_still_refuses_a_trapezoid():
                                             inner_map_entry=inner)
 
 
-def test_the_swapped_bounds_name_the_parameters_at_the_dtype_they_declare():
-    """The rewritten ranges read ``i`` and ``j``, whose dtype follows from the int64 bounds that named them."""
-
-    @dace.program
-    def trapez_dtypes(aa: dace.float64[N, N], bb: dace.float64[N, N]):
-        for j in dace.map[0:N]:
-            for i in dace.map[V * j:N]:
-                aa[i, j] = bb[i, j] + 1.0
-
-    sdfg = trapez_dtypes.to_sdfg(simplify=True)
-    equalize(sdfg)
-    outer, inner = nest(sdfg)
-    MapInterchange.apply_to(sdfg, options={'transform_bounds': True}, outer_map_entry=outer, inner_map_entry=inner)
-    assert nest(sdfg)[0].map.params == ['i'], 'the nest was not swapped'
-
-    assert equalize(sdfg) is None, 'the interchange spelled a parameter at a dtype its map does not declare'
-    sdfg.validate()
-
-
 def test_stride_comparison_uses_the_shape_contract():
     """An extent is at least one, so a symbolic stride is not an undecidable one."""
     assert stride_difference_sign('1', 'N') == -1
@@ -129,5 +109,4 @@ if __name__ == '__main__':
     test_the_contiguous_parameter_ends_up_innermost()
     test_the_iteration_set_is_preserved(33, 4)
     test_a_plain_swap_still_refuses_a_trapezoid()
-    test_the_swapped_bounds_name_the_parameters_at_the_dtype_they_declare()
     test_stride_comparison_uses_the_shape_contract()

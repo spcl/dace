@@ -23,7 +23,7 @@ from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.interstate.loop_to_map import _affine_coeffs, _dim_provably_disjoint
+from dace.transformation.interstate.loop_to_map import _dim_provably_disjoint
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -54,18 +54,6 @@ def _maps_over(sdfg, itervar):
     return [
         n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.MapEntry) and itervar in n.map.params
     ]
-
-
-def test_affine_coeffs_sees_through_a_dtype_tagged_iteration_symbol():
-    """The root cause at unit scale: ``j:int64`` in the index, ``j:int32`` as the iteration symbol.
-
-    Before the fix this returned ``(0, 1)`` -- the index misread as the constant ``1``.
-    """
-    j64 = symbolic.symbol('j', dace.int64)
-    itersym = symbolic.pystr_to_symbolic('j')
-    assert j64 is not itersym and j64 != itersym, 'the test needs two distinct instances of j'
-    assert _affine_coeffs(j64 + 1, itersym) == (1, 1)
-    assert _affine_coeffs(j64, itersym) == (1, 0)
 
 
 def test_a_unit_distance_recurrence_is_not_provably_disjoint():

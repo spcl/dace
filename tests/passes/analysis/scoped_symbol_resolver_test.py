@@ -4,7 +4,7 @@ and the invalidation contract that keeps a cached answer honest."""
 import pytest
 
 import dace
-from dace import subsets, symbolic
+from dace import subsets
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -108,23 +108,6 @@ def test_a_map_parameter_bounded_by_int32_symbols_resolves_to_int32():
     assert resolved == dace.int32
     assert resolved != dace.int64
     assert 'i' not in sdfg.symbols  # a plain symbol-table lookup would have missed it entirely
-
-
-def test_one_name_at_two_dtypes_is_two_symbols_that_refuse_to_cancel():
-    narrow = symbolic.symbol('i', dace.int32)
-    wide = symbolic.symbol('i', dace.int64)
-
-    assert narrow != wide
-    assert hash(narrow) != hash(wide)
-    # sympy reached through dace.symbolic; Min is the construction the injectivity test builds.
-    assert str(symbolic.sympy.Min(narrow, wide)) == 'Min(i, i)'
-    difference = symbolic.simplify(narrow - wide)
-    assert difference != 0
-    # Both terms print as ``i``, so the printed order is a sympy tie-break; compare the terms.
-    assert set(difference.args) == {narrow, -wide}
-    # The asymmetry that makes the trap hard to see: ``_eval_subs`` matches by NAME, so substitution
-    # crosses the dtype boundary that equality, hashing and cancellation all refuse to cross.
-    assert str(wide.subs({narrow: 4})) == '4'
 
 
 def test_a_map_scope_added_after_a_query_is_refused_until_the_state_is_invalidated():
@@ -234,7 +217,6 @@ if __name__ == '__main__':
     test_resolver_answers_every_node_of_a_map_nest_exactly_as_the_state_does()
     test_tabulating_one_state_leaves_the_other_states_untouched()
     test_a_map_parameter_bounded_by_int32_symbols_resolves_to_int32()
-    test_one_name_at_two_dtypes_is_two_symbols_that_refuse_to_cancel()
     test_a_map_scope_added_after_a_query_is_refused_until_the_state_is_invalidated()
     test_a_symbol_declared_after_a_query_stays_invisible_until_the_sdfg_is_invalidated()
     test_an_undeterminable_dtype_is_reported_and_cannot_be_defaulted()

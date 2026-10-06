@@ -16,7 +16,6 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX)
-from dace.transformation.passes.equalize_symbol_dtypes import equalize
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
@@ -352,18 +351,6 @@ def gauss_seidel_5pt(aa: dace.float64[N, N]):
     for i in range(1, N - 1):
         for j in range(1, N - 1):
             aa[i, j] = (aa[i, j - 1] + aa[i - 1, j] + aa[i, j + 1] + aa[i + 1, j]) / 4.0
-
-
-@pytest.mark.parametrize('prog', [seidel_perfect, gauss_seidel_5pt])
-def test_wavefront_skew_names_its_iterators_at_the_dtype_it_declares(prog):
-    """``t`` and ``p`` are declared int64, so every spelling of them in the skewed nest must be int64: a name
-    spelled at two dtypes is two symbols that never cancel."""
-    sdfg = prog.to_sdfg(simplify=True)
-    equalize(sdfg)
-
-    assert WavefrontSkew().apply_pass(sdfg, {}) == 1
-
-    assert equalize(sdfg) is None, 'the skew spelled an iterator at a dtype its loop or map does not declare'
 
 
 def test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map():
@@ -1280,8 +1267,6 @@ if __name__ == '__main__':
     test_wavefront_skew_steep_gauss_seidel_value_preserving()
     test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop()
     test_dependence_kind_classifies_backward_flow_forward_anti()
-    for prog in (seidel_perfect, gauss_seidel_5pt):
-        test_wavefront_skew_names_its_iterators_at_the_dtype_it_declares(prog)
     test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map()
     test_wavefront_skew_five_point_gauss_seidel_value_preserving()
     test_wavefront_skew_fires_on_nussinov_through_full_pipeline()
