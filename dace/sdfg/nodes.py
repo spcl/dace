@@ -3,6 +3,8 @@
     dataflow multigraph representation. """
 
 import ast
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -43,6 +45,31 @@ def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
                 result[name] = desc.dtype
         sdfg = sdfg.parent_sdfg
     return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict['dace.SDFG', Set[str]]]] = contextvars.ContextVar(
+    'nested_used_symbols_memo', default=None)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
 
 
 @make_properties
@@ -214,11 +241,17 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(f'Tried to remove `{connector_name}` from the in-connectors of node {str(self)}',
+                          stacklevel=1)
+            return False
 
-        if connector_name in self.in_connectors:
-            connectors = self.in_connectors
-            del connectors[connector_name]
-            self.in_connectors = connectors
+        if connector_name not in self.in_connectors:
+            return False
+
+        connectors = self.in_connectors
+        del connectors[connector_name]
+        self.in_connectors = connectors
         return True
 
     def remove_out_connector(self, connector_name: str):
@@ -227,11 +260,17 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(f'Tried to remove `{connector_name}` from the out-connectors of node {str(self)}',
+                          stacklevel=1)
+            return False
 
-        if connector_name in self.out_connectors:
-            connectors = self.out_connectors
-            del connectors[connector_name]
-            self.out_connectors = connectors
+        if connector_name not in self.out_connectors:
+            return False
+
+        connectors = self.out_connectors
+        del connectors[connector_name]
+        self.out_connectors = connectors
         return True
 
     def _next_connector_int(self) -> int:
@@ -280,6 +319,11 @@ class Node(object):
         """ Returns a mapping between symbols defined by this node (e.g., for
             scope entries) to their type. """
         return {}
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """ Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+            without inferring their types. """
+        return set(self.new_symbols(sdfg, state, {}).keys())
 
     def infer_connector_types(self, sdfg, state):
         """
@@ -387,9 +431,11 @@ class CodeNode(Node):
 
     label = Property(dtype=str, category='General', desc="Name of the CodeNode")
     location = DictProperty(key_type=str,
-                            value_type=dace.symbolic.pystr_to_symbolic,
+                            value_type=str,
                             category='Scheduling',
-                            desc='Full storage location identifier (e.g., rank, GPU ID)')
+                            desc='Full storage location identifier (e.g., rank, GPU ID). Values are always stored and '
+                            'serialized as strings, which may encode a constant (e.g., "0"), a symbolic expression '
+                            '(e.g., "N - 1"), or a range in subset notation (e.g., "0:N"); consumers parse them.')
     environments = SetProperty(str,
                                category='Code Generation',
                                desc="Environments required by CMake to build and run this code node.",
@@ -663,6 +709,20 @@ class NestedSDFG(CodeNode):
             self.sdfg.parent = context
             self.sdfg.parent_sdfg = context.sdfg if context else None
 
+            # Integrate nested SDFG into its parent SDFG
+            self.integrate_into_parent()
+
+    def integrate_into_parent(self):
+        """
+        Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
+        the nested SDFG are shared with the parent SDFG.
+
+        For more information, see ``dace.sdfg.dealias.integrate_nested_sdfg()``.
+        """
+        if self.sdfg is not None:
+            from dace.sdfg import dealias  # Avoid import loop
+            dealias.integrate_nested_sdfg(self.sdfg)
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
@@ -709,7 +769,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.
@@ -739,7 +805,11 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
+    def validate(self,
+                 sdfg: 'dace.SDFG',
+                 state: 'dace.SDFGState',
+                 references: Optional[Set[int]] = None,
+                 **context: bool):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -757,7 +827,10 @@ class NestedSDFG(CodeNode):
                 raise ValueError('Parent SDFG not properly set for nested SDFG node')
 
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
-            for conn in connectors:
+            # Connector descriptors are compared as if written in the parent's symbols (see ``Data.is_equivalent``)
+            replacements = dace.symbolic.symbol_replacements(self.symbol_mapping)
+            connector_symbols: Set[str] = set()
+            for conn in sorted(connectors):
                 if conn in self.sdfg.symbols:
                     raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
                                      'To pass symbols use "symbol_mapping".')
@@ -765,6 +838,31 @@ class NestedSDFG(CodeNode):
                     raise NameError(
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                         'Example: parameter passed to a function without a matching array within it.')
+
+                # The internal data descriptor is written in the nested SDFG's symbols. Without a symbol of the
+                # nested SDFG for every name it uses, it cannot be compared with the external one.
+                inner_desc = self.sdfg.arrays[conn]
+                desc_symbols = {str(s) for s in inner_desc.free_symbols}
+                connector_symbols |= desc_symbols
+                undeclared = sorted(desc_symbols - self.sdfg.symbols.keys())
+                if undeclared:
+                    raise ValueError(f'Connector "{conn}" has a data descriptor ({inner_desc}) that uses symbols '
+                                     f'{undeclared}, which are not symbols of the nested SDFG. Add them to the nested '
+                                     'SDFG and to the symbol mapping.')
+                unmapped = sorted(desc_symbols - self.symbol_mapping.keys())
+                if unmapped:
+                    raise ValueError(f'Connector "{conn}" has a data descriptor ({inner_desc}) that uses symbols '
+                                     f'{unmapped}, which are not in the symbol mapping of the nested SDFG node.')
+
+                # Verify that the internal data descriptor, restated in the symbols of the parent SDFG, is equivalent
+                # to the external data descriptor connected to the connector.
+                edge = next(iter(state.edges_by_connector(self, conn)))
+                if not inner_desc.is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=replacements):
+                    raise ValueError(
+                        f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
+                        f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
+                        f'{sdfg.arrays[edge.data.data]}). If a reinterpretation or a subset is needed, use a view.')
+
             for dname, desc in self.sdfg.arrays.items():
                 if not desc.transient and dname not in connectors:
                     raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
@@ -791,10 +889,17 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
+            # A mapped symbol is given its value by the node, but its type by the nested SDFG
+            undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
+            if undeclared_symbols:
+                raise ValueError(f'Symbols {undeclared_symbols} are mapped into the nested SDFG but not declared in it')
+
+            # The shapes of connector descriptors are not "used" by the nested SDFG, but they are given by the mapping
+            symbols |= connector_symbols
             extra_symbols = self.symbol_mapping.keys() - symbols
             if len(extra_symbols) > 0:
                 # TODO: Elevate to an error?
@@ -880,7 +985,7 @@ class MapEntry(EntryNode):
         return self._map
 
     @map.setter
-    def map(self, val):
+    def map(self, val: 'Map'):
         self._map = val
 
     def __str__(self):
@@ -911,6 +1016,10 @@ class MapEntry(EntryNode):
 
         return result
 
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
+
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbol names that are used within the Map scope created by this MapEntry
@@ -925,7 +1034,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))

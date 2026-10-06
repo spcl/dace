@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
 import dace
 import networkx as nx
@@ -9,13 +9,15 @@ from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
+from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
+from dace.sdfg import dealias
 
 from copy import deepcopy as dcpy
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import warnings
 
 from collections import defaultdict
@@ -133,6 +135,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         except NotImplementedError:
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
+
+        # A map output that flows straight into an enclosing scope's exit has no container to fuse through.
+        if not all(isinstance(n, nodes.AccessNode) for n in out_nodes):
+            return False
 
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
@@ -546,7 +552,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             graph.remove_edge(edge)
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
+    def adjust_arrays_nsdfg(self,
+                            sdfg: dace.sdfg.SDFG,
+                            nsdfg: nodes.NestedSDFG,
+                            name: str,
+                            nname: str,
+                            memlet: Memlet,
+                            min_offset: Optional[List[symbolic.SymbolicType]] = None):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs
         adjacent to its corresponding access nodes, applied during post-processing
@@ -558,6 +570,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :param nname: Name of the array in the nested SDFG
         :param memlet: Memlet adjacent to the nested SDFG that leads to the
                        access node with the corresponding data name
+        :param min_offset: The offset by which the outer container was compressed, if it was.
         """
         # check whether array needs to change
         if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
@@ -581,10 +594,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 nsdfg.data(nname).strides = tuple(strides)
                 nsdfg.data(nname).total_size = total_size
 
-        else:
-            if isinstance(nsdfg.data(nname), data.Array):
-                nsdfg.data(nname).strides = sdfg.data(name).strides
-                nsdfg.data(nname).total_size = sdfg.data(name).total_size
+        elif isinstance(nsdfg.data(nname), data.Array):
+            inner_desc = nsdfg.data(nname)
+            outer_desc = sdfg.data(name)
+            if not isinstance(inner_desc, data.View) and tuple(inner_desc.shape) != tuple(outer_desc.shape):
+                # Also restates the connectors below, so the recursion finds their shapes matching
+                dealias.reduce_connector(nsdfg, nname, outer_desc, offset=min_offset)
+            else:
+                inner_desc.strides = outer_desc.strides
+                inner_desc.total_size = outer_desc.total_size
 
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
@@ -1104,7 +1122,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if isinstance(iedge.src, nodes.NestedSDFG):
                         nsdfg = iedge.src.sdfg
                         nested_data_name = edge.src_conn
-                        self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data)
+                        self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data, min_offset)
 
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
@@ -1116,7 +1134,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if isinstance(edge.dst, nodes.NestedSDFG):
                             nsdfg = edge.dst.sdfg
                             nested_data_name = edge.dst_conn
-                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data)
+                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data, min_offset)
 
                 # if in_edges has several entries:
                 # put other_subset into out_edges for correctness
@@ -1274,13 +1292,33 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        if not onode:
-                            onode = graph.add_access(dname)
-                        graph.add_memlet_path(acc,
-                                              global_map_exit,
-                                              onode,
-                                              memlet=Memlet(data=dname, subset=in_subset),
-                                              src_conn=None)
+                        # Skip a store the downstream chain overwrites: it would leave the fused
+                        # MapExit and that chain writing the same slot unordered.
+                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
+                                                        global_map_exit.map.params, global_map_exit.map.range).subset
+                        downstream = sdutil.find_downstream_nodes(acc, graph)
+                        superseded = any(
+                            ie.src in downstream and not ie.data.is_empty()
+                            and ie.data.get_dst_subset(ie, graph) is not None
+                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
+                            for ds in graph.data_nodes() if ds.data == dname and graph.out_degree(ds) == 0
+                            for ie in graph.in_edges(ds))
+                        if not superseded:
+                            if not onode:
+                                onode = graph.add_access(dname)
+                            graph.add_memlet_path(acc,
+                                                  global_map_exit,
+                                                  onode,
+                                                  memlet=Memlet(data=dname, subset=in_subset),
+                                                  src_conn=None)
+
+                # Connectors follow the data into the transient covering the union of the incoming subsets
+                for e in graph.edges():
+                    if e.data.data != new_name:
+                        continue
+                    for node, conn in ((e.src, e.src_conn), (e.dst, e.dst_conn)):
+                        if isinstance(node, nodes.NestedSDFG) and conn in node.sdfg.arrays:
+                            self.adjust_arrays_nsdfg(sdfg, node.sdfg, new_name, conn, e.data, in_subset)
 
         for e in edges_to_remove:
             graph.remove_edge(e)

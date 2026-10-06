@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 tokenize_cpp = re.compile(r'\b\w+\b')
 
 
+def _symbol_name(sym) -> str:
+    """ ``str(sym)``, without invoking the SymPy printer for plain symbols. """
+    if type(sym) is symbolic.symbol or type(sym) is sp.Symbol:
+        return sym.name
+    return str(sym)
+
+
 def _internal_replace(sym, symrepl):
     # A SymExpr is a (exact, over-approximation) pair, not a sympy.Basic, so the guard below
     # would hand it back untouched. Strip-mined bounds are SymExprs and sit in the same range
@@ -39,7 +46,7 @@ def _internal_replace(sym, symrepl):
             tokens = s.split('.')
             for i in range(1, len(tokens)):
                 fsyms.add('.'.join(tokens[:i]))
-    newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
+    newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
 
@@ -70,11 +77,12 @@ def replace_dict(subgraph: 'StateSubgraphView',
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname):
+            symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+            for symname, new_name in repl.items()
+        }
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -98,9 +106,8 @@ def replace_dict(subgraph: 'StateSubgraphView',
                                                     inputs={},
                                                     outputs={f'{node.data}_value'},
                                                     code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
-                        access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])),
-                                                                 find_new_name=True)
+                        # Type the container like the scalar it replaces, so connectors below keep matching
+                        access_node_name, _ = sdfg.add_transient(f'{node.data}', [1], desc.dtype, find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
                                        Memlet.simple(access_node_name, '0'))
@@ -128,7 +135,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
@@ -242,11 +249,12 @@ def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
                             symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                             sdfg: Optional['dace.SDFG'] = None):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname):
+            symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+            for symname, new_name in repl.items()
+        }
 
     for propclass, propval in node.properties():
         if propval is None:
@@ -255,9 +263,9 @@ def replace_properties_dict(node: Any,
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
+                setattr(node, pname, _internal_replace(symbolic.pystr_to_symbolic(str(propval)), symrepl))
             else:
-                setattr(node, pname, propval.subs(symrepl))
+                setattr(node, pname, _internal_replace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])

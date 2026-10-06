@@ -260,6 +260,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         codegen=self,
                                                         ancestor=0,
                                                         is_write=is_write,
+                                                        use_offset=True,
                                                         const_read_only_array=const_view)
 
         # Test for views of container arrays and structs
@@ -844,11 +845,19 @@ class CPUCodeGen(TargetCodeGenerator):
                             [src_node, dst_node],
                         )
                     else:
-                        copysize = " * ".join([cpp.sym2cpp(s) for s in memlet.subset.size()])
+                        # The memlet narrows the connector's container to the element being pushed
+                        push_subset = memlet.subset
+                        if memlet.data != src_node.data and memlet.other_subset:
+                            push_subset = memlet.other_subset
+                        if push_subset is None:
+                            push_subset = subsets.Range.from_array(src_nodedesc)
+                        copysize = " * ".join([cpp.sym2cpp(s) for s in push_subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                              arr=self.ptr(src_node.data, src_nodedesc, sdfg),
-                                                              size=copysize),
+                            "{s}.push(&{arr}[{off}], {size});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
+                                                                      arr=self.ptr(src_node.data, src_nodedesc, sdfg),
+                                                                      off=cpp.cpp_offset_expr(
+                                                                          src_nodedesc, push_subset),
+                                                                      size=copysize),
                             cfg,
                             state_id,
                             [src_node, dst_node],
@@ -2000,7 +2009,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Declare each map parameter with its inferred type rather than ``auto``, which would take the type of
         # the range start alone (e.g., ``int`` for a literal ``0`` even when the end is a 64-bit symbol)
-        param_types = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node))
+        param_types = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg, node))
 
         def param_ctype(param: str) -> str:
             dtype = param_types.get(param)
@@ -2133,7 +2142,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
-        pe_type = node.new_symbols(sdfg, state_dfg, state_dfg.symbols_defined_at(node)).get(node.consume.pe_index)
+        pe_type = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg,
+                                                                                   node)).get(node.consume.pe_index)
 
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "

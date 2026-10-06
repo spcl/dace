@@ -5,7 +5,7 @@ import dace
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import StateSubgraphView
+from dace.sdfg.state import LoopRegion, StateSubgraphView
 import numpy as np
 
 
@@ -196,6 +196,32 @@ def test_nest_cf_simple_if_chain():
     assert sdfg(15)[0] == 4
 
 
+def test_nest_two_loops_with_same_variable():
+    """ Nesting a second region that defines the same symbol must name its symbol output consistently. """
+
+    @dace.program
+    def two_loops(A: dace.float64[10], B: dace.float64[10]):
+        for i in range(10):
+            A[i] = A[i] * 2
+        for i in range(10):
+            B[i] = B[i] + A[i]
+
+    sdfg = two_loops.to_sdfg(simplify=True)
+    loops = [b for b in sdfg.bfs_nodes(sdfg.start_block) if isinstance(b, LoopRegion)]
+    assert len(loops) == 2
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loops[0]]))
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loops[1]]))
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+
+    A = np.random.rand(10)
+    B = np.random.rand(10)
+    A_ref = A * 2
+    B_ref = B + A_ref
+    sdfg(A=A, B=B)
+    assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -205,3 +231,4 @@ if __name__ == '__main__':
     test_nest_cf_simple_if()
     test_nest_cf_simple_if_elif()
     test_nest_cf_simple_if_chain()
+    test_nest_two_loops_with_same_variable()

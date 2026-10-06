@@ -1,10 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from dace import data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
+from dace.sdfg import utils as sdutil
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.utils import dfs_topological_sort
 from typing import Callable, Dict, List, Optional, Set, Union
 
@@ -64,13 +66,14 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
-                else:
-                    allocated_as_scalar = True
 
                 if node.in_connectors[cname].type is None:
+                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+                    if e.data.data is not None:
+                        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+                    else:
+                        allocated_as_scalar = True
+
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
@@ -105,6 +108,9 @@ def infer_connector_types(sdfg: SDFG):
                     if ctype is not None:
                         node.out_connectors[cname] = ctype
 
+            if isinstance(node, nodes.NestedSDFG):
+                widen_mapped_symbols(state, node)
+
             # Let the node infer other output types on its own
             node.infer_connector_types(sdfg, state)
 
@@ -114,6 +120,29 @@ def infer_connector_types(sdfg: SDFG):
                 if cname and node.out_connectors[cname] is None:
                     raise TypeError('Ambiguous or uninferable type in'
                                     ' connector "%s" of node "%s"' % (cname, node))
+
+
+def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
+    """
+    Widens each symbol of a nested SDFG that is declared narrower than the expression mapped to it, e.g., one declared
+    by ``add_nested_sdfg`` before the node was placed in the map that defines the expression. The symbol keeps its kind
+    (signed, unsigned or floating point).
+
+    :param state: The state that contains ``node``.
+    :param node: The nested SDFG node.
+    """
+    outer_symbols = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer_symbols is None:
+            outer_symbols = state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer_symbols)
+        # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
+        if (mapped is not None and mapped.bytes > declared.bytes and type(declared) is type(mapped) is dtypes.typeclass
+                and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind):
+            node.sdfg.symbols[name] = mapped
 
 
 #############################################################################
@@ -238,10 +267,13 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     if node is None or isinstance(node, nodes.NestedSDFG):  # State or nested SDFG
         pass
     elif isinstance(node, nodes.EntryNode):
-        # Test for storage of the scope by collecting all neighboring memlets
-        memlets = set(e.data.data for e in state.out_edges(node) if not e.data.is_empty())
+        # The containers that decide are the ones outside the scope: an edge on the inside may name
+        # a buffer the scope gathers into, which says nothing about the schedule the scope should have
+        memlets = set(e.data.data for e in state.in_edges(node)
+                      if not e.data.is_empty() and e.dst_conn and e.dst_conn.startswith('IN_'))
         exit_node = state.exit_node(node)
-        memlets.update(e.data.data for e in state.in_edges(exit_node) if not e.data.is_empty())
+        memlets.update(e.data.data for e in state.out_edges(exit_node)
+                       if not e.data.is_empty() and e.src_conn and e.src_conn.startswith('OUT_'))
     else:
         # Other nodes only need neighboring memlets
         memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
@@ -349,7 +381,8 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
     exit_nodes = [state.exit_node(n) for n in child_nodes[parent_node] if isinstance(n, nodes.EntryNode)]
     scope_subgraph = SubgraphView(state, child_nodes[parent_node] + exit_nodes)
 
-    # Loop over access nodes
+    # A view lives where the container behind it lives, which is known once that container has a storage
+    view_nodes: List[nodes.AccessNode] = []
     for node in scope_subgraph.nodes():
         if not isinstance(node, nodes.AccessNode):
             continue
@@ -358,7 +391,19 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
         if not desc.transient and sdfg.parent is not None:
             desc.storage = _get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
-            desc.storage = child_storage
+            if isinstance(desc, data.View):
+                view_nodes.append(node)
+            else:
+                desc.storage = child_storage
+
+    for node in view_nodes:
+        desc = node.desc(sdfg)
+        if desc.storage != dtypes.StorageType.Default:  # Resolved through another access node
+            continue
+        viewed = sdutil.get_view_node(state, node)
+        viewed_storage = (viewed.desc(sdfg).storage
+                          if isinstance(viewed, nodes.AccessNode) else dtypes.StorageType.Default)
+        desc.storage = (viewed_storage if viewed_storage != dtypes.StorageType.Default else child_storage)
 
     # Take care of code->code edges that do not have access nodes
     for edge in scope_subgraph.edges():

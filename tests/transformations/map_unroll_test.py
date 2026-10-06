@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 from dace.transformation.dataflow import MapUnroll
@@ -38,6 +38,8 @@ def test_map_unroll():
     write = inner_state.add_write("y")
     inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet(f"x[0]"))
     inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet(f"y[0]"))
+
+    nsdfg_node.integrate_into_parent()
 
     assert sdfg.apply_transformations_repeated(MapUnroll) == 4
 
