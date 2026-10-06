@@ -41,6 +41,15 @@ def fused_polynomial(a: dace.float64[N], out: dace.float64[N]):
         out[i] = (a[i] * a[i] + 1.0) * (a[i] * a[i] - 1.0)
 
 
+@dace.program
+def conditional_stores(cond: dace.float64[N], src: dace.float64[N], a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        if cond[i] > 0.0:
+            a[i] = src[i] * 2.0
+        else:
+            b[i] = src[i] + 1.0
+
+
 def vector_add_in_numpy(host: HostArrays) -> HostArrays:
     return {'c': host['a'] + host['b']}
 
@@ -92,6 +101,22 @@ def test_an_offloaded_kernel_renders_as_one_cuda_unit_with_the_host_entry_protot
     assert '__dace_' not in code, 'the unit must name nothing of the DaCe runtime'
     assert code.count('extern "C"') == 1, 'the entry is the one C-linkage function'
     assert entry_prototypes(code, name) == entry_prototypes(host_code, name) != [], 'the c++ entry prototype'
+
+
+def test_a_nested_body_function_is_not_declared_inline_twice_in_a_cuda_unit():
+    """``DACE_DFI`` already spells ``__forceinline__``, which nvcc reads as ``inline``.
+
+    A branch inside a map becomes a nested body function, whose host-side header carries ``static inline``;
+    the device spelling is prefixed to that header, so ``inline`` must be left out or nvcc rejects the
+    unit with "duplicate specifier in declaration".
+    """
+    name = 'cpf_cuda_conditional_stores'
+
+    _, code = render_gpu(conditional_stores, name, language='cuda')
+
+    assert_standalone_device(code, name)
+    assert re.search(r'__device__ __forceinline__ void loop_body_\w+\(', code), 'no nested body function'
+    assert not re.search(r'\binline\s+__device__\s+__forceinline__', code), 'inline is declared twice'
 
 
 @pytest.mark.gpu
