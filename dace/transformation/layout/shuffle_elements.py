@@ -146,15 +146,20 @@ class ShuffleElements(ppl.Pass):
                 if isinstance(node, nd.AccessNode) and node.data == arr:
                     node.data = shuffled
             for edge in state.edges():
-                if edge.data is None or edge.data.data != arr:
+                if edge.data is None:
                     continue
-                if edge.data.other_subset is not None:
-                    raise NotImplementedError("ShuffleElements: other_subset memlets are unsupported.")
+                if edge.data.data != arr:
+                    # The other side of a copy keeps its own subset; one that indexes ``arr`` would need sigma^{-1}
+                    if edge.data.other_subset is not None and any(
+                            isinstance(n, nd.AccessNode) and n.data == shuffled for n in (edge.src, edge.dst)):
+                        raise NotImplementedError(f"ShuffleElements: a copy into '{arr}' named after its source.")
+                    continue
                 self._rename_connectors(edge, arr, shuffled)
                 new_subset = self._compose_subset(edge.data.subset, fns, sizes)
                 # preserve wcr: reduction into the shuffled target keeps accumulating
                 edge.data = dace.memlet.Memlet(data=shuffled,
                                                subset=new_subset,
+                                               other_subset=edge.data.other_subset,
                                                wcr=edge.data.wcr,
                                                wcr_nonatomic=edge.data.wcr_nonatomic,
                                                dynamic=edge.data.dynamic)
@@ -167,11 +172,10 @@ class ShuffleElements(ppl.Pass):
             for edge in state.edges():
                 if edge.data is None or edge.data.data != arr:
                     continue
-                if edge.data.other_subset is not None:
-                    raise NotImplementedError("ShuffleElements: other_subset memlets are unsupported.")
                 new_subset = self._compose_subset(edge.data.subset, fns, sizes)
                 edge.data = dace.memlet.Memlet(data=arr,
                                                subset=new_subset,
+                                               other_subset=edge.data.other_subset,
                                                wcr=edge.data.wcr,
                                                wcr_nonatomic=edge.data.wcr_nonatomic,
                                                dynamic=edge.data.dynamic)

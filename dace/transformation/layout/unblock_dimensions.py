@@ -109,13 +109,16 @@ class UnblockDimensions(ppl.Pass):
     def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         for state in sdfg.states():
             for edge in state.edges():
+                if (edge.data is not None and edge.data.data != arr_name and edge.data.other_subset is not None and any(
+                        isinstance(n, dace.nodes.AccessNode) and n.data == arr_name for n in (edge.src, edge.dst))):
+                    # The other side of a copy keeps its own subset; one that indexes ``arr_name`` would need unblocking
+                    raise NotImplementedError(f"UnblockDimensions: a copy into '{arr_name}' named after its source.")
                 if edge.data is not None and edge.data.data == arr_name:
-                    if edge.data.other_subset is not None:
-                        raise NotImplementedError("UnblockDimensions: other_subset memlets are unsupported.")
                     new_subset = self._unblocked_subset(edge.data.subset, masks, factors)
                     # keep wcr: reduction still accumulates.
                     edge.data = dace.memlet.Memlet(data=edge.data.data,
                                                    subset=new_subset,
+                                                   other_subset=edge.data.other_subset,
                                                    wcr=edge.data.wcr,
                                                    wcr_nonatomic=edge.data.wcr_nonatomic,
                                                    dynamic=edge.data.dynamic)
