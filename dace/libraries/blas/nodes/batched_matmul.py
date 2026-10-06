@@ -7,7 +7,8 @@ import dace.library
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, check_one_device, dtype_to_cudadatatype,
+                                              to_cublas_computetype)
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
 from .. import environments
 from dace.libraries.blas import gpu_dialect
@@ -98,16 +99,14 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         dtype_b = outer_array_b.dtype.type
         dtype_c = cdesc.dtype.type
 
-        if outer_array_a.storage != outer_array_b.storage:
-            raise ValueError("Input matrices must have same storage")
-        storage = outer_array_a.storage
+        check_one_device(outer_array_a, outer_array_b)
 
         # Create replacement SDFG
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=storage)
-        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=storage)
+        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdesc.storage)
 
         # C is read and written in place through the sole "_c" connector -- BatchedMatMul carries
         # no _cin, mirroring Gemm(cin=False). beta==1 leaves C for the WCR add below to accumulate

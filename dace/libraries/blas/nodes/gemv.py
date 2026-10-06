@@ -72,13 +72,11 @@ class ExpandGemvPure(ExpandTransformation):
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
-        if outer_array_a.storage != outer_array_x.storage:
-            raise ValueError("Input matrices must have same storage")
-        storage = outer_array_a.storage
+        blas_helpers.check_one_device(outer_array_a, outer_array_x)
 
-        _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=storage)
-        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=storage)
-        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=storage)
+        _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
+        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
 
         # A numeric coefficient takes the element type: C++ has no operator* for int and std::complex.
         if symbolic.equal_valued(1, node.alpha):
@@ -96,7 +94,7 @@ class ExpandGemvPure(ExpandTransformation):
             mul_out, mul_out_array = tmp, array_tmp = sdfg.add_transient('gemv_tmp',
                                                                          shape_y,
                                                                          dtype_y,
-                                                                         storage=storage,
+                                                                         storage=outer_array_y.storage,
                                                                          find_new_name=True)
 
             access_tmp = state.add_read(tmp)
