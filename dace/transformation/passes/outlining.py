@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutils
 from dace.sdfg.state import (AbstractControlFlowRegion, CodeGeneratorFunctionRegion, ConditionalBlock, ControlFlowBlock,
                              ControlFlowRegion, LoopRegion, SDFGState)
 from dace.transformation import helpers as xfh
@@ -175,6 +176,7 @@ class OutliningPlanner:
         self.function_weight = function_weight
         self.costs = CostModel()
         self._used_symbols: Dict[ControlFlowBlock, Set[str]] = {}
+        self._opaque: Dict[ControlFlowBlock, bool] = {}
 
     def _free_symbols(self, block: ControlFlowBlock) -> Set[str]:
         """ The symbols (and data names) a block reads before assigning them, cached. """
@@ -324,10 +326,12 @@ class OutliningPlanner:
 
             for k, block in enumerate(chain):
                 too_large = not self.fits(self.costs.block(block))
-                if too_large or isinstance(block, CodeGeneratorFunctionRegion) or xfh.control_flow_exit(block):
-                    # Not a part of any function: divide its contents instead if it is too large
+                opaque = self._calls_opaque_code(block)
+                if too_large or opaque or isinstance(block,
+                                                     CodeGeneratorFunctionRegion) or xfh.control_flow_exit(block):
+                    # Not a part of any function: divide its contents instead if it is too large or calls opaque code
                     flush()
-                    if too_large:
+                    if too_large or opaque:
                         plans.extend(self._plan_inside(block))
                     continue
                 if run:
@@ -335,6 +339,19 @@ class OutliningPlanner:
                 run.append(block)
             flush()
         return plans
+
+    def _calls_opaque_code(self, block: ControlFlowBlock) -> bool:
+        """
+        Whether a block calls opaque code (e.g., a callback). Such blocks stay in their caller: a function containing
+        one would have to reach persistent data through the state struct, which compilers treat as possibly aliased.
+        """
+        cached = self._opaque.get(block)
+        if cached is None:
+            states = [block] if isinstance(block, SDFGState) else (
+                list(block.all_states()) if isinstance(block, AbstractControlFlowRegion) else [])
+            cached = sdutils.calls_opaque_code(block.sdfg, states)
+            self._opaque[block] = cached
+        return cached
 
     def _plan_inside(self, block: ControlFlowBlock) -> List[FunctionPlan]:
         if isinstance(block, ConditionalBlock):

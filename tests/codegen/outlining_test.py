@@ -375,6 +375,40 @@ def test_region_units_define_their_nested_functions():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
+_callback_values = []
+
+
+def _record(x):
+    _callback_values.append(x.copy())
+
+
+@dace.program
+def loops_with_callback(A: dace.float64[N]):
+    for i in range(N):
+        A[i] = A[i] + 1
+    _record(A)
+    for i in range(N):
+        A[i] = A[i] * 2
+
+
+def test_region_with_callback():
+    """ A callback called in the region is passed as a function pointer, and its data through the state struct. """
+    sdfg = loops_with_callback.to_sdfg(simplify=True)
+    sdfg.name = 'fnregion_callback'
+    blocks = list(sdfg.bfs_nodes(sdfg.start_block))
+    xfh.wrap_in_function_region(blocks, 'with_callback', dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+    frame, unit = _linkable_sources(sdfg)
+    assert 'dace.callback' not in _signature(unit, 'with_callback')
+    _callback_values.clear()
+    A = np.random.rand(8)
+    ref = (A + 1) * 2
+    # The frontend parses ``_record`` and calls back into ``_callback_values.append``
+    sdfg(A=A, N=8, _callback_values_append=lambda x: _callback_values.append(x.copy()))
+    assert np.allclose(A, ref)
+    assert len(_callback_values) == 1 and np.allclose(_callback_values[0], ref / 2)
+
+
 def test_region_serialization():
     sdfg = _three_loop_regions('fnregion_serialization', dtypes.FunctionPlacement.SeparateUnit, 'unit0')
     loaded = dace.SDFG.from_json(sdfg.to_json())
@@ -408,4 +442,5 @@ if __name__ == '__main__':
     test_region_rejects_escaping_break()
     test_region_rejects_non_chain()
     test_region_units_define_their_nested_functions()
+    test_region_with_callback()
     test_region_serialization()

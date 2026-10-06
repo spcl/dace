@@ -30,18 +30,11 @@ from dace.transformation.passes.analysis import StateReachability, loop_analysis
 def _reaches_state_struct(sdfg: SDFG, states: List[SDFGState]) -> bool:
     """
     Whether code in the given states may access data through the state struct other than by name: nested SDFGs and
-    library nodes (their functions receive the state struct), code with side effects (e.g., callbacks), and tasklets
-    whose code mentions the state struct.
+    library nodes (their functions receive the state struct), and opaque code (see ``utils.calls_opaque_code``).
     """
-    for state in states:
-        for node in state.nodes():
-            if isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
-                return True
-            if isinstance(node, nodes.CodeNode) and node.has_side_effects(sdfg):
-                return True
-            if isinstance(node, nodes.Tasklet) and '__state' in node.code.as_string:
-                return True
-    return False
+    if any(isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)) for state in states for node in state.nodes()):
+        return True
+    return utils.calls_opaque_code(sdfg, states)
 
 
 def _inside_loop_of(block: ControlFlowBlock, region: ControlFlowRegion) -> bool:
@@ -858,7 +851,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 continue
             ctype = symbol_types[sym].ctype
             if sym not in assigned_inside:
-                params.append(f'{ctype} {sym}')
+                params.append(symbol_types[sym].as_arg(sym))  # e.g., a function pointer for a callback
                 args.append(sym)
             elif sym in used_outside or sym in used_inside:
                 # Assigned inside but read before it (``used_inside`` holds the free symbols only) or elsewhere

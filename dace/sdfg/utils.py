@@ -2845,3 +2845,21 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def calls_opaque_code(sdfg: SDFG, states: Sequence[SDFGState]) -> bool:
+    """
+    Whether code in the given states may access data other than through its connectors: code with side effects
+    (e.g., a callback, which may hold its own references to the data) or tasklets whose code mentions the state struct.
+
+    :param sdfg: The SDFG of the states.
+    :param states: The states to check.
+    :return: True if any node in the states calls such code.
+    """
+    for state in states:
+        for node in state.nodes():
+            if isinstance(node, nd.CodeNode) and node.has_side_effects(sdfg):
+                return True
+            if isinstance(node, nd.Tasklet) and '__state' in node.code.as_string:
+                return True
+    return False

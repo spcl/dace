@@ -161,6 +161,16 @@ def test_translation_units_by_size():
     assert len({p.translation_unit for p in plans}) == 2
 
 
+def test_planner_keeps_opaque_code_in_caller():
+    """ A block calling opaque code (e.g., a callback) stays in its caller, and the functions form around it. """
+    sdfg = _chain_of_loops('outline_opaque', 4)
+    chain = maximal_chains(sdfg)[0]
+    opaque = sdfg.add_state_after(chain[1], 'opaque')
+    opaque.add_tasklet('external', {}, {}, 'external_call()', language=dace.Language.CPP, side_effects=True)
+    plans = OutliningPlanner(max_basic_blocks=10**6, max_statements=10**6).plan_region(sdfg)
+    assert [[b.label for b in p.blocks] for p in plans] == [['loop_0', 'loop_1'], ['loop_2', 'loop_3']]
+
+
 def test_outline_functions_pass():
     sdfg = _chain_of_loops('outline_functions_pass', 6)
     size = CostModel().block(next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))).basic_blocks
@@ -213,6 +223,7 @@ if __name__ == '__main__':
     test_translation_units_balanced()
     test_statement_budget()
     test_translation_units_by_size()
+    test_planner_keeps_opaque_code_in_caller()
     test_outline_functions_pass()
     test_outline_functions_in_codegen()
     test_outline_functions_small_sdfg_unchanged()
