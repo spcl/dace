@@ -276,9 +276,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
 
-        # Test the return value.
+        # Test the return value. Only the top-level SDFG returns: a nested SDFG's ``__return*`` containers are
+        # connectors named after the caller's containers, which may be any subset of its return values.
         tuple_return_args = {n for n in sdfg._arrays if n.startswith('__return_')}
-        if '__return' in sdfg._arrays and tuple_return_args:
+        if sdfg.parent is not None:
+            tuple_return_args = set()
+        elif '__return' in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(
                 'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
                 'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
