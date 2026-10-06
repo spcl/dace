@@ -133,6 +133,24 @@ def test_each_gpu_scope_says_what_it_is_ahead_of_it():
     assert '// ' + ThreadBlockScopeGenerator.SCOPE_HINT.splitlines()[0] in lines[kernel:], code
 
 
+def test_a_block_tiled_reduction_folds_without_a_runtime_functor():
+    """A kernel whose rows reduce is block-tiled: its lanes fold through ``gpucub::BlockReduce`` with a lambda, so the
+    unit needs no ``dace::_wcr_fixed``."""
+    M = dace.symbol('M')
+
+    @dace.program
+    def matvec(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
+        for i in range(M):
+            s = 0.0
+            for j in range(N):
+                s += A[i, j] * x[j]
+            y[i] = s
+
+    code = render_gpu(matvec, 'cpf_hip_block_tiled_reduce')[1]
+    assert_standalone_device(code, 'cpf_hip_block_tiled_reduce')
+    assert 'gpucub::BlockReduce' in code, code
+
+
 def test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma():
     """A scatter whose index array may repeat is the WCR that stays conflicting. On the host CPF
     writes ``#pragma omp atomic update`` for it; inside a ``__global__`` function that pragma is

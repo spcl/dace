@@ -7,7 +7,7 @@ from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
 from dace.transformation import transformation as xf, helpers as xfh
 from dace.sdfg import utils as sdutil
-from dace.libraries.standard.block_reduce import block_allreduce_code
+from dace.libraries.standard.block_reduce import block_allreduce_code, block_redop
 
 
 def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:
@@ -175,7 +175,7 @@ class WarpTiling(xf.SingleStateTransformation):
                             e.data.data = name
                             e.data.subset = subsets.Range([(0, 0, 1)])
 
-                        functor = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
+                        functor = block_redop(redtype, ctype)
                         if self.warp_size == 32:
                             code = f'__out = {functor}(__acc, dace::warpReduce<{credtype}, {ctype}>::reduce(__a));'
                         else:

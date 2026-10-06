@@ -22,6 +22,32 @@ from dace.sdfg.state import SDFGState
 #: max of its thread-block maps, so keeping them equal avoids specializing the block for one.
 BLOCK_COLLECTIVE_THREADS = 256
 
+#: The fold a block collective spells itself, over ``{a}`` and ``{b}``. Min and max keep ``std::min`` /
+#: ``std::max``'s operand order, so ties and NaNs resolve as the runtime functor resolves them.
+FOLDS = {
+    dtypes.ReductionType.Sum: '{a} + {b}',
+    dtypes.ReductionType.Product: '{a} * {b}',
+    dtypes.ReductionType.Min: '({b} < {a} ? {b} : {a})',
+    dtypes.ReductionType.Max: '({a} < {b} ? {b} : {a})',
+    dtypes.ReductionType.Logical_And: '{a} && {b}',
+    dtypes.ReductionType.Logical_Or: '{a} || {b}',
+    dtypes.ReductionType.Bitwise_And: '{a} & {b}',
+    dtypes.ReductionType.Bitwise_Or: '{a} | {b}',
+    dtypes.ReductionType.Bitwise_Xor: '{a} ^ {b}',
+}
+
+
+def block_redop(redtype: dtypes.ReductionType, ctype: str) -> str:
+    """A CUB-compatible binary functor EXPRESSION folding ``redtype`` at ``ctype``.
+
+    A lambda rather than ``dace::_wcr_fixed``: it needs no runtime header, so the same text builds against the
+    DaCe runtime and in a standalone CPF unit. A reduction without a fold here keeps the runtime functor.
+    """
+    fold = FOLDS.get(redtype)
+    if fold is None:
+        return f'dace::_wcr_fixed<dace::ReductionType::{redtype.name}, {ctype}>()'
+    return f'[] (const {ctype} &__fold_l, const {ctype} &__fold_r) {{ return {fold.format(a="__fold_l", b="__fold_r")}; }}'
+
 
 def block_reduce_code(idstr: str, ctype: str, lanes: int, count_expr: str, element_expr: str, redop: str, identity: str,
                       out_expr: str) -> str:
@@ -33,7 +59,7 @@ def block_reduce_code(idstr: str, ctype: str, lanes: int, count_expr: str, eleme
     :param lanes: Threads in the block; must match the enclosing thread-block map.
     :param count_expr: Number of elements, as C++.
     :param element_expr: The i-th element, as C++ over the loop variable ``__bri``.
-    :param redop: A CUB-compatible binary functor EXPRESSION (e.g. ``dace::_wcr_fixed<...>()``).
+    :param redop: A CUB-compatible binary functor EXPRESSION (:func:`block_redop`).
     :param identity: The op's identity, at ``ctype``. Lanes past the end fold this, so a short final
                      chunk needs no special case -- and every lane must still reach the collective
                      below, which carries a barrier.

@@ -1059,7 +1059,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
-        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map, block_redop,
                                                           block_reduce_code)
 
         node.validate(sdfg, state)
@@ -1078,8 +1078,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
         dtype = out_desc.dtype.base_type
         ctype = dtype.ctype
         identity = node.identity if node.identity is not None else dtypes.reduction_identity(dtype, redtype)
-        credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
-        redop = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
+        redop = block_redop(redtype, ctype)
 
         idstr = global_code_id(sdfg, state, node)
         code = block_reduce_code(idstr=idstr,

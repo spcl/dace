@@ -126,7 +126,7 @@ class ExpandDotCUDABlock(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         from dace.codegen.common import global_code_id
-        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map, block_redop,
                                                           block_reduce_code)
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
@@ -141,7 +141,7 @@ class ExpandDotCUDABlock(ExpandTransformation):
                                  lanes=BLOCK_COLLECTIVE_THREADS,
                                  count_expr=symbolic.symstr(n),
                                  element_expr=f'{x_element} * __y[__bri * ({symbolic.symstr(stride_y)})]',
-                                 redop=f'dace::_wcr_fixed<dace::ReductionType::Sum, {ctype}>()',
+                                 redop=block_redop(dtypes.ReductionType.Sum, ctype),
                                  identity=f'static_cast<{ctype}>(0)',
                                  out_expr='__res[0]')
 

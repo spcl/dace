@@ -396,7 +396,7 @@ class ExpandGemmCUDABlock(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         from dace.codegen.common import global_code_id
-        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map,
+        from dace.libraries.standard.block_reduce import (BLOCK_COLLECTIVE_THREADS, add_block_lane_map, block_redop,
                                                           block_reduce_code)
         adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
         desc_a, shape_a, strides_a = _matrix_operand(adata)[1:]
@@ -427,7 +427,7 @@ class ExpandGemmCUDABlock(ExpandTransformation):
                                  lanes=BLOCK_COLLECTIVE_THREADS,
                                  count_expr=symstr(K),
                                  element_expr=f'__a[{a_at}] * __b[{b_at}]',
-                                 redop=f'dace::_wcr_fixed<dace::ReductionType::Sum, {ctype}>()',
+                                 redop=block_redop(dtypes.ReductionType.Sum, ctype),
                                  identity=f'static_cast<{ctype}>(0)',
                                  out_expr='__gacc')
         code = (f'{ctype} __gacc;\n'
