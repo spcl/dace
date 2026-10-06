@@ -480,6 +480,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # so the iedge assignments use the post-rename name.
         non_identity_mapping = {sym_replacements.get(k, k): v for k, v in non_identity_mapping.items()}
 
+        # Replace nested SDFG parents with new SDFG
+        for nstate in nsdfg.states():
+            nstate.sdfg = sdfg
+            for node in nstate.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    node.sdfg.parent_sdfg = sdfg
+                    node.sdfg.parent_nsdfg_node = node
+
+        # A key only the connector descriptors used binds nothing once the parent's containers replace them; the
+        # inlined states resolve their containers in the parent now.
+        used_inside = set()
+        for block in nsdfg.nodes():
+            used_inside |= block.used_symbols(all_symbols=True)
+        for ise in nsdfg.edges():
+            used_inside |= ise.data.free_symbols
+        non_identity_mapping = {k: v for k, v in non_identity_mapping.items() if k in used_inside}
+
         # Reconnect state machine. For each edge ``predecessor -> nsdfg_state``
         # we redirect it to ``predecessor -> source``; while doing so, plant the
         # non-identity symbol_mapping entries as interstate-edge assignments
@@ -514,14 +531,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Modify start state as necessary
         if outer_start_state is nsdfg_state:
             outer_state.parent_graph.start_block = outer_state.parent_graph.node_id(source)
-
-        # Replace nested SDFG parents with new SDFG
-        for nstate in nsdfg.states():
-            nstate.sdfg = sdfg
-            for node in nstate.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    node.sdfg.parent_sdfg = sdfg
-                    node.sdfg.parent_nsdfg_node = node
 
         #######################################################
         # Remove nested SDFG and state
