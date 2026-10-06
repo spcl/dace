@@ -37,6 +37,20 @@ def _reaches_state_struct(sdfg: SDFG, states: List[SDFGState]) -> bool:
     return utils.calls_opaque_code(sdfg, states)
 
 
+_LABEL = re.compile(r'__state_(?:exit_)?\d+(?:_\w+)?')
+_MARKER = re.compile(r'////__DACE:[\d:]*')
+
+
+def _function_key(code: str, name: str) -> str:
+    """
+    The code of a generated function up to the names that differ between equal regions: the function's name, the
+    labels of its control flow (numbered by appearance) and the comments mapping code to SDFG elements.
+    """
+    labels: Dict[str, str] = {}
+    code = _MARKER.sub('', code.replace(name, '@'))
+    return _LABEL.sub(lambda m: labels.setdefault(m.group(0), f'@{len(labels)}'), code)
+
+
 def _inside_loop_of(block: ControlFlowBlock, region: ControlFlowRegion) -> bool:
     """ Whether a loop inside ``region`` encloses ``block`` (i.e., a break or continue there stays in the region). """
     graph = block.parent_graph
@@ -85,6 +99,8 @@ class DaCeCodeGenerator(object):
         self._symbol_types: Dict[SDFG, Dict[str, dtypes.typeclass]] = {}
         self._symbol_uses_cache: Dict[SDFG, Dict[Any, Set[str]]] = {}
         self._state_local_cache: Dict[SDFG, Set[str]] = {}
+        # The functions of regions in separate translation units, by their code up to names (see ``_function_key``)
+        self._region_functions: Dict[str, str] = {}
         self._toplevel_sdfg = sdfg
         self._struct_types: Dict[SDFG, Dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
@@ -874,8 +890,17 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         if region.attributes:
             specifiers += region.attributes + ' '
         if placement == dtypes.FunctionPlacement.SeparateUnit:
+            unit_code = unit_global_stream.getvalue() + 'DACE_HIDDEN ' + specifiers + definition
+            # Equal regions (e.g., repeated steps of an algorithm) share one function, unless named explicitly
+            duplicate = False
+            if not region.function_name:
+                first = self._region_functions.setdefault(_function_key(unit_code, fname), fname)
+                duplicate = first != fname
+                fname = first
+                signature = f'void {fname}({", ".join([state_struct] + params)})'
             outer_global_stream.write(f'DACE_HIDDEN {specifiers}{signature};\n', sdfg)
-            self.add_to_translation_unit(unit, unit_global_stream.getvalue() + 'DACE_HIDDEN ' + specifiers + definition)
+            if not duplicate:
+                self.add_to_translation_unit(unit, unit_code)
         else:
             outer_global_stream.write('static ' + specifiers + definition, sdfg)
 

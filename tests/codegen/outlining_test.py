@@ -409,6 +409,34 @@ def test_region_with_callback():
     assert len(_callback_values) == 1 and np.allclose(_callback_values[0], ref / 2)
 
 
+def test_region_equal_functions_shared():
+    """ Equal regions in separate units share one function; a region differing in a constant does not. """
+    sdfg = dace.SDFG('fnregion_equal_functions')
+    sdfg.add_array('A', [N], dace.float64)
+    loops = []
+    for k, expr in enumerate(['a + 1', 'a + 1', 'a + 2']):
+        loop = LoopRegion(f'loop_{k}', 'i < N', 'i', 'i = 0', 'i = i + 1')
+        sdfg.add_node(loop, is_start_block=(k == 0))
+        body = loop.add_state(f'body_{k}', is_start_block=True)
+        t = body.add_tasklet('compute', {'a'}, {'b'}, f'b = {expr}')
+        body.add_edge(body.add_read('A'), None, t, 'a', dace.Memlet('A[i]'))
+        body.add_edge(t, 'b', body.add_write('A'), None, dace.Memlet('A[i]'))
+        if loops:
+            sdfg.add_edge(loops[-1], loop, dace.InterstateEdge())
+        loops.append(loop)
+    for k, loop in enumerate(loops):
+        xfh.wrap_in_function_region([loop], f'step_{k}', dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+    frame, *units = _linkable_sources(sdfg)
+    assert len(units) == 2
+    calls = re.findall(r'\b(step_\d+_\d+)\(__state', frame)
+    assert len(calls) == 3 and calls[0] == calls[1] != calls[2]
+    A = np.random.rand(10)
+    ref = A + 4
+    sdfg(A=A, N=10)
+    assert np.allclose(A, ref)
+
+
 def test_region_serialization():
     sdfg = _three_loop_regions('fnregion_serialization', dtypes.FunctionPlacement.SeparateUnit, 'unit0')
     loaded = dace.SDFG.from_json(sdfg.to_json())
@@ -443,4 +471,5 @@ if __name__ == '__main__':
     test_region_rejects_non_chain()
     test_region_units_define_their_nested_functions()
     test_region_with_callback()
+    test_region_equal_functions_shared()
     test_region_serialization()
