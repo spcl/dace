@@ -758,12 +758,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
-        # Add data-descriptor free symbols
-        for desc in sdfg.arrays.values():
-            for sym in desc.free_symbols:
-                if sym.dtype is not None:
-                    defined_syms[str(sym)] = sym.dtype
-
         # Add inter-state symbols
         try:
             start_block = sdfg.start_block
@@ -1016,7 +1010,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Add scalar arguments from free symbols of data descriptors
         for arg in data_args.values():
             scalar_args.update({
-                str(k): dt.Scalar(k.dtype)
+                str(k): dt.Scalar(defined_syms[str(k)])
                 for k in arg.used_symbols(all_symbols=False)
                 if not str(k).startswith('__dace') and str(k) not in sdfg.constants
             })
@@ -1612,17 +1606,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         :return: A dictionary mapping symbol names to their types.
         """
-        from dace.sdfg.sdfg import SDFG
-
-        sdfg: SDFG = self.sdfg
-
-        symbols = collections.OrderedDict(sdfg.symbols)
-        # A declared symbol keeps its declared type over the dtype a data descriptor's instance carries
-        for desc in sdfg.arrays.values():
-            for s in desc.free_symbols:
-                symbols.setdefault(s.name, s.dtype)
-
-        return symbols
+        return collections.OrderedDict(self.sdfg.symbols)
 
     def symbols_defined_at_state(
         self,
@@ -2725,7 +2709,8 @@ class SymbolResolver:
             for name, low, high, step in ranges:
                 sign = sympy.sympify(step)
                 low, high = (low, high) if sign.is_positive else (high, low) if sign.is_negative else (None, None)
-                if low is not None:
+                # The body of a provably empty range never runs, so its bounds, which contradict, are not facts
+                if low is not None and not (sympy.sympify(high) - sympy.sympify(low)).is_negative:
                     relations += [
                         symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
                         symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high))

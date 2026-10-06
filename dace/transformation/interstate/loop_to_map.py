@@ -129,7 +129,7 @@ def _affine_coeffs(expr: IndexExpr,
     """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
     value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
     ``itersym`` is the degree test."""
-    e, itersym = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(expr), itersym)
+    e = symbolic.pystr_to_symbolic(expr)
     if not e.is_polynomial(itersym):
         return None
     a = sp.diff(e, itersym)
@@ -140,7 +140,7 @@ def _affine_coeffs(expr: IndexExpr,
 
 def _same_injective_index(idx1: IndexExpr, idx2: IndexExpr, itersym: symbolic.symbol) -> bool:
     """True iff ``idx1`` and ``idx2`` are the same injective affine ``a*i+b`` (``a != 0``) of ``itersym``."""
-    e1, e2 = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(idx1), symbolic.pystr_to_symbolic(idx2))
+    e1, e2 = symbolic.pystr_to_symbolic(idx1), symbolic.pystr_to_symbolic(idx2)
     coeffs = _affine_coeffs(e1, itersym)
     return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
 
@@ -792,8 +792,8 @@ class LoopToMap(xf.MultiStateTransformation):
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
-                    # Other passes map symbols without declaring them; type it off the symbol
-                    passed_on[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
+                    # Other passes map symbols without declaring them; those get the default symbol type
+                    passed_on[s] = sdfg.symbols.get(s, symbolic.DEFAULT_SYMBOL_TYPE)
                     nsdfg.symbol_repo.add(s, passed_on[s])
         for name in read_set:
             r = body.add_read(name)

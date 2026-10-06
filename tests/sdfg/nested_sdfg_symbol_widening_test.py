@@ -11,10 +11,11 @@ OFFSET = 2**33
 
 def _map_over_nested_sdfg(mapped_value: str = 'i', start: int = 0) -> dace.SDFG:
     """
-    A map over ``start:start + N`` whose body is a nested SDFG writing its undeclared symbol ``n``, which is mapped to
-    ``mapped_value``, to ``A[i - start]``.
+    A map over ``start:start + N`` whose body is a nested SDFG writing its symbol ``n``, which is declared ``int32``
+    and mapped to ``mapped_value``, to ``A[i - start]``.
     """
     inner = dace.SDFG('inner')
+    inner.add_symbol('n', dace.int32)
     inner.add_array('a', [1], dace.int64)
     inner_state = inner.add_state()
     tasklet = inner_state.add_tasklet('write_n', {}, {'o'}, 'o = n')

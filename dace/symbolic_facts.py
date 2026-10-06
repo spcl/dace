@@ -91,6 +91,13 @@ class Facts:
     def none(cls) -> 'Facts':
         return cls((), frozenset())
 
+    # Determined by its relations and integers, so equal facts share cached proofs
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Facts) and (self.relations, self.integers) == (other.relations, other.integers)
+
+    def __hash__(self) -> int:
+        return hash((self.relations, self.integers))
+
     def assumptions(self, name: str) -> dict[str, bool]:
         """ The SymPy assumptions the facts prove for the symbol ``name``: integrality from its dtype, and a sign. """
         assumed = {'integer': True} if name in self.integers else {'real': True}

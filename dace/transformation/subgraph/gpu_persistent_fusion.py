@@ -3,6 +3,7 @@ import copy
 import dace
 from dace import nodes, Memlet
 from dace.sdfg import dealias, SDFG, SDFGState, InterstateEdge
+from dace.sdfg.sdfg import scope_bound_names
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
 from dace.sdfg.state import AbstractControlFlowRegion
@@ -193,11 +194,13 @@ class GPUPersistentKernel(SubgraphTransformation):
                 new_symbols.add(k)
                 if k in sdfg.symbols and k not in kernel_sdfg.symbols:
                     kernel_sdfg.add_symbol(k, sdfg.symbols[k])
+        # A loop iterator is bound by its loop, not an SDFG symbol
+        scoped = scope_bound_names(kernel_sdfg)
         for blk in subgraph_blocks:
             if isinstance(blk, AbstractControlFlowRegion):
                 for k, v in blk.new_symbols(sdfg.symbols).items():
                     new_symbols.add(k)
-                    if k not in kernel_sdfg.symbols:
+                    if k not in kernel_sdfg.symbols and k not in scoped:
                         kernel_sdfg.add_symbol(k, v)
 
         # Setting entry node in nested SDFG if no entry guard was created

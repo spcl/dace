@@ -22,9 +22,7 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     :returns: the destination :class:`~dace.subsets.Range`.
     """
     dst_range = subsets.Range.from_array(dst_desc)
-    # Equalize first: two instances of the same symbol name make equal() answer None on identical counts.
-    src_count, dst_count = symbolic.equalize_symbols(src_subset.num_elements(), dst_range.num_elements())
-    if symbolic.equal(src_count, dst_count) is not False:
+    if symbolic.equal(src_subset.num_elements(), dst_range.num_elements()) is not False:
         return dst_range
     return src_subset
 

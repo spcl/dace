@@ -700,6 +700,18 @@ def declare_program_symbol(sdfg: SDFG, declared: symbolic.symbol) -> None:
         sdfg.add_symbol(declared)
 
 
+def defined_type(defined: Any) -> dtypes.typeclass:
+    """ The type of a name the program defines: the declaration of its own symbol object (a global or an iterator),
+    the type of a data descriptor, or the type of a declared SDFG symbol. """
+    if isinstance(defined, symbolic.symbol):
+        return defined.declaration.dtype
+    if isinstance(defined, data.Data):
+        return defined.dtype
+    if isinstance(defined, dtypes.typeclass):
+        return defined
+    raise TypeError(f'{defined} is not a typed program name')
+
+
 def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
     """ Declares a symbol the program reads on the SDFG, unless a loop or map scope of the SDFG binds it. """
     if name not in sdfg.symbols and name not in scope_bound_names(sdfg):
@@ -870,7 +882,7 @@ class TaskletTransformer(ExtNodeTransformer):
         # If accessing a symbol, add it to the SDFG symbol list
         if (isinstance(node.ctx, ast.Load) and node.id in self.defined
                 and isinstance(self.defined[node.id], symbolic.symbol)):
-            declare_read_symbol(self.sdfg, node.id, self.defined[node.id].dtype)
+            declare_read_symbol(self.sdfg, node.id, defined_type(self.defined[node.id]))
             return self.generic_visit(node)
         # Storing into a symbol is not allowed
         if (isinstance(node.ctx, ast.Store) and node.id in self.defined
@@ -1240,6 +1252,13 @@ class ProgramVisitor(ExtNodeVisitor):
     @property
     def defined(self) -> DefinedNames:
         return DefinedNames(self)
+
+    def symbol_types(self) -> Dict[str, dtypes.typeclass]:
+        """ The type of every symbol name the program can read here: the SDFG's declared symbols, and the declarations
+        of the program's own symbol objects (its globals and loop and map iterators) the SDFG does not declare. """
+        types = {k: v.declaration.dtype for k, v in self.defined_dict().items() if isinstance(v, symbolic.symbol)}
+        types.update(self.sdfg.symbols)
+        return types
 
     def defined_dict(self) -> Dict[str, Any]:
         """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
@@ -1997,7 +2016,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
                         elif candidate not in self.sdfg.symbols:
-                            declare_read_symbol(self.sdfg, atomstr, self.defined[candidate].dtype)
+                            declare_read_symbol(self.sdfg, atomstr, defined_type(self.defined[candidate]))
 
                 for expr in symbolic.swalk(symval):
                     # An array access in a bound (legacy ``arr(i)`` or ``Subscript(arr, i)``)
@@ -2460,7 +2479,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
 
             data_dtypes = {
-                k: v.dtype
+                k: defined_type(v)
                 for k, v in self.defined_dict().items() if isinstance(v, (data.Data, symbolic.symbol))
             }
             data_dtypes.update(self.sdfg.symbols)
@@ -2489,7 +2508,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         # Add to global SDFG symbols if not a scalar
                         if isinstance(atom,
                                       symbolic.symbol) and not (astr in self.variables or astr in self.sdfg.arrays):
-                            declare_read_symbol(self.sdfg, astr, atom.dtype)
+                            declare_read_symbol(self.sdfg, astr, defined_type(self.defined[astr]))
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
@@ -2634,11 +2653,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
             # Add to global SDFG symbols if not a scalar
             if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
-                # Prefer the dtype of the originally-declared symbol object (if any), since re-parsing the condition
-                # string creates a fresh symbol with the default dtype.
-                defined = self.defined.get(astr, None)
-                dtype = defined.dtype if isinstance(defined, symbolic.symbol) else atom.dtype
-                declare_read_symbol(self.sdfg, astr, dtype)
+                declare_read_symbol(self.sdfg, astr, defined_type(self.defined[astr]))
 
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
@@ -2844,7 +2859,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), sym.dtype)
+                    declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}
@@ -3075,7 +3090,7 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), sym.dtype)
+                    declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
                 operand = symbolic.symstr(operand)
 
         indirect_indices = indirect_indices or {}
@@ -3571,7 +3586,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if result in self.sdfg.symbols:
                         rtype = self.sdfg.symbols[result]
                     elif symbolic.issymbolic(result):
-                        rtype = sym_type(result)
+                        rtype = sym_type(result, self.symbol_types())
                     else:
                         rtype = type(result)
                     if name.startswith('__return'):
@@ -3929,6 +3944,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _eval_arg(self, arg: Union[str, Any]) -> Any:
         if not isinstance(arg, str):
+            if symbolic.issymbolic(arg) and not isinstance(arg, symbolic.symbol):
+                # The callee sees an expression as a scalar typed by its symbols, which only this program types
+                return data.Scalar(symbolic.symtype(arg, self.symbol_types()))
             return arg
         if arg in self.defined:
             return self.defined[arg]
@@ -4448,6 +4466,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         atype = data.Scalar(dtypes.string)
                     elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
                         atype = data.create_datadescriptor(type(parsed_arg))
+                    elif symbolic.issymbolic(parsed_arg):
+                        atype = data.Scalar(symbolic.symtype(parsed_arg, self.symbol_types()))
                     else:
                         atype = data.create_datadescriptor(parsed_arg)
 

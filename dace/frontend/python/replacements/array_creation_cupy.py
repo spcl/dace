@@ -35,7 +35,7 @@ def _cupy_full(pv: ProgramVisitor,
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif symbolic.issymbolic(fill_value):
-        vtype = sym_type(fill_value)
+        vtype = sym_type(fill_value, pv.symbol_types())
     else:
         raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
     dtype = dtype or vtype

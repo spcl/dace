@@ -1025,7 +1025,8 @@ class Structure(Data):
                 fields_and_types[k] = v
             elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
-                fields_and_types[k] = symbolic.symtype(v)
+                # A member given as a symbol object is its creator's; nothing here types the symbols of an expression
+                fields_and_types[k] = v.declaration.dtype if isinstance(v, symbolic.symbol) else symbolic.symtype(v, {})
             elif isinstance(v, (int, np.integer)):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:

@@ -269,8 +269,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if scoped:
             raise InvalidSDFGError(
                 f'Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols', sdfg, None)
-        # What the SDFG needs from outside must be declared as its parameters
-        undeclared = sorted(sdfg.free_symbols - sdfg.symbols.keys())
+        # What the SDFG needs from outside must be declared as its parameters; ``__dace`` names are the code
+        # generator's own (e.g. the element count of a consume chunk)
+        undeclared = sorted(name for name in sdfg.free_symbols - sdfg.symbols.keys() if not name.startswith('__dace'))
         if undeclared:
             raise InvalidSDFGError(f'Free symbols {undeclared} are not declared as SDFG symbols', sdfg, None)
 
@@ -371,9 +372,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         symbols = dict(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
-        for desc in sdfg.arrays.values():
-            for sym in desc.free_symbols:
-                symbols[str(sym)] = sym.dtype
 
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)

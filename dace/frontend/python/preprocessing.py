@@ -157,8 +157,8 @@ def _decide(condition: sympy.Basic, scope: Dict[str, Any]) -> symbolic.Truth:
     program_symbols = [value for value in scope.values() if isinstance(value, symbolic.symbol)]
     facts = symbolic.Facts([
         symbolic.predicate_relation(predicate, declared) for declared in program_symbols
-        for predicate in sorted(symbolic.declared_predicates(declared), key=lambda p: p.name)
-    ], frozenset(declared.name for declared in program_symbols if declared.dtype in dtypes.INTEGER_TYPES))
+        for predicate in sorted(declared.declaration.predicates, key=lambda p: p.name)
+    ], frozenset(declared.name for declared in program_symbols if declared.declaration.dtype in dtypes.INTEGER_TYPES))
     return symbolic.ask(symbolic.Relation(kind, lhs, rhs), facts)
 
 

@@ -391,13 +391,13 @@ def test_iteration_range_symbolic_upper_bound():
     ``i == 0`` a contradiction and ``not(i == 1)`` a tautology, regardless of ``N``."""
     N = dace.symbol("N")
     contra = _get_loop_with_conditional("i == 0", cond="i < N")
-    contra.add_symbol("N", N.dtype)
+    contra.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(contra, {})
     contra.validate()
     assert _num_conditionals(contra) == 0
 
     tauto = _get_loop_with_conditional("not (i == 1)", cond="i < N")
-    tauto.add_symbol("N", N.dtype)
+    tauto.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(tauto, {})
     tauto.validate()
     assert _num_conditionals(tauto) == 0

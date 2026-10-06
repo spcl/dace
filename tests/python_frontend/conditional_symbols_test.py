@@ -24,7 +24,7 @@ def test_symbol_only_in_if_condition():
 
     sdfg = symbol_only_in_if_condition.to_sdfg(simplify=True)
     assert 'M' in sdfg.symbols
-    assert sdfg.symbols['M'] == M.dtype
+    assert sdfg.symbols['M'] == M.declaration.dtype
     assert 'M' in sdfg.arglist()
 
     A = np.arange(16, dtype=np.float64)

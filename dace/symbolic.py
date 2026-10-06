@@ -5,7 +5,7 @@ from functools import lru_cache, cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, Optional, Set, Tuple, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, NamedTuple, Optional, Set, Union, TYPE_CHECKING
 import numpy
 
 import sympy.abc
@@ -66,12 +66,20 @@ else:
     equal_valued = sympy.core.numbers.equal_valued
 
 
+class SymbolDeclaration(NamedTuple):
+    """ What ``dace.symbol(name, dtype, **assumptions)`` declares. Only the creator of the object reads it (the
+    frontend, from the program's own symbols): an object found inside an expression may be any symbol of its name,
+    so the type of a name comes from the SDFG's symbols. """
+    dtype: dtypes.typeclass
+    predicates: FrozenSet[Predicate]
+
+
 class symbol(sympy.Symbol):
     """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
         information. """
 
     s_currentsymbol = 0
-    dtype: dtypes.typeclass
+    declaration: SymbolDeclaration
 
     def __new__(cls, name=None, dtype=None, **assumptions):
         if dtype is None:
@@ -90,31 +98,17 @@ class symbol(sympy.Symbol):
         if dtype in (dtypes.complex64, dtypes.complex128):
             raise TypeError(f'Symbol "{name}" cannot be complex: symbols are real scalars')
 
-        dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
-        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-
         # A symbol is its name: SymPy sees the same assumption on every symbol (a scalar, so real), so equal names are
-        # equal symbols everywhere. The declared facts travel with this object only to its declaration
-        # (``SDFG.add_symbol``); integrality and signs come from the facts where an expression is simplified.
-        declared = {k: v for k, v in assumptions.items() if k != 'commutative'}
-        if 'integer' not in declared and numpy.any(is_integer):
-            declared['integer'] = True
+        # equal symbols everywhere. The declaration travels with this object only to ``SDFG.add_symbol``; integrality
+        # and signs come from the facts where an expression is simplified.
         self = sympy.Symbol.__xnew__(cls, name, real=True)
-        self._declared = declared
-
-        self.dtype = dtype
+        self.declaration = SymbolDeclaration(
+            dtype, frozenset(predicate for predicate in Predicate if assumptions.get(predicate.name.lower())))
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return {'dtype': self.dtype, '_declared': self._declared, '_constraints': self._constraints}
-
-    def _hashable_content(self):
-        # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
-        # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
-        # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
-        # comparing these tuples element-wise, and typeclasses define equality but no ordering.
-        return super()._hashable_content()
+        return {'declaration': self.declaration, '_constraints': self._constraints}
 
     def _eval_subs(self, old, new):
         """
@@ -187,12 +181,6 @@ class symbol(sympy.Symbol):
         # yapf: enable
 
 
-def declared_predicates(declared: symbol) -> FrozenSet[Predicate]:
-    """ The sign predicates a symbol object was created with. Only for the creator's own objects (the frontend's
-    program symbols): an object found inside an expression may be any symbol of its name. """
-    return frozenset(predicate for predicate in Predicate if declared._declared.get(predicate.name.lower()))
-
-
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
 
@@ -221,7 +209,7 @@ class UndefinedSymbol(symbol):
             dtype = DEFAULT_SYMBOL_TYPE
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
-        self.dtype = dtype
+        self.declaration = SymbolDeclaration(dtype, frozenset())
         self._constraints = []
         return self
 
@@ -234,37 +222,37 @@ class UndefinedSymbol(symbol):
         return super()._eval_subs(old, new)
 
     def __abs__(self):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __add__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __radd__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __sub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rsub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __mul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rmul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __truediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rtruediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __pow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rpow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     # Comparisons always return False to indicate indeterminate equality
     def __eq__(self, other):
@@ -584,17 +572,20 @@ def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
 
 
-def symtype(expr):
-    """ Returns the inferred symbol type from a symbolic expression. """
-    stypes = [s.dtype for s in symlist(expr).values()]
+def symtype(expr, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """ The type shared by the symbols of a symbolic expression, typed by name in ``symbols``.
+
+        :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+        :raise TypeError: If the symbols have different types.
+    """
+    stypes = {name: symbols[name] for name in symlist(expr)}
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
-    elif _checkEqualIvo(stypes):
-        return stypes[0]
+    elif _checkEqualIvo(list(stypes.values())):
+        return next(iter(stypes.values()))
     else:
-        raise TypeError('Cannot infer symbolic type from expression "%s"'
-                        ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
+        raise TypeError('Cannot infer symbolic type from expression "%s" with symbols [%s]' %
+                        (str(expr), ', '.join(f'{name}: {stype}' for name, stype in stypes.items())))
 
 
 def symlist(values):
@@ -1029,7 +1020,10 @@ def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
     if step == 1:
         return numerator
     quotient = numerator / step
-    return quotient if _integral(quotient) else sympy.ceiling(quotient)
+    # Over integer operands the ceiling folds an exact quotient and an integer part (``ceil(N - 1/2) = N``)
+    names = {s.name: s for s in quotient.free_symbols if isinstance(s, sympy.Symbol)}
+    folded = sympy.ceiling(_as_integers(quotient))
+    return folded.xreplace({s: names[s.name] for s in folded.free_symbols if isinstance(s, sympy.Symbol)})
 
 
 class int_floor(sympy.Function):
@@ -2414,20 +2408,22 @@ def _fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
+@lru_cache(maxsize=2048, typed=True)
 def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
     """ Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
     (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
     is written back in the original symbols (``s = N - 5``). """
     expr = _fold_extrema(sympy.sympify(expr), facts)
-    names = {s.name: s for s in expr.free_symbols if isinstance(s, symbol)}
+    names = {s.name: s for s in expr.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     solved = {str(target): value for target, value in facts.substitution.items()}
     rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
     plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
     result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
-    return result.xreplace(
-        {s: names.get(s.name, symbol(s.name))
-         for s in result.free_symbols if isinstance(s, sympy.Symbol)})
+    return result.xreplace({
+        s: names[s.name] if s.name in names else symbol(s.name)
+        for s in result.free_symbols if isinstance(s, sympy.Symbol)
+    })
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
@@ -2741,36 +2737,6 @@ class SympyAwareUnpickler(pickle.Unpickler):
             raise pickle.UnpicklingError("unsupported persistent object")
 
 
-def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
-    """
-    If a symbol or symbolic expressions has multiple symbols with the same
-    name, it substitutes them with the last symbol (as they appear in
-    s.free_symbols).
-    """
-    symdict = {s.name: s for s in sym.free_symbols}
-    repldict = {s: symdict[s.name] for s in sym.free_symbols}
-    return sym.subs(repldict)
-
-
-def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
-    """
-    If the 2 input expressions use different symbols but with the same name,
-    it substitutes the symbols of the second expressions with those of the
-    first expression.
-    """
-    a = equalize_symbol(a)
-    b = equalize_symbol(b)
-    a_syms = {s.name: s for s in a.free_symbols}
-    b_syms = {s.name: s for s in b.free_symbols}
-    common_names = set(a_syms.keys()).intersection(set(b_syms.keys()))
-    if common_names:
-        repldict = dict()
-        for name in common_names:
-            repldict[b_syms[name]] = a_syms[name]
-        b = b.subs(repldict)
-    return a, b
-
-
 def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
@@ -2788,7 +2754,6 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
-        a, b = equalize_symbols(a, b)
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation

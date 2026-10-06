@@ -12,7 +12,7 @@ from collections import deque
 from typing import TYPE_CHECKING, List, Optional, Set
 
 import sympy
-from sympy import Symbol, ceiling
+from sympy import Symbol
 from sympy.concrete.summations import Sum
 
 from dace import data, dtypes, registry, subsets, symbolic
@@ -906,7 +906,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                     # This resolves ranges based on the order of iteration
                     # variables pushed on to the stack if we're in a nested
                     # loop.
-                    loop_executions = ceiling(((stop + 1) - start) / stride)
+                    loop_executions = symbolic.ceiling_div((stop + 1) - start, stride)
                     for outer_itvar_string in reversed(itvar_stack):
                         outer_range = state.ranges[outer_itvar_string]
                         outer_start = outer_range[0][0]
@@ -914,8 +914,8 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
                         exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
-                        loop_executions = Sum(exec_repl,
-                                              (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
+                        loop_executions = Sum(
+                            exec_repl, (outer_itvar, 0, symbolic.ceiling_div(outer_stop - outer_start, outer_stride)))
                     loop_executions = loop_executions.doit()
 
                     loop_state = condition_edges[state].dst

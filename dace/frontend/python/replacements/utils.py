@@ -9,7 +9,7 @@ from dace.frontend.python import astutils
 
 import itertools
 from numbers import Number, Integral
-from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
+from typing import List, Mapping, Sequence, Tuple, TYPE_CHECKING, Union
 
 import numpy as np
 import sympy as sp
@@ -52,7 +52,7 @@ def simple_call(pv: 'ProgramVisitor',
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
     elif symbolic.issymbolic(inpname):
-        dtype = symbolic.symtype(inpname)
+        dtype = symbolic.symtype(inpname, pv.symbol_types())
         inparr = data.Scalar(dtype)
         create_input = False
     else:
@@ -229,10 +229,14 @@ def np_result_type(nptypes):
     return dtypes.dtype_to_typeclass(restype.type)
 
 
-def sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
+def sym_type(expr: Union[symbolic.symbol, sp.Basic], symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """ The type of a symbolic expression whose symbols have the types ``symbols`` gives by name.
+
+        :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+    """
     if isinstance(expr, symbolic.symbol):
-        return expr.dtype
-    representative_value = expr.subs([(s, representative_num(s.dtype)) for s in expr.free_symbols])
+        return symbols[expr.name]
+    representative_value = expr.subs([(s, representative_num(symbols[s.name])) for s in expr.free_symbols])
     pyval = eval(astutils.unparse(representative_value))
     # Overflow check
     if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or pyval < np.iinfo(np.int64).min):

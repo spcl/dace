@@ -1048,7 +1048,7 @@ class SDFG(ControlFlowRegion):
                    predicates: FrozenSet[symbolic.Predicate] = frozenset()):
         """ Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
-            :param name: Symbol name, or a symbol, whose dtype and declared assumptions are taken.
+            :param name: Symbol name, or a symbol, whose declaration is taken.
             :param stype: Symbol type.
             :param find_new_name: Find a new name.
             :param predicates: Sign predicates assumed for the symbol.
@@ -1057,9 +1057,7 @@ class SDFG(ControlFlowRegion):
                                                  predicates contradict the SDFG's facts.
         """
         if isinstance(name, symbolic.symbol):
-            # The assumptions given at declaration, not the ones SymPy derives from them
-            predicates = symbolic.declared_predicates(name)
-            name, stype = name.name, name.dtype
+            name, stype, predicates = name.name, name.declaration.dtype, name.declaration.predicates
         dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError(f'Invalid type {stype} for symbol "{name}"')
@@ -2383,8 +2381,12 @@ class SDFG(ControlFlowRegion):
             scoped.update(name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments)
             # Declared by name only: a symbol object inside an expression may be any symbol of that name (SymPy caches
             # by name), so its own declaration is not this SDFG's. A dimension that is a single symbol is an extent,
-            # so that symbol is nonnegative.
-            extents = {str(dim) for dim in getattr(desc, 'shape', ()) if isinstance(dim, symbolic.symbol)}
+            # so that symbol is nonnegative; an undefined symbol is a placeholder with no facts.
+            extents = {
+                str(dim)
+                for dim in getattr(desc, 'shape', ())
+                if isinstance(dim, symbolic.symbol) and not isinstance(dim, symbolic.UndefinedSymbol)
+            }
             for sym in sorted(desc.free_symbols, key=str):
                 if (isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
                         and sym.name not in scoped):

@@ -1964,8 +1964,6 @@ def traverse_sdfg_with_defined_symbols(
     # Start with global symbols and scalar constants
     symbols = dict(sdfg.symbols)
     symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
-    for desc in sdfg.arrays.values():
-        symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 

@@ -139,8 +139,8 @@ def _nested_symbol_types(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
 def test_frontend_declares_map_parameter_with_its_range_type():
     """The body of a map is a nested SDFG, which receives the parameter as a symbol of the type the frontend infers
     from the range (``start:stop:step``); it must match the map's, or the call narrows the parameter."""
-    assert _nested_symbol_types(strided_conditional.to_sdfg(simplify=True), 'i') == [dace.int64]
-    assert _nested_symbol_types(default_conditional.to_sdfg(simplify=True), 'i') == [dace.int32]
+    assert _nested_symbol_types(strided_conditional.to_sdfg(simplify=False), 'i') == [dace.int64]
+    assert _nested_symbol_types(default_conditional.to_sdfg(simplify=False), 'i') == [dace.int32]
 
 
 def test_frontend_map_parameter_beyond_32_bits():

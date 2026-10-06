@@ -113,7 +113,6 @@ def rename_map_parameters(
     second_map: nodes.Map,
     second_map_entry: nodes.MapEntry,
     state: dace.SDFGState,
-    simplify_ranges: bool = False,
 ) -> None:
     """Replaces the map parameters of the second map with names from the first.
 
@@ -125,13 +124,11 @@ def rename_map_parameters(
     :param second_map: The second map, this map will be replaced.
     :param second_map_entry: The entry node of the second map.
     :param state: The SDFGState on which we operate.
-    :param simplify_ranges: Perform simplification on the range expressions.
     """
     # Compute the replacement dict.
     repl_dict: Dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
-        simplify_ranges=simplify_ranges,
     )
 
     if repl_dict is None:

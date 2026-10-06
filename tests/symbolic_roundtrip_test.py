@@ -319,13 +319,12 @@ def test_symbolic_roundtrip_preserves_integerness():
         assert s1.is_integer == s2.is_integer
 
 
-def test_max_roundtrip_keeps_integer_assumptions():
+def test_max_roundtrip_is_lossless():
     expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
 
     rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
 
-    assert expr.is_integer
-    assert rt.is_integer
+    assert rt == expr
 
 
 if __name__ == '__main__':
@@ -355,4 +354,4 @@ if __name__ == '__main__':
     test_interstate_edge_assignment_roundtrip()
     test_symbolic_expression_serialization_preserves_integerness()
     test_symbolic_roundtrip_preserves_integerness()
-    test_max_roundtrip_keeps_integer_assumptions()
+    test_max_roundtrip_is_lossless()

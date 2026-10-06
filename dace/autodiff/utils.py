@@ -451,9 +451,8 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
-                idx_sym = connector_symbol(idx, symbols.get(idx) or tasklet.in_connectors.get(idx))
-                # An Idx label must be integral, so a non-integer declaration cannot supply one.
-                symbol_table[idx] = sp.Idx(idx_sym if idx_sym.is_integer else symbolic.symbol(idx))
+                # An Idx label must be integral, and an index is an integer by definition
+                symbol_table[idx] = sp.Idx(sp.Symbol(idx, integer=True))
                 indexed_objects_code += f"    {idx} = {SYMBOL_TABLE_GLOBAL}['{idx}']\n"
 
     code_fn = """

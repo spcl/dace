@@ -111,9 +111,7 @@ def infer_expr_type(code, symbols=None):
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, symbol):
-        if code.name in symbols:
-            return symbols[code.name]
-        return code.dtype
+        return symbols.get(code.name)
     elif isinstance(code, symbolic.TypedConstant):
         return code.dtype
     elif isinstance(code, sympy.Basic):
@@ -415,7 +413,7 @@ def _Name(t, symbols, inferred_symbols):
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
             elif isinstance(inferred_type, symbolic.symbol):
-                inferred_type = inferred_type.dtype
+                inferred_type = inferred_type.declaration.dtype
             elif isinstance(inferred_type, data.Data):
                 inferred_type = inferred_type.dtype
         elif t_id in inferred_symbols:
