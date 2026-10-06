@@ -82,8 +82,7 @@ def test_dot_strided(implementation):
     assert np.allclose(daceres, reference)
 
 
-@pytest.mark.parametrize(('implementation', ), [('pure', ),
-                                                pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', )])
+@pytest.mark.parametrize(('implementation', ), [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', )])
 def test_transpose_strided_column(implementation):
     """``pos[:, 0:1]`` is an (N, 1) column whose rows are 3 apart: a vendor transpose reads it by that stride,
     not as N contiguous elements (nbody's pairwise separations under OpenBLAS)."""

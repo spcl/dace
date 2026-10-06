@@ -185,8 +185,15 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         order = 'CblasRowMajor'
         trans = 'CblasTrans'
         code = ("cblas_{f}({o}, {t}, {m}, {n}, {cast}{a}, {cast}_inp, "
-                "{lda}, {cast}_out, {ldb});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha, cast=cast,
-                                                       lda=lda, ldb=ldb)
+                "{lda}, {cast}_out, {ldb});").format(f=func,
+                                                     o=order,
+                                                     t=trans,
+                                                     m=m,
+                                                     n=n,
+                                                     a=alpha,
+                                                     cast=cast,
+                                                     lda=lda,
+                                                     ldb=ldb)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
