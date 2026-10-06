@@ -160,10 +160,10 @@ def replace_dict(subgraph: 'StateSubgraphView',
                         repl_val = symrepl[node_data_symbolic]
                         # Skip when the replacement is a sympy symbol / expression (representing
                         # another array name, not a literal constant) -- wrapping in a constant
-                        # tasklet is the wrong transformation, and ``dtypes.typeclass(type(...))``
-                        # would raise ``KeyError`` on the sympy class anyway. The branch is for
-                        # literal-constant scalar inputs only.
-                        if isinstance(repl_val, (sp.Basic, dace.symbolic.SymExpr)):
+                        # tasklet is the wrong transformation. The branch is for literal-constant
+                        # scalar inputs only, which a sympy number (``pystr_to_symbolic('5')``) is too.
+                        if isinstance(repl_val, dace.symbolic.SymExpr) or (isinstance(repl_val, sp.Basic)
+                                                                           and not repl_val.is_number):
                             continue
                         tasklet = state.add_tasklet(name="constant",
                                                     inputs={},
