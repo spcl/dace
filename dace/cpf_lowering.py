@@ -2660,6 +2660,154 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     '    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n);\n'
     '    return gpuGetLastError();\n'
     '}',
+    'segments_inclusive':
+    '//: Independent inclusive scans over one buffer, the device side of a strided or segmented Scan: scan k\n'
+    '//: reads in[k * pitch + g * step] for g below its length -- the residue classes mod s are\n'
+    '//: {n, s, 1, s, n}, the rows of a segmented scan {n, rows, n / rows, 1, n / rows}. Many interleaved\n'
+    '//: classes take one thread each; otherwise every scan is cut into chunks of 4096 elements and scanned\n'
+    '//: in three phases: every (scan, chunk) block folds its chunk, one block per scan scans those totals,\n'
+    '//: and every block rescans its chunk entered with the total before it. Block b is scan b % count of\n'
+    '//: chunk b / count.\n'
+    'struct cpf_segments {\n'
+    '    long n, count, pitch, step, cap;\n'
+    '    __host__ __device__ long length(long k) const {\n'
+    '        const long first = k * pitch;\n'
+    '        if (first >= n) return 0;\n'
+    '        const long m = (n - first + step - 1) / step;\n'
+    '        return m < cap ? m : cap;\n'
+    '    }\n'
+    '};\n'
+    'template <typename T, typename Op>\n'
+    '__global__ void cpf_per_class_scan_kernel(const T *__restrict__ in, T *__restrict__ out, long n, long s, Op op) {\n'
+    '    const long k = (long)blockIdx.x * (long)blockDim.x + (long)threadIdx.x;\n'
+    '    if (k >= s || k >= n) return;\n'
+    '    T acc = in[k];\n'
+    '    out[k] = acc;\n'
+    '    for (long j = k + s; j < n; j += s) { acc = op(acc, in[j]); out[j] = acc; }\n'
+    '}\n'
+    'template <typename T, typename Op>\n'
+    'struct cpf_scan_carry {\n'
+    '    T running;\n'
+    '    Op op;\n'
+    '    __device__ T operator()(T block_aggregate) { const T seed = running; running = op(running, block_aggregate); return seed; }\n'
+    '};\n'
+    '//: m elements spaced step apart, scanned by the whole block with seed folded in front.\n'
+    'template <typename T, typename Op, int BLOCK>\n'
+    '__device__ void cpf_block_scan(const T *__restrict__ in, T *__restrict__ out, long m, long step, Op op, T identity,\n'
+    '                               T seed) {\n'
+    '    typedef gpucub::BlockScan<T, BLOCK> BlockScanT;\n'
+    '    __shared__ typename BlockScanT::TempStorage storage;\n'
+    '    cpf_scan_carry<T, Op> carry{seed, op};\n'
+    '    for (long base = 0; base < m; base += BLOCK) {\n'
+    '        const long g = base + (long)threadIdx.x;\n'
+    '        T value = (g < m) ? in[g * step] : identity;  // every lane reaches the barrier in the scan\n'
+    '        BlockScanT(storage).InclusiveScan(value, value, op, carry);\n'
+    '        if (g < m) out[g * step] = value;\n'
+    '        __syncthreads();\n'
+    '    }\n'
+    '}\n'
+    '//: Where this block\'s chunk starts in the buffer, and how many elements of its scan it holds.\n'
+    '__device__ inline void cpf_chunk_of_block(const cpf_segments &seg, long chunk, long *offset, long *count) {\n'
+    '    const long k = (long)blockIdx.x % seg.count;\n'
+    '    const long begin = ((long)blockIdx.x / seg.count) * chunk;\n'
+    '    const long m = seg.length(k);\n'
+    '    *offset = k * seg.pitch + begin * seg.step;\n'
+    '    *count = (m > begin) ? ((m - begin < chunk) ? (m - begin) : chunk) : 0;\n'
+    '}\n'
+    'template <typename T, typename Op, int BLOCK>\n'
+    '__global__ void cpf_chunk_totals_kernel(const T *__restrict__ in, T *__restrict__ totals, cpf_segments seg, long chunk,\n'
+    '                                        Op op, T identity) {\n'
+    '    long offset, count;\n'
+    '    cpf_chunk_of_block(seg, chunk, &offset, &count);\n'
+    '    T acc = identity;\n'
+    '    for (long g = (long)threadIdx.x; g < count; g += BLOCK) acc = op(acc, in[offset + g * seg.step]);\n'
+    '    typedef gpucub::BlockReduce<T, BLOCK> BlockReduceT;\n'
+    '    __shared__ typename BlockReduceT::TempStorage storage;\n'
+    '    const T total = BlockReduceT(storage).Reduce(acc, op);\n'
+    '    if (threadIdx.x == 0) totals[blockIdx.x] = total;\n'
+    '}\n'
+    'template <typename T, typename Op, int BLOCK>\n'
+    '__global__ void cpf_segment_scan_kernel(const T *__restrict__ in, T *__restrict__ out, cpf_segments seg, Op op,\n'
+    '                                        T identity) {\n'
+    '    const long k = (long)blockIdx.x;\n'
+    '    cpf_block_scan<T, Op, BLOCK>(in + k * seg.pitch, out + k * seg.pitch, seg.length(k), seg.step, op, identity,\n'
+    '                                 identity);\n'
+    '}\n'
+    'template <typename T, typename Op, int BLOCK>\n'
+    '__global__ void cpf_chunk_scan_kernel(const T *__restrict__ in, T *__restrict__ out, const T *__restrict__ totals,\n'
+    '                                      cpf_segments seg, long chunk, Op op, T identity) {\n'
+    '    long offset, count;\n'
+    '    cpf_chunk_of_block(seg, chunk, &offset, &count);\n'
+    '    const T seed = ((long)blockIdx.x >= seg.count) ? totals[(long)blockIdx.x - seg.count] : identity;\n'
+    '    cpf_block_scan<T, Op, BLOCK>(in + offset, out + offset, count, seg.step, op, identity, seed);\n'
+    '}\n'
+    'template <typename T, typename Op>\n'
+    'static inline gpuError_t segments_inclusive(const T *in, T *out, cpf_segments seg, Op op, T identity,\n'
+    '                                            gpuStream_t stream) {\n'
+    '    constexpr int block = 256;\n'
+    '    constexpr long chunk = 16L * block;\n'
+    '    if (seg.count <= 0 || seg.n <= 0) return gpuSuccess;\n'
+    '    if (seg.pitch == 1 && seg.count >= 4096) {\n'
+    '        cpf_per_class_scan_kernel<T, Op><<<(unsigned)((seg.count + block - 1) / block), block, 0, stream>>>(\n'
+    '            in, out, seg.n, seg.step, op);\n'
+    '        return gpuGetLastError();\n'
+    '    }\n'
+    '    const long chunks = (seg.length(0) + chunk - 1) / chunk;\n'
+    '    if (chunks <= 1) {\n'
+    '        cpf_segment_scan_kernel<T, Op, block><<<(unsigned)seg.count, block, 0, stream>>>(in, out, seg, op, identity);\n'
+    '        return gpuGetLastError();\n'
+    '    }\n'
+    '    gpuError_t status = gpuSuccess;\n'
+    '    T *totals = (T *)get_scratch<ScanTag>((size_t)(chunks * seg.count) * sizeof(T), stream, &status);\n'
+    '    if (totals == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
+    '    const unsigned blocks = (unsigned)(chunks * seg.count);\n'
+    '    cpf_chunk_totals_kernel<T, Op, block><<<blocks, block, 0, stream>>>(in, totals, seg, chunk, op, identity);\n'
+    '    const cpf_segments of_totals{chunks * seg.count, seg.count, 1, seg.count, chunks};\n'
+    '    cpf_segment_scan_kernel<T, Op, block><<<(unsigned)seg.count, block, 0, stream>>>(totals, totals, of_totals, op,\n'
+    '                                                                                    identity);\n'
+    '    cpf_chunk_scan_kernel<T, Op, block><<<blocks, block, 0, stream>>>(in, out, totals, seg, chunk, op, identity);\n'
+    '    return gpuGetLastError();\n'
+    '}',
+    'strided_inclusive_sum':
+    'template <typename T>\n'
+    'static inline gpuError_t strided_inclusive_sum(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_plus(), T(0), stream);\n'
+    '}',
+    'segmented_inclusive_sum':
+    'template <typename T>\n'
+    'static inline gpuError_t segmented_inclusive_sum(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_plus(), T(0), stream);\n'
+    '}',
+    'strided_inclusive_product':
+    'template <typename T>\n'
+    'static inline gpuError_t strided_inclusive_product(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_multiplies(), T(1), stream);\n'
+    '}',
+    'segmented_inclusive_product':
+    'template <typename T>\n'
+    'static inline gpuError_t segmented_inclusive_product(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_multiplies(), T(1), stream);\n'
+    '}',
+    'strided_inclusive_min':
+    'template <typename T>\n'
+    'static inline gpuError_t strided_inclusive_min(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_minimum(), min_identity<T>(), stream);\n'
+    '}',
+    'segmented_inclusive_min':
+    'template <typename T>\n'
+    'static inline gpuError_t segmented_inclusive_min(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_minimum(), min_identity<T>(), stream);\n'
+    '}',
+    'strided_inclusive_max':
+    'template <typename T>\n'
+    'static inline gpuError_t strided_inclusive_max(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, 1, s, n}, cpf_cub_maximum(), max_identity<T>(), stream);\n'
+    '}',
+    'segmented_inclusive_max':
+    'template <typename T>\n'
+    'static inline gpuError_t segmented_inclusive_max(const T *in, T *out, long n, long s, gpuStream_t stream) {\n'
+    '    return segments_inclusive(in, out, cpf_segments{n, s, n / s, 1, n / s}, cpf_cub_maximum(), max_identity<T>(), stream);\n'
+    '}',
 }
 
 HIP_INLINE_DEFINITIONS: Dict[str, str] = {**INLINE_DEFINITIONS, **HIP_DEVICE_INLINE_DEFINITIONS}
@@ -2668,6 +2816,15 @@ HIP_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     **DEFINITION_DEPENDENCIES,
     'find_first_index_device': ('get_scratch', ),
     'inclusive_affine': ('get_scratch', ),
+    'segments_inclusive': ('get_scratch', ),
+    'strided_inclusive_sum': ('segments_inclusive', ),
+    'segmented_inclusive_sum': ('segments_inclusive', ),
+    'strided_inclusive_product': ('segments_inclusive', ),
+    'segmented_inclusive_product': ('segments_inclusive', ),
+    'strided_inclusive_min': ('segments_inclusive', 'min_identity'),
+    'segmented_inclusive_min': ('segments_inclusive', 'min_identity'),
+    'strided_inclusive_max': ('segments_inclusive', 'max_identity'),
+    'segmented_inclusive_max': ('segments_inclusive', 'max_identity'),
 }
 
 #: The CUB scratch pool's tag types, which reach the text as template ARGUMENTS rather than as

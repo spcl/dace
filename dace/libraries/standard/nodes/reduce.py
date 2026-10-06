@@ -102,6 +102,38 @@ class ExpandReducePure(pm.ExpandTransformation):
             return dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.Sequential
         return default
 
+    #: Upper bound on the blocks of a whole-array device reduction: about seven per compute unit of
+    #: an MI300X (304) and fifteen per SM of an H100 (132), enough to keep the loads in flight.
+    GRID_STRIDE_BLOCKS = 2048
+
+    @classmethod
+    def add_grid_stride_reduction(cls, nstate: SDFGState, param: str, extent, inmm: dace.Memlet, outm: dace.Memlet,
+                                  suffix: str) -> None:
+        """A whole-array reduction on the device, as a bounded grid of blocks striding over ``_in``.
+
+        One map over the whole range made one block per 128 elements, and each block commits its
+        ``gpucub::BlockReduce`` total with one atomic on the single accumulator. A product has no
+        native atomic, so that is a CAS loop, and 2.5 million of them on one address cost 8.5 s
+        for tsvc s312's 3.2e8 elements. Here at most :data:`GRID_STRIDE_BLOCKS` blocks of
+        :data:`~dace.libraries.standard.block_reduce.BLOCK_COLLECTIVE_THREADS` threads each fold a
+        strided share in a register first; the code generator folds the block with a warp-shuffle
+        ``gpucub::BlockReduce``, so the accumulator sees at most that many atomics -- for a sum
+        (native atomic) and a product (CAS) alike.
+        """
+        from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+        lanes = BLOCK_COLLECTIVE_THREADS
+        blocks = dace.symbolic.pystr_to_symbolic(f'Min(int_ceil({symstr(extent)}, {lanes}), {cls.GRID_STRIDE_BLOCKS})')
+        block, lane = '_rb' + suffix, '_rl' + suffix
+        gme, gmx = nstate.add_map('reduce_grid', {block: subsets.Range([(0, blocks - 1, 1)])},
+                                  schedule=dtypes.ScheduleType.GPU_Device)
+        tme, tmx = nstate.add_map('reduce_lanes', {lane: f'0:{lanes}'}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+        first = dace.symbolic.pystr_to_symbolic(f'{block} * {lanes} + {lane}')
+        ime, imx = nstate.add_map('reduce_values', {param: subsets.Range([(first, extent - 1, blocks * lanes)])},
+                                  schedule=dtypes.ScheduleType.Sequential)
+        t = nstate.add_tasklet('identity', {'__inp': None}, {'__out': None}, '__out = __inp')
+        nstate.add_memlet_path(nstate.add_read('_in'), gme, tme, ime, t, dst_conn='__inp', memlet=inmm)
+        nstate.add_memlet_path(t, imx, tmx, gmx, nstate.add_write('_out'), src_conn='__out', memlet=outm)
+
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
@@ -212,6 +244,11 @@ class ExpandReducePure(pm.ExpandTransformation):
             ome, omx = None, None
             outm = dace.Memlet.simple('_out', '0', wcr_str=node.wcr)
             inmm = dace.Memlet.simple('_in', ','.join([iname(i) for i in range(len(axes))]))
+
+        if ome is None and len(axes) == 1 and outer_schedule == dtypes.ScheduleType.GPU_Device:
+            ExpandReducePure.add_grid_stride_reduction(nstate, iname(0),
+                                                       insubset.size()[isqdim.index(axes[0])], inmm, outm, suffix)
+            return nsdfg
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet

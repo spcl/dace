@@ -235,6 +235,17 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
     return in_desc, out_desc, in_edges[0], out_edges[0], (init_edges[0] if init_edges else None)
 
 
+def segmented(node: "Scan") -> bool:
+    """Whether ``node`` scans several consecutive segments rather than its whole input."""
+    return not symbolic.equal_valued(1, node.segments)
+
+
+def refuse_segments(node: "Scan", expansion: str) -> None:
+    """Only ``CUDA`` lowers a segmented scan; every other expansion would scan across the segment boundaries."""
+    if segmented(node):
+        raise NotImplementedError(f"Scan({expansion}): ``segments`` != 1 is lowered by the CUDA expansion only.")
+
+
 def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG):
     """Validate every chain and return chain 0's ``(in_desc, out_desc, in_edge, out_edge)``.
 
@@ -242,6 +253,10 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
     schedule, one OpenMP region), so they must agree on element count and dtype --
     they are lowered as list items of a single ``reduction(inscan, ...)`` clause.
     """
+    if segmented(node) and (node.chains != 1 or node.exclusive or node.op is ScanOp.AFFINE or _has_init(node)
+                            or not symbolic.equal_valued(1, node.stride)):
+        raise ValueError(f"Scan node {node.label}: ``segments`` != 1 needs an inclusive, single-chain, unit-stride, "
+                         f"unseeded scan that is not AFFINE.")
     first = None
     for chain in range(node.chains):
         in_desc, out_desc, in_edge, out_edge, _ = _validate_chain(node, state, sdfg, chain)
@@ -783,6 +798,7 @@ class ExpandSequential(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        refuse_segments(node, 'sequential')
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         # The hint is read after expansion (``dace.codegen.cpf``); a comment claiming the parallel
@@ -966,6 +982,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> Union[nodes.Tasklet, dace.SDFG]:
+        refuse_segments(node, 'pure')
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         if node.specialization_hint == PARALLEL_SCAN_HINT:
@@ -1016,6 +1033,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        refuse_segments(node, 'CPU')
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         # SCOPE decides the shape, not ``node.schedule``: that is storage-derived, so a Scan
@@ -1126,15 +1144,19 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
                          language=dace.Language.CPP)
 
 
-def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
-    """``s`` independent residue-class scans, one device thread per class.
+def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
+    """Many independent scans over one buffer in a fixed number of launches: the ``s`` residue classes of a
+    strided scan, or the consecutive rows of a segmented one.
 
-    ``gpucub::DeviceScan`` scans one contiguous sequence, so it cannot serve a stride: CUB has a
-    segmented reduce and a segmented sort but no segmented scan, and driving the residue classes
-    through ``s`` separate strided-iterator ``DeviceScan`` calls would be ``s`` kernel launches for
-    the shape that produces most of them (``LoopToScan``'s composite body, where ``s`` is the inner
-    size and runs to 1e5). One launch over ``dace::cuda_scan::strided_inclusive_<op>``
-    (:file:`dace/runtime/include/dace/cuda/scan.cuh`) walks every class in parallel instead.
+    ``gpucub::DeviceScan`` scans one contiguous sequence, so it cannot serve either: CUB has a
+    segmented reduce and a segmented sort but no segmented scan, and driving the scans through
+    separate ``DeviceScan`` calls would be one launch per scan for the shapes that produce most of
+    them (``LoopToScan``'s composite body, where ``s`` is the inner size and runs to 1e5; a map of
+    row scans, 13482 rows in ``safety_map_of_scans``). ``dace::cuda_scan::strided_inclusive_<op>`` /
+    ``segmented_inclusive_<op>`` (:file:`dace/runtime/include/dace/cuda/scan.cuh`) give many
+    interleaved classes one thread each and cut every other scan into chunks scanned in three phases
+    (chunk totals, their scan, a seeded rescan), so a symbolic stride of 1..8 (tsvc's
+    ``a[i] = a[i-K] + x[i]``) does not run as ``K`` blocks over the whole array.
 
     Emitted as a wrapper in the CUDA translation unit and CALLED from the host tasklet, the same
     shape :func:`affine_cuda_tasklet` and the cub path use: the kernel launch is nvcc/hipcc-only
@@ -1142,26 +1164,26 @@ def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
     every dtype the header accepts works.
     """
     if node.chains != 1:
-        raise NotImplementedError("Scan(CUDA, stride > 1): multi-chain scans are not yet supported.")
+        raise NotImplementedError("Scan(CUDA, strided): multi-chain scans are not yet supported.")
     if node.exclusive:
-        raise NotImplementedError("Scan(CUDA, stride > 1): ``exclusive=True`` is not yet supported.")
+        raise NotImplementedError("Scan(CUDA, strided): ``exclusive=True`` is not yet supported.")
     if _has_init(node):
-        raise NotImplementedError("Scan(CUDA, stride > 1): ``_scan_init`` is not yet supported.")
+        raise NotImplementedError("Scan(CUDA, strided): ``_scan_init`` is not yet supported.")
     ctype = out_desc.dtype.base_type.ctype
     suffix = _OP_TO_OMP_SUFFIX[node.op]
-    wrapper = f'__dace_scan_strided_{global_code_id(sdfg, state, node)}'
+    kind, count = ('segmented', node.segments) if segmented(node) else ('strided', node.stride)
+    wrapper = f'__dace_scan_{kind}_{global_code_id(sdfg, state, node)}'
     params = f'const {ctype}* __sc_in, {ctype}* __sc_out, long __sc_n, long __sc_s, gpuStream_t __sc_stream'
     prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
     sdfg.append_global_code(prototype + '\n')
     sdfg.append_global_code(
         f'{prototype}\n'
         f'gpuError_t {wrapper}({params}) {{\n'
-        f'    ::dace::cuda_scan::strided_inclusive_{suffix}<{ctype}>('
+        f'    return ::dace::cuda_scan::{kind}_inclusive_{suffix}<{ctype}>('
         f'__sc_in, __sc_out, __sc_n, __sc_s, __sc_stream);\n'
-        f'    return gpuGetLastError();\n'
         f'}}\n', 'cuda')
     code = (f'DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, '
-            f'(long)({_resolve_length(node, state, sdfg)}), (long)({sym2cpp(node.stride)}), '
+            f'(long)({_resolve_length(node, state, sdfg)}), (long)({sym2cpp(count)}), '
             f'__dace_current_stream));')
     return nodes.Tasklet(node.name,
                          inputs={INPUT_CONNECTOR_NAME: None},
@@ -1186,6 +1208,8 @@ def block_refusal(node: "Scan") -> Optional[str]:
         return "op=AFFINE is not supported."
     if node.chains != 1:
         return "multi-chain scans are not supported."
+    if segmented(node):
+        return "segmented scans are not supported."
     if node.exclusive:
         return "exclusive scans are not supported."
     if _has_init(node):
@@ -1314,12 +1338,12 @@ class ExpandCUDA(ExpandTransformation):
         stride_expr = sym2cpp(node.stride)
         is_stride_one = symbolic.equal_valued(1, node.stride)
 
-        if not is_stride_one:
+        if not is_stride_one or segmented(node):
             # ``gpucub::DeviceScan`` walks one contiguous sequence and would run past each
-            # residue's boundary, so stride > 1 takes the residue-class kernel instead. Same
+            # residue's (or row's) boundary, so these take the batched kernels instead. Same
             # implementation key: a caller that asks for the GPU should not also have to know
             # the stride, and the fast-library priority lists only ever name ``CUDA``.
-            return strided_cuda_tasklet(node, state, sdfg, out_desc)
+            return batched_cuda_tasklet(node, state, sdfg, out_desc)
 
         # The chains are independent, so on the device they stay independent cub
         # launches -- the CPU-side fork/join fusion the multi-chain shape exists for
@@ -1517,6 +1541,14 @@ class Scan(nodes.LibraryNode):
                               "non-positive stride at runtime terminates the program before the scan "
                               "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
                               "are not yet supported.")
+
+    segments = SymbolicProperty(default=1,
+                                allow_none=False,
+                                desc="Number of equal CONSECUTIVE segments the input is cut into, each scanned on "
+                                "its own: ``out[r*L + k] = in[r*L] OP ... OP in[r*L + k]`` for ``L = N / segments``. "
+                                "The default ``1`` is one scan over the whole input. ``segments > 1`` batches the "
+                                "rows of a map of scans into one invocation; it is inclusive, single-chain, "
+                                "unit-stride, unseeded and not AFFINE, and only the ``CUDA`` expansion lowers it.")
 
     implementations = {
         "CPU": ExpandCPU,
