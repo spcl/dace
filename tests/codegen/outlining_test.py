@@ -437,6 +437,56 @@ def test_region_equal_functions_shared():
     assert np.allclose(A, ref)
 
 
+def _literal_scalar_sdfg(name: str, second_value: str, second_reads_data: bool) -> dace.SDFG:
+    """
+    Sets scalars ``c`` to a literal and ``d`` to ``second_value`` (which reads ``A[0]`` as ``a`` if
+    ``second_reads_data``), then scales ``A`` by both in a loop.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_scalar('c', dace.float64, transient=True)
+    sdfg.add_scalar('d', dace.float64, transient=True)
+    init = sdfg.add_state('init', is_start_block=True)
+    for scalar, code, inputs in [('c', 'o = dace.float64(-2.0)', {}),
+                                 ('d', f'o = {second_value}', {'a'} if second_reads_data else {})]:
+        t = init.add_tasklet(f'set_{scalar}', inputs, {'o'}, code)
+        if inputs:
+            init.add_edge(init.add_read('A'), None, t, 'a', dace.Memlet('A[0]'))
+        init.add_edge(t, 'o', init.add_write(scalar), None, dace.Memlet(scalar))
+    loop = LoopRegion('scale', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+    body = loop.add_state('body', is_start_block=True)
+    t = body.add_tasklet('scale', {'a', 'f', 'g'}, {'b'}, 'b = a * f + g')
+    body.add_edge(body.add_read('A'), None, t, 'a', dace.Memlet('A[i]'))
+    body.add_edge(body.add_read('c'), None, t, 'f', dace.Memlet('c'))
+    body.add_edge(body.add_read('d'), None, t, 'g', dace.Memlet('d'))
+    body.add_edge(t, 'b', body.add_write('A'), None, dace.Memlet('A[i]'))
+    xfh.wrap_in_function_region([loop], 'scale_fn', dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+    return sdfg
+
+
+def test_region_literal_scalars_folded():
+    """ A scalar only ever assigned one literal is a constant of the function; one computed from data is not. """
+    sdfg = _literal_scalar_sdfg('fnregion_literals', 'a * 3', True)
+    frame, unit = _linkable_sources(sdfg)
+    params = _signature(unit, 'scale_fn')
+    assert not re.search(r'\bc\b', params) and re.search(r'const double c = -2\.0;', unit)
+    assert re.search(r'\bd\b', params)
+    A = np.random.rand(10)
+    ref = A * -2.0 + A[0] * 3
+    sdfg(A=A, N=10)
+    assert np.allclose(A, ref)
+
+
+def test_region_literal_scalar_not_folded_with_call():
+    """ A function call that is not a cast (here ``abs``) does not count as a literal. """
+    sdfg = _literal_scalar_sdfg('fnregion_literal_call', 'abs(-3.0)', False)
+    frame, unit = _linkable_sources(sdfg)
+    assert re.search(r'\bd\b', _signature(unit, 'scale_fn'))
+
+
 def test_region_serialization():
     sdfg = _three_loop_regions('fnregion_serialization', dtypes.FunctionPlacement.SeparateUnit, 'unit0')
     loaded = dace.SDFG.from_json(sdfg.to_json())
@@ -472,4 +522,6 @@ if __name__ == '__main__':
     test_region_units_define_their_nested_functions()
     test_region_with_callback()
     test_region_equal_functions_shared()
+    test_region_literal_scalars_folded()
+    test_region_literal_scalar_not_folded_with_call()
     test_region_serialization()
