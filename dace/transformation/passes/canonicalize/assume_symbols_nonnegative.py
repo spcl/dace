@@ -101,6 +101,12 @@ def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
     return found
 
 
+def passed_through(node: nodes.NestedSDFG, name: str) -> bool:
+    """Whether ``node`` maps its symbol ``name`` to the parent's symbol of the same name."""
+    value = node.symbol_mapping.get(name)
+    return value is not None and str(value) == name
+
+
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     """Set the SymPy ``nonnegative=True`` assumption on every signed-integer argument symbol of
     ``sdfg`` (and its nested SDFGs), in place.
@@ -122,9 +128,17 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     # A name declared positive anywhere keeps that (stronger) assumption everywhere: respelling it merely nonnegative
     # in one SDFG makes it a different sympy symbol from the positive spelling a nested SDFG keeps.
     positive = {s.name for g in sdfg.all_sdfgs_recursive() for s in sized_symbols(g) if s.is_positive}
+    # Per SDFG, the names whose spelling there carries the assumption once this runs. A nested SDFG passes a
+    # same-name symbol through its mapping, and No-View compares its connector descriptors with the parent's
+    # by sympy equality, so it may mark such a name only when the parent marks it too: a loop iterator or map
+    # parameter of the parent is not a free symbol there and stays plain.
+    marked: Dict[SDFG, Set[str]] = {}
     for g in sdfg.all_sdfgs_recursive():
         repl = {}
         plain = names_still_plain(g, positive)
+        node = g.parent_nsdfg_node
+        parent_marked = marked.get(g.parent_sdfg) if node is not None else None
+        marked[g] = set()
         # ``free_symbols``, NOT the argument set: a nested SDFG's size symbol often enters only
         # through descriptor shapes and the symbol mapping, so it is absent from
         # ``used_symbols(all_symbols=False)`` -- and an unstamped nested spelling makes a second
@@ -138,6 +152,9 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
             dtype = g.symbols.get(name)
             if dtype not in SIGNED_INTEGER_DTYPES:
                 continue
+            if parent_marked is not None and name not in parent_marked and passed_through(node, name):
+                continue
+            marked[g].add(name)
             if name not in plain:
                 continue
             assumption = {'positive': True} if name in positive else {'nonnegative': True}
