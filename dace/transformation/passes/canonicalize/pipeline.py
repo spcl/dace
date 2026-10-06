@@ -659,6 +659,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # clean: raise structured control flow (required by every stage), then RemoveViews up front so
     # no matcher reasons through a view (library-node operand views are kept for BLAS expansions).
     s += [('clean', ControlFlowRaising()), ('clean', RequireStructuredControlFlow()), ('clean', RemoveViews())]
+    # Every pattern pass below expects a tasklet to read and write array elements directly, not main's frontend copies.
+    s += [('clean', FoldScalarReadCopies())]
 
     # loop_to_symm: lift the polybench symm MAP form (triangular self-scatter ``C[0:i, j]`` plus
     # point write) to ``Symm``. Must precede normalize_reduction, which rewrites that boundary WCR.

@@ -1,11 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fold the frontend's scalar read copies (``A[i] -> A_index -> tasklet``) into direct tasklet reads.
+"""Fold the frontend's scalar copies into direct tasklet accesses: reads (``A[i] -> A_index -> tasklet``)
+and results (``tasklet -> result -> assign tasklet -> A[i]``).
 
 The Python frontend reads an array element into a transient Scalar before a tasklet uses it. The copy is a
 SNAPSHOT: the tasklet sees ``A[i]`` as it was when the copy ran. Reading ``A[i]`` directly instead is the
 same value exactly when nothing can write ``A`` between the copy and the tasklet. Copy and consumers sit in
 one state, so a write in another state runs wholly before or wholly after both and cannot interfere; only a
-write in the same state that is ordered neither before the copy nor after every consumer can.
+write in the same state that is ordered neither before the copy nor after every consumer can. A result
+copy folds by the mirror rule: no other access to the array may fall between the producing tasklet and the
+write.
 """
 from typing import Any, Dict, Iterator, List, Optional, Set
 
@@ -71,6 +74,51 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
     state.remove_node(scalar)
 
 
+def assign_target(state: SDFGState, scalar: nodes.AccessNode) -> Optional[Any]:
+    """The out-edge of the assign tasklet ``y = x`` that is ``scalar``'s only reader, if it is one."""
+    readers = state.out_edges(scalar)
+    if len(readers) != 1 or not isinstance(readers[0].dst, nodes.Tasklet):
+        return None
+    tasklet = readers[0].dst
+    if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1 or state.out_degree(tasklet) != 1:
+        return None
+    out_conn, in_conn = next(iter(tasklet.out_connectors)), next(iter(tasklet.in_connectors))
+    if tasklet.code.as_string.strip() != f'{out_conn} = {in_conn}':
+        return None
+    target = state.out_edges(tasklet)[0]
+    return target if isinstance(target.dst, nodes.AccessNode) and target.data.wcr is None else None
+
+
+def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str, int]) -> Optional[Any]:
+    """The assign tasklet's edge into the array if the result scalar ``produce`` fills may be folded away."""
+    scalar = produce.dst
+    desc = sdfg.arrays[scalar.data]
+    if not (isinstance(desc, data.Scalar) and desc.transient and counts.get(scalar.data) == 1):
+        return None
+    if not isinstance(produce.src, nodes.Tasklet) or state.in_degree(scalar) != 1 or produce.data.wcr is not None:
+        return None
+    target = assign_target(state, scalar)
+    if target is None or sdfg.arrays[target.dst.data].dtype != desc.dtype:
+        return None
+    if symbolic.equal(target.data.subset.num_elements(), 1) is not True:
+        return None
+    before = reachable(state, produce.src, forward=False)
+    after = reachable(state, target.dst)
+    accessors = [node for node in state.data_nodes() if node.data == target.dst.data and node is not target.dst]
+    if any(node not in before and node not in after for node in accessors):
+        return None
+    return target
+
+
+def fold_write(state: SDFGState, produce: Any, target: Any) -> None:
+    """Let the producing tasklet write the array element itself; drop the scalar and the assign tasklet."""
+    assign = target.src
+    state.add_edge(produce.src, produce.src_conn, target.dst, target.dst_conn,
+                   Memlet(data=target.data.data, subset=target.data.subset))
+    state.remove_node(assign)
+    state.remove_node(produce.dst)
+
+
 def copy_edges(sdfg: SDFG, state: SDFGState) -> Iterator[Any]:
     """The edges that fill a transient Scalar access node in ``state``."""
     for edge in state.edges():
@@ -80,7 +128,7 @@ def copy_edges(sdfg: SDFG, state: SDFGState) -> Iterator[Any]:
 
 @transformation.explicit_cf_compatible
 class FoldScalarReadCopies(ppl.Pass):
-    """Fold every scalar read copy the snapshot rule allows, in ``sdfg`` and its nested SDFGs."""
+    """Fold every scalar read and result copy the snapshot rule allows, in ``sdfg`` and its nested SDFGs."""
     CATEGORY: str = 'Canonicalization'
 
     def modifies(self) -> ppl.Modifies:
@@ -99,9 +147,17 @@ class FoldScalarReadCopies(ppl.Pass):
                     counts[node.data] = counts.get(node.data, 0) + 1
             for state in owner.states():
                 for copy in list(copy_edges(owner, state)):
+                    if copy.dst not in state.nodes():
+                        continue
                     read = foldable(owner, state, copy, counts)
                     if read is not None:
                         fold(state, copy, read)
+                        counts[copy.dst.data] = 0
+                        folded += 1
+                        continue
+                    target = foldable_write(owner, state, copy, counts)
+                    if target is not None:
+                        fold_write(state, copy, target)
                         counts[copy.dst.data] = 0
                         folded += 1
         return folded or None

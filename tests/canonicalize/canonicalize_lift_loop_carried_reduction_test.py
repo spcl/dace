@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.sdfg.state import LoopRegion
 from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.pass_pipeline import Pipeline
@@ -24,6 +25,8 @@ N = dace.symbol('N')
 
 
 def _apply(sdfg) -> int:
+    # Canonicalize folds the frontend's scalar copies before the lift; so does this direct call.
+    FoldScalarReadCopies().apply_pass(sdfg, {})
     res = Pipeline([LiftLoopCarriedReduction()]).apply_pass(sdfg, {})
     return (res or {}).get('LiftLoopCarriedReduction', 0) or 0
 

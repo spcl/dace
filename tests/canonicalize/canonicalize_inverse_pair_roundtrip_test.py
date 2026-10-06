@@ -28,6 +28,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
@@ -213,6 +214,8 @@ def test_mapfission_then_mapfusion_roundtrip():
     exp_c = exp_b + 1.0
 
     sdfg = two_stmt_map.to_sdfg(simplify=True)
+    # Canonicalize folds the frontend's scalar copies before fission and fusion; so does this direct call.
+    FoldScalarReadCopies().apply_pass(sdfg, {})
     assert _nmaps(sdfg) == 1, 'the fixture must start as a single two-statement map'
     nfis = sdfg.apply_transformations_repeated(MapFission)
     sdfg.validate()
