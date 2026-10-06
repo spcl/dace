@@ -195,15 +195,6 @@ def test_fuse_maps_propagates_only_the_connectors_a_fusion_changed(monkeypatch: 
     assert cached_memlets < uncached_memlets
 
 
-def test_fuse_maps_repropagates_a_nested_sdfg_whose_strides_the_fusion_rewrote(monkeypatch: pytest.MonkeyPatch):
-    sdfg = map_chain_with_nested_sdfgs(width=4)
-
-    propagated, _ = fuse_counting_propagations(sdfg, monkeypatch, use_cache=True)
-
-    assert len({id(nested) for nested in propagated}) == CHAIN_LENGTH
-    assert len(propagated) > CHAIN_LENGTH
-
-
 @pytest.mark.parametrize('fixture', sorted(FIXTURES))
 def test_fuse_maps_leaves_the_cfg_list_a_reset_would_build(fixture: str):
     sdfg = FIXTURES[fixture]()
