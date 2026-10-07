@@ -14,14 +14,6 @@ repos:
   - id: check-yaml
   - id: end-of-file-fixer
   - id: trailing-whitespace
-- repo: https://github.com/google/yapf
-  rev: v0.43.0
-  hooks:
-    - id: yapf
-      name: yapf
-      language: python
-      entry: yapf
-      types: [python]
 - repo: local
   hooks:
     # No leading-underscore module/variable/parameter names, no `import x as x` (redundant
