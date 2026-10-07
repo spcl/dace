@@ -18,8 +18,9 @@ def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState
     for region, entry in entries:
         successors = list(region.out_edges(entry))
         # Copies follow the entry on a plain edge; any other shape stays as it is.
-        plain = len(successors) <= 1 and all(edge.data.is_unconditional() and not edge.data.assignments
-                                             for edge in successors)
+        plain = len(successors) <= 1 and all(
+            edge.data.is_unconditional() and not edge.data.assignments for edge in successors
+        )
         if entry.number_of_nodes() > 0 or not plain:
             continue
         for edge in list(region.in_edges(entry)):
@@ -33,7 +34,7 @@ def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGStat
     entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
         for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
-            entry = region.add_state_before(block, 'return_entry', is_start_block=block is region.start_block)
+            entry = region.add_state_before(block, "return_entry", is_start_block=block is region.start_block)
             entries.append((region, entry))
     return entries
 
@@ -43,8 +44,11 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
     entries: List[OffloadingIRNode] = []
 
     def collect(node: OffloadingIRNode) -> None:
-        if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState) and any(
-                isinstance(edge.dst, ReturnBlock) for edge in node.block.parent_graph.out_edges(node.block)):
+        if (
+            node.type == OffloadingIRNode.STATE
+            and isinstance(node.block, SDFGState)
+            and any(isinstance(edge.dst, ReturnBlock) for edge in node.block.parent_graph.out_edges(node.block))
+        ):
             entries.append(node)
 
     traverse_IR(IR, collect)
@@ -59,7 +63,7 @@ def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional
 
 
 #: Connectors the Python frontend wires to ``__pystate`` around a callback, to block reordering.
-PYSTATE_CONNECTORS = frozenset({'__istate', '__ostate'})
+PYSTATE_CONNECTORS = frozenset({"__istate", "__ostate"})
 
 
 def callback_symbol_names(sdfg: SDFG) -> OrderedSet[str]:
@@ -79,15 +83,17 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[O
     if PYSTATE_CONNECTORS & (OrderedSet(node.in_connectors) | OrderedSet(node.out_connectors)):
         return True
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
-    code = node.code.as_string or ''
+    code = node.code.as_string or ""
     return any(name in code for name in names)
 
 
-def scope_holds_callback(state: SDFGState,
-                         entry: Optional[nodes.MapEntry],
-                         scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
-                         sdfg: SDFG,
-                         callback_names: Optional[OrderedSet[str]] = None) -> bool:
+def scope_holds_callback(
+    state: SDFGState,
+    entry: Optional[nodes.MapEntry],
+    scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
+    sdfg: SDFG,
+    callback_names: Optional[OrderedSet[str]] = None,
+) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
     for node in scope_children.get(entry, ()):
@@ -114,7 +120,8 @@ def sdfg_holds_gpu_schedule(sdfg: SDFG) -> bool:
     """Any map or library node anywhere in ``sdfg`` scheduled on the device."""
     return any(
         isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
-        for node, _ in sdfg.all_nodes_recursive())
+        for node, _ in sdfg.all_nodes_recursive()
+    )
 
 
 def is_device_work(node: nodes.Node) -> bool:
@@ -130,7 +137,7 @@ def scope_nodes(state: SDFGState, entry: nodes.MapEntry) -> List[nodes.Node]:
 
 #: Expansions of a library node that emit code for inside a kernel; any other chosen expansion is a call
 #: only host code can issue (a cub device reduce, a vendor BLAS call).
-IN_KERNEL_IMPLEMENTATIONS = frozenset({'pure', 'pure-seq', 'CUDA (block)', 'CUDA (block allreduce)'})
+IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "pure-seq", "CUDA (block)", "CUDA (block allreduce)"})
 
 
 def is_device_wide_libnode(node: nodes.Node) -> bool:
@@ -138,8 +145,12 @@ def is_device_wide_libnode(node: nodes.Node) -> bool:
     from dace.libraries.standard.nodes.copy import CopyLibraryNode  # Avoid import loop
     from dace.libraries.standard.nodes.fill import FillLibraryNode  # Avoid import loop
 
-    return (isinstance(node, nodes.LibraryNode) and not isinstance(node, (CopyLibraryNode, FillLibraryNode))
-            and node.implementation is not None and node.implementation not in IN_KERNEL_IMPLEMENTATIONS)
+    return (
+        isinstance(node, nodes.LibraryNode)
+        and not isinstance(node, (CopyLibraryNode, FillLibraryNode))
+        and node.implementation is not None
+        and node.implementation not in IN_KERNEL_IMPLEMENTATIONS
+    )
 
 
 def holds_device_wide_libnode(node: nodes.Node) -> bool:
@@ -195,8 +206,11 @@ def written_in_full(sdfg: SDFG, name: str) -> bool:
                 if memlet.is_empty() or memlet.dynamic or memlet.wcr is not None:
                     continue
                 written = memlet.get_dst_subset(edge, state)
-                if written is not None and written.covers(whole) and symbolic.equal(
-                        memlet.volume, desc.total_size, is_length=False):
+                if (
+                    written is not None
+                    and written.covers(whole)
+                    and symbolic.equal(memlet.volume, desc.total_size, is_length=False)
+                ):
                     return True
     return False
 
@@ -233,8 +247,12 @@ def is_array(data_name: str, sdfg: SDFG) -> bool:
     """A buffer with a location of its own: not a view (placed with its container), not a container kind, and
     not a constant (declared on both sides)."""
     desc = sdfg.arrays[data_name]
-    return (isinstance(desc, data.Array) and not isinstance(desc, data.View) and not is_unoffloadable(data_name, sdfg)
-            and data_name not in sdfg.constants)
+    return (
+        isinstance(desc, data.Array)
+        and not isinstance(desc, data.View)
+        and not is_unoffloadable(data_name, sdfg)
+        and data_name not in sdfg.constants
+    )
 
 
 def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes.Node) -> Optional[nodes.MapEntry]:
@@ -256,13 +274,9 @@ def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
         scopes = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES:
-                through_the_exit |= get_data_used_by_access_nodes(sdfg,
-                                                                  state,
-                                                                  node,
-                                                                  downstream=True,
-                                                                  include_scalars=True,
-                                                                  ordering=False,
-                                                                  through_copies=False)
+                through_the_exit |= get_data_used_by_access_nodes(
+                    sdfg, state, node, downstream=True, include_scalars=True, ordering=False, through_copies=False
+                )
             if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
                 continue
             kernel = enclosing_kernel(scopes, node)
@@ -278,19 +292,22 @@ def device_resident(sdfg: SDFG) -> OrderedSet[str]:
     for nested in sdfg.all_sdfgs_recursive():
         for name, desc in nested.arrays.items():
             if desc.storage in GPU_RESIDENT_STORAGES:
-                placed.add(f'{nested.cfg_id}.{name}')
+                placed.add(f"{nested.cfg_id}.{name}")
     return placed
 
 
 def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
     """Raise if a Scalar a kernel writes would reach that kernel by value, which discards the write."""
     offenders = [
-        name for name in data_written_by_device_code(sdfg)
+        name
+        for name in data_written_by_device_code(sdfg)
         if isinstance(sdfg.arrays[name], data.Scalar) and sdfg.arrays[name].storage != dtypes.StorageType.GPU_Global
     ]
     if offenders:
-        raise ValueError(f'device code writes {offenders}, still Scalars in host storage; a kernel takes those '
-                         'by value, so the write would be lost')
+        raise ValueError(
+            f"device code writes {offenders}, still Scalars in host storage; a kernel takes those "
+            "by value, so the write would be lost"
+        )
 
 
 def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: OrderedSet[str]) -> None:
@@ -301,9 +318,14 @@ def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: OrderedSet[str])
             scopes = state.scope_dict()
             for node in state.data_nodes():
                 desc = nested.arrays.get(node.data)
-                if (desc is None or not desc.transient or isinstance(desc, (data.View, data.Stream))
-                        or not (desc.storage == dtypes.StorageType.Default or
-                                (nested is sdfg and node.data in placed_on_gpu))):
+                if (
+                    desc is None
+                    or not desc.transient
+                    or isinstance(desc, (data.View, data.Stream))
+                    or not (
+                        desc.storage == dtypes.StorageType.Default or (nested is sdfg and node.data in placed_on_gpu)
+                    )
+                ):
                     continue
                 kernels.setdefault(node.data, OrderedSet()).add(enclosing_kernel(scopes, node))
         for name, owners in kernels.items():
@@ -358,7 +380,7 @@ def traverse_IR_after_predecessors(IR: OffloadingIRNode, method: Callable[[Offlo
         stack.extend(reversed(ready))
     stuck = [node.debug_name for node, pending in waiting.items() if pending]
     if stuck:
-        raise RuntimeError(f'the offloading IR is not a DAG: {stuck} are never reached by all predecessors')
+        raise RuntimeError(f"the offloading IR is not a DAG: {stuck} are never reached by all predecessors")
 
 
 def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:  # DFS
@@ -377,16 +399,18 @@ def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode
             break
 
         else:
-            raise ValueError(f'unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}')
+            raise ValueError(f"unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}")
 
 
-def get_data_used_by_access_nodes(sdfg: SDFG,
-                                  state: SDFGState,
-                                  node: nodes.Node,
-                                  downstream: bool,
-                                  include_scalars: bool = False,
-                                  ordering: bool = True,
-                                  through_copies: bool = True) -> OrderedSet[str]:
+def get_data_used_by_access_nodes(
+    sdfg: SDFG,
+    state: SDFGState,
+    node: nodes.Node,
+    downstream: bool,
+    include_scalars: bool = False,
+    ordering: bool = True,
+    through_copies: bool = True,
+) -> OrderedSet[str]:
     """Arrays reachable from ``node`` through access nodes, following empty memlets and copies if asked."""
     arrays: OrderedSet[str] = OrderedSet()
     # Visited, because an access node and a view of it can refer to each other.
@@ -420,12 +444,14 @@ def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> L
     return [] if origin is None else [origin]
 
 
-def neighboring_access_nodes(state: SDFGState, node: nodes.Node, downstream: bool,
-                             ordering: bool) -> List[nodes.AccessNode]:
+def neighboring_access_nodes(
+    state: SDFGState, node: nodes.Node, downstream: bool, ordering: bool
+) -> List[nodes.AccessNode]:
     edges = state.out_edges(node) if downstream else state.in_edges(node)
     neighbors = [(edge.dst if downstream else edge.src, edge) for edge in edges]
     return [
-        neighbor for neighbor, edge in neighbors
+        neighbor
+        for neighbor, edge in neighbors
         if isinstance(neighbor, nodes.AccessNode) and (ordering or not edge.data.is_empty())
     ]
 
@@ -436,8 +462,8 @@ def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) ->
     taken: OrderedSet = OrderedSet()
     for node in state.nodes():
         if isinstance(
-                node,
-            (nodes.MapEntry, nodes.MapExit, nodes.Tasklet, nodes.AccessNode, nodes.LibraryNode, nodes.NestedSDFG)):
+            node, (nodes.MapEntry, nodes.MapExit, nodes.Tasklet, nodes.AccessNode, nodes.LibraryNode, nodes.NestedSDFG)
+        ):
             taken.add(node.label)
 
     symbols: OrderedSet = OrderedSet()

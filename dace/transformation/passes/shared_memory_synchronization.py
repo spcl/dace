@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
+
 import warnings
 from typing import Dict, Tuple
 
@@ -14,8 +15,11 @@ from ordered_set import OrderedSet
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
     """Whether ``node`` is a ``GPU_Shared`` access node with a non-empty incoming edge."""
-    return (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Shared
-            and any(not edge.data.is_empty() for edge in state.in_edges(node)))
+    return (
+        isinstance(node, AccessNode)
+        and node.desc(state).storage == dtypes.StorageType.GPU_Shared
+        and any(not edge.data.is_empty() for edge in state.in_edges(node))
+    )
 
 
 @properties.make_properties
@@ -45,13 +49,15 @@ class DefaultSharedMemorySync(ppl.Pass):
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
             return False
         if all(
-                isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-                for pred in state.predecessors(node)):
+            isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            for pred in state.predecessors(node)
+        ):
             return False
         if all(edge.data.is_empty() for edge in state.in_edges(node)):
             return False
-        return (is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_Device])
-                and not is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock]))
+        return is_in_scope(state.sdfg, state, node, [dtypes.ScheduleType.GPU_Device]) and not is_in_scope(
+            state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock]
+        )
 
     def identify_synchronization_tb_exits(self, tb_map_exits: Dict[MapExit, SDFGState]) -> Dict[MapExit, SDFGState]:
         """The thread-block exits that write shared memory and need a barrier after them."""
@@ -66,7 +72,8 @@ class DefaultSharedMemorySync(ppl.Pass):
                     f"Race condition danger: LoopRegion or Sequential Map inside ThreadBlock map {map_entry} "
                     "writes to GPU shared memory. No synchronization occurs for intermediate steps, "
                     "because '__syncthreads()' is only called outside the ThreadBlock map to avoid potential deadlocks."
-                    "Please consider moving the LoopRegion or Sequential Map outside the ThreadBlock map.")
+                    "Please consider moving the LoopRegion or Sequential Map outside the ThreadBlock map."
+                )
             sync_requiring_exits[map_exit] = state
         return sync_requiring_exits
 
@@ -76,12 +83,16 @@ class DefaultSharedMemorySync(ppl.Pass):
         The race danger is a shared write inside a sequential map or loop, even a single-iteration one.
         """
         nested_sdfgs = [n.sdfg for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, NestedSDFG)]
-        race_cond_danger = (any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs)
-                            or any(inner_scope.map.schedule == dtypes.ScheduleType.Sequential
-                                   and self.map_writes_to_smem(inner_scope, inner_state)
-                                   for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)))
-        return (self.map_writes_to_smem(map_entry,
-                                        state), race_cond_danger, nested_in_threadblock_map(state, map_entry))
+        race_cond_danger = any(self.writes_to_smem_inside_loopregion(sd) for sd in nested_sdfgs) or any(
+            inner_scope.map.schedule == dtypes.ScheduleType.Sequential
+            and self.map_writes_to_smem(inner_scope, inner_state)
+            for inner_state, inner_scope in helpers.get_internal_scopes(state, map_entry)
+        )
+        return (
+            self.map_writes_to_smem(map_entry, state),
+            race_cond_danger,
+            nested_in_threadblock_map(state, map_entry),
+        )
 
     def writes_to_smem_inside_loopregion(self, sdfg: SDFG) -> bool:
         """Whether ``sdfg``, nested SDFGs included, writes shared memory inside a loop region."""
@@ -100,22 +111,28 @@ class DefaultSharedMemorySync(ppl.Pass):
         """Whether the map writes shared memory at its exit, in its scope or through a nested SDFG."""
         map_exit = state.exit_node(map_entry)
         if any(
-                isinstance(edge.dst, AccessNode) and edge.dst.desc(state).storage == dtypes.StorageType.GPU_Shared
-                and not edge.data.is_empty() for edge in state.out_edges(map_exit)):
+            isinstance(edge.dst, AccessNode)
+            and edge.dst.desc(state).storage == dtypes.StorageType.GPU_Shared
+            and not edge.data.is_empty()
+            for edge in state.out_edges(map_exit)
+        ):
             return True
         return any(
-            is_shared_memory_write(node, state) or (
-                isinstance(node, NestedSDFG) and self.sdfg_writes_to_smem(node.sdfg))
-            for node in state.all_nodes_between(map_entry, map_exit))
+            is_shared_memory_write(node, state)
+            or (isinstance(node, NestedSDFG) and self.sdfg_writes_to_smem(node.sdfg))
+            for node in state.all_nodes_between(map_entry, map_exit)
+        )
 
     def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
         """Insert a ``__syncthreads()`` tasklet after each given node."""
         for node, state in nodes.items():
-            sync_tasklet = state.add_tasklet(name="sync_threads",
-                                             inputs=OrderedSet(),
-                                             outputs=OrderedSet(),
-                                             code="__syncthreads();\n",
-                                             language=dtypes.Language.CPP)
+            sync_tasklet = state.add_tasklet(
+                name="sync_threads",
+                inputs=OrderedSet(),
+                outputs=OrderedSet(),
+                code="__syncthreads();\n",
+                language=dtypes.Language.CPP,
+            )
             for succ in state.successors(node):
                 state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
             state.add_edge(node, None, sync_tasklet, None, dace.Memlet())

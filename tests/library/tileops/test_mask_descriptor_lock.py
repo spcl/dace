@@ -6,6 +6,7 @@ Each lib node that carries a mask connector (``TileMaskGen._o``,
 ``validate()`` time: ``Array(shape=widths, dtype=bool_, storage=Register,
 transient=True)``. Any other descriptor is rejected with a named error.
 """
+
 import pytest
 
 import dace

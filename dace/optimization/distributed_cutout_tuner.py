@@ -55,7 +55,7 @@ class DistributedCutoutTuner:
             results = self._tuner.search(cutout=cutout, measurements=measurements, **kwargs)
 
             file_name = self._tuner.file_name(hash)
-            with open(file_name, 'w') as fp:
+            with open(file_name, "w") as fp:
                 json.dump(results, fp)
 
 
@@ -72,7 +72,7 @@ class DistributedSpaceTuner:
         cutouts = OrderedDict()
         existing_files = set()
         for cutout, cutout_hash in self._tuner.cutouts():
-            cutout_hash = f'{cutout_hash}_{rank}'
+            cutout_hash = f"{cutout_hash}_{rank}"
 
             cutouts[cutout_hash] = cutout
             file_name = self._tuner.file_name(cutout_hash)
@@ -100,7 +100,7 @@ class DistributedSpaceTuner:
             chunk_start = rank * chunk_size
             chunk_end = None if rank == (num_ranks - 1) else ((rank + 1) * chunk_size)
 
-            label = f'{rank + 1}/{num_ranks}: {cutout_hash}'
+            label = f"{rank + 1}/{num_ranks}: {cutout_hash}"
             results = {}
             key = evaluate_kwargs["key"]
             for config in tqdm(list(itertools.islice(configs, chunk_start, chunk_end)), desc=label):
@@ -109,5 +109,5 @@ class DistributedSpaceTuner:
                 results[key(config)] = runtime
 
                 file_name = self._tuner.file_name(cutout_hash)
-                with open(file_name, 'w') as fp:
+                with open(file_name, "w") as fp:
                     json.dump(results, fp)

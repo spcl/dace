@@ -103,12 +103,14 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     before = sdfg.add_state("before_loop", is_start_block=True)
     after = sdfg.add_state("after_loop")
 
-    loop = LoopRegion(label="for_region",
-                      condition_expr=f"i < {num_iters}",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1",
-                      inverted=False)
+    loop = LoopRegion(
+        label="for_region",
+        condition_expr=f"i < {num_iters}",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+        inverted=False,
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(before, loop, dace.InterstateEdge())
     sdfg.add_edge(loop, after, dace.InterstateEdge())
@@ -156,8 +158,13 @@ def kernel_sdfg():
     TS = dace.symbol("TS")
 
     @dace.program
-    def example(A: dace.float64[100, 100], B: dace.float64[100, 100], C: dace.float64[100, 100],
-                D: dace.float64[100, 100], E: dace.float64[100]) -> dace.float64[100, 100]:
+    def example(
+        A: dace.float64[100, 100],
+        B: dace.float64[100, 100],
+        C: dace.float64[100, 100],
+        D: dace.float64[100, 100],
+        E: dace.float64[100],
+    ) -> dace.float64[100, 100]:
         for t1 in range(TS):
             for i, j in dace.map[0:100, 0:100]:
                 C[i, j] = A[i, j] + B[i, j]
@@ -282,7 +289,7 @@ def reduce_to_scalar_sdfg(n: int = 16):
     inp = state.add_access("inp")
     red_scalar = state.add_access("red_scalar")
     out = state.add_access("out")
-    red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
+    red = state.add_reduce("lambda a, b: a + b", axes=(0,), identity=0)
 
     state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
     state.add_nedge(red, red_scalar, dace.Memlet("red_scalar[0]"))
@@ -303,7 +310,7 @@ def reduce_to_array_sdfg(n: int = 16):
     inp = state.add_access("inp")
     red_array = state.add_access("red_array")
     out = state.add_access("out")
-    red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
+    red = state.add_reduce("lambda a, b: a + b", axes=(0,), identity=0)
 
     state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
     state.add_nedge(red, red_array, dace.Memlet("red_array[0]"))
@@ -349,7 +356,7 @@ def run_numerical_offloading_test(sdfg, param_dict: dict, result_array1, result_
     input2 = param_dict
     input2[result_name] = result_array2
 
-    #print("PARAMS:", sdfg.arglist())
+    # print("PARAMS:", sdfg.arglist())
     sdfg(**input2)
 
     # assert the results are equal
@@ -422,10 +429,7 @@ def test_conditional_offload_if():
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
         sdfg,
-        {
-            "inp": np.arange(5, dtype=np.float64),
-            "flag": np.int32(0)
-        },  # run with flag == 0
+        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(0)},  # run with flag == 0
         orig_output,
         new_output,
     )
@@ -439,10 +443,7 @@ def test_conditional_offload_else():
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
         sdfg,
-        {
-            "inp": np.arange(5, dtype=np.float64),
-            "flag": np.int32(1)
-        },  # run with flag == 1
+        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(1)},  # run with flag == 1
         orig_output,
         new_output,
     )
@@ -530,10 +531,7 @@ def test_tasklet_map_wrapper_larger():
 
     run_numerical_offloading_test(
         sdfg,
-        {
-            "A": A,
-            "B": B
-        },
+        {"A": A, "B": B},
         orig_out,
         new_out,
     )
@@ -550,10 +548,7 @@ def test_scalar_init():
 
     run_numerical_offloading_test(
         sdfg,
-        {
-            "alpha": alpha,
-            "A": A
-        },
+        {"alpha": alpha, "A": A},
         orig_out,
         new_out,
     )
@@ -570,10 +565,7 @@ def test_len1_array_init():
 
     run_numerical_offloading_test(
         sdfg,
-        {
-            "alpha": alpha,
-            "A": A
-        },
+        {"alpha": alpha, "A": A},
         orig_out,
         new_out,
     )
@@ -619,10 +611,7 @@ def test_single_element_copy():
 
     run_numerical_offloading_test(
         sdfg,
-        {
-            "A": A,
-            "B": B
-        },
+        {"A": A, "B": B},
         orig_out,
         new_out,
     )
@@ -656,8 +645,9 @@ def device_map_state_sdfg(host_writer_between: bool, reads_b: bool = False) -> d
     second = sdfg.add_state("fill_b")
     sdfg.add_edge(previous, second, dace.InterstateEdge())
     entry, exit_ = second.add_map("fill", dict(i="0:20"))
-    fill = second.add_tasklet("fill", {"x", "b"} if reads_b else {"x"}, {"y"},
-                              "y = x + b" if reads_b else "y = x + 1.0")
+    fill = second.add_tasklet(
+        "fill", {"x", "b"} if reads_b else {"x"}, {"y"}, "y = x + b" if reads_b else "y = x + 1.0"
+    )
     second.add_memlet_path(second.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
     if reads_b:
         second.add_memlet_path(second.add_read("B"), entry, fill, dst_conn="b", memlet=dace.Memlet("B[i]"))
@@ -674,8 +664,8 @@ def states_in_execution_order(sdfg: dace.SDFG) -> list:
 
 def holds_device_map(state: dace.SDFGState) -> bool:
     return any(
-        isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
-        for node in state.nodes())
+        isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device for node in state.nodes()
+    )
 
 
 def writes_container(state: dace.SDFGState, name: str) -> bool:
@@ -695,10 +685,12 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
     order = states_in_execution_order(sdfg)
     device_at = [index for index, state in enumerate(order) if holds_device_map(state)]
     assert len(device_at) == 2, f"expected both maps on the device, got {[s.label for s in order]}"
-    assert device_at == list(range(device_at[0], device_at[-1] +
-                                   1)), (f"a host state sits between two device states: {[s.label for s in order]}")
-    assert writes_container(order[device_at[0] - 1],
-                            "B_gpu"), (f"B's copy did not move above the device states: {[s.label for s in order]}")
+    assert device_at == list(range(device_at[0], device_at[-1] + 1)), (
+        f"a host state sits between two device states: {[s.label for s in order]}"
+    )
+    assert writes_container(order[device_at[0] - 1], "B_gpu"), (
+        f"B's copy did not move above the device states: {[s.label for s in order]}"
+    )
 
 
 def test_an_array_the_device_overwrites_is_not_staged_down():
@@ -711,9 +703,9 @@ def test_an_array_the_device_overwrites_is_not_staged_down():
     device_at = [index for index, state in enumerate(order) if holds_device_map(state)]
     assert len(device_at) == 2, f"expected both maps on the device, got {[s.label for s in order]}"
     staged = [index for index, state in enumerate(order) if writes_container(state, "B_gpu")]
-    assert all(
-        index in device_at
-        for index in staged), (f"B was staged down although the device writes all of it: {[s.label for s in order]}")
+    assert all(index in device_at for index in staged), (
+        f"B was staged down although the device writes all of it: {[s.label for s in order]}"
+    )
 
 
 def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
@@ -756,9 +748,9 @@ N = dace.symbol("N")
 def laplace_program(A: dace.float64[N], T: dace.int64):
     tmp = np.zeros_like(A)
     for _ in range(T):
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             tmp[i] = A[i - 1] - 2 * A[i] + A[i + 1]
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             A[i] = tmp[i - 1] - 2 * tmp[i] + tmp[i + 1]
 
 
@@ -775,12 +767,11 @@ def test_a_never_written_input_is_not_copied_back_to_the_host():
 
     states = list(sdfg.states())
     labels = [state.label for state in states]
-    assert any(writes_container(state, "A_gpu") for state in states), \
+    assert any(writes_container(state, "A_gpu") for state in states), (
         f"the read-only array was not staged onto the device at all: {labels}"
-    assert any(writes_container(state, "B") for state in states), \
-        f"the written array was not copied back: {labels}"
-    assert not any(writes_container(state, "A") for state in states), \
-        f"the read-only array was copied back: {labels}"
+    )
+    assert any(writes_container(state, "B") for state in states), f"the written array was not copied back: {labels}"
+    assert not any(writes_container(state, "A") for state in states), f"the read-only array was copied back: {labels}"
 
 
 def test_a_container_nothing_touches_is_left_where_it_started():
@@ -789,10 +780,10 @@ def test_a_container_nothing_touches_is_left_where_it_started():
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     assert "C_gpu" not in sdfg.arrays, f"an untouched array was given a device twin: {sorted(sdfg.arrays)}"
-    assert sdfg.arrays["C"].storage == dace.StorageType.Default, \
+    assert sdfg.arrays["C"].storage == dace.StorageType.Default, (
         f"an untouched array was moved off the host: {sdfg.arrays['C'].storage}"
-    assert not any(writes_container(state, "C") for state in sdfg.states()), \
-        "an untouched array was copied"
+    )
+    assert not any(writes_container(state, "C") for state in sdfg.states()), "an untouched array was copied"
 
 
 def test_a_map_over_a_read_only_container_survives_being_nested():
@@ -873,7 +864,8 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
             assert origin is not None, f"{node.data} in {state.label} aliases nothing"
             assert views[node.data].storage == sdfg.arrays[origin].storage, (
                 f"{node.data} ({views[node.data].storage}) does not live where "
-                f"{origin} ({sdfg.arrays[origin].storage}) does")
+                f"{origin} ({sdfg.arrays[origin].storage}) does"
+            )
 
 
 def two_arm_branch_sdfg(arms_meet: bool, big_arm_padding: int = 0) -> dace.SDFG:
@@ -886,17 +878,25 @@ def two_arm_branch_sdfg(arms_meet: bool, big_arm_padding: int = 0) -> dace.SDFG:
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("t", [8], dace.float64, transient=True)
     fill = sdfg.add_state("fill", is_start_block=True)
-    fill.add_mapped_tasklet("double",
-                            dict(i="0:8"), {"inp": dace.Memlet("A[i]")},
-                            "out = inp * 2.0", {"out": dace.Memlet("t[i]")},
-                            external_edges=True)
+    fill.add_mapped_tasklet(
+        "double",
+        dict(i="0:8"),
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("t[i]")},
+        external_edges=True,
+    )
     arms = []
     for label, condition, offset in (("big", "t[0] > 5.0", "1.0"), ("small", "not (t[0] > 5.0)", "-1.0")):
         arm = sdfg.add_state(label)
-        arm.add_mapped_tasklet(label,
-                               dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
-                               f"out = inp + {offset}", {"out": dace.Memlet("A[i]")},
-                               external_edges=True)
+        arm.add_mapped_tasklet(
+            label,
+            dict(i="0:8"),
+            {"inp": dace.Memlet("t[i]")},
+            f"out = inp + {offset}",
+            {"out": dace.Memlet("A[i]")},
+            external_edges=True,
+        )
         sdfg.add_edge(fill, arm, dace.InterstateEdge(condition=condition))
         arms.append(arm)
     for index in range(big_arm_padding):
@@ -916,7 +916,7 @@ def exits_not_writing_after(sdfg: dace.SDFG, block: ControlFlowBlock, name: str)
     stale = []
     for sink in sdfg.sink_nodes():
         for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink):
-            later = path[path.index(block) + 1:]
+            later = path[path.index(block) + 1 :]
             if not any(isinstance(step, dace.SDFGState) and writes_container(step, name) for step in later):
                 stale.append([step.label for step in path])
     return stale
@@ -929,7 +929,8 @@ def empty_states_offloading_adds(sdfg: dace.SDFG) -> list:
     empty_after_raising = [state.label for state in raised.all_states() if state.number_of_nodes() == 0]
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     return [
-        state.label for state in sdfg.all_states()
+        state.label
+        for state in sdfg.all_states()
         if state.number_of_nodes() == 0 and state.label not in empty_after_raising
     ]
 
@@ -967,11 +968,14 @@ def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) 
     np.testing.assert_array_equal(took_small, np.full(8, 0.0))
 
 
-@pytest.mark.parametrize("build", [
-    lambda: two_arm_branch_sdfg(arms_meet=False),
-    lambda: early_return_sdfg(return_after_arm=True),
-],
-                         ids=["device_branch", "early_return"])
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: two_arm_branch_sdfg(arms_meet=False),
+        lambda: early_return_sdfg(return_after_arm=True),
+    ],
+    ids=["device_branch", "early_return"],
+)
 def test_offloading_leaves_no_empty_states_of_its_own(build) -> None:
     """The states the pass adds to place copies are spliced out again when no copy lands after them."""
     sdfg = build()
@@ -1004,7 +1008,8 @@ def test_a_host_only_branch_gets_no_blocks_from_offloading() -> None:
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     assert sorted(block.label for block in sdfg.all_control_flow_blocks(recursive=True)) == sorted(
-        block.label for block in raised.all_control_flow_blocks(recursive=True))
+        block.label for block in raised.all_control_flow_blocks(recursive=True)
+    )
 
 
 def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
@@ -1017,30 +1022,39 @@ def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("t", [8], dace.float64, transient=True)
     fill = sdfg.add_state("fill", is_start_block=True)
-    fill.add_mapped_tasklet("double",
-                            dict(i="0:8"), {"inp": dace.Memlet("A[i]")},
-                            "out_a = inp * 2.0\nout_t = inp * 2.0", {
-                                "out_a": dace.Memlet("A[i]"),
-                                "out_t": dace.Memlet("t[i]")
-                            },
-                            external_edges=True)
+    fill.add_mapped_tasklet(
+        "double",
+        dict(i="0:8"),
+        {"inp": dace.Memlet("A[i]")},
+        "out_a = inp * 2.0\nout_t = inp * 2.0",
+        {"out_a": dace.Memlet("A[i]"), "out_t": dace.Memlet("t[i]")},
+        external_edges=True,
+    )
     early = sdfg.add_return("early")
     big_condition = dace.InterstateEdge(condition="t[0] > 5.0")
     if return_after_arm:
         big = sdfg.add_state("big")
-        big.add_mapped_tasklet("big",
-                               dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
-                               "out = inp + 1.0", {"out": dace.Memlet("A[i]")},
-                               external_edges=True)
+        big.add_mapped_tasklet(
+            "big",
+            dict(i="0:8"),
+            {"inp": dace.Memlet("t[i]")},
+            "out = inp + 1.0",
+            {"out": dace.Memlet("A[i]")},
+            external_edges=True,
+        )
         sdfg.add_edge(fill, big, big_condition)
         sdfg.add_edge(big, early, dace.InterstateEdge())
     else:
         sdfg.add_edge(fill, early, big_condition)
     small = sdfg.add_state("small")
-    small.add_mapped_tasklet("small",
-                             dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
-                             "out = inp - 1.0", {"out": dace.Memlet("A[i]")},
-                             external_edges=True)
+    small.add_mapped_tasklet(
+        "small",
+        dict(i="0:8"),
+        {"inp": dace.Memlet("t[i]")},
+        "out = inp - 1.0",
+        {"out": dace.Memlet("A[i]")},
+        external_edges=True,
+    )
     sdfg.add_edge(fill, small, dace.InterstateEdge(condition="not (t[0] > 5.0)"))
     sdfg.validate()
     return sdfg
@@ -1057,17 +1071,19 @@ def test_an_early_return_copies_the_written_array_back_first(return_after_arm: b
     branch = arm.parent_graph
     way_in = nx.shortest_path(sdfg.nx, sdfg.start_block, branch) + nx.shortest_path(arm.nx, arm.start_block, early)
     writers = [
-        block for block in way_in
+        block
+        for block in way_in
         if isinstance(block, dace.SDFGState) and (writes_container(block, "A") or writes_container(block, "A_gpu"))
     ]
     assert writers and writes_container(writers[-1], "A"), (
-        f"the last write of A before the return is not the copy to the host: {[block.label for block in writers]}")
+        f"the last write of A before the return is not the copy to the host: {[block.label for block in writers]}"
+    )
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(strict=True,
-                   raises=AttributeError,
-                   reason="the CUDA codegen reads a ReturnBlock after a GPU state as an SDFGState")
+@pytest.mark.xfail(
+    strict=True, raises=AttributeError, reason="the CUDA codegen reads a ReturnBlock after a GPU state as an SDFGState"
+)
 @pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
 def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
     """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""

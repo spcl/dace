@@ -2,15 +2,20 @@
 """Wires the streams a :class:`GPUStreamSchedulingStrategy` assigned: allocates ``gpu_streams``, connects each
 consumer to ``gpu_streams[i]`` and has the strategy insert its syncs. Applied once: see :func:`is_stream_wiring_applied`.
 """
+
 from typing import Any, Dict, Optional, Set, Type, Union
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (GPUStreamSchedulingStrategy,
-                                                                                 allocate_stream_array,
-                                                                                 wire_stream_connectors)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
-                                                                               persisted_stream_assignments)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (
+    GPUStreamSchedulingStrategy,
+    allocate_stream_array,
+    wire_stream_connectors,
+)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    is_stream_wiring_applied,
+    persisted_stream_assignments,
+)
 
 
 @transformation.explicit_cf_compatible
@@ -33,8 +38,10 @@ class GPUStreamWiring(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         if sdfg.parent_sdfg is not None:
-            raise ValueError(f"GPUStreamWiring: must run on the root SDFG. Got nested SDFG "
-                             f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}').")
+            raise ValueError(
+                f"GPUStreamWiring: must run on the root SDFG. Got nested SDFG "
+                f"'{sdfg.name}' (parent '{sdfg.parent_sdfg.name}')."
+            )
         if is_stream_wiring_applied(sdfg):
             return None
         assignments = persisted_stream_assignments(sdfg)

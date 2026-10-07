@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 
-W = dp.symbol('W')
-H = dp.symbol('H')
+W = dp.symbol("W")
+H = dp.symbol("H")
 
 
 @dp.program

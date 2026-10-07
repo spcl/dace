@@ -32,9 +32,9 @@ def test_fortran_frontend_arr2loop_without_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 9], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -68,8 +68,8 @@ def test_fortran_frontend_arr2loop_1d_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 1
-    assert sdfg.data('d').shape[0] == 5
+    assert len(sdfg.data("d").shape) == 1
+    assert sdfg.data("d").shape[0] == 5
 
     a = np.full([6], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -105,9 +105,9 @@ def test_fortran_frontend_arr2loop_2d_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 9], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -141,9 +141,9 @@ def test_fortran_frontend_arr2loop_2d_offset2():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 9], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -187,9 +187,9 @@ def test_fortran_frontend_arr2loop_2d_offset3():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 9], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -221,7 +221,6 @@ def test_fortran_frontend_arr2loop_2d_offset3():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_arr2loop_1d_offset()
     test_fortran_frontend_arr2loop_2d_offset()
     test_fortran_frontend_arr2loop_2d_offset2()

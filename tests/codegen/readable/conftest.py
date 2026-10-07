@@ -19,6 +19,7 @@ ready. The probe therefore also requires the experimental output to *differ* fro
 legacy on a trivial SDFG (the readable form emits per-array ``_idx`` index
 functions and ``const``/``constexpr`` initialization, which legacy never does).
 """
+
 import functools
 import os
 import signal
@@ -123,6 +124,7 @@ def to_host(value):
     """Return a host numpy array for ``value`` (handles cupy device arrays)."""
     if type(value).__module__.split(".")[0] == "cupy":
         import cupy
+
         return cupy.asnumpy(value)
     return np.asarray(value)
 
@@ -170,6 +172,7 @@ def run_isolated(build_and_run, timeout=300):
             os._exit(0)
         except BaseException:  # noqa: BLE001 - report and exit non-zero, never raise past fork
             import traceback
+
             traceback.print_exc()
             os._exit(17)
     try:
@@ -209,20 +212,21 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
     """
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
-    assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
-                                              f"{sorted(legacy)} vs {sorted(experimental)}")
+    assert set(legacy) == set(experimental), f"{label}: output-key mismatch {sorted(legacy)} vs {sorted(experimental)}"
     for name, lv in legacy.items():
         ev = experimental[name]
         assert lv.shape == ev.shape, f"{label}/{name}: shape {lv.shape} vs {ev.shape}"
         if target == "cpu":
             equal = np.array_equal(lv, ev, equal_nan=True) if lv.dtype.kind == "f" else np.array_equal(lv, ev)
-            assert equal, (f"{label}/{name}: experimental CPU codegen is not bit-exact vs legacy, "
-                           f"max|diff|={max_abs_diff(lv, ev):.3e}")
+            assert equal, (
+                f"{label}/{name}: experimental CPU codegen is not bit-exact vs legacy, "
+                f"max|diff|={max_abs_diff(lv, ev):.3e}"
+            )
         else:
             rtol, atol = tolerance_for(lv.dtype)
-            assert np.allclose(lv, ev, rtol=rtol, atol=atol,
-                               equal_nan=True), (f"{label}/{name}: experimental GPU codegen diverges from legacy, "
-                                                 f"max|diff|={max_abs_diff(lv, ev):.3e}")
+            assert np.allclose(lv, ev, rtol=rtol, atol=atol, equal_nan=True), (
+                f"{label}/{name}: experimental GPU codegen diverges from legacy, max|diff|={max_abs_diff(lv, ev):.3e}"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -235,10 +239,12 @@ def require_experimental():
         pytest.skip("experimental readable codegen not ready")
 
 
-@pytest.fixture(params=[
-    pytest.param("cpu", id="cpu"),
-    pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
-])
+@pytest.fixture(
+    params=[
+        pytest.param("cpu", id="cpu"),
+        pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
+    ]
+)
 def target(request):
     """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with ``-m gpu``)."""
     return request.param

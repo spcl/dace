@@ -44,25 +44,26 @@ class ExpandDotPure(ExpandTransformation):
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
-                                      "_out = 0", {"_out": dace.Memlet("_result[0]")},
-                                      external_edges=True)
+        init_state.add_mapped_tasklet(
+            "_i_dotnit", {"__i_unused": "0:1"}, {}, "_out = 0", {"_out": dace.Memlet("_result[0]")}, external_edges=True
+        )
 
         # Multiplication map
-        state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
-            "__x": dace.Memlet("_x[__i]"),
-            "__y": dace.Memlet("_y[__i]")
-        },
-                                 mul_program, {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
-                                 external_edges=True,
-                                 output_nodes=None)
+        state.add_mapped_tasklet(
+            "dot",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]"), "__y": dace.Memlet("_y[__i]")},
+            mul_program,
+            {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+            external_edges=True,
+            output_nodes=None,
+        )
 
         return sdfg
 
 
 @dace.library.expansion
 class ExpandDotOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -74,26 +75,24 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
-        func = func.lower() + 'dot'
+        func = func.lower() + "dot"
 
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
         code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtype},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, {"_result": dtype}, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandDotMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -103,7 +102,6 @@ class ExpandDotMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandDotCuBLAS(ExpandTransformation):
-
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
@@ -115,9 +113,9 @@ class ExpandDotCuBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
-        func = func + 'dot'
+        func = func + "dot"
 
         n = n or node.n or sz
         if veclen != 1:
@@ -143,17 +141,15 @@ class ExpandDotCuBLAS(ExpandTransformation):
                 {blas_helpers.dtype_to_cudadatatype(node.accumulator_type)}));
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtypes.pointer(dtype)},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, {"_result": dtypes.pointer(dtype)}, code, language=dace.dtypes.Language.CPP
+        )
 
         return tasklet
 
 
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "pure": ExpandDotPure,
@@ -165,9 +161,9 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    accumulator_type = dace.properties.TypeClassProperty(default=None,
-                                                         allow_none=True,
-                                                         desc="Accumulator or intermediate storage type")
+    accumulator_type = dace.properties.TypeClassProperty(
+        default=None, allow_none=True, desc="Accumulator or intermediate storage type"
+    )
 
     def __init__(self, name, n=None, accumulator_type=None, **kwargs):
         super().__init__(name, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)
@@ -221,25 +217,25 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
         if squeezed1.num_elements() != squeezed2.num_elements():
-            raise ValueError('Size mismatch in inputs')
+            raise ValueError("Size mismatch in inputs")
 
         return (desc_x, stride_x), (desc_y, stride_y), desc_res, n
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.dot')
-@oprepo.replaces('dace.libraries.blas.Dot')
-def dot_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, result, acctype=None):
+@oprepo.replaces("dace.libraries.blas.dot")
+@oprepo.replaces("dace.libraries.blas.Dot")
+def dot_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, y, result, acctype=None):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)
 
-    libnode = Dot('dot', n=sdfg.arrays[x].shape[0], accumulator_type=acctype)
+    libnode = Dot("dot", n=sdfg.arrays[x].shape[0], accumulator_type=acctype)
     state.add_node(libnode)
 
     # Connect nodes
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
-    state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_y", mm.Memlet(y))
+    state.add_edge(libnode, "_result", res, None, mm.Memlet(result))
 
     return []

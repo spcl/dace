@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Unit tests for the GPU to-device transformation. """
+"""Unit tests for the GPU to-device transformation."""
 
 import dace
 import numpy as np
@@ -27,7 +27,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
 
     @dace.program
     def main_program(a: dace.int32):
-        out = np.ndarray((10, ), dtype=np.int32)
+        out = np.ndarray((10,), dtype=np.int32)
         nested_program(a, out)
         return out
 
@@ -65,7 +65,7 @@ def test_a_fully_overwritten_array_is_not_staged_down_first():
     only when the device writes ALL of it.
     """
 
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def write_full(A: dace.int32[M, N]):
@@ -77,12 +77,15 @@ def test_a_fully_overwritten_array_is_not_staged_down_first():
 
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
-                assert state.out_degree(node) == 0, (f'"A" is read in {state.label!r}: the host array is '
-                                                     'still staged down before the map overwrites it')
+            if isinstance(node, dace.nodes.AccessNode) and node.data == "A":
+                assert state.out_degree(node) == 0, (
+                    f'"A" is read in {state.label!r}: the host array is still staged down before the map overwrites it'
+                )
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.in_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the result never reaches the caller\'s array'
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.in_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "the result never reaches the caller's array"
 
 
 def test_a_partially_written_array_keeps_its_copy_in():
@@ -90,20 +93,21 @@ def test_a_partially_written_array_keeps_its_copy_in():
     down, because the copy-out sends the whole device buffer back and the untouched elements have to
     be the ones the caller passed in, not whatever the allocation held."""
 
-    M = dace.symbol('M')
+    M = dace.symbol("M")
 
     @dace.program
     def write_interior(A: dace.int32[M]):
-        for i in dace.map[1:M - 1]:
+        for i in dace.map[1 : M - 1]:
             A[i] = i
 
     sdfg = write_interior.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations(simplify=False)
 
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), ('a partially written array lost its copy-in; the '
-                                                                'elements the map skips would come back as garbage')
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.out_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "a partially written array lost its copy-in; the elements the map skips would come back as garbage"
 
 
 def test_an_indirect_write_keeps_its_copy_in():
@@ -118,16 +122,24 @@ def test_an_indirect_write_keeps_its_copy_in():
             A[x[i], y[j]] = i + j
 
     sdfg = write_subset_dynamic.to_sdfg(simplify=True)
-    writes = [(e.data.subset, e.data.volume) for state in sdfg.states() for node in state.data_nodes()
-              if node.data == 'A' for e in state.in_edges(node)]
+    writes = [
+        (e.data.subset, e.data.volume)
+        for state in sdfg.states()
+        for node in state.data_nodes()
+        if node.data == "A"
+        for e in state.in_edges(node)
+    ]
     assert writes, 'no write to "A" to inspect'
-    assert any(str(subset) == '0:20, 0:20' and volume != 400
-               for subset, volume in writes), (f'the indirect write no longer over-approximates its subset: {writes}')
+    assert any(str(subset) == "0:20, 0:20" and volume != 400 for subset, volume in writes), (
+        f"the indirect write no longer over-approximates its subset: {writes}"
+    )
 
     sdfg.apply_gpu_transformations(simplify=False)
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the indirect write lost its copy-in'
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.out_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "the indirect write lost its copy-in"
 
 
 @pytest.mark.gpu
@@ -161,7 +173,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -182,7 +194,7 @@ def test_free_tasklet_connectorless_dependency_edge():
     ``TypeError`` when ``dst_conn`` is None; the edge is now threaded through the map as a
     dependency edge with no IN_/OUT_ connector."""
     sdfg = dace.SDFG("gcode_depedge")
-    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
+    arr_name, _ = sdfg.add_array("A", (4,), dace.float32, transient=False)
     state = sdfg.add_state("main")
 
     seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
@@ -201,14 +213,14 @@ def test_free_tasklet_connectorless_dependency_edge():
 
 def _row_doubling_body(shape):
     """``b[0, j] = 2 * a[0, j]``, with both connectors describing the whole container."""
-    sdfg = dace.SDFG('body')
-    sdfg.add_array('a', shape, dace.float64)
-    sdfg.add_array('b', shape, dace.float64)
-    sdfg.add_symbol('j', dace.int64)
+    sdfg = dace.SDFG("body")
+    sdfg.add_array("a", shape, dace.float64)
+    sdfg.add_array("b", shape, dace.float64)
+    sdfg.add_symbol("j", dace.int64)
     state = sdfg.add_state()
-    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x * 2')
-    state.add_edge(state.add_read('a'), None, tasklet, 'x', dace.Memlet('a[0, j]'))
-    state.add_edge(tasklet, 'y', state.add_write('b'), None, dace.Memlet('b[0, j]'))
+    tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x * 2")
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0, j]"))
+    state.add_edge(tasklet, "y", state.add_write("b"), None, dace.Memlet("b[0, j]"))
     return sdfg
 
 
@@ -221,14 +233,14 @@ def test_gpu_local_storage_of_a_nested_sdfg_row():
     so the connectors below have to be restated the same way.
     """
     shape = (4, 5)
-    sdfg = dace.SDFG('gpu_local_storage_nested')
-    sdfg.add_array('A', shape, dace.float64)
-    sdfg.add_array('B', shape, dace.float64)
+    sdfg = dace.SDFG("gpu_local_storage_nested")
+    sdfg.add_array("A", shape, dace.float64)
+    sdfg.add_array("B", shape, dace.float64)
     state = sdfg.add_state()
-    entry, exit_ = state.add_map('m', dict(j='0:%d' % shape[1]))
-    node = state.add_nested_sdfg(_row_doubling_body(shape), {'a'}, {'b'}, {'j': 'j'})
-    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='a', memlet=dace.Memlet('A[0, j]'))
-    state.add_memlet_path(node, exit_, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[0, j]'))
+    entry, exit_ = state.add_map("m", dict(j="0:%d" % shape[1]))
+    node = state.add_nested_sdfg(_row_doubling_body(shape), {"a"}, {"b"}, {"j": "j"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="a", memlet=dace.Memlet("A[0, j]"))
+    state.add_memlet_path(node, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[0, j]"))
     sdfg.validate()
 
     assert sdfg.apply_transformations(GPUTransformLocalStorage) == 1
@@ -240,7 +252,7 @@ def test_gpu_local_storage_of_a_nested_sdfg_row():
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
     test_a_fully_overwritten_array_is_not_staged_down_first()

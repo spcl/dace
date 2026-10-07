@@ -5,6 +5,7 @@ The vectorizer stamps ``node.target_isa`` and sets ``node.implementation = selec
 before the nodes are expanded. The choice depends only on the target ISA, the tile rank and the node's operands, all
 known at that point, so it is a function rather than an ``Auto`` expansion that re-decides at expansion time.
 """
+
 import enum
 import functools
 import platform
@@ -15,6 +16,7 @@ from dace.sdfg import nodes
 
 class ISA(enum.Enum):
     """Target instruction set a K=1 tile lowers to."""
+
     AUTO = enum.auto()  #: resolve to the host's best ISA at expansion
     AVX512 = enum.auto()
     AVX2 = enum.auto()
@@ -110,11 +112,14 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     implementation = ISA_TO_IMPL.get(target_isa)
     if len(node.widths) != 1 or implementation not in node.implementations:
         return "pure"
-    if (target_isa is not ISA.CUDA
-            and has_complex_operand(node, parent_state)) or not node.can_lower_to_isa(parent_state, parent_state.sdfg):
+    if (target_isa is not ISA.CUDA and has_complex_operand(node, parent_state)) or not node.can_lower_to_isa(
+        parent_state, parent_state.sdfg
+    ):
         return "pure"
     if target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
-        raise ValueError(f"tile-op target_isa={target_isa.name} is not executable on this host "
-                         f"(supported: {sorted(isa.name for isa in host_supported_isas())}). Vectorization enforces "
-                         f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA.")
+        raise ValueError(
+            f"tile-op target_isa={target_isa.name} is not executable on this host "
+            f"(supported: {sorted(isa.name for isa in host_supported_isas())}). Vectorization enforces "
+            f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA."
+        )
     return implementation

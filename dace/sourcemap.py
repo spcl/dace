@@ -18,7 +18,6 @@ class NodeInfo(TypedDict):
 
 
 class SdfgLocation:
-
     def __init__(self, cfg_id: int, state_id: int, node_ids: list[int]):
         self.cfg_id = cfg_id
         self.state_id = state_id
@@ -47,11 +46,11 @@ def create_cache(name: str, folder: str) -> str:
     :param folder: the build folder
     :return: relative path to the created folder
     """
-    if (folder is not None):
+    if folder is not None:
         create_folder(os.path.join(folder, "map"))
         return folder
     else:
-        build_folder = Config.get('default_build_folder')
+        build_folder = Config.get("default_build_folder")
         cache_folder = os.path.join(build_folder, name)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
@@ -71,7 +70,7 @@ def send(data: json):
     HOST = socket.gethostname()
     PORT = os.environ["DACE_port"]
 
-    data_bytes = bytes(json.dumps(data, indent=None, separators=(',', ':')), "utf-8")
+    data_bytes = bytes(json.dumps(data, indent=None, separators=(",", ":")), "utf-8")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
         s.sendall(data_bytes)
@@ -89,10 +88,10 @@ def save(language: str, name: str, map: dict, build_folder: str) -> str:
     :return: absolute path to the cache folder of the SDFG
     """
     folder = create_cache(name, build_folder)
-    path = os.path.abspath(os.path.join(folder, 'map', 'map_' + language + '.json'))
+    path = os.path.abspath(os.path.join(folder, "map", "map_" + language + ".json"))
 
     with open(path, "w") as json_file:
-        json.dump(map, json_file, indent=None, separators=(',', ':'))
+        json.dump(map, json_file, indent=None, separators=(",", ":"))
 
     return os.path.abspath(folder)
 
@@ -106,15 +105,15 @@ def get_src_files(sdfg):
     """
     sourcefiles = []
     for node, _ in sdfg.all_nodes_recursive():
-        if (isinstance(node, (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map, nodes.NestedSDFG))
-                and node.debuginfo is not None):
-
+        if (
+            isinstance(node, (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map, nodes.NestedSDFG))
+            and node.debuginfo is not None
+        ):
             filename = node.debuginfo.filename
             if not filename in sourcefiles:
                 sourcefiles.append(filename)
 
-        elif (isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None):
-
+        elif isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None:
             filename = node.map.debuginfo.filename
             if not filename in sourcefiles:
                 sourcefiles.append(filename)
@@ -123,11 +122,11 @@ def get_src_files(sdfg):
 
 
 def create_py_map(sdfg):
-    """ Creates the mapping from the python source lines to the SDFG nodes.
-        The mapping gets saved at: ``<SDFG build folder>/map/map_py.json``
+    """Creates the mapping from the python source lines to the SDFG nodes.
+    The mapping gets saved at: ``<SDFG build folder>/map/map_py.json``
 
-        :param sdfg: The SDFG for which the mapping will be created
-        :return: an object with the build_folder, src_files and made_with_api
+    :param sdfg: The SDFG for which the mapping will be created
+    :return: an object with the build_folder, src_files and made_with_api
     """
     py_mapper = MapPython(sdfg.name)
     made_with_api = py_mapper.mapper(sdfg)
@@ -138,17 +137,17 @@ def create_py_map(sdfg):
 
 
 def create_cpp_map(code: str, name: str, target_name: str, build_folder: str, sourceFiles: [str], made_with_api: bool):
-    """ Creates the mapping from the SDFG nodes to the C++ code lines.
-        The mapping gets saved at: ``<SDFG build folder>/map/map_cpp.json``
+    """Creates the mapping from the SDFG nodes to the C++ code lines.
+    The mapping gets saved at: ``<SDFG build folder>/map/map_cpp.json``
 
-        :param code: C++ code containing the identifiers '////__DACE:0:0:0'
-        :param name: The name of the SDFG
-        :param target_name: The target type, example: 'cpu'
-        :param build_folder: The build_folder of the SDFG
-        :param sourceFiles: A list of source files of to the SDFG
-        :param made_with_api: true if the SDFG was created just with the API
+    :param code: C++ code containing the identifiers '////__DACE:0:0:0'
+    :param name: The name of the SDFG
+    :param target_name: The target type, example: 'cpu'
+    :param build_folder: The build_folder of the SDFG
+    :param sourceFiles: A list of source files of to the SDFG
+    :param made_with_api: true if the SDFG was created just with the API
     """
-    codegen_debug = Config.get_bool('compiler', 'codegen_lineinfo')
+    codegen_debug = Config.get_bool("compiler", "codegen_lineinfo")
     cpp_mapper = MapCpp(code, name, target_name)
     cpp_mapper.mapper(codegen_debug)
 
@@ -158,47 +157,50 @@ def create_cpp_map(code: str, name: str, target_name: str, build_folder: str, so
         save("codegen", name, cpp_mapper.codegen_map, build_folder)
 
     # Send information about the SDFG to VSCode
-    send({
-        "type": "registerFunction",
-        "name": name,
-        "path_cache": folder,
-        "path_file": sourceFiles,
-        "target_name": target_name,
-        "made_with_api": made_with_api,
-        "codegen_map": codegen_debug
-    })
+    send(
+        {
+            "type": "registerFunction",
+            "name": name,
+            "path_cache": folder,
+            "path_file": sourceFiles,
+            "target_name": target_name,
+            "made_with_api": made_with_api,
+            "codegen_map": codegen_debug,
+        }
+    )
 
 
 def create_maps(sdfg, code: str, target_name: str):
-    """ Creates the C++, Py and Codegen mapping
+    """Creates the C++, Py and Codegen mapping
 
-        :param sdfg: The sdfg to create the mapping for
-        :param code: The generated code
-        :param target_name: The target name
+    :param sdfg: The sdfg to create the mapping for
+    :param code: The generated code
+    :param target_name: The target name
     """
     build_folder, sourceFiles, made_with_api = create_py_map(sdfg)
     create_cpp_map(code, sdfg.name, target_name, build_folder, sourceFiles, made_with_api)
 
 
 class MapCpp:
-    """ Creates the mapping between the SDFG nodes and
-        the generated C++ code lines.
+    """Creates the mapping between the SDFG nodes and
+    the generated C++ code lines.
     """
 
     def __init__(self, code: str, name: str, target_name: str):
         self.name = name
         self.code = code
-        self.map = {'target': target_name}
+        self.map = {"target": target_name}
         self.codegen_map = {}
-        self.cpp_pattern = re.compile(r'(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)')
+        self.cpp_pattern = re.compile(r"(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)")
         self.codegen_pattern = re.compile(
-            r'(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)')
+            r"(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)"
+        )
 
     def mapper(self, codegen_debug: bool = False):
-        """ For each line of code retrieve the corresponding identifiers
-            and create the mapping
+        """For each line of code retrieve the corresponding identifiers
+        and create the mapping
 
-            :param codegen_debug: if the codegen mapping should be created
+        :param codegen_debug: if the codegen mapping should be created
         """
         for line_num, line in enumerate(self.code.split("\n"), 1):
             nodes = self.get_nodes(line)
@@ -208,10 +210,10 @@ class MapCpp:
                 self.codegen_mapping(line, line_num)
 
     def create_mapping(self, node: SdfgLocation, line_num: int):
-        """ Adds a C++ line number to the mapping
+        """Adds a C++ line number to the mapping
 
-            :param node: A node which will map to the line number
-            :param line_num: The line number to add to the mapping
+        :param node: A node which will map to the line number
+        :param line_num: The line number to add to the mapping
         """
         if node.cfg_id not in self.map:
             self.map[node.cfg_id] = {}
@@ -222,11 +224,11 @@ class MapCpp:
 
         for node_id in node.node_ids:
             if node_id not in state:
-                state[node_id] = {'from': line_num, 'to': line_num}
-            elif state[node_id]['to'] + 1 == line_num:
+                state[node_id] = {"from": line_num, "to": line_num}
+            elif state[node_id]["to"] + 1 == line_num:
                 # If the current node maps to the previous line
                 # (before "line_num"), then extend the range this node maps to
-                state[node_id]['to'] += 1
+                state[node_id]["to"] += 1
 
     def get_nodes(self, line_code: str):
         """
@@ -240,24 +242,27 @@ class MapCpp:
         nodes = []
         for identifier in line_identifiers:
             ids_split = identifier.split(":")
-            nodes.append(SdfgLocation(
-                ids_split[1],
-                ids_split[2],
-                # node might be an edge
-                ids_split[3].split(",")))
+            nodes.append(
+                SdfgLocation(
+                    ids_split[1],
+                    ids_split[2],
+                    # node might be an edge
+                    ids_split[3].split(","),
+                )
+            )
         return nodes
 
     def codegen_mapping(self, line: str, line_num: int):
-        """ Searches the code line for the first ``////__CODEGEN`` identifier
-            and adds the information to the codegen_map
+        """Searches the code line for the first ``////__CODEGEN`` identifier
+        and adds the information to the codegen_map
 
-            :param line: code line to search for identifiers
-            :param line_num: corresponding line number
+        :param line: code line to search for identifiers
+        :param line_num: corresponding line number
         """
         codegen_identifier = self.get_identifiers(line, findall=False)
         if codegen_identifier:
-            codegen_debuginfo = codegen_identifier.split(';')
-            self.codegen_map[line_num] = {'file': codegen_debuginfo[1], 'line': codegen_debuginfo[2]}
+            codegen_debuginfo = codegen_identifier.split(";")
+            self.codegen_map[line_num] = {"file": codegen_debuginfo[1], "line": codegen_debuginfo[2]}
 
     def get_identifiers(self, line: str, findall: bool = True):
         """
@@ -279,8 +284,8 @@ class MapCpp:
 
 
 class MapPython:
-    """ Creates the mapping between the source code and
-        the SDFG nodes
+    """Creates the mapping between the source code and
+    the SDFG nodes
     """
 
     def __init__(self, name):
@@ -289,10 +294,10 @@ class MapPython:
         self.debuginfo = {}
 
     def mapper(self, sdfg) -> bool:
-        """ Creates the source to SDFG node mapping
+        """Creates the source to SDFG node mapping
 
-            :param sdfg: SDFG to create the mapping for
-            :return: if the sdfg was created only by the API
+        :param sdfg: SDFG to create the mapping for
+        :return: if the sdfg was created only by the API
         """
         self.debuginfo = self.sdfg_debuginfo(sdfg)
         self.debuginfo = self.divide()
@@ -312,15 +317,15 @@ class MapPython:
         return len(range_dict.items()) == 0
 
     def divide(self):
-        """ Divide debuginfo into an array where each entry
-            corresponds to the debuginfo of a diffrent sourcefile.
+        """Divide debuginfo into an array where each entry
+        corresponds to the debuginfo of a diffrent sourcefile.
         """
         divided = []
         for dbinfo in self.debuginfo:
-            source = dbinfo['debuginfo'].get('filename')
+            source = dbinfo["debuginfo"].get("filename")
             exists = False
             for src_infos in divided:
-                if len(src_infos) > 0 and src_infos[0]['debuginfo'].get('filename') == source:
+                if len(src_infos) > 0 and src_infos[0]["debuginfo"].get("filename") == source:
                     src_infos.append(dbinfo)
                     exists = True
                     break
@@ -330,35 +335,41 @@ class MapPython:
         return divided
 
     def sorter(self):
-        """ Prioritizes smaller ranges over larger ones """
+        """Prioritizes smaller ranges over larger ones"""
         db_sorted = []
         for dbinfo_source in self.debuginfo:
             db_sorted.append(
-                sorted(dbinfo_source,
-                       key=lambda n:
-                       (n['debuginfo'].get('start_line', 0), n['debuginfo'].get('start_column', 0), n['debuginfo'].get(
-                           'end_line', 0), n['debuginfo'].get('end_column', 0))))
+                sorted(
+                    dbinfo_source,
+                    key=lambda n: (
+                        n["debuginfo"].get("start_line", 0),
+                        n["debuginfo"].get("start_column", 0),
+                        n["debuginfo"].get("end_line", 0),
+                        n["debuginfo"].get("end_column", 0),
+                    ),
+                )
+            )
         return db_sorted
 
     def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> NodeInfo:
-        """ Creates an object for the current node with
-            the most important information
+        """Creates an object for the current node with
+        the most important information
 
-            :param debuginfo: JSON object of the debuginfo of the node
-            :param node_id: ID of the node
-            :param state_id: ID of the state
-            :param cfg_id: ID of the sdfg
-            :return: Dictionary with a debuginfo JSON object and the identifiers
+        :param debuginfo: JSON object of the debuginfo of the node
+        :param node_id: ID of the node
+        :param state_id: ID of the state
+        :param cfg_id: ID of the sdfg
+        :return: Dictionary with a debuginfo JSON object and the identifiers
         """
         return {"debuginfo": debuginfo, "cfg_id": cfg_id, "state_id": state_id, "node_id": node_id}
 
     def sdfg_debuginfo(self, graph, cfg_id: int = 0, state_id: int = 0):
-        """ Recursively extracts all debuginfo from the nodes
+        """Recursively extracts all debuginfo from the nodes
 
-            :param graph: An SDFG or SDFGState to check for nodes
-            :param cfg_id: Id of the current SDFG/NestedSDFG
-            :param state_id: Id of the current SDFGState
-            :return: list of debuginfo with the node identifiers
+        :param graph: An SDFG or SDFGState to check for nodes
+        :param cfg_id: Id of the current SDFG/NestedSDFG
+        :param state_id: Id of the current SDFGState
+        :return: list of debuginfo with the node identifiers
         """
         if cfg_id is None:
             cfg_id = 0
@@ -366,10 +377,10 @@ class MapPython:
         mapping = []
         for id, node in enumerate(graph.nodes()):
             # Node has Debuginfo, no recursive call
-            if isinstance(
-                    node,
-                (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map)) and node.debuginfo is not None:
-
+            if (
+                isinstance(node, (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map))
+                and node.debuginfo is not None
+            ):
                 dbinfo = node.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, cfg_id))
 
@@ -388,10 +399,10 @@ class MapPython:
         return mapping
 
     def create_mapping(self, range_dict=None):
-        """ Creates the actual mapping by using the debuginfo list
+        """Creates the actual mapping by using the debuginfo list
 
-            :param range_dict: For each file, a list of tuples containing a start and
-                               end line of a DaCe program
+        :param range_dict: For each file, a list of tuples containing a start and
+                           end line of a DaCe program
         """
         for file_dbinfo in self.debuginfo:
             for node in file_dbinfo:
@@ -404,18 +415,15 @@ class MapPython:
                     if not str(line) in self.map[src_file]:
                         self.map[src_file][str(line)] = []
 
-                    self.map[src_file][str(line)].append({
-                        "cfg_id": node["cfg_id"],
-                        "state_id": node["state_id"],
-                        "node_id": node["node_id"]
-                    })
+                    self.map[src_file][str(line)].append(
+                        {"cfg_id": node["cfg_id"], "state_id": node["state_id"], "node_id": node["node_id"]}
+                    )
 
         if range_dict:
             # Mapping lines that don't occur in the debugInfo of the SDFG
             # These might be lines that don't have any code on them or
             # no debugInfo correspond directly to them
             for src_file, ranges in range_dict.items():
-
                 src_map = self.map.get(src_file)
                 if src_map is None:
                     src_map = {}

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Consumers use ``CopyLibraryNode.INPUT_CONNECTOR_NAME`` and the like; only the definition files own the literals."""
+
 import pathlib
 import re
 
@@ -37,11 +38,13 @@ def test_no_libnode_connector_literals_outside_definitions():
             if QUOTED_LITERAL.search(line):
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
-    assert not offenders, ("Hardcoded libnode connector literals found outside their "
-                           "definition files. Use CopyLibraryNode.INPUT_CONNECTOR_NAME / "
-                           "OUTPUT_CONNECTOR_NAME / FillLibraryNode.OUTPUT_CONNECTOR_NAME "
-                           "instead:\n  " + "\n  ".join(offenders))
+    assert not offenders, (
+        "Hardcoded libnode connector literals found outside their "
+        "definition files. Use CopyLibraryNode.INPUT_CONNECTOR_NAME / "
+        "OUTPUT_CONNECTOR_NAME / FillLibraryNode.OUTPUT_CONNECTOR_NAME "
+        "instead:\n  " + "\n  ".join(offenders)
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_no_libnode_connector_literals_outside_definitions()

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe's ``OrderedSet``: insertion-ordered iteration, but set equality."""
+
 from typing import Any, Iterable
 
 from ordered_set import OrderedSet as SequenceOrderedSet

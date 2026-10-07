@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for default storage/schedule inference. """
+"""Tests for default storage/schedule inference."""
+
 import dace
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
@@ -24,8 +25,9 @@ def test_default_schedule_autodetect():
 def test_gpu_schedule_autodetect():
 
     @dace.program
-    def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
-            b: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
+    def add(
+        a: dace.float32[10, 10] @ dace.StorageType.GPU_Global, b: dace.float32[10, 10] @ dace.StorageType.GPU_Global
+    ):
         return a + b @ b
 
     sdfg = add.to_sdfg()
@@ -38,8 +40,11 @@ def test_gpu_schedule_autodetect():
 def test_gpu_schedule_scalar_autodetect():
 
     @dace.program
-    def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
-            b: dace.float32[10, 10] @ dace.StorageType.GPU_Global, c: dace.float32[10] @ dace.StorageType.CPU_Heap):
+    def add(
+        a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
+        b: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
+        c: dace.float32[10] @ dace.StorageType.CPU_Heap,
+    ):
         return a + b @ b + c[0]
 
     sdfg = add.to_sdfg()
@@ -138,8 +143,11 @@ def test_ambiguous_schedule():
 def test_ambiguous_schedule_2():
 
     @dace.program
-    def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
-            b: dace.float32[10, 10] @ dace.StorageType.GPU_Global, c: dace.float32[10] @ dace.StorageType.CPU_Heap):
+    def add(
+        a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
+        b: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
+        c: dace.float32[10] @ dace.StorageType.CPU_Heap,
+    ):
         return a + b @ b + c
 
     with pytest.raises(InvalidSDFGNodeError):
@@ -150,8 +158,9 @@ def test_ambiguous_schedule_2():
 def test_semi_ambiguous_schedule():
 
     @dace.program
-    def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
-            b: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
+    def add(
+        a: dace.float32[10, 10] @ dace.StorageType.GPU_Global, b: dace.float32[10, 10] @ dace.StorageType.GPU_Global
+    ):
         for i in dace.map[0:10] @ dace.ScheduleType.GPU_Device:
             shared = dace.define_local([10], dace.float32)
             for j in dace.map[0:10]:  # Should be inferred as thread-block
@@ -168,29 +177,29 @@ def test_semi_ambiguous_schedule():
 
 
 def test_view_storage_follows_the_container():
-    """ A view addresses the memory of the container behind it, so it lives where that container lives. """
-    sdfg = dace.SDFG('view_storage')
-    sdfg.add_array('A', [8, 8], dace.float64, storage=dace.StorageType.GPU_Global)
-    sdfg.add_array('B', [8], dace.float64, storage=dace.StorageType.GPU_Global)
-    sdfg.add_view('v', [8], dace.float64)
+    """A view addresses the memory of the container behind it, so it lives where that container lives."""
+    sdfg = dace.SDFG("view_storage")
+    sdfg.add_array("A", [8, 8], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [8], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_view("v", [8], dace.float64)
     state = sdfg.add_state()
 
-    view = state.add_access('v')
-    state.add_edge(state.add_read('A'), None, view, 'views', dace.Memlet('A[1, 0:8]'))
-    entry, exit_node = state.add_map('m', dict(i='0:8'), schedule=dace.ScheduleType.GPU_Device)
-    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp')
-    state.add_memlet_path(view, entry, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
-    state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='out', memlet=dace.Memlet('B[i]'))
+    view = state.add_access("v")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet("A[1, 0:8]"))
+    entry, exit_node = state.add_map("m", dict(i="0:8"), schedule=dace.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp")
+    state.add_memlet_path(view, entry, tasklet, dst_conn="inp", memlet=dace.Memlet("v[i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("B"), src_conn="out", memlet=dace.Memlet("B[i]"))
 
     set_default_schedule_and_storage_types(sdfg, [None])
 
-    assert sdfg.arrays['v'].storage == dace.StorageType.GPU_Global
+    assert sdfg.arrays["v"].storage == dace.StorageType.GPU_Global
 
 
 def test_scope_schedule_ignores_a_staging_buffer():
-    """ A scope's schedule follows the containers outside it, not a buffer it gathers into. """
+    """A scope's schedule follows the containers outside it, not a buffer it gathers into."""
     M = 32
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def transpose_and_add(A: dace.float64[M, N], B: dace.float64[N, M]):
@@ -205,12 +214,15 @@ def test_scope_schedule_ignores_a_staging_buffer():
 
     set_default_schedule_and_storage_types(sdfg, [None])
 
-    outer = next(node for node, _ in sdfg.all_nodes_recursive()
-                 if isinstance(node, dace.nodes.MapEntry) and node.map.params == ['i'])
+    outer = next(
+        node
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]
+    )
     assert outer.schedule == dace.ScheduleType.GPU_Device
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_default_schedule_autodetect()
     test_gpu_schedule_autodetect()
     test_gpu_schedule_scalar_autodetect()

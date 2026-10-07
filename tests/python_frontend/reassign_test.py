@@ -19,7 +19,7 @@ def test_reassign():
             tmp[:] = B
             return tmp[0:20]
 
-    with pytest.raises(DaceSyntaxError, match='reassign'):
+    with pytest.raises(DaceSyntaxError, match="reassign"):
         shouldfail.to_sdfg()
 
 
@@ -52,11 +52,11 @@ def test_reassign_retval():
             tmp2[:] = B
             return tmp2
 
-    with pytest.raises(DaceSyntaxError, match='Return'):
+    with pytest.raises(DaceSyntaxError, match="Return"):
         shouldfail_retval.to_sdfg()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reassign()
     test_reassign_samesize()
     test_reassign_retval()

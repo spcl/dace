@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from util import fusion
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -47,5 +47,5 @@ def test():
     assert np.allclose(C1, C2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

@@ -3,8 +3,8 @@ import math
 import numpy as np
 import dace
 
-M = dace.symbol('M')
-K = dace.symbol('K')
+M = dace.symbol("M")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -73,7 +73,7 @@ def test_indirect_symbolic_access():
     assert np.allclose(c, refc)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()
     test_inout_connector()
     test_indirect_symbolic_access()

@@ -14,7 +14,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
     Perform an SSA transformation on all symbols in the SDFG in a strict manner, i.e., without introducing phi nodes.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes | ppl.Modifies.States
@@ -76,4 +76,4 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
             return results
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f'Renamed {len(pass_retval)} symbols: {pass_retval}.'
+        return f"Renamed {len(pass_retval)} symbols: {pass_retval}."

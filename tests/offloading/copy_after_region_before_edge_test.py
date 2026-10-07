@@ -5,6 +5,7 @@ The loop's IR node is a CLOSE, which has no block of its own, and a copy in fron
 placed AFTER the node: with neither side a block the offloader raised "invalid: both states are None", which
 made bdf_newton_krylov unsupported on the canon GPU column.
 """
+
 import numpy as np
 import pytest
 
@@ -12,7 +13,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -38,7 +39,7 @@ def test_a_loop_before_a_host_reading_edge_is_followed_by_its_copy_back():
     after = sdfg.successors(loop)
     assert len(after) == 1 and isinstance(after[0], dace.SDFGState), after
     copied = {e.data.data for e in after[0].edges()}
-    assert 'A_gpu' in copied, copied
+    assert "A_gpu" in copied, copied
 
 
 @pytest.mark.gpu

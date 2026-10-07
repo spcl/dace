@@ -6,6 +6,7 @@ arithmetic, ``free_symbols`` and ``is_number`` on them do not type-check; ``Meml
 ``Subset | None`` while most passes only handle a ``Range``. Extended-only code narrows once, here, instead of
 probing at every call site.
 """
+
 from typing import Union
 
 import sympy
@@ -31,7 +32,7 @@ def as_expr(value: SymbolicLike) -> sympy.Expr:
     if isinstance(expr, (int, float, str)):
         expr = symbolic.pystr_to_symbolic(expr)
     if not isinstance(expr, sympy.Expr):
-        raise TypeError(f'{expr!r} is not a sympy expression')
+        raise TypeError(f"{expr!r} is not a sympy expression")
     return expr
 
 
@@ -49,7 +50,7 @@ def as_basic(value: SymbolicLike) -> sympy.Basic:
     if isinstance(expr, (int, float, str)):
         expr = symbolic.pystr_to_symbolic(expr)
     if not isinstance(expr, sympy.Basic):
-        raise TypeError(f'{expr!r} is not a sympy object')
+        raise TypeError(f"{expr!r} is not a sympy object")
     return expr
 
 
@@ -66,14 +67,14 @@ def as_range(subset: subsets.Subset | None) -> subsets.Range:
     :raises TypeError: If ``subset`` is ``None`` or a ``SubsetUnion``.
     """
     if not isinstance(subset, subsets.Range):
-        raise TypeError(f'expected a Range subset, got {type(subset).__name__}')
+        raise TypeError(f"expected a Range subset, got {type(subset).__name__}")
     return subset
 
 
 def as_map_entry(node: nodes.Node | None) -> nodes.MapEntry:
     """``node`` as a :class:`~dace.sdfg.nodes.MapEntry`; scope lookups return the abstract ``EntryNode | None``."""
     if not isinstance(node, nodes.MapEntry):
-        raise TypeError(f'expected a MapEntry, got {type(node).__name__}')
+        raise TypeError(f"expected a MapEntry, got {type(node).__name__}")
     return node
 
 
@@ -88,7 +89,7 @@ def as_typeclass(dtype: object) -> dtypes.typeclass:
     :raises TypeError: If ``dtype`` is not a typeclass.
     """
     if not isinstance(dtype, dtypes.typeclass):
-        raise TypeError(f'expected a dace typeclass, got {dtype!r}')
+        raise TypeError(f"expected a dace typeclass, got {dtype!r}")
     return dtype
 
 
@@ -102,7 +103,7 @@ def free_symbols(expr: sympy.Basic) -> set[sympy.Symbol]:
     result: set[sympy.Symbol] = set()
     for s in expr.free_symbols:
         if not isinstance(s, sympy.Symbol):
-            raise TypeError(f'free symbol {s!r} of {expr} is not a sympy.Symbol')
+            raise TypeError(f"free symbol {s!r} of {expr} is not a sympy.Symbol")
         result.add(s)
     return result
 
@@ -111,7 +112,7 @@ def coeff_of(expr: sympy.Expr, symbol: sympy.Expr, power: int = 1) -> sympy.Expr
     """``expr.coeff(symbol, power)`` narrowed from sympy's ``Expr | None`` (it returns ``0`` for no match)."""
     coeff = expr.coeff(symbol, power)
     if coeff is None:
-        raise TypeError(f'{expr} has no coefficient for {symbol}**{power}')
+        raise TypeError(f"{expr} has no coefficient for {symbol}**{power}")
     return coeff
 
 
@@ -124,7 +125,7 @@ def config_str(*key_hierarchy: str) -> str:
     """The current value of a string configuration entry (``Config.get`` returns any schema type)."""
     value = Config.get(*key_hierarchy)
     if not isinstance(value, str):
-        raise TypeError(f'configuration entry {".".join(key_hierarchy)} is {value!r}, not a string')
+        raise TypeError(f"configuration entry {'.'.join(key_hierarchy)} is {value!r}, not a string")
     return value
 
 
@@ -132,21 +133,21 @@ def config_int(*key_hierarchy: str) -> int:
     """The current value of an integer configuration entry (``Config.get`` returns any schema type)."""
     value = Config.get(*key_hierarchy)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f'configuration entry {".".join(key_hierarchy)} is {value!r}, not an integer')
+        raise TypeError(f"configuration entry {'.'.join(key_hierarchy)} is {value!r}, not an integer")
     return value
 
 
 def as_state(block: ControlFlowBlock) -> SDFGState:
     """``block`` as an :class:`~dace.sdfg.state.SDFGState`; the control-flow region it came from must hold a state."""
     if not isinstance(block, SDFGState):
-        raise TypeError(f'expected an SDFGState, got {type(block).__name__}')
+        raise TypeError(f"expected an SDFGState, got {type(block).__name__}")
     return block
 
 
 def as_loop(region: ControlFlowRegion | ControlFlowBlock | None) -> LoopRegion:
     """``region`` as a :class:`~dace.sdfg.state.LoopRegion`; parent-graph walks answer with the abstract region."""
     if not isinstance(region, LoopRegion):
-        raise TypeError(f'expected a LoopRegion, got {type(region).__name__}')
+        raise TypeError(f"expected a LoopRegion, got {type(region).__name__}")
     return region
 
 
@@ -164,5 +165,5 @@ def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
 def as_access(node: nodes.Node) -> nodes.AccessNode:
     """``node`` as an :class:`~dace.sdfg.nodes.AccessNode`."""
     if not isinstance(node, nodes.AccessNode):
-        raise TypeError(f'expected an AccessNode, got {type(node).__name__}')
+        raise TypeError(f"expected an AccessNode, got {type(node).__name__}")
     return node

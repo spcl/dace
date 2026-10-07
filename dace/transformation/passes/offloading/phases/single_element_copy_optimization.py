@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Move a single-element copy into the map that alone reads it: ``A -> s -> Map`` becomes ``A -> Map -> s``."""
+
 from copy import deepcopy
 from typing import List
 
@@ -28,10 +29,15 @@ def single_element_copies_into_map(sdfg: SDFG) -> None:
             for access in OrderedSet(state.predecessors(map_entry)):
                 # Only a copy the map alone reads moves: another reader would be left reading a node
                 # inside this map's scope.
-                if (isinstance(access, nodes.AccessNode) and state.out_degree(access) == 1 and
-                    (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg))
-                        and state.in_degree(access) == 1
-                        and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)):
+                if (
+                    isinstance(access, nodes.AccessNode)
+                    and state.out_degree(access) == 1
+                    and (
+                        isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg)
+                    )
+                    and state.in_degree(access) == 1
+                    and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
+                ):
                     changes.append((state, access, map_entry))
 
     for state, access, map_entry in changes:

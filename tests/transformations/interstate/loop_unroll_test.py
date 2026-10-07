@@ -14,12 +14,14 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
     sdfg = dace.SDFG("size_5_loop_sdfg")
 
-    for_cfg = LoopRegion(label="size_5_loop",
-                         condition_expr=CodeBlock(f"i < {l}"),
-                         loop_var="i",
-                         initialize_expr=CodeBlock("i = 0"),
-                         update_expr=CodeBlock("i = i + 1"),
-                         sdfg=sdfg)
+    for_cfg = LoopRegion(
+        label="size_5_loop",
+        condition_expr=CodeBlock(f"i < {l}"),
+        loop_var="i",
+        initialize_expr=CodeBlock("i = 0"),
+        update_expr=CodeBlock("i = i + 1"),
+        sdfg=sdfg,
+    )
 
     if add_state_before:
         _ps = sdfg.add_state(label="pre_s", is_start_block=True)
@@ -49,8 +51,8 @@ def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
     s2.add_edge(t, "_out", b_an, None, Memlet(expr="B[i]"))
     s2.add_edge(a_an, None, t, "_in", Memlet(expr="A[i]"))
 
-    sdfg.add_array("A", shape=(5, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(5, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(5,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(5,), dtype=dace.float64)
 
     sdfg.validate()
     return sdfg
@@ -86,7 +88,7 @@ def test_empty_loop():
 def test_compiler_unroll_pragma():
     sdfg = _get_sdfg(add_state_before=False, l=5)
     code = sdfg.generate_code()[0].clean_code
-    unroll_pragma = re.search(r'#pragma unroll', code) is None
+    unroll_pragma = re.search(r"#pragma unroll", code) is None
     assert unroll_pragma, "Unroll pragma found in generated code."
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 1
@@ -94,13 +96,13 @@ def test_compiler_unroll_pragma():
     loop.unroll = True
     loop.unroll_factor = 5
     unrolled_loop_code = sdfg.generate_code()[0].clean_code
-    unroll_pragma = re.search(r'#pragma unroll 5', unrolled_loop_code) is not None
+    unroll_pragma = re.search(r"#pragma unroll 5", unrolled_loop_code) is not None
     assert unroll_pragma, "Unroll pragma not found in generated code after setting unroll_pragma to True."
 
 
-klev = dace.symbol('klev', dtype=dace.int32)
-klon = dace.symbol('klon', dtype=dace.int32)
-nclv = dace.symbol('nclv', dtype=dace.int32)
+klev = dace.symbol("klev", dtype=dace.int32)
+klon = dace.symbol("klon", dtype=dace.int32)
+nclv = dace.symbol("nclv", dtype=dace.int32)
 
 
 @dace.program
@@ -133,8 +135,9 @@ def triang_elim_kernel(
         for jm in range(jn + 1, nclv + 1):
             for ik in range(jn + 1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
-                    zqlhs[ik - 1, jm - 1, jl - 1] = (zqlhs[ik - 1, jm - 1, jl - 1] -
-                                                     zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1])
+                    zqlhs[ik - 1, jm - 1, jl - 1] = (
+                        zqlhs[ik - 1, jm - 1, jl - 1] - zqlhs[jn - 1, jm - 1, jl - 1] * zqlhs[ik - 1, jn - 1, jl - 1]
+                    )
 
 
 def test_triang_elim():
@@ -184,8 +187,8 @@ def test_melt_kernel():
 
 
 def test_replace_dict_inner_loop():
-    nclv = dace.symbol('nclv', dtype=dace.int32)
-    klon = dace.symbol('klon', dtype=dace.int32)
+    nclv = dace.symbol("nclv", dtype=dace.int32)
+    klon = dace.symbol("klon", dtype=dace.int32)
 
     @dace.program
     def nested_loop_kernel(A: dace.float64[nclv, klon], jn: dace.int32):
@@ -204,17 +207,19 @@ def test_replace_dict_inner_loop():
 def test_unroll_loop_with_negative_iterate_values():
     """A descending loop must unroll every iteration, under a label that stays a valid name once
     the iterate goes negative."""
-    sdfg = dace.SDFG('negative_iterate_loop_sdfg')
-    for_cfg = LoopRegion(label='size_3_countdown',
-                         condition_expr=CodeBlock('i > -5'),
-                         loop_var='i',
-                         initialize_expr=CodeBlock('i = 0'),
-                         update_expr=CodeBlock('i = i - 1'),
-                         sdfg=sdfg)
+    sdfg = dace.SDFG("negative_iterate_loop_sdfg")
+    for_cfg = LoopRegion(
+        label="size_3_countdown",
+        condition_expr=CodeBlock("i > -5"),
+        loop_var="i",
+        initialize_expr=CodeBlock("i = 0"),
+        update_expr=CodeBlock("i = i - 1"),
+        sdfg=sdfg,
+    )
     sdfg.add_node(for_cfg, is_start_block=True)
-    body = ControlFlowRegion(label='for_body', sdfg=sdfg, parent=for_cfg)
+    body = ControlFlowRegion(label="for_body", sdfg=sdfg, parent=for_cfg)
     for_cfg.add_node(body, is_start_block=True)
-    body.add_state(label='s1', is_start_block=True)
+    body.add_state(label="s1", is_start_block=True)
     sdfg.validate()
 
     applied = sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
@@ -226,7 +231,7 @@ def test_unroll_loop_with_negative_iterate_values():
     # i = 0, -1, -2, -3, -4. The body is a ControlFlowRegion, so each iteration inlines to two
     # states, plus the predecessor prepended because the loop is its region's start block.
     assert sdfg.number_of_nodes() == 11
-    assert len([n for n in sdfg.nodes() if n.label.endswith('_for_body')]) == 5
+    assert len([n for n in sdfg.nodes() if n.label.endswith("_for_body")]) == 5
 
 
 if __name__ == "__main__":

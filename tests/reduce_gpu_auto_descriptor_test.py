@@ -20,18 +20,18 @@ from dace.libraries.standard.nodes import Reduce
 
 def gpu_auto_reduce_sdfg() -> dace.SDFG:
     """A rank-4 reduction over the last axis, which is where the reshape changes the rank."""
-    sdfg = dace.SDFG('gpu_auto_reduce')
-    sdfg.add_array('A', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('B', [2, 3, 4], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg = dace.SDFG("gpu_auto_reduce")
+    sdfg.add_array("A", [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [2, 3, 4], dace.float32, storage=dtypes.StorageType.GPU_Global)
 
     state = sdfg.add_state()
-    reduce_node = Reduce('reduce', wcr='lambda a, b: a + b', axes=[3], identity=0)
-    reduce_node.implementation = 'GPUAuto'
-    reduce_node.add_in_connector('_in')
-    reduce_node.add_out_connector('_out')
+    reduce_node = Reduce("reduce", wcr="lambda a, b: a + b", axes=[3], identity=0)
+    reduce_node.implementation = "GPUAuto"
+    reduce_node.add_in_connector("_in")
+    reduce_node.add_out_connector("_out")
     state.add_node(reduce_node)
-    state.add_edge(state.add_read('A'), None, reduce_node, '_in', dace.Memlet('A[0:2, 0:3, 0:4, 0:5]'))
-    state.add_edge(reduce_node, '_out', state.add_write('B'), None, dace.Memlet('B[0:2, 0:3, 0:4]'))
+    state.add_edge(state.add_read("A"), None, reduce_node, "_in", dace.Memlet("A[0:2, 0:3, 0:4, 0:5]"))
+    state.add_edge(reduce_node, "_out", state.add_write("B"), None, dace.Memlet("B[0:2, 0:3, 0:4]"))
 
     sdfg.validate()
     return sdfg
@@ -52,24 +52,24 @@ def gpu_auto_reduce_from_view_sdfg() -> dace.SDFG:
 
     lenet's second reduce has this shape: it reads a view of the maxpool input.
     """
-    sdfg = dace.SDFG('gpu_auto_reduce_from_view')
-    sdfg.add_array('A', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg = dace.SDFG("gpu_auto_reduce_from_view")
+    sdfg.add_array("A", [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.GPU_Global)
     # Declared ``Default`` on purpose: a view owns no storage, so this is what one looks like
     # before anything has matched it to the container it aliases.
-    sdfg.add_view('A_view', [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.Default)
-    sdfg.add_array('B', [2, 3, 4], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_view("A_view", [2, 3, 4, 5], dace.float32, storage=dtypes.StorageType.Default)
+    sdfg.add_array("B", [2, 3, 4], dace.float32, storage=dtypes.StorageType.GPU_Global)
 
     state = sdfg.add_state()
-    view = state.add_access('A_view')
-    state.add_edge(state.add_read('A'), None, view, 'views', dace.Memlet('A[0:2, 0:3, 0:4, 0:5]'))
+    view = state.add_access("A_view")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet("A[0:2, 0:3, 0:4, 0:5]"))
 
-    reduce_node = Reduce('reduce', wcr='lambda a, b: a + b', axes=[3], identity=0)
-    reduce_node.implementation = 'GPUAuto'
-    reduce_node.add_in_connector('_in')
-    reduce_node.add_out_connector('_out')
+    reduce_node = Reduce("reduce", wcr="lambda a, b: a + b", axes=[3], identity=0)
+    reduce_node.implementation = "GPUAuto"
+    reduce_node.add_in_connector("_in")
+    reduce_node.add_out_connector("_out")
     state.add_node(reduce_node)
-    state.add_edge(view, None, reduce_node, '_in', dace.Memlet('A_view[0:2, 0:3, 0:4, 0:5]'))
-    state.add_edge(reduce_node, '_out', state.add_write('B'), None, dace.Memlet('B[0:2, 0:3, 0:4]'))
+    state.add_edge(view, None, reduce_node, "_in", dace.Memlet("A_view[0:2, 0:3, 0:4, 0:5]"))
+    state.add_edge(reduce_node, "_out", state.add_write("B"), None, dace.Memlet("B[0:2, 0:3, 0:4]"))
 
     sdfg.validate()
     return sdfg
@@ -84,8 +84,8 @@ def test_the_expansion_leaves_every_descriptor_valid():
         try:
             desc.validate()
         except TypeError as exc:
-            invalid.append(f'{owner}.{name}: {exc}')
-    assert not invalid, 'the expansion produced descriptors that cannot be read back: ' + '; '.join(invalid)
+            invalid.append(f"{owner}.{name}: {exc}")
+    assert not invalid, "the expansion produced descriptors that cannot be read back: " + "; ".join(invalid)
 
 
 def test_the_reshaped_input_keeps_its_offset_at_the_new_rank():
@@ -93,11 +93,11 @@ def test_the_reshaped_input_keeps_its_offset_at_the_new_rank():
     sdfg = gpu_auto_reduce_sdfg()
     sdfg.expand_library_nodes()
 
-    reshaped = [desc for _, name, desc in all_descriptors(sdfg) if name == '_in']
-    assert reshaped, 'the GPUAuto expansion did not run, so this test is anchored on nothing'
+    reshaped = [desc for _, name, desc in all_descriptors(sdfg) if name == "_in"]
+    assert reshaped, "the GPUAuto expansion did not run, so this test is anchored on nothing"
     for desc in reshaped:
-        assert len(desc.offset) == len(desc.shape), f'offset {desc.offset} does not match shape {desc.shape}'
-        assert len(desc.strides) == len(desc.shape), f'strides {desc.strides} do not match shape {desc.shape}'
+        assert len(desc.offset) == len(desc.shape), f"offset {desc.offset} does not match shape {desc.shape}"
+        assert len(desc.strides) == len(desc.shape), f"strides {desc.strides} do not match shape {desc.shape}"
 
 
 def test_a_reduce_reading_a_view_reads_a_view_of_real_data_inside():
@@ -111,18 +111,25 @@ def test_a_reduce_reading_a_view_reads_a_view_of_real_data_inside():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    inner = [(node.sdfg, state) for state in sdfg.states() for node in state.nodes()
-             if isinstance(node, nodes.NestedSDFG) and '_in' in node.sdfg.arrays]
-    assert inner, 'the GPUAuto expansion did not run, so this test is anchored on nothing'
+    inner = [
+        (node.sdfg, state)
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.NestedSDFG) and "_in" in node.sdfg.arrays
+    ]
+    assert inner, "the GPUAuto expansion did not run, so this test is anchored on nothing"
     for nested, _ in inner:
-        if not isinstance(nested.arrays['_in'], data.View):
+        if not isinstance(nested.arrays["_in"], data.View):
             continue
         viewed = [
-            e.src.data for st in nested.states() for e in st.edges()
-            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == '_in' and isinstance(e.src, nodes.AccessNode)
+            e.src.data
+            for st in nested.states()
+            for e in st.edges()
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == "_in" and isinstance(e.src, nodes.AccessNode)
         ]
-        assert viewed and all(not isinstance(nested.arrays[v], data.View)
-                              for v in viewed), (f'_in views {viewed}, not the data the nested SDFG receives')
+        assert viewed and all(not isinstance(nested.arrays[v], data.View) for v in viewed), (
+            f"_in views {viewed}, not the data the nested SDFG receives"
+        )
 
 
 def test_the_expansion_reads_storage_through_the_view():
@@ -139,8 +146,9 @@ def test_the_expansion_reads_storage_through_the_view():
 
     schedules = {node.map.schedule for _, state, node in every_map(sdfg)}
     assert dtypes.ScheduleType.GPU_Device in schedules, (
-        f'the reduce did not expand for the device, so the alias was read rather than the array '
-        f'it views (schedules: {sorted(str(s) for s in schedules)})')
+        f"the reduce did not expand for the device, so the alias was read rather than the array "
+        f"it views (schedules: {sorted(str(s) for s in schedules)})"
+    )
 
 
 def every_map(sdfg: dace.SDFG):
@@ -153,5 +161,5 @@ def every_map(sdfg: dace.SDFG):
                 yield from every_map(node.sdfg)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

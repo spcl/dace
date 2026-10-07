@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Which blocks make an SDFG's control flow unstructured."""
+
 import pytest
 
 import dace

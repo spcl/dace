@@ -5,6 +5,7 @@
 single element a connector carries to every lane (a tile-shaped array an upstream tile op widened is still read per
 lane). ``Symbol`` embeds an expression of the symbols in scope inline and has no connector.
 """
+
 TILE = "Tile"
 SYMBOL = "Symbol"
 SCALAR = "Scalar"

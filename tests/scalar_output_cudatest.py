@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for GPU kernels with scalar outputs. """
+"""Tests for GPU kernels with scalar outputs."""
+
 import numpy as np
 import pytest
 import dace
@@ -21,7 +22,7 @@ def test_dot_gpu():
 
     # Expand pure version
     oldimpl = blas.default_implementation
-    blas.default_implementation = 'pure'
+    blas.default_implementation = "pure"
 
     daceres = sdfg(x=x, y=y)
 
@@ -80,7 +81,7 @@ def test_scalar_output_ptr_access():
     assert np.allclose(ret, 5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_dot_gpu()
     test_scalar_output()
     test_scalar_output_ptr_access()

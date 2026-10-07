@@ -11,7 +11,6 @@ import pytest
 
 
 class _MockProgramVisitor:
-
     def __init__(self):
         self.globals = {}
         self.scope_arrays = {}
@@ -23,7 +22,7 @@ class _MockProgramVisitor:
 
     def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         self._target_name_counter += 1
-        return default or f'__pgrid{self._target_name_counter}'
+        return default or f"__pgrid{self._target_name_counter}"
 
     def __getattr__(self, name):
         value = mock.MagicMock()
@@ -38,35 +37,41 @@ def _mock_program_visitor():
 @pytest.mark.mpi
 def test_process_grid():
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
     pv = _mock_program_visitor()
 
     sdfg = dace.SDFG("process_grid_test")
-    sdfg.add_symbol('P', dace.int32)
-    _, darr = sdfg.add_array("dims", (2, ), dtype=dace.int32)
-    _, parr = sdfg.add_array("periods", (2, ), dtype=dace.int32)
-    _, carr = sdfg.add_array("coords", (2, ), dtype=dace.int32)
-    _, varr = sdfg.add_array("valid", (1, ), dtype=dace.bool_)
+    sdfg.add_symbol("P", dace.int32)
+    _, darr = sdfg.add_array("dims", (2,), dtype=dace.int32)
+    _, parr = sdfg.add_array("periods", (2,), dtype=dace.int32)
+    _, carr = sdfg.add_array("coords", (2,), dtype=dace.int32)
+    _, varr = sdfg.add_array("valid", (1,), dtype=dace.bool_)
 
     state = sdfg.add_state("start")
     pgrid_name = comm._cart_create(pv, sdfg, state, [1, P])
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
-                                 "MPI_Cart_get(g, P, d, p, c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    tasklet = state2.add_tasklet(
+        "MPI_Cart_get",
+        {"g"},
+        {"d", "p", "c", "v"},
+        "MPI_Cart_get(g, P, d, p, c);\nv = (g != MPI_COMM_NULL);",
+        dtypes.Language.CPP,
+    )
     pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
-    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
-    state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
-    state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
-    state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))
-    state2.add_edge(tasklet, 'v', valid, None, dace.Memlet("valid[0]"))
+    state2.add_edge(pgrid, None, tasklet, "g", dace.Memlet(data=pgrid_name))
+    state2.add_edge(tasklet, "d", dims, None, dace.Memlet.from_array("dims", darr))
+    state2.add_edge(tasklet, "p", periods, None, dace.Memlet.from_array("periods", parr))
+    state2.add_edge(tasklet, "c", coords, None, dace.Memlet.from_array("coords", carr))
+    state2.add_edge(tasklet, "v", valid, None, dace.Memlet("valid[0]"))
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -76,30 +81,30 @@ def test_process_grid():
 
     func = utils.distributed_compile(sdfg, commworld)
 
-    dims = np.zeros((2, ), dtype=np.int32)
-    periods = np.zeros((2, ), dtype=np.int32)
-    coords = np.zeros((2, ), dtype=np.int32)
-    valid = np.zeros((1, ), dtype=np.bool_)
+    dims = np.zeros((2,), dtype=np.int32)
+    periods = np.zeros((2,), dtype=np.int32)
+    coords = np.zeros((2,), dtype=np.int32)
+    valid = np.zeros((1,), dtype=np.bool_)
     func(dims=dims, periods=periods, coords=coords, valid=valid, P=size)
 
-    assert (np.array_equal(dims, [1, size]))
-    assert (np.array_equal(periods, [0, 0]))
-    assert (np.array_equal(coords, [0, rank]))
-    assert (valid[0])
+    assert np.array_equal(dims, [1, size])
+    assert np.array_equal(periods, [0, 0])
+    assert np.array_equal(coords, [0, rank])
+    assert valid[0]
 
 
 @pytest.mark.mpi
 def test_sub_grid():
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
     pv = _mock_program_visitor()
 
     sdfg = dace.SDFG("sub_grid_test")
-    sdfg.add_symbol('P', dace.int32)
-    _, darr = sdfg.add_array("dims", (1, ), dtype=dace.int32)
-    _, parr = sdfg.add_array("periods", (1, ), dtype=dace.int32)
-    _, carr = sdfg.add_array("coords", (1, ), dtype=dace.int32)
-    _, varr = sdfg.add_array("valid", (1, ), dtype=dace.bool_)
+    sdfg.add_symbol("P", dace.int32)
+    _, darr = sdfg.add_array("dims", (1,), dtype=dace.int32)
+    _, parr = sdfg.add_array("periods", (1,), dtype=dace.int32)
+    _, carr = sdfg.add_array("coords", (1,), dtype=dace.int32)
+    _, varr = sdfg.add_array("valid", (1,), dtype=dace.bool_)
 
     state = sdfg.add_state("start")
     parent_pgrid_name = comm._cart_create(pv, sdfg, state, [1, P])
@@ -107,20 +112,26 @@ def test_sub_grid():
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
-                                 "MPI_Cart_get(g, P, &d, &p, &c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    tasklet = state2.add_tasklet(
+        "MPI_Cart_get",
+        {"g"},
+        {"d", "p", "c", "v"},
+        "MPI_Cart_get(g, P, &d, &p, &c);\nv = (g != MPI_COMM_NULL);",
+        dtypes.Language.CPP,
+    )
     pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
-    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
-    state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
-    state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
-    state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))
-    state2.add_edge(tasklet, 'v', valid, None, dace.Memlet("valid[0]"))
+    state2.add_edge(pgrid, None, tasklet, "g", dace.Memlet(data=pgrid_name))
+    state2.add_edge(tasklet, "d", dims, None, dace.Memlet.from_array("dims", darr))
+    state2.add_edge(tasklet, "p", periods, None, dace.Memlet.from_array("periods", parr))
+    state2.add_edge(tasklet, "c", coords, None, dace.Memlet.from_array("coords", carr))
+    state2.add_edge(tasklet, "v", valid, None, dace.Memlet("valid[0]"))
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -130,22 +141,22 @@ def test_sub_grid():
 
     func = utils.distributed_compile(sdfg, commworld)
 
-    dims = np.zeros((1, ), dtype=np.int32)
-    periods = np.zeros((1, ), dtype=np.int32)
-    coords = np.zeros((1, ), dtype=np.int32)
-    valid = np.zeros((1, ), dtype=np.bool_)
+    dims = np.zeros((1,), dtype=np.int32)
+    periods = np.zeros((1,), dtype=np.int32)
+    coords = np.zeros((1,), dtype=np.int32)
+    valid = np.zeros((1,), dtype=np.bool_)
     func(dims=dims, periods=periods, coords=coords, valid=valid, P=size)
 
-    assert (np.array_equal(dims, [size]))
-    assert (np.array_equal(periods, [0]))
-    assert (np.array_equal(coords, [rank]))
-    assert (valid[0])
+    assert np.array_equal(dims, [size])
+    assert np.array_equal(periods, [0])
+    assert np.array_equal(coords, [rank])
+    assert valid[0]
 
 
 @pytest.mark.mpi
 def test_process_grid_bcast():
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def pgrid_bcast(A: dace.int32[10]):
@@ -153,6 +164,7 @@ def test_process_grid_bcast():
         dace.comm.Bcast(A, grid=pgrid)
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -168,16 +180,16 @@ def test_process_grid_bcast():
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
     else:
-        A = np.zeros((10, ), dtype=np.int32)
+        A = np.zeros((10,), dtype=np.int32)
     func(A=A, P=size)
 
-    assert (np.array_equal(A, np.arange(10, dtype=np.int32)))
+    assert np.array_equal(A, np.arange(10, dtype=np.int32))
 
 
 @pytest.mark.mpi
 def test_sub_grid_bcast():
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def subgrid_bcast(A: dace.int32[10], rank: dace.int32):
@@ -190,6 +202,7 @@ def test_sub_grid_bcast():
         A[:] = B
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -206,15 +219,15 @@ def test_sub_grid_bcast():
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
     else:
-        A = np.ones((10, ), dtype=np.int32)
+        A = np.ones((10,), dtype=np.int32)
     func(A=A, rank=rank, P=size)
 
     if rank < size // 2:
-        assert (np.array_equal(A, np.zeros((10, ), dtype=np.int32)))
+        assert np.array_equal(A, np.zeros((10,), dtype=np.int32))
     elif rank < last_rank:
-        assert (np.array_equal(A, np.full_like(A, fill_value=(size // 2) % 10)))
+        assert np.array_equal(A, np.full_like(A, fill_value=(size // 2) % 10))
     else:
-        assert (np.array_equal(A, np.full_like(A, fill_value=rank % 10)))
+        assert np.array_equal(A, np.full_like(A, fill_value=rank % 10))
 
 
 if __name__ == "__main__":

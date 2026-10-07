@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A nested SDFG at a host level is a level of its own: its body places its data after the level around it."""
+
 from copy import deepcopy
 from typing import Iterator, Optional
 
@@ -12,9 +13,9 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import SDFGState
 
 
-def host_level_nested_sdfgs(state: SDFGState,
-                            host_maps: OrderedSet[nodes.MapEntry],
-                            entry: Optional[nodes.MapEntry] = None) -> Iterator[nodes.NestedSDFG]:
+def host_level_nested_sdfgs(
+    state: SDFGState, host_maps: OrderedSet[nodes.MapEntry], entry: Optional[nodes.MapEntry] = None
+) -> Iterator[nodes.NestedSDFG]:
     """Nested SDFGs at ``state``'s top level or under host maps only: one below a kernel is device code."""
     for node in state.scope_children().get(entry, ()):
         if isinstance(node, nodes.NestedSDFG):
@@ -49,18 +50,23 @@ def stage_device_scalar_bindings(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes
     """
     body = nsdfg_node.sdfg
     for edge in state.in_edges(nsdfg_node):
-        if edge.data.is_empty() or edge.dst_conn not in body.arrays or not isinstance(
-                body.arrays[edge.dst_conn], data.Scalar):
+        if (
+            edge.data.is_empty()
+            or edge.dst_conn not in body.arrays
+            or not isinstance(body.arrays[edge.dst_conn], data.Scalar)
+        ):
             continue
         if sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES:
             continue
         if not read_outside_a_kernel(body, edge.dst_conn):
             continue
-        host_name, _ = sdfg.add_scalar(f"{edge.dst_conn}_host",
-                                       body.arrays[edge.dst_conn].dtype,
-                                       transient=True,
-                                       storage=dtypes.StorageType.Default,
-                                       find_new_name=True)
+        host_name, _ = sdfg.add_scalar(
+            f"{edge.dst_conn}_host",
+            body.arrays[edge.dst_conn].dtype,
+            transient=True,
+            storage=dtypes.StorageType.Default,
+            find_new_name=True,
+        )
         staged = state.add_access(host_name)
         # The edge's own source, so the old one is not left isolated once this edge goes.
         source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(edge.data.data)

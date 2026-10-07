@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """What a tile node requires of the descriptors and memlets wired to it, and which dtype promotions it allows."""
+
 from collections.abc import Sequence
 
 import numpy as np
@@ -94,8 +95,8 @@ def promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool
     d_int = np.issubdtype(dst.type, np.integer)
     s_flt = is_floating_dtype(src)
     d_flt = is_floating_dtype(dst)
-    s_bool = (src.type is np.bool_)
-    d_bool = (dst.type is np.bool_)
+    s_bool = src.type is np.bool_
+    d_bool = dst.type is np.bool_
     if s_int and d_flt:  # int -> float / double
         return True
     if s_int and d_int and dst.bytes >= src.bytes:  # integer widening
@@ -173,20 +174,26 @@ def validate_packed_layout(node_label: str, conn_name: str, desc: dace.data.Data
     if len(shape) == 1:
         try:
             if dace.symbolic.simplify(strides[0] - 1) != 0:
-                raise NotImplementedError(f"{node_label}: {conn_name!r} has non-unit stride "
-                                          f"{strides[0]} on its single dim; only packed layouts are "
-                                          f"supported (section 2.3).")
+                raise NotImplementedError(
+                    f"{node_label}: {conn_name!r} has non-unit stride "
+                    f"{strides[0]} on its single dim; only packed layouts are "
+                    f"supported (section 2.3)."
+                )
         except NotImplementedError:
             raise
         except Exception:
-            raise NotImplementedError(f"{node_label}: {conn_name!r} stride {strides[0]} could not be "
-                                      f"verified against the packed-layout invariant (section 2.3).")
+            raise NotImplementedError(
+                f"{node_label}: {conn_name!r} stride {strides[0]} could not be "
+                f"verified against the packed-layout invariant (section 2.3)."
+            )
         return
     if not (strides_match_packed(shape, strides, "C") or strides_match_packed(shape, strides, "F")):
-        raise NotImplementedError(f"{node_label}: {conn_name!r} has non-packed stride pattern "
-                                  f"(shape={shape}, strides={strides}). Only packed-C and packed-"
-                                  f"Fortran layouts are supported (section 2.3); padded layouts raise "
-                                  f"NotImplementedError until codegen lands.")
+        raise NotImplementedError(
+            f"{node_label}: {conn_name!r} has non-packed stride pattern "
+            f"(shape={shape}, strides={strides}). Only packed-C and packed-"
+            f"Fortran layouts are supported (section 2.3); padded layouts raise "
+            f"NotImplementedError until codegen lands."
+        )
 
 
 def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.data.Data, widths: Sequence[int]) -> None:
@@ -206,16 +213,15 @@ def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.da
     :raises ValueError: On any descriptor lock violation.
     """
     if not isinstance(desc, dace.data.Array):
-        raise ValueError(f"{node_label}: {conn_name!r} mask must be a dace.data.Array, "
-                         f"got {type(desc).__name__}")
+        raise ValueError(f"{node_label}: {conn_name!r} mask must be a dace.data.Array, got {type(desc).__name__}")
     if tuple(desc.shape) != tuple(widths):
-        raise ValueError(f"{node_label}: {conn_name!r} mask shape {tuple(desc.shape)} must "
-                         f"match widths {tuple(widths)} (section 10.2)")
+        raise ValueError(
+            f"{node_label}: {conn_name!r} mask shape {tuple(desc.shape)} must "
+            f"match widths {tuple(widths)} (section 10.2)"
+        )
     if desc.dtype != dace.bool_:
-        raise ValueError(f"{node_label}: {conn_name!r} mask dtype {desc.dtype} must be bool_ "
-                         f"(section 10.2)")
+        raise ValueError(f"{node_label}: {conn_name!r} mask dtype {desc.dtype} must be bool_ (section 10.2)")
     if desc.storage != dace.dtypes.StorageType.Register:
-        raise ValueError(f"{node_label}: {conn_name!r} mask storage {desc.storage} must be "
-                         f"Register (section 10.2)")
+        raise ValueError(f"{node_label}: {conn_name!r} mask storage {desc.storage} must be Register (section 10.2)")
     if not desc.transient:
         raise ValueError(f"{node_label}: {conn_name!r} mask must be transient (section 10.2)")

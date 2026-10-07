@@ -7,6 +7,7 @@ for its ``code_global``. A header named by two tasklets, or by a tasklet and its
 arrives once per writer. :func:`~dace.codegen.targets.experimental_cpu.deduplicate_includes` drops
 the repeats at the single point that sees all of them.
 """
+
 import collections
 
 import numpy as np
@@ -40,10 +41,9 @@ def sqrt_chain_sdfg(name, num_tasklets, sdfg_global_code=None):
         if previous is not None:
             sdfg.add_edge(previous, state, dace.InterstateEdge())
         previous = state
-        tasklet = state.add_tasklet(f"t{index}", {"a"}, {"b"},
-                                    "b = std::sqrt(a);",
-                                    language=dace.Language.CPP,
-                                    code_global=TASKLET_GLOBAL_CODE)
+        tasklet = state.add_tasklet(
+            f"t{index}", {"a"}, {"b"}, "b = std::sqrt(a);", language=dace.Language.CPP, code_global=TASKLET_GLOBAL_CODE
+        )
         entry, exit_node = state.add_map(f"m{index}", dict(i="0:8"))
         state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
         state.add_memlet_path(tasklet, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
@@ -108,44 +108,23 @@ def test_only_include_lines_are_touched():
 def test_annotated_lines_compare_without_their_provenance_tag():
     """``CodeIOStream`` pads a per-node ``////__DACE:`` tag onto each line, so two copies of one
     include are never textually equal; the comparison must look past the tag."""
-    code = ("#include <a.h>    ////__DACE:0:0:0\n"
-            "#include <a.h>    ////__DACE:0:1:0\n")
+    code = "#include <a.h>    ////__DACE:0:0:0\n#include <a.h>    ////__DACE:0:1:0\n"
     assert deduplicate_includes(code) == "#include <a.h>    ////__DACE:0:0:0\n"
 
 
 def test_conditional_includes_are_left_alone():
     """An include inside ``#ifdef`` is selected by its branch, so it neither gets dropped nor
     suppresses the unconditional copy that follows it."""
-    code = ("#ifdef USE_FAST\n"
-            "#include <a.h>\n"
-            "#else\n"
-            "#include <a.h>\n"
-            "#endif\n"
-            "#include <a.h>\n"
-            "#include <a.h>\n")
-    assert deduplicate_includes(code) == ("#ifdef USE_FAST\n"
-                                          "#include <a.h>\n"
-                                          "#else\n"
-                                          "#include <a.h>\n"
-                                          "#endif\n"
-                                          "#include <a.h>\n")
+    code = "#ifdef USE_FAST\n#include <a.h>\n#else\n#include <a.h>\n#endif\n#include <a.h>\n#include <a.h>\n"
+    assert deduplicate_includes(code) == (
+        "#ifdef USE_FAST\n#include <a.h>\n#else\n#include <a.h>\n#endif\n#include <a.h>\n"
+    )
 
 
 def test_nested_conditionals_restore_the_unconditional_depth():
     """Nesting is counted, so the include after the outermost ``#endif`` is deduped again."""
-    code = ("#if A\n"
-            "#ifdef B\n"
-            "#include <a.h>\n"
-            "#endif\n"
-            "#endif\n"
-            "#include <b.h>\n"
-            "#include <b.h>\n")
-    assert deduplicate_includes(code) == ("#if A\n"
-                                          "#ifdef B\n"
-                                          "#include <a.h>\n"
-                                          "#endif\n"
-                                          "#endif\n"
-                                          "#include <b.h>\n")
+    code = "#if A\n#ifdef B\n#include <a.h>\n#endif\n#endif\n#include <b.h>\n#include <b.h>\n"
+    assert deduplicate_includes(code) == ("#if A\n#ifdef B\n#include <a.h>\n#endif\n#endif\n#include <b.h>\n")
 
 
 if __name__ == "__main__":

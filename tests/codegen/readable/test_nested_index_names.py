@@ -8,6 +8,7 @@ to a globally-unique name so every data name owns exactly one ``(ndim, strides, 
 Separately, ``_flush_generated_functions`` must emit each helper once per OUTPUT FILE (not per stream),
 so an un-inlined nested-SDFG function does not re-emit an identical helper into the same host TU.
 """
+
 import re
 
 import pytest
@@ -114,6 +115,7 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     ``<name>_idx`` at most once per translation unit (no ODR redefinition)."""
     import importlib.util
     import os
+
     base = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "polybench", "linear_algebra", "solvers")
     path = os.path.join(base, f"{kernel}.py")
     if not os.path.exists(path):

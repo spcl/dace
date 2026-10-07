@@ -5,6 +5,7 @@ Every branch of the conditional is a tail of the loop body and each one resolves
 so the offloader stacked one identical ``A -> A_gpu`` copy state after it per branch: 24 in a row after one
 CLOUDSC branch, 11704 repeated copies over the whole graph.
 """
+
 import collections
 
 import numpy as np
@@ -14,7 +15,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -73,7 +74,7 @@ def test_a_loop_ending_in_a_conditional_copies_back_to_the_device_once():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('c', [0, 1, 2, 3])
+@pytest.mark.parametrize("c", [0, 1, 2, 3])
 def test_the_offloaded_loop_computes_what_numpy_computes(c):
     sdfg = offloaded()
     for node, _ in sdfg.all_nodes_recursive():

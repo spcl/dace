@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Resolve a hybrid state by wrapping its host code that touches arrays into size-1 GPU maps."""
+
 from collections import deque
 from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
@@ -26,8 +27,9 @@ def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[
 
     for partition in subgraphs_after_removing(state, partition_nodes):
         if not any(
-                isinstance(node, nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], data.Scalar)
-                for node in partition):
+            isinstance(node, nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], data.Scalar)
+            for node in partition
+        ):
             continue
         remove_outer_access_nodes(state, partition)
         # A partition is a dataflow component, and a map scope spans one, so it can hold a lone MapEntry.
@@ -87,9 +89,9 @@ def rewire_boundary(state: SDFGState, edges: List, scope_node: nodes.Node, prefi
 
 def wrap_region_in_size1_map(state: SDFGState, region_nodes: OrderedSet) -> Tuple[nodes.MapEntry, nodes.MapExit]:
     map_label, map_param = helpers.get_new_map_identifiers(state, "size1_wrap_region", "__wrap_i")
-    map_entry, map_exit = state.add_map(name=map_label,
-                                        ndrange={map_param: '0:1'},
-                                        schedule=dtypes.ScheduleType.GPU_Device)
+    map_entry, map_exit = state.add_map(
+        name=map_label, ndrange={map_param: "0:1"}, schedule=dtypes.ScheduleType.GPU_Device
+    )
 
     # Lists, not sets: the connector numbering follows this order.
     boundary_in = [e for node in region_nodes for e in state.in_edges(node) if e.src not in region_nodes]
@@ -130,9 +132,15 @@ def subgraphs_after_removing(state: SDFGState, partition_nodes: OrderedSet) -> L
 def remove_outer_access_nodes(state: SDFGState, group: OrderedSet) -> None:
     """Peel access nodes off the group's boundary until none is left there: they stay outside the wrapper."""
     while True:
-        outer = OrderedSet(node for node in group if isinstance(node, nodes.AccessNode) and (all(
-            e.src not in group for e in state.in_edges(node)) or all(e.dst not in group
-                                                                     for e in state.out_edges(node))))
+        outer = OrderedSet(
+            node
+            for node in group
+            if isinstance(node, nodes.AccessNode)
+            and (
+                all(e.src not in group for e in state.in_edges(node))
+                or all(e.dst not in group for e in state.out_edges(node))
+            )
+        )
         if not outer:
             return
         group -= outer
@@ -170,8 +178,9 @@ def forward_input_only_map_data(state: SDFGState, map_entry: nodes.MapEntry, map
         state.add_edge(map_exit, out_conn, state.add_access(input_memlet.data), None, deepcopy(input_memlet))
 
 
-def last_access_nodes_in_map(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
-                             data_names: OrderedSet) -> Dict[str, nodes.AccessNode]:
+def last_access_nodes_in_map(
+    state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, data_names: OrderedSet
+) -> Dict[str, nodes.AccessNode]:
     """The access node of each name in ``data_names`` that a breadth-first walk from the entry reaches last."""
     last_access: Dict[str, nodes.AccessNode] = {}
     queue = deque([map_entry])

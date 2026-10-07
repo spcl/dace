@@ -3,8 +3,10 @@ from ordered_set import OrderedSet
 
 from dace import data, dtypes
 from dace.sdfg import SDFG
-from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
-                                                                           ConvertScalarsToLengthOneArrays)
+from dace.transformation.passes.length_one_array_scalar_conversion import (
+    ConvertLengthOneArraysToScalars,
+    ConvertScalarsToLengthOneArrays,
+)
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
@@ -13,11 +15,19 @@ def change_single_element_containers(sdfg: SDFG, exceptions: OrderedSet[str]) ->
     arrays scalars; ``exceptions`` are not asked again. Return the names asked for."""
     gpu_written = helpers.data_written_by_device_code(sdfg)
     to_len1_arrays = OrderedSet(
-        name for name in sdfg.arrays
-        if isinstance(sdfg.arrays[name], data.Scalar) and name in gpu_written and name not in exceptions)
+        name
+        for name in sdfg.arrays
+        if isinstance(sdfg.arrays[name], data.Scalar) and name in gpu_written and name not in exceptions
+    )
     # ``__return`` stays by reference: the caller reads the result back through it.
-    to_scalars = OrderedSet(name for name in sdfg.arrays if helpers.is_length1_array(name, sdfg)
-                            and name not in gpu_written and name not in exceptions and not name.startswith("__return"))
+    to_scalars = OrderedSet(
+        name
+        for name in sdfg.arrays
+        if helpers.is_length1_array(name, sdfg)
+        and name not in gpu_written
+        and name not in exceptions
+        and not name.startswith("__return")
+    )
 
     if to_len1_arrays:
         ConvertScalarsToLengthOneArrays(recursive=True, preserve_abi=True, filter=to_len1_arrays).apply_pass(sdfg, {})

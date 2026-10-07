@@ -22,7 +22,7 @@ def aligned_ndarray(arr, alignment=64):
     extra = alignment // arr.itemsize
     buf = np.empty(arr.size + extra, dtype=arr.dtype)
     ofs = (-buf.ctypes.data % alignment) // arr.itemsize
-    result = buf[ofs:ofs + arr.size].reshape(arr.shape)
+    result = buf[ofs : ofs + arr.size].reshape(arr.shape)
     np.copyto(result, arr)
     assert (result.ctypes.data % alignment) == 0
     return result

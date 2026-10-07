@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Narrowing of optional values; a leaf module so that every layer of DaCe can import it."""
+
 from typing import TypeVar
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def required(value: T | None) -> T:
@@ -16,5 +17,5 @@ def required(value: T | None) -> T:
     :raises TypeError: If ``value`` is ``None``.
     """
     if value is None:
-        raise TypeError('expected a value, got None')
+        raise TypeError("expected a value, got None")
     return value

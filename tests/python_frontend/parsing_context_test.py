@@ -21,5 +21,5 @@ def test_parsing_context():
     assert np.allclose(second, 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_parsing_context()

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps that stay on the host so the maps under them become the kernels (ICON's ``nblks`` over ``nproma``/``nlev``)."""
+
 import itertools
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -56,14 +57,16 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) ->
     return False
 
 
-def is_host_map(state: SDFGState,
-                entry: nodes.MapEntry,
-                scope_children: Dict,
-                auto: bool,
-                pinned_labels: OrderedSet,
-                pinned_entries: OrderedSet,
-                sdfg: SDFG = None,
-                callback_names: Optional[OrderedSet] = None) -> bool:
+def is_host_map(
+    state: SDFGState,
+    entry: nodes.MapEntry,
+    scope_children: Dict,
+    auto: bool,
+    pinned_labels: OrderedSet,
+    pinned_entries: OrderedSet,
+    sdfg: SDFG = None,
+    callback_names: Optional[OrderedSet] = None,
+) -> bool:
     """A named map, a map holding a callback, or with ``auto`` a map that only launches, stays on the host."""
     named = entry in pinned_entries or entry.map.label in pinned_labels
     if named or auto:
@@ -100,11 +103,13 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
             elif isinstance(item, str):
                 pinned_labels.add(item)
             else:
-                raise TypeError(f"host_maps takes map labels or MapEntry nodes, got {item!r} "
-                                f"of type {type(item).__name__}")
+                raise TypeError(
+                    f"host_maps takes map labels or MapEntry nodes, got {item!r} of type {type(item).__name__}"
+                )
     elif spec not in (None, True, False):
-        raise TypeError(f"host_maps must be None, a bool or a list of labels / MapEntry nodes, "
-                        f"got {type(spec).__name__}")
+        raise TypeError(
+            f"host_maps must be None, a bool or a list of labels / MapEntry nodes, got {type(spec).__name__}"
+        )
 
     found: OrderedSet = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
@@ -112,8 +117,9 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
         for state in nested.states():
             scope_children = state.scope_children()
             for node in state.nodes():
-                if isinstance(node, nodes.MapEntry) and is_host_map(state, node, scope_children, auto, pinned_labels,
-                                                                    pinned_entries, nested, callback_names):
+                if isinstance(node, nodes.MapEntry) and is_host_map(
+                    state, node, scope_children, auto, pinned_labels, pinned_entries, nested, callback_names
+                ):
                     found.add(node)
     return found
 

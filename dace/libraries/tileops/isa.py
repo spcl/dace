@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """What the ISA expansions of the tile nodes share: staging operands for a ``dace::tileops::tile_*`` call."""
+
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -37,6 +38,7 @@ class IsaCall:
     The headers take one element type ``T`` for the operands and the output, so a widening tile operand is copied into
     a ``T`` buffer first, and a symbol or scalar becomes a one-element buffer read with ``Broadcast=true``.
     """
+
     sdfg: dace.SDFG
     in_edges: dict[str, MultiConnectorEdge]
     ctype: str
@@ -45,8 +47,9 @@ class IsaCall:
 
     @classmethod
     def of(cls, node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, out_conn: str) -> "IsaCall":
-        return cls(sdfg, connected_edges(state, node), edge_ctype(sdfg, output_edge(state, node, out_conn)),
-                   require_k1(node))
+        return cls(
+            sdfg, connected_edges(state, node), edge_ctype(sdfg, output_edge(state, node, out_conn)), require_k1(node)
+        )
 
     def operand(self, operand: Operand, promote_tile: bool = True) -> tuple[str, str]:
         """``(broadcast flag, pointer)`` of an operand as the call takes it."""
@@ -55,8 +58,9 @@ class IsaCall:
                 return "false", operand.conn
             buffer = f"_cast{operand.conn}"
             self.pre.append(f"{self.ctype} {buffer}[{self.vlen}];")
-            self.pre.append(f"for (int _ci = 0; _ci < {self.vlen}; ++_ci) "
-                            f"{buffer}[_ci] = ({self.ctype}){operand.conn}[_ci];")
+            self.pre.append(
+                f"for (int _ci = 0; _ci < {self.vlen}; ++_ci) {buffer}[_ci] = ({self.ctype}){operand.conn}[_ci];"
+            )
             return "false", buffer
         if operand.kind == SYMBOL:
             value = f"({self.ctype})({pyexpr2cpp(operand.expr)})"
@@ -66,8 +70,15 @@ class IsaCall:
         self.pre.append(f"const {self.ctype} {buffer}[1] = {{ {value} }};")
         return "true", buffer
 
-    def tasklet(self, node: nodes.LibraryNode, backend: str, operands: Sequence[Operand], out_conn: str, call: str,
-                has_mask: bool) -> nodes.Tasklet:
+    def tasklet(
+        self,
+        node: nodes.LibraryNode,
+        backend: str,
+        operands: Sequence[Operand],
+        out_conn: str,
+        call: str,
+        has_mask: bool,
+    ) -> nodes.Tasklet:
         return nodes.Tasklet(
             label=f"{node.label}_{backend}",
             inputs=dict.fromkeys(input_connectors(operands, has_mask)),

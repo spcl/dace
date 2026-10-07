@@ -5,6 +5,7 @@ A tile is a K-fold nested loop over per-dim lane indices ``__l0, __l1, ...`` rat
 decode. Register tiles are contiguous and row-major, so :func:`tile_offset` flattens the lane indices; a node supplies
 the per-lane body to :func:`nested_loops`.
 """
+
 import numbers
 from collections.abc import Sequence
 
@@ -132,8 +133,9 @@ def tile_offset(widths: Sequence[int], lanes: Sequence[str] | None = None) -> st
     return " + ".join(reversed(terms))
 
 
-def lane_invariant_assign(out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int],
-                          mask_elements: int | sympy.Basic | None) -> str:
+def lane_invariant_assign(
+    out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int], mask_elements: int | sympy.Basic | None
+) -> str:
     """Body assigning a lane-invariant ``rhs_expr`` to the one-element output ``out_conn``.
 
     Every lane computes the same value, so under ``_mask`` it is kept when AT LEAST ONE lane is
@@ -159,7 +161,8 @@ def offset_via_strides(
     coeffs: Sequence[int],
     strides: Sequence[str],
     replicate_factors: Sequence[int] = (),
-    lane_index_exprs: Sequence[str] = ()) -> str:
+    lane_index_exprs: Sequence[str] = (),
+) -> str:
     """Return the flat offset expression
     ``sum_d coeffs[d] * strides[d] * (__l<d> / replicate_factors[d])``.
 
@@ -264,7 +267,7 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
     # Scalar gather index (no lane dep): the legacy literal ``(1,)`` shape. A
     # K-dim all-``ONE`` shape is also scalar and falls out of the positional
     # loop below (every dim skipped -> empty deps).
-    if idx_shape == (1, ):
+    if idx_shape == (1,):
         return ()
     # Full-K-dim positional resolution. The ONE markers are PRESERVED, never
     # collapsed: dim d is a dep iff its extent is not a 1/ONE broadcast marker.
@@ -303,7 +306,7 @@ def gather_lane_offset(deps: Sequence[int], widths: Sequence[int], conn: str) ->
     parts = []
     for i, p in enumerate(deps):
         inner = 1
-        for q in deps[i + 1:]:
+        for q in deps[i + 1 :]:
             inner *= widths[q]
         parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
     return f"(long long)({conn}[{' + '.join(parts)}])"

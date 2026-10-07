@@ -39,7 +39,7 @@ def test_reload():
         func2 = prog_two.compile()
     except CompilationError:
         # On some systems (e.g., Windows), the file will be locked, so compilation will fail
-        pytest.skip('Compilation failed due to locked file. Skipping test.')
+        pytest.skip("Compilation failed due to locked file. Skipping test.")
 
     lib1_path = pathlib.Path(func1.filename)
     lib2_path = pathlib.Path(func2.filename)
@@ -52,13 +52,13 @@ def test_reload():
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
     print("Differences:", diff1, diff2)
-    assert (diff1 < 1e-5 and diff2 < 1e-5)
+    assert diff1 < 1e-5 and diff2 < 1e-5
 
 
 def test_load_precompiled():
     for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:
-            conf.set('compiler', 'build_folder_mode', value=folder_mode)
+            conf.set("compiler", "build_folder_mode", value=folder_mode)
             _load_precompiled_impl(
                 test_name="test_load_precompiled",
                 folder_mode=folder_mode,
@@ -68,7 +68,7 @@ def test_load_precompiled():
 def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
     prog = program_generator(10, 2.0)
     sdfg = prog.to_sdfg()
-    sdfg.name = f'{test_name}_{sdfg.name}_{folder_mode}'
+    sdfg.name = f"{test_name}_{sdfg.name}_{folder_mode}"
 
     func1 = sdfg.compile()
 
@@ -89,12 +89,12 @@ def _load_precompiled_impl(test_name: str, folder_mode: str) -> None:
     assert lib1_path != lib2_path
     assert lib1_path.parent == lib2_path.parent
 
-    assert (np.allclose(output_one, output_two))
+    assert np.allclose(output_one, output_two)
 
     del func1
     del func2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reload()
     test_load_precompiled()

@@ -15,12 +15,12 @@ def test_string_literal_in_callback():
     @callback_inhibitor
     def cb(a):
         nonlocal success
-        if a == 'a':
+        if a == "a":
             success = True
 
     @dace
     def tester(a):
-        cb('a')
+        cb("a")
 
     a = np.random.rand(1)
     with pytest.warns(match="Automatically creating callback"):
@@ -35,12 +35,12 @@ def test_bytes_literal_in_callback():
     @callback_inhibitor
     def cb(a):
         nonlocal success
-        if a == b'Hello World!':
+        if a == b"Hello World!":
             success = True
 
     @dace
     def tester(a):
-        cb(b'Hello World!')
+        cb(b"Hello World!")
 
     a = np.random.rand(1)
     with pytest.warns(match="Automatically creating callback"):
@@ -78,58 +78,57 @@ def test_string_literal_comparison():
     assert np.allclose(tester(), False)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_string_literal():
 
     @dace
     def tester():
-        return 'Hello World!'
+        return "Hello World!"
 
-    assert tester()[0] == 'Hello World!'
+    assert tester()[0] == "Hello World!"
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_bytes_literal():
 
     @dace
     def tester():
-        return b'Hello World!'
+        return b"Hello World!"
 
-    assert tester()[0] == b'Hello World!'
+    assert tester()[0] == b"Hello World!"
 
 
 def test_string_literal_in_complex_object():
     success = False
 
     class HashableObject:
-
         def __init__(self, q) -> None:
             self.q = q
 
         def __hash__(self) -> int:
-            return hash(('a', self.q))
+            return hash(("a", self.q))
 
-        def __eq__(self, other: 'HashableObject') -> bool:
+        def __eq__(self, other: "HashableObject") -> bool:
             return self.q == other.q
 
     @callback_inhibitor
     def cb(a, b, c):
         nonlocal success
-        if set(a.keys()) == {'hello', 2}:
-            if a['hello'] == {'w': 'orld'} and a[2] == 3:
-                if b == 4 and c == {'something', HashableObject(9)}:
+        if set(a.keys()) == {"hello", 2}:
+            if a["hello"] == {"w": "orld"} and a[2] == 3:
+                if b == 4 and c == {"something", HashableObject(9)}:
                     success = True
 
     @dace
     def tester(a: int):
-        cb(a={'hello': {'w': 'orld'}, 2: 3}, b=a, c={'something', HashableObject(9)})
+        cb(a={"hello": {"w": "orld"}, 2: 3}, b=a, c={"something", HashableObject(9)})
 
     with pytest.warns(match="Automatically creating callback"):
         tester(4)
     assert success is True
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_string_literal_in_callback()
     test_bytes_literal_in_callback()
     test_string_literal_in_callback_2()

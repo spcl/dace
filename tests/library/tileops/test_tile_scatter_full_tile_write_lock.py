@@ -12,6 +12,7 @@ designed.
 Scatter mode (``gather_dims`` non-empty) is exempt: the dest memlet covers
 the full dest range and per-lane addressing comes from ``_idx_<k>``.
 """
+
 import pytest
 
 import dace
@@ -77,29 +78,31 @@ def test_refuses_partial_inner_dim():
 def test_scatter_mode_skips_full_tile_check():
     """When ``gather_dims`` is non-empty, the dest memlet covers the full dest range and the
     full-tile-shape check is skipped (per-lane addressing via ``_idx_<k>``)."""
-    sdfg, state, node = build_store(src_shape=(4, 8),
-                                    dst_shape=(16, 32),
-                                    dst_subset="0:16, 0:32",
-                                    widths=(4, 8),
-                                    gather_dims=(0, ),
-                                    idx_shapes=[(4, ONE)])
+    sdfg, state, node = build_store(
+        src_shape=(4, 8),
+        dst_shape=(16, 32),
+        dst_subset="0:16, 0:32",
+        widths=(4, 8),
+        gather_dims=(0,),
+        idx_shapes=[(4, ONE)],
+    )
     node.validate(sdfg, state)
 
 
 def test_accepts_K1_full_tile_window():
     """K=1 ``Dst[0:8]`` with widths ``(8,)`` -- full-tile, passes."""
-    sdfg, state, node = build_store(src_shape=(8, ), dst_shape=(32, ), dst_subset="0:8", widths=(8, ))
+    sdfg, state, node = build_store(src_shape=(8,), dst_shape=(32,), dst_subset="0:8", widths=(8,))
     node.validate(sdfg, state)
 
 
 def test_refuses_K1_single_element_write():
     """K=1 ``Dst[0:1]`` with widths ``(8,)`` -- single element, refused."""
-    sdfg, state, node = build_store(src_shape=(8, ), dst_shape=(32, ), dst_subset="0:1", widths=(8, ))
+    sdfg, state, node = build_store(src_shape=(8,), dst_shape=(32,), dst_subset="0:1", widths=(8,))
     with pytest.raises(NotImplementedError, match=r"non-full-tile structured store"):
         node.validate(sdfg, state)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_accepts_full_tile_window_K2()
     test_accepts_full_tile_window_at_offset_K2()
     test_refuses_whole_array_write_with_smaller_tile()

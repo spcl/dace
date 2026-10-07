@@ -18,8 +18,7 @@ from dace.transformation.passes.offloading.phases.copy_insertion import CopyInse
 from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.offloading.phases.host_level_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
-from dace.transformation.passes.offloading.phases.single_element_copy_optimization import (
-    single_element_copies_into_map)
+from dace.transformation.passes.offloading.phases.single_element_copy_optimization import single_element_copies_into_map
 from dace.transformation.passes.offloading.phases.single_element_values import change_single_element_containers
 from dace.transformation.passes.offloading.phases.single_iteration_maps import make_size1_map_wrappers
 
@@ -37,20 +36,24 @@ class OffloadToAccelerator(ppl.Pass):
         dtype=int,
         default=1000,
         desc="Safety bound on the placement fixpoint. Reaching it is a bug, not a workload property: the loop "
-        "converges once no state is hybrid and no container changed.")
+        "converges once no state is hybrid and no container changed.",
+    )
     verbose = properties.Property(dtype=bool, default=False, desc="Print the host maps, hybrid states and IR.")
     pin_host_loop_maps = properties.Property(
         dtype=bool,
         default=False,
         desc="Keep a serial host loop's small maps on the host when offloading them would copy the containers "
-        "they share with the loop's host code every iteration (see maps_pinned_by_host_loops).")
+        "they share with the loop's host code every iteration (see maps_pinned_by_host_loops).",
+    )
 
-    def __init__(self,
-                 host_maps: HostMapSpec = False,
-                 max_iterations: Optional[int] = None,
-                 verbose: Optional[bool] = None,
-                 pin_host_loop_maps: Optional[bool] = None,
-                 **kwargs: Any) -> None:
+    def __init__(
+        self,
+        host_maps: HostMapSpec = False,
+        max_iterations: Optional[int] = None,
+        verbose: Optional[bool] = None,
+        pin_host_loop_maps: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         :param host_maps: maps that keep a host schedule so the maps under them become the kernels; see
             :data:`~dace.transformation.passes.offloading.host_maps.HostMapSpec`. Not a ``Property``: a
@@ -83,7 +86,7 @@ class OffloadToAccelerator(ppl.Pass):
         """
         :return: every container left in a GPU storage, qualified by its SDFG's id, or None if there is none.
         """
-        require_structured_control_flow(sdfg, 'OffloadToAccelerator')
+        require_structured_control_flow(sdfg, "OffloadToAccelerator")
         host_map_entries = host_maps(sdfg, self._host_maps)
         if self.verbose and host_map_entries:
             print(f"host maps: {[entry.map.label for entry in host_map_entries]}")
@@ -112,11 +115,13 @@ class OffloadToAccelerator(ppl.Pass):
         insertion.apply(IR)
         helpers.remove_empty_return_entries(entries)
         if wrapped:
-            ppl.Pipeline([
-                FullMapFusion(strict_dataflow=True,
-                              perform_vertical_map_fusion=True,
-                              perform_horizontal_map_fusion=True)
-            ]).apply_pass(sdfg, {})
+            ppl.Pipeline(
+                [
+                    FullMapFusion(
+                        strict_dataflow=True, perform_vertical_map_fusion=True, perform_horizontal_map_fusion=True
+                    )
+                ]
+            ).apply_pass(sdfg, {})
         single_element_copies_into_map(sdfg)
 
         placed_on_gpu = OrderedSet(insertion.placed_on_gpu)
@@ -144,6 +149,8 @@ class OffloadToAccelerator(ppl.Pass):
                     print(f"offloading IR:\n{IR}")
                 return analysis, IR, wrapped
             wrapped = wrapped or bool(analysis.hybrid_states)
-        raise RuntimeError(f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} iterations. "
-                           "The placement loop is expected to converge; treat this as a bug rather than raising "
-                           "the bound.")
+        raise RuntimeError(
+            f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} iterations. "
+            "The placement loop is expected to converge; treat this as a bug rather than raising "
+            "the bound."
+        )

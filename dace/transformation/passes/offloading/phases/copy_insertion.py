@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Materialize the offloading IR: rename each access to the side it runs on, and copy where a location changes."""
+
 from typing import Dict, Optional, Tuple
 
 from ordered_set import OrderedSet
@@ -16,7 +17,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 class CopyInsertion:
     """One copy insertion into ``sdfg`` from its placement IR; run it with :meth:`apply`."""
 
-    __slots__ = ('sdfg', 'scopes', 'no_copy_in_needed', 'written', 'placed_on_gpu', 'placed', 'entry_fills')
+    __slots__ = ("sdfg", "scopes", "no_copy_in_needed", "written", "placed_on_gpu", "placed", "entry_fills")
 
     def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]) -> None:
         self.sdfg = sdfg
@@ -47,13 +48,17 @@ class CopyInsertion:
     def place_transients(self, IR: OffloadingIRNode) -> None:
         """A transient lives on the side of the first IR node that names it; a shared-memory or register one keeps
         the scope-local storage it was given."""
-        seen: OrderedSet[str] = OrderedSet(name for name, desc in self.sdfg.arrays.items()
-                                           if desc.storage in (dtypes.StorageType.GPU_Shared,
-                                                               dtypes.StorageType.Register))
+        seen: OrderedSet[str] = OrderedSet(
+            name
+            for name, desc in self.sdfg.arrays.items()
+            if desc.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+        )
 
         def place(node: OffloadingIRNode) -> None:
-            for storage, names in ((dtypes.StorageType.GPU_Global, node.gpu_set), (dtypes.StorageType.Default,
-                                                                                   node.cpu_set)):
+            for storage, names in (
+                (dtypes.StorageType.GPU_Global, node.gpu_set),
+                (dtypes.StorageType.Default, node.cpu_set),
+            ):
                 for name in names:
                     if self.sdfg.arrays[name].transient and name not in seen:
                         self.sdfg.arrays[name].storage = storage
@@ -138,12 +143,14 @@ class CopyInsertion:
             twin = helpers.gpu_name(name) if to_gpu else helpers.host_name(name)
             if twin not in sdfg.arrays:
                 desc = sdfg.arrays[name]
-                sdfg.add_view(twin,
-                              desc.shape,
-                              desc.dtype,
-                              storage=dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default,
-                              strides=desc.strides,
-                              offset=desc.offset)
+                sdfg.add_view(
+                    twin,
+                    desc.shape,
+                    desc.dtype,
+                    storage=dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default,
+                    strides=desc.strides,
+                    offset=desc.offset,
+                )
             rename_dict[name] = twin
 
     def origin_of_a_staged_view(self, state: SDFGState, access: nodes.AccessNode) -> Optional[str]:
@@ -152,8 +159,11 @@ class CopyInsertion:
         sdfg = self.sdfg
         node = access
         seen: OrderedSet[str] = OrderedSet()
-        while isinstance(node, nodes.AccessNode) and node.data in sdfg.arrays and isinstance(
-                sdfg.arrays[node.data], data.View):
+        while (
+            isinstance(node, nodes.AccessNode)
+            and node.data in sdfg.arrays
+            and isinstance(sdfg.arrays[node.data], data.View)
+        ):
             if node.data in seen:  # a cycle is not a chain to a container
                 return None
             seen.add(node.data)
@@ -168,11 +178,14 @@ class CopyInsertion:
             self.insert_loop_copies(node)
         for next in node.next:
             if node.cpu_set & node.gpu_set:
-                raise NotImplementedError(f"This pass does not support copies within a single state. State "
-                                          f"{node.debug_name} uses {node.cpu_set & node.gpu_set} on both sides.")
+                raise NotImplementedError(
+                    f"This pass does not support copies within a single state. State "
+                    f"{node.debug_name} uses {node.cpu_set & node.gpu_set} on both sides."
+                )
             # Before an interstate edge, or between two CLOSEs, there is no next block: copy after the node.
-            if next.type == OffloadingIRNode.EDGE or (node.type == OffloadingIRNode.CLOSE
-                                                      and next.type == OffloadingIRNode.CLOSE):
+            if next.type == OffloadingIRNode.EDGE or (
+                node.type == OffloadingIRNode.CLOSE and next.type == OffloadingIRNode.CLOSE
+            ):
                 self.insert_copies(node, next, block_after(node), None)
             else:
                 self.insert_copies(node, next, node.block, next.block)
@@ -190,8 +203,13 @@ class CopyInsertion:
         close.gpu_set = (close.gpu_set | gpu_copies) - cpu_copies
         close.cpu_set = (close.cpu_set | cpu_copies) - gpu_copies
 
-    def insert_copies(self, node: OffloadingIRNode, next: OffloadingIRNode, node_block: Optional[ControlFlowBlock],
-                      next_block: Optional[ControlFlowBlock]) -> None:
+    def insert_copies(
+        self,
+        node: OffloadingIRNode,
+        next: OffloadingIRNode,
+        node_block: Optional[ControlFlowBlock],
+        next_block: Optional[ControlFlowBlock],
+    ) -> None:
         gpu_copies = OrderedSet(name for name in node.cpu_set & next.gpu_set if name not in self.no_copy_in_needed)
         if gpu_copies:
             self.place_copy(node_block, next_block, gpu_copies, to_gpu=True)
@@ -199,8 +217,13 @@ class CopyInsertion:
         if cpu_copies:
             self.place_copy(node_block, next_block, cpu_copies, to_gpu=False)
 
-    def place_copy(self, before: Optional[ControlFlowBlock], after: Optional[ControlFlowBlock],
-                   array_names: OrderedSet[str], to_gpu: bool) -> None:
+    def place_copy(
+        self,
+        before: Optional[ControlFlowBlock],
+        after: Optional[ControlFlowBlock],
+        array_names: OrderedSet[str],
+        to_gpu: bool,
+    ) -> None:
         """Copy ``array_names`` between ``before`` and ``after``, once per program point and direction.
 
         A copy toward a container's home only carries writes of its twin, so it is dropped when nothing
@@ -209,22 +232,33 @@ class CopyInsertion:
         """
         sdfg = self.sdfg
         array_names = OrderedSet(
-            name for name in array_names
-            if helpers.is_array_stored_on_GPU(sdfg, name) != to_gpu or helpers.twin_name(sdfg, name) in self.written)
-        constant = OrderedSet(name for name in array_names
-                              if name not in self.written and helpers.twin_name(sdfg, name) not in self.written)
+            name
+            for name in array_names
+            if helpers.is_array_stored_on_GPU(sdfg, name) != to_gpu or helpers.twin_name(sdfg, name) in self.written
+        )
+        constant = OrderedSet(
+            name
+            for name in array_names
+            if name not in self.written and helpers.twin_name(sdfg, name) not in self.written
+        )
         self.entry_fills[to_gpu] |= constant
-        point = (after, 'before') if after is not None else (before, 'after')
+        point = (after, "before") if after is not None else (before, "after")
         directions = self.placed.setdefault(point, {})
-        fresh = OrderedSet(name for name in array_names
-                           if name not in constant and directions.get(name) != OrderedSet([to_gpu]))
+        fresh = OrderedSet(
+            name for name in array_names if name not in constant and directions.get(name) != OrderedSet([to_gpu])
+        )
         for name in fresh:
             directions.setdefault(name, OrderedSet()).add(to_gpu)
         if fresh:
             self.create_interstate_copy(before, after, fresh, to_gpu=to_gpu)
 
-    def create_interstate_copy(self, before: Optional[ControlFlowBlock], after: Optional[ControlFlowBlock],
-                               array_names: OrderedSet[str], to_gpu: bool) -> None:
+    def create_interstate_copy(
+        self,
+        before: Optional[ControlFlowBlock],
+        after: Optional[ControlFlowBlock],
+        array_names: OrderedSet[str],
+        to_gpu: bool,
+    ) -> None:
         """One new state, before ``after`` or else after ``before``, copying every name in ``array_names``."""
         assert before is not None or after is not None, "invalid: both states are None"
         sdfg = self.sdfg
@@ -246,10 +280,16 @@ class CopyInsertion:
             if isinstance(sdfg.arrays[name], data.View):
                 continue
             copy_state.add_edge(
-                copy_state.add_access(src), None, copy_state.add_access(dst), None,
-                Memlet(data=src,
-                       subset=subsets.Range.from_array(sdfg.arrays[src]),
-                       other_subset=subsets.Range.from_array(sdfg.arrays[dst])))
+                copy_state.add_access(src),
+                None,
+                copy_state.add_access(dst),
+                None,
+                Memlet(
+                    data=src,
+                    subset=subsets.Range.from_array(sdfg.arrays[src]),
+                    other_subset=subsets.Range.from_array(sdfg.arrays[dst]),
+                ),
+            )
 
 
 def block_after(node: OffloadingIRNode) -> ControlFlowBlock:

@@ -37,6 +37,7 @@ for (size_t i = 0; i < M; ++i) {
 }
 ```
 """
+
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
@@ -75,12 +76,14 @@ class TileMMA(TileOp):
         "(``c = a @ b + c``); ``0`` overwrites (``c = a @ b``).",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, int, int],
-                 alpha: int | float = 1,
-                 beta: int | float = 1,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, int, int],
+        alpha: int | float = 1,
+        beta: int | float = 1,
+        location: str | None = None,
+    ):
         """Construct a ``TileMMA`` node.
 
         :param name: Node label.
@@ -120,10 +123,15 @@ class TileMMA(TileOp):
         b_desc = sdfg.arrays[required(in_e["_b"].data.data)]
         c_desc = sdfg.arrays[required(out_e["_c"].data.data)]
         if a_desc.dtype != b_desc.dtype or a_desc.dtype != c_desc.dtype:
-            raise NotImplementedError(f"{self.label}: requires uniform dtype across _a, _b, _c; "
-                                      f"got a={a_desc.dtype}, b={b_desc.dtype}, c={c_desc.dtype}")
-        for desc, name, expected in ((a_desc, "_a", (M, K_inner)), (b_desc, "_b", (K_inner, N)), (c_desc, "_c", (M,
-                                                                                                                 N))):
+            raise NotImplementedError(
+                f"{self.label}: requires uniform dtype across _a, _b, _c; "
+                f"got a={a_desc.dtype}, b={b_desc.dtype}, c={c_desc.dtype}"
+            )
+        for desc, name, expected in (
+            (a_desc, "_a", (M, K_inner)),
+            (b_desc, "_b", (K_inner, N)),
+            (c_desc, "_c", (M, N)),
+        ):
             shape = tuple(desc.shape) if hasattr(desc, "shape") else ()
             if len(shape) != 2 or tuple(int(s) for s in shape) != expected:
                 raise ValueError(f"{self.label}: {name!r} descriptor shape {shape} != expected {expected}")

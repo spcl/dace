@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The lowering of every tile-op library node is what the committed snapshot says."""
+
 import json
 
 import pytest

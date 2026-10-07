@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``MaskedCopyLibraryNode``: a copy between a global array and a register tile that a per-lane mask gates."""
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,14 @@ from dace.sdfg import nodes
 from dace.symbolic import symstr
 
 from dace.libraries.tileops.alignment import align_template_arg
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
@@ -24,15 +32,17 @@ MASK_CONNECTOR_NAME = "_mask"
 
 #: The ``(source, destination)`` storages of a masked load, which fills the tile and zeroes its inactive lanes without
 #: reading their source.
-LOAD_STORAGES = frozenset({
-    (dtypes.StorageType.GPU_Global, dtypes.StorageType.Register),
-    (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared),
-    (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register),
-    (dtypes.StorageType.Default, dtypes.StorageType.Register),
-    (dtypes.StorageType.Default, dtypes.StorageType.Default),
-    # A later pass may give an array of registers (a reduction buffer) the storage of its tile.
-    (dtypes.StorageType.Register, dtypes.StorageType.Register),
-})
+LOAD_STORAGES = frozenset(
+    {
+        (dtypes.StorageType.GPU_Global, dtypes.StorageType.Register),
+        (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared),
+        (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register),
+        (dtypes.StorageType.Default, dtypes.StorageType.Register),
+        (dtypes.StorageType.Default, dtypes.StorageType.Default),
+        # A later pass may give an array of registers (a reduction buffer) the storage of its tile.
+        (dtypes.StorageType.Register, dtypes.StorageType.Register),
+    }
+)
 #: The ``(source, destination)`` storages of a masked store, which writes the active lanes only.
 STORE_STORAGES = frozenset({(destination, source) for source, destination in LOAD_STORAGES})
 
@@ -58,11 +68,15 @@ def is_load(source: dace.data.Data, destination: dace.data.Data, label: str) -> 
             return True
         if holds_a_tile(source) and not holds_a_tile(destination):
             return False
-        raise NotImplementedError(f"{label}: {pair[0]} to {pair[1]} does not say whether it loads or stores a tile; "
-                                  f"exactly one of the two data containers must be the transient tile.")
+        raise NotImplementedError(
+            f"{label}: {pair[0]} to {pair[1]} does not say whether it loads or stores a tile; "
+            f"exactly one of the two data containers must be the transient tile."
+        )
     if not loads and not stores:
-        raise NotImplementedError(f"{label}: no masked copy from {pair[0]} to {pair[1]}; loads are "
-                                  f"{sorted(map(str, LOAD_STORAGES))} and stores the mirrored pairs.")
+        raise NotImplementedError(
+            f"{label}: no masked copy from {pair[0]} to {pair[1]}; loads are "
+            f"{sorted(map(str, LOAD_STORAGES))} and stores the mirrored pairs."
+        )
     return loads
 
 
@@ -73,6 +87,7 @@ class Lanes:
     The extents and strides are those of the windows with their singleton dims dropped, so the step of a memlet is part
     of the stride and a window of a lower-rank tile on a higher-rank array lines up with it.
     """
+
     loads: bool
     ctype: str
     extents: list
@@ -179,11 +194,14 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         in_edges = [edge for edge in state.in_edges(self) if edge.dst_conn == INPUT_CONNECTOR_NAME]
         mask_edges = [edge for edge in state.in_edges(self) if edge.dst_conn == MASK_CONNECTOR_NAME]
         if len(out_edges) != 1 or len(in_edges) != 1:
-            raise ValueError(f"{self.label}: expects exactly one {INPUT_CONNECTOR_NAME!r} and one "
-                             f"{OUTPUT_CONNECTOR_NAME!r} edge.")
+            raise ValueError(
+                f"{self.label}: expects exactly one {INPUT_CONNECTOR_NAME!r} and one {OUTPUT_CONNECTOR_NAME!r} edge."
+            )
         if len(mask_edges) != int(self.has_mask):
-            raise ValueError(f"{self.label}: has_mask={self.has_mask} but {len(mask_edges)} "
-                             f"{MASK_CONNECTOR_NAME!r} edges are connected.")
+            raise ValueError(
+                f"{self.label}: has_mask={self.has_mask} but {len(mask_edges)} "
+                f"{MASK_CONNECTOR_NAME!r} edges are connected."
+            )
         inp, out = sdfg.arrays[required(in_edges[0].data.data)], sdfg.arrays[required(out_edges[0].data.data)]
         in_subset, out_subset = in_edges[0].data.subset, out_edges[0].data.subset
         if inp.dtype != out.dtype:
@@ -191,12 +209,15 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         in_extents = collapse_shape_and_strides(in_subset, inp.strides)[0]
         out_extents = collapse_shape_and_strides(out_subset, out.strides)[0]
         if tuple(in_extents) != tuple(out_extents):
-            raise ValueError(f"{self.label}: the windows have different extents, {tuple(in_extents)} and "
-                             f"{tuple(out_extents)}; a masked copy does not transpose or reshape.")
+            raise ValueError(
+                f"{self.label}: the windows have different extents, {tuple(in_extents)} and "
+                f"{tuple(out_extents)}; a masked copy does not transpose or reshape."
+            )
         is_load(inp, out, self.label)
         if self.has_mask:
-            validate_mask_descriptor_lock(self.label, MASK_CONNECTOR_NAME,
-                                          sdfg.arrays[required(mask_edges[0].data.data)], tuple(self.widths))
+            validate_mask_descriptor_lock(
+                self.label, MASK_CONNECTOR_NAME, sdfg.arrays[required(mask_edges[0].data.data)], tuple(self.widths)
+            )
         return INPUT_CONNECTOR_NAME, inp, in_subset, OUTPUT_CONNECTOR_NAME, out, out_subset
 
     def stores(self, state: dace.SDFGState) -> bool:
@@ -216,10 +237,18 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         lanes = self.lanes(sdfg, state)
         lane_names = [f"__l{dim}" for dim in range(len(lanes.extents))]
-        source = " + ".join(f"({lane} * ({symstr(stride)}))"
-                            for lane, stride in zip(lane_names, lanes.in_strides, strict=True)) or "0"
-        destination = " + ".join(f"({lane} * ({symstr(stride)}))"
-                                 for lane, stride in zip(lane_names, lanes.out_strides, strict=True)) or "0"
+        source = (
+            " + ".join(
+                f"({lane} * ({symstr(stride)}))" for lane, stride in zip(lane_names, lanes.in_strides, strict=True)
+            )
+            or "0"
+        )
+        destination = (
+            " + ".join(
+                f"({lane} * ({symstr(stride)}))" for lane, stride in zip(lane_names, lanes.out_strides, strict=True)
+            )
+            or "0"
+        )
         mask = f"{MASK_CONNECTOR_NAME}[{tile_offset(lanes.extents, lane_names)}]"
         read = f"{INPUT_CONNECTOR_NAME}[{source}]"
         write = f"{OUTPUT_CONNECTOR_NAME}[{destination}]"
@@ -255,8 +284,10 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         mask_argument = MASK_CONNECTOR_NAME if self.has_mask else "nullptr"
         align = align_template_arg(self, state, sdfg, array_edge, backend, vlen, allow_shift=lanes.loads)
         function = "tile_load" if lanes.loads else "tile_store"
-        code = (f"dace::tileops::{function}<{lanes.ctype}, {vlen}, {masked}{align}>"
-                f"({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {mask_argument}, {symstr(stride)});")
+        code = (
+            f"dace::tileops::{function}<{lanes.ctype}, {vlen}, {masked}{align}>"
+            f"({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {mask_argument}, {symstr(stride)});"
+        )
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs=dict.fromkeys(self.input_names()),

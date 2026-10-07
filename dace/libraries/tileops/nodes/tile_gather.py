@@ -4,6 +4,7 @@
 A load through index tiles, a replicated, transposed or broadcast one. The pure expansion is a loop over the lanes,
 which addresses the source with its strides; only the gather of a unit-stride 1-D array has an ISA lowering.
 """
+
 from collections.abc import Sequence
 
 import sympy
@@ -14,12 +15,26 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import graph, nodes
 
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
 from dace.libraries.tileops.nodes.tile_op import TileOp
-from dace.libraries.tileops.lanes import GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset
+from dace.libraries.tileops.lanes import (
+    GATHER_INDEX_DTYPES,
+    gather_lane_offset,
+    nested_loops,
+    offset_via_strides,
+    resolve_gather_deps,
+    tile_offset,
+)
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 from dace.optionals import required
@@ -56,9 +71,13 @@ def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list
     return params
 
 
-def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
-                           src_edge: graph.MultiConnectorEdge[dace.Memlet], dims: list[int],
-                           replicate: Sequence[int | sympy.Basic]) -> list[str]:
+def phase_aware_lane_exprs(
+    node: "TileGather",
+    parent_state: dace.SDFGState,
+    src_edge: graph.MultiConnectorEdge[dace.Memlet],
+    dims: list[int],
+    replicate: Sequence[int | sympy.Basic],
+) -> list[str]:
     """Per-tile-dim per-lane source offset for non-dividing REPLICATE dims.
 
     For a REPLICATE dim whose factor ``D`` does not (provably) divide the tile
@@ -107,21 +126,25 @@ def phase_aware_lane_exprs(node: "TileGather", parent_state: dace.SDFGState,
         begin = as_range(src_edge.data.subset).ranges[dims[d]][0]
         fname = type(begin).__name__
         if fname not in ("int_floor", "__int_floor"):
-            raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "
-                                      f"begin in the source memlet, got {begin!r} ({fname}); int_ceil / "
-                                      f"non-floor replicate-with-remainder is not yet supported.")
+            raise NotImplementedError(
+                f"{node.label}: non-dividing REPLICATE dim {d} expected an int_floor "
+                f"begin in the source memlet, got {begin!r} ({fname}); int_ceil / "
+                f"non-floor replicate-with-remainder is not yet supported."
+            )
         dividend, divisor = as_basic(begin).args
         div_syms = {str(s) for s in dividend.free_symbols}
         cand = [p for p in map_params if p in div_syms]
         if len(cand) != 1:
-            raise NotImplementedError(f"{node.label}: non-dividing REPLICATE dim {d} dividend {dividend!r} must "
-                                      f"contain exactly one enclosing map iter-var (found {cand} among {map_params}).")
+            raise NotImplementedError(
+                f"{node.label}: non-dividing REPLICATE dim {d} dividend {dividend!r} must "
+                f"contain exactly one enclosing map iter-var (found {cand} among {map_params})."
+            )
         psym = next(s for s in dividend.free_symbols if str(s) == cand[0])
         from dace.symbolic import symstr
+
         dividend_lane = dividend.subs(psym, psym + sympy.Symbol(f"__l{d}"))
         div_str = symstr(divisor)
-        exprs[d] = (f"(({symstr(dividend_lane)}) / ({div_str})) - "
-                    f"(({symstr(dividend)}) / ({div_str}))")
+        exprs[d] = f"(({symstr(dividend_lane)}) / ({div_str})) - (({symstr(dividend)}) / ({div_str}))"
     return exprs
 
 
@@ -248,8 +271,7 @@ class TileGather(TileOp):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc=
-        "Sorted SOURCE-array dim indices that GATHER. For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
+        desc="Sorted SOURCE-array dim indices that GATHER. For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
         "declared; the connector's descriptor shape is the Cartesian product of widths over the tile "
         "dims the gather expression depends on (lane-dependency rule). Lane geometry "
         "(``widths``) and source addressing (``gather_dims``) are orthogonal: ``len(widths) == K_tile`` "
@@ -259,17 +281,19 @@ class TileGather(TileOp):
         "``gather_dims=(0, 2)``, ``_idx_0`` shape ``(W_i,)``, ``_idx_2`` shape ``(W_i,)``.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 dim_strides: tuple[int, ...] | None = None,
-                 src_dims: tuple[int, ...] | None = None,
-                 has_mask: bool = False,
-                 src_kind: str = TILE,
-                 src_expr: str | None = None,
-                 replicate_factor_per_dim: tuple[int, ...] | None = None,
-                 gather_dims: tuple[int, ...] | None = None,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        dim_strides: tuple[int, ...] | None = None,
+        src_dims: tuple[int, ...] | None = None,
+        has_mask: bool = False,
+        src_kind: str = TILE,
+        src_expr: str | None = None,
+        replicate_factor_per_dim: tuple[int, ...] | None = None,
+        gather_dims: tuple[int, ...] | None = None,
+        location: str | None = None,
+    ):
         """Construct a ``TileGather`` node.
 
         :param name: Node label.
@@ -303,8 +327,10 @@ class TileGather(TileOp):
             raise ValueError("TileGather: src_kind='Symbol' requires a non-empty src_expr")
         if replicate_factor_per_dim is not None:
             if len(replicate_factor_per_dim) != len(widths):
-                raise ValueError(f"TileGather: replicate_factor_per_dim length "
-                                 f"{len(replicate_factor_per_dim)} != widths length {len(widths)}")
+                raise ValueError(
+                    f"TileGather: replicate_factor_per_dim length "
+                    f"{len(replicate_factor_per_dim)} != widths length {len(widths)}"
+                )
             for d, (w, k) in enumerate(zip(widths, replicate_factor_per_dim)):
                 # The factor only needs to be a positive integer. Divisibility
                 # ``W % k == 0`` is NOT required: when ``k`` divides ``W`` the
@@ -324,8 +350,9 @@ class TileGather(TileOp):
         # ``src_ndim`` depends on the wired ``_src`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
-            raise ValueError(f"TileGather: gather_dims must be a sorted tuple of unique non-negative "
-                             f"source-dim indices; got {g!r}")
+            raise ValueError(
+                f"TileGather: gather_dims must be a sorted tuple of unique non-negative source-dim indices; got {g!r}"
+            )
         # ``Symbol`` source has no ``_src`` connector — the literal is embedded
         # inline at expansion time.
         inputs = (set() if src_kind == SYMBOL else {"_src"}) | ({"_mask"} if has_mask else set())
@@ -338,8 +365,9 @@ class TileGather(TileOp):
         self.src_kind = src_kind
         self.src_expr = src_expr
         self.gather_dims = list(g)
-        self.replicate_factor_per_dim = (list(replicate_factor_per_dim) if replicate_factor_per_dim else [1] *
-                                         len(widths))
+        self.replicate_factor_per_dim = (
+            list(replicate_factor_per_dim) if replicate_factor_per_dim else [1] * len(widths)
+        )
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Check connectors + index-tile shape contract (design section 9.4).
@@ -371,9 +399,11 @@ class TileGather(TileOp):
             src_arr = sdfg.arrays[required(in_e["_src"].data.data)]
             src_ndim = len(src_arr.shape)
             if any(d >= src_ndim for d in self.gather_dims):
-                raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
-                                 f"source ndim {src_ndim} (source '{in_e['_src'].data.data}' shape "
-                                 f"{tuple(src_arr.shape)})")
+                raise ValueError(
+                    f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
+                    f"source ndim {src_ndim} (source '{in_e['_src'].data.data}' shape "
+                    f"{tuple(src_arr.shape)})"
+                )
         for d in self.gather_dims:
             conn = f"_idx_{d}"
             if conn not in in_e:
@@ -381,20 +411,25 @@ class TileGather(TileOp):
             desc = sdfg.arrays[required(in_e[conn].data.data)]
             shape = tuple(desc.shape)
             if resolve_gather_deps(shape, widths) is None:
-                raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
-                                 f"product of widths {widths} for any sorted subset of tile dims "
-                                 f"(design section 9.2)")
+                raise ValueError(
+                    f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                    f"product of widths {widths} for any sorted subset of tile dims "
+                    f"(design section 9.2)"
+                )
             if desc.dtype not in GATHER_INDEX_DTYPES:
-                raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
-                                 f"{GATHER_INDEX_DTYPES} (design section 10.4)")
+                raise ValueError(
+                    f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in {GATHER_INDEX_DTYPES} (design section 10.4)"
+                )
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         from dace.symbolic import symstr
+
         widths = list(self.widths)
         K = len(widths)
         dst_off = tile_offset(widths)
-        dst_dtype = required(sdfg.arrays[required(
-            next(e for e in state.out_edges(self) if e.src_conn == "_dst").data.data)]).dtype.ctype
+        dst_dtype = required(
+            sdfg.arrays[required(next(e for e in state.out_edges(self) if e.src_conn == "_dst").data.data)]
+        ).dtype.ctype
         if self.src_kind == SYMBOL:
             src_ref = f"({dst_dtype})({pyexpr2cpp(self.src_expr)})"
         elif self.src_kind == SCALAR:
@@ -440,8 +475,10 @@ class TileGather(TileOp):
                     idx_shape = tuple(required(sdfg.arrays[required(edge.data.data)]).shape)
                     deps_d = resolve_gather_deps(idx_shape, widths)
                     if deps_d is None:
-                        raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
-                                         f"{idx_shape} against widths {tuple(widths)}")
+                        raise ValueError(
+                            f"{self.label}: cannot resolve deps for '{conn}' shape "
+                            f"{idx_shape} against widths {tuple(widths)}"
+                        )
                     gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
                 src_to_tile = {dims[d]: d for d in range(K)}
                 parts = []
@@ -465,14 +502,16 @@ class TileGather(TileOp):
                                     f"{self.label}: non-dividing REPLICATE factor {Di} on tile dim {d} "
                                     f"(width {widths[d]}) mixed with a gather access is not supported "
                                     f"(phase-aware replicate-with-remainder is only wired on the "
-                                    f"structured load path).")
+                                    f"structured load path)."
+                                )
                             emit_div = Di > 1
                         except (TypeError, ValueError):
                             raise NotImplementedError(
                                 f"{self.label}: symbolic REPLICATE factor {replicate[d]!r} on tile dim {d} "
                                 f"mixed with a gather access is not supported (cannot prove it divides "
                                 f"width {widths[d]}; phase-aware replicate-with-remainder is only wired "
-                                f"on the structured load path).")
+                                f"on the structured load path)."
+                            )
                         if emit_div:
                             lane = f"({lane} / {replicate[d]})"
                         parts.append(f"({coeff[d]} * ({s}) * {lane})")
@@ -527,7 +566,7 @@ class TileGather(TileOp):
             index_shape = tuple(int(extent) for extent in required(sdfg.arrays[required(index_edge.data.data)]).shape)
         except (TypeError, ValueError):
             return False
-        return index_shape == (int(self.widths[0]), )
+        return index_shape == (int(self.widths[0]),)
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         return self.src_kind == TILE and self.is_unit_stride_gather(state, sdfg)
@@ -539,8 +578,10 @@ class TileGather(TileOp):
         index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
         masked = "true" if self.has_mask else "false"
         mask_argument = "_mask" if self.has_mask else "nullptr"
-        code = (f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
-                f"(_dst, _src, _idx_0, {mask_argument});")
+        code = (
+            f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
+            f"(_dst, _src, _idx_0, {mask_argument});"
+        )
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs=dict.fromkeys(["_src", *(["_mask"] if self.has_mask else []), "_idx_0"]),

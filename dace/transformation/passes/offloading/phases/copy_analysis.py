@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Build the offloading IR: per block, which arrays are wanted on the host and which on the device."""
+
 from typing import Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
@@ -7,8 +8,15 @@ from ordered_set import OrderedSet
 from dace import data, dtypes
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock,
-                             SDFGState)
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
@@ -22,10 +30,14 @@ class CopyAnalysis:
     A map of ``host_maps`` launches rather than computes: its body decides where the data it reaches goes.
     """
 
-    __slots__ = ('sdfg', 'scopes', 'host_maps', 'hybrid_states')
+    __slots__ = ("sdfg", "scopes", "host_maps", "hybrid_states")
 
-    def __init__(self, sdfg: SDFG, scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]],
-                 host_maps: OrderedSet[nodes.MapEntry]) -> None:
+    def __init__(
+        self,
+        sdfg: SDFG,
+        scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]],
+        host_maps: OrderedSet[nodes.MapEntry],
+    ) -> None:
         self.sdfg = sdfg
         self.scopes = scopes
         self.host_maps = host_maps
@@ -34,8 +46,9 @@ class CopyAnalysis:
     def build_ir(self) -> OffloadingIRNode:
         sdfg = self.sdfg
         # A view is placed with the container it aliases; a structure or container array is not placed.
-        non_transients = OrderedSet(name for name, desc in sdfg.arrays.items()
-                                    if not desc.transient and helpers.is_array(name, sdfg))
+        non_transients = OrderedSet(
+            name for name, desc in sdfg.arrays.items() if not desc.transient and helpers.is_array(name, sdfg)
+        )
         initially_on_gpu = OrderedSet(name for name in non_transients if helpers.is_array_stored_on_GPU(sdfg, name))
         initially_on_cpu = non_transients - initially_on_gpu
 
@@ -64,8 +77,9 @@ class CopyAnalysis:
         for block in cfr.bfs_nodes():
             in_edge_arrays: OrderedSet[str] = OrderedSet()
             for edge in cfr.in_edges(block):
-                in_edge_arrays |= OrderedSet(name for name in edge.data.used_arrays(self.sdfg.arrays)
-                                             if helpers.is_array(name, self.sdfg))
+                in_edge_arrays |= OrderedSet(
+                    name for name in edge.data.used_arrays(self.sdfg.arrays) if helpers.is_array(name, self.sdfg)
+                )
             if in_edge_arrays:
                 curr_node = append(curr_node, OffloadingIRNode.new_edge_node(block, in_edge_arrays))
 
@@ -81,8 +95,9 @@ class CopyAnalysis:
         curr_node = outer_node
         if isinstance(block, (ConditionalBlock, LoopRegion)):
             # A condition or a loop header reads on the host.
-            meta_data = OrderedSet(memlet.data for memlet in block.get_meta_read_memlets()
-                                   if memlet.data in self.sdfg.arrays)
+            meta_data = OrderedSet(
+                memlet.data for memlet in block.get_meta_read_memlets() if memlet.data in self.sdfg.arrays
+            )
             if meta_data:
                 curr_node = append(curr_node, OffloadingIRNode.new_state_node(block, meta_data, OrderedSet()))
         if isinstance(block, ConditionalBlock):
@@ -156,8 +171,7 @@ class CopyAnalysis:
         # A structure or container array has no single location to decide, a Stream is a queue with its own
         # device-side protocol that the code generator allocates where its pusher runs, and a constant is
         # declared on both sides.
-        if (helpers.is_unoffloadable(name, sdfg) or isinstance(sdfg.arrays[name], data.Stream)
-                or name in sdfg.constants):
+        if helpers.is_unoffloadable(name, sdfg) or isinstance(sdfg.arrays[name], data.Stream) or name in sdfg.constants:
             return OrderedSet()
         raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) on edge {edge}: {edge.data}")
 
@@ -171,18 +185,27 @@ class CopyAnalysis:
         arrays |= helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
         return arrays
 
-    def locations_of_map(self, state: SDFGState, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
-                         cpu_set: OrderedSet[str], is_gpu: bool) -> None:
+    def locations_of_map(
+        self,
+        state: SDFGState,
+        map_entry: nodes.MapEntry,
+        gpu_set: OrderedSet[str],
+        cpu_set: OrderedSet[str],
+        is_gpu: bool,
+    ) -> None:
         """Add what ``map_entry``'s scope accesses: on the device if it or an enclosing map is a kernel.
 
         A host map is transparent: what its body leaves unclaimed goes to the device, the side of its kernels.
         """
         is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES
-        launcher = not is_gpu and map_entry in self.host_maps and any(
-            helpers.is_device_work(node) for node in helpers.scope_nodes(state, map_entry))
-        boundary = (helpers.get_data_used_by_access_nodes(self.sdfg, state, map_entry, downstream=False)
-                    | helpers.get_data_used_by_access_nodes(
-                        self.sdfg, state, state.exit_node(map_entry), downstream=True))
+        launcher = (
+            not is_gpu
+            and map_entry in self.host_maps
+            and any(helpers.is_device_work(node) for node in helpers.scope_nodes(state, map_entry))
+        )
+        boundary = helpers.get_data_used_by_access_nodes(
+            self.sdfg, state, map_entry, downstream=False
+        ) | helpers.get_data_used_by_access_nodes(self.sdfg, state, state.exit_node(map_entry), downstream=True)
         if not launcher:
             (gpu_set if is_gpu else cpu_set).update(boundary)
 
@@ -196,8 +219,15 @@ class CopyAnalysis:
         if launcher:
             gpu_set |= boundary - cpu_set
 
-    def add_scope_node(self, state: SDFGState, node: nodes.Node, map_entry: nodes.MapEntry, gpu_set: OrderedSet[str],
-                       cpu_set: OrderedSet[str], is_gpu: bool) -> None:
+    def add_scope_node(
+        self,
+        state: SDFGState,
+        node: nodes.Node,
+        map_entry: nodes.MapEntry,
+        gpu_set: OrderedSet[str],
+        cpu_set: OrderedSet[str],
+        is_gpu: bool,
+    ) -> None:
         for name in self.arrays_used_in_scope(state, node, map_entry):
             if name in gpu_set and not is_gpu:
                 raise RuntimeError(f"{name} is used on the device and on the host inside map {map_entry}")
@@ -214,16 +244,18 @@ class CopyAnalysis:
             return OrderedSet()
         raise RuntimeError(f"Unknown node {node} of type {type(node).__name__} inside map {map_entry}")
 
-    def add_host_level_node(self, state: SDFGState, node: nodes.Node, gpu_set: OrderedSet[str],
-                            cpu_set: OrderedSet[str]) -> None:
+    def add_host_level_node(
+        self, state: SDFGState, node: nodes.Node, gpu_set: OrderedSet[str], cpu_set: OrderedSet[str]
+    ) -> None:
         """A library node at a host level goes where its schedule runs; a nested SDFG where its body wants its
         bound arrays."""
         if isinstance(node, nodes.LibraryNode):
             on_gpu = node.schedule in dtypes.GPU_SCHEDULES
             (gpu_set if on_gpu else cpu_set).update(self.arrays_used_by_node(state, node))
             return
-        inner_gpu, inner_cpu = CopyAnalysis(node.sdfg, helpers.get_sdfg_scope_dict(node.sdfg),
-                                            self.host_maps).locations_of_sdfg()
+        inner_gpu, inner_cpu = CopyAnalysis(
+            node.sdfg, helpers.get_sdfg_scope_dict(node.sdfg), self.host_maps
+        ).locations_of_sdfg()
         for edge in state.all_edges(node):
             connector = edge.dst_conn if edge.dst is node else edge.src_conn
             if edge.data.is_empty() or not helpers.is_array(edge.data.data, self.sdfg):
@@ -283,8 +315,10 @@ def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
                     location_on_gpu[name] = on_gpu
 
     helpers.traverse_same_level(IR, gather)
-    return (OrderedSet(name for name, on_gpu in location_on_gpu.items()
-                       if on_gpu), OrderedSet(name for name, on_gpu in location_on_gpu.items() if not on_gpu))
+    return (
+        OrderedSet(name for name, on_gpu in location_on_gpu.items() if on_gpu),
+        OrderedSet(name for name, on_gpu in location_on_gpu.items() if not on_gpu),
+    )
 
 
 def hoist_device_copies(IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, OrderedSet[str]]) -> None:

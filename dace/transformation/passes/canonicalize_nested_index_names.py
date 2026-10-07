@@ -14,6 +14,7 @@ node's connector + incident edge -- so the name -> body map is 1:1 before codege
 Only the readable-codegen preprocessing block runs this pass (see ``dace.codegen.codegen.generate_code``),
 so the legacy generator is unaffected.
 """
+
 from typing import Dict, Optional, Set, Tuple
 
 from dace import data as dt
@@ -50,7 +51,7 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
     def _unique(self, base: str, used: Set[str]) -> str:
         i = 0
         while True:
-            cand = '%s_v%d' % (base, i)
+            cand = "%s_v%d" % (base, i)
             if cand not in used:
                 used.add(cand)
                 return cand

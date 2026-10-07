@@ -22,6 +22,7 @@ the two code generators never share a ``.dacecache`` build (the implementation
 flag is not part of the SDFG hash, so a shared name would serve one generator's
 compiled binary to the other and mask a real divergence).
 """
+
 import importlib
 import pkgutil
 
@@ -33,16 +34,21 @@ from dace.codegen.exceptions import CompilationError
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic import evaluate
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation)
+from tests.codegen.readable.conftest import (
+    EXPERIMENTAL,
+    LEGACY,
+    assert_outputs_equivalent,
+    run_isolated,
+    use_implementation,
+)
 
 
 @pytest.fixture(autouse=True)
 def fp_contract_off():
     """GCC fuses multiply-adds per expression shape, so two equivalent spellings of one kernel can differ in the last
     ulp under ``-ffast-math``; turning the contraction off keeps the bit-exact comparison about the code generators."""
-    previous = dace.config.Config.get('compiler', 'cpu', 'args')
-    with dace.config.set_temporary('compiler', 'cpu', 'args', value=previous + ' -ffp-contract=off'):
+    previous = dace.config.Config.get("compiler", "cpu", "args")
+    with dace.config.set_temporary("compiler", "cpu", "args", value=previous + " -ffp-contract=off"):
         yield
 
 
@@ -83,8 +89,9 @@ def discover(family):
     """All ``(family, kernel_stem)`` in ``tests/npbench/<family>`` (via the package's own
     ``__path__``, so no filesystem paths are hard-coded), minus the denylist."""
     package = importlib.import_module(f"tests.npbench.{family}")
-    stems = sorted(info.name[:-len("_test")] for info in pkgutil.iter_modules(package.__path__)
-                   if info.name.endswith("_test"))
+    stems = sorted(
+        info.name[: -len("_test")] for info in pkgutil.iter_modules(package.__path__) if info.name.endswith("_test")
+    )
     return [(family, stem) for stem in stems if stem not in DENYLIST]
 
 
@@ -134,7 +141,7 @@ def collect_outputs(result, call_arguments):
     returned values."""
     outputs = {name: np.asarray(value) for name, value in call_arguments.items() if hasattr(value, "shape")}
     if result is not None:
-        for index, value in enumerate(result if isinstance(result, tuple) else (result, )):
+        for index, value in enumerate(result if isinstance(result, tuple) else (result,)):
             outputs[f"__return{index}"] = np.asarray(value)
     return outputs
 

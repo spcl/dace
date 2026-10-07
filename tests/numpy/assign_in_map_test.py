@@ -2,9 +2,9 @@
 import numpy as np
 import dace
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -26,5 +26,5 @@ def test_assign_in_map():
         assert np.allclose(A, B[i])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_assign_in_map()
