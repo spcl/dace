@@ -267,7 +267,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         memlets = loop_region.get_meta_read_memlets(self._ctx.root.containers, include_scalars=True)
         self._ensure_data_descriptors(memlets, sdfg)
 
-        cf_region.add_node(loop_region, ensure_unique_name=True)
+        cf_region.add_node(loop_region, ensure_unique_name=True, reset_cfg_list=False)
         prefix = self._loop_state_name_prefix(node)
         loop_state = loop_region.add_state(f"{prefix}_loop_state_{id(node)}", is_start_block=True)
 
@@ -322,7 +322,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         cf_region = before_state.parent_graph
 
         conditional_block = ConditionalBlock(f"if_scope_{id(node)}")
-        cf_region.add_node(conditional_block)
+        cf_region.add_node(conditional_block, reset_cfg_list=False)
         _insert_and_split_assignments(
             before_state,
             conditional_block,
@@ -330,7 +330,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         )
 
         if_body = ControlFlowRegion("if_body", sdfg=sdfg)
-        conditional_block.add_branch(node.condition, if_body)
+        conditional_block.add_branch(node.condition, if_body, reset_cfg_list=False)
 
         memlets = conditional_block.get_meta_read_memlets(self._ctx.root.containers, include_scalars=True)
         self._ensure_data_descriptors(memlets, sdfg)
@@ -388,7 +388,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         :param block: The break or continue block to add.
         """
         cf_region = self._current_state.parent_graph
-        cf_region.add_node(block, ensure_unique_name=True)
+        cf_region.add_node(block, ensure_unique_name=True, reset_cfg_list=False)
         _insert_and_split_assignments(self._current_state, block, assignments=self._pending_interstate_assignments())
         self._current_state = _insert_and_split_assignments(block, label=f"after_{block.label}")
 
@@ -404,7 +404,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         merge_state = self._pop_state("merge_state")
 
         elif_body = ControlFlowRegion("elif_body", sdfg=sdfg)
-        conditional_block.add_branch(node.condition, elif_body)
+        conditional_block.add_branch(node.condition, elif_body, reset_cfg_list=False)
 
         memlets = conditional_block.get_meta_read_memlets(self._ctx.root.containers, include_scalars=True)
         self._ensure_data_descriptors(memlets, sdfg)
@@ -424,7 +424,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         conditional_block: ConditionalBlock = self._pop_state("if_scope")
 
         else_body = ControlFlowRegion("else_body", sdfg=sdfg)
-        conditional_block.add_branch(None, else_body)
+        conditional_block.add_branch(None, else_body, reset_cfg_list=False)
 
         else_state = else_body.add_state("else_state", is_start_block=True)
         self._current_state = else_state
@@ -1046,6 +1046,7 @@ def from_schedule_tree(
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
     _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
+    result.reset_cfg_list()  # Regions are added without updating the list each time (quadratic in their number)
 
     # Memlet directions (src/dst subsets) are determined when edges are added. Scope pass-through edges are
     # connected later than the edges inside the scope, so re-initialize them before propagation.

@@ -567,6 +567,36 @@ def test_create_if_elif_else() -> None:
     assert len(block.branches) == 3, "Block contains three branches"
 
 
+def test_cfg_list_complete() -> None:
+    """Regions are added without updating the CFG list each time; the converted SDFG still lists every region once,
+    with its position as its ID."""
+
+    def assign(value: int) -> tn.TaskletNode:
+        return tn.TaskletNode(nodes.Tasklet(f'assign_{value}', {}, {'out'}, f'out = {value}'), {},
+                              {'out': dace.Memlet('A[i]')})
+
+    loop = LoopRegion(label='outer',
+                      loop_var='i',
+                      initialize_expr=CodeBlock('i = 0'),
+                      condition_expr=CodeBlock('i < 3'),
+                      update_expr=CodeBlock('i = i + 1'))
+    stree = tn.ScheduleTreeRoot(name='tester',
+                                containers={'A': data.Array(dace.float64, [20])},
+                                children=[
+                                    tn.ForScope(loop=loop,
+                                                children=[
+                                                    tn.IfScope(condition=CodeBlock('i > 0'), children=[assign(1)]),
+                                                    tn.ElseScope(children=[assign(2)]),
+                                                ])
+                                ])
+    sdfg = stree.as_sdfg(validate=True, simplify=False)
+
+    regions = list(sdfg.all_control_flow_regions(recursive=True))
+    assert len(regions) == 5  # The SDFG, the loop, the conditional block and its two branches
+    assert sdfg.cfg_list == regions
+    assert [r.cfg_id for r in regions] == list(range(len(regions)))
+
+
 def test_create_if_without_else() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
@@ -1429,6 +1459,7 @@ if __name__ == '__main__':
     test_create_loop_while()
     test_create_if_else()
     test_create_if_elif_else()
+    test_cfg_list_complete()
     test_create_if_without_else()
     test_create_map_scope_write()
     test_create_map_scope_read()

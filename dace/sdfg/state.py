@@ -8,6 +8,7 @@ import copy
 import re
 import inspect
 import itertools
+import sys
 import warnings
 import sympy
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
@@ -56,7 +57,8 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
+        # The caller of the method calling this function. ``inspect.stack()`` would read the source of every frame
+        caller = inspect.getframeinfo(sys._getframe(2), context=0)
         return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
     return None
@@ -4051,7 +4053,18 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
 
-    def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
+    def add_branch(self,
+                   condition: Optional[Union[CodeBlock, str]],
+                   branch: ControlFlowRegion,
+                   *,
+                   reset_cfg_list: bool = True):
+        """
+        Adds a branch to this conditional block.
+
+        :param condition: The condition of the branch, or None for the ``else`` branch.
+        :param branch: The region executed if the condition holds.
+        :param reset_cfg_list: If False, does not update the CFG list of the SDFG (see ``ControlFlowRegion.add_node``).
+        """
         if condition is not None and not isinstance(condition, CodeBlock):
             condition = CodeBlock(condition)
         self._branches.append([condition, branch])
@@ -4062,7 +4075,8 @@ class ConditionalBlock(AbstractControlFlowRegion):
         # invalidate here instead. Without this the branch's blocks keep ``sdfg is None``.
         for n in branch.all_control_flow_blocks():
             n.sdfg = self.sdfg
-        self.reset_cfg_list()
+        if reset_cfg_list:
+            self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]
