@@ -44,7 +44,7 @@ class Wait(MPINode):
     default_implementation = "MPI"
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_request"}, outputs={"_stat_tag", "_stat_source"}, **kwargs)
@@ -112,7 +112,7 @@ class Waitall(MPINode):
     default_implementation = "MPI"
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_request"}, outputs={}, **kwargs)

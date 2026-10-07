@@ -175,13 +175,16 @@ class ONNXParameterType(enum.Enum):
 class ONNXParameter:
     """Python representation of an ONNX parameter."""
 
-    name = Property(dtype=str, desc="The parameter name")
-    description = Property(dtype=str, desc="A description of the parameter")
-    type_str = Property(dtype=str, desc="The type string of this parameter")
+    name = Property(dtype=str, category="General", desc="The parameter name")
+    description = Property(dtype=str, category="General", desc="A description of the parameter")
+    type_str = Property(dtype=str, category="General", desc="The type string of this parameter")
     param_type = Property(
-        choices=ONNXParameterType, desc="The type of the this parameter", default=ONNXParameterType.Single
+        choices=ONNXParameterType,
+        category="General",
+        desc="The type of the this parameter",
+        default=ONNXParameterType.Single,
     )
-    homogeneous = Property(dtype=bool, desc="Whether this parameter is homogeneous")
+    homogeneous = Property(dtype=bool, category="General", desc="Whether this parameter is homogeneous")
 
     def __repr__(self):
         return "{} ({})".format(self.name, str(self.param_type))
@@ -213,13 +216,15 @@ _ATTR_TYPE_TO_PYTHON_TYPE = {
 class ONNXAttribute:
     """Python representation of an ONNX attribute."""
 
-    name = Property(dtype=str, desc="The attribute name")
-    description = Property(dtype=str, desc="A description this attribute")
-    required = Property(dtype=bool, desc="Whether this attribute is required")
+    name = Property(dtype=str, category="General", desc="The attribute name")
+    description = Property(dtype=str, category="General", desc="A description this attribute")
+    required = Property(dtype=bool, category="General", desc="Whether this attribute is required")
     attribute_type = Property(
-        choices=ONNXAttributeType, desc="The type of this attribute", default=ONNXAttributeType.Int
+        choices=ONNXAttributeType, category="General", desc="The type of this attribute", default=ONNXAttributeType.Int
     )
-    default_value = Property(dtype=None, desc="The default value of this attribute", default=None, allow_none=True)
+    default_value = Property(
+        dtype=None, category="General", desc="The default value of this attribute", default=None, allow_none=True
+    )
 
     def validate(self):
         if self.required and self.attribute_type == ONNXAttributeType.Unsupported:
@@ -239,9 +244,11 @@ class ONNXAttribute:
 class ONNXTypeConstraint:
     """Python representation of an ONNX type constraint."""
 
-    type_str = Property(dtype=str, desc="The type parameter string")
+    type_str = Property(dtype=str, category="General", desc="The type parameter string")
     types = ListProperty(
-        element_type=typeclass, desc="The possible types. Note that only tensor types are currently supported."
+        element_type=typeclass,
+        category="General",
+        desc="The possible types. Note that only tensor types are currently supported.",
     )
 
     def __repr__(self):
@@ -260,29 +267,33 @@ class ONNXTypeConstraint:
 class ONNXSchema:
     """Python representation of an ONNX schema"""
 
-    name = Property(dtype=str, desc="The operator name")
-    domain = Property(dtype=str, desc="The operator domain")
-    doc = Property(dtype=str, desc="The operator's docstring")
-    since_version = Property(dtype=int, desc="The version of the operator")
+    name = Property(dtype=str, category="General", desc="The operator name")
+    domain = Property(dtype=str, category="General", desc="The operator domain")
+    doc = Property(dtype=str, category="General", desc="The operator's docstring")
+    since_version = Property(dtype=int, category="General", desc="The version of the operator")
     attributes = DictProperty(
         key_type=str,
         value_type=ONNXAttribute,
+        category="General",
         desc="The operator attributes. Keys should contain the name of the attribute, and values "
         "should have type :class:`~dace.libraries.onnx.ONNXAttribute`.",
     )
     type_constraints = DictProperty(
         key_type=str,
         value_type=ONNXTypeConstraint,
+        category="General",
         desc="The type constraints for inputs and outputs. Keys should contain the type string of the constraint, "
         "values should have type :class:`~dace.libraries.onnx.ONNXTypeConstraint`.",
     )
     inputs = ListProperty(
         element_type=ONNXParameter,
+        category="General",
         desc="The operator input parameter descriptors. Entries should have type"
         " :class:`~dace.libraries.onnx.ONNXParameter`.",
     )
     outputs = ListProperty(
         element_type=ONNXParameter,
+        category="General",
         desc="The operator output parameter descriptors. Entries should have type"
         " :class:`~dace.libraries.onnx.ONNXParameter`.",
     )
