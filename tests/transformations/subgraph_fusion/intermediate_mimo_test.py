@@ -7,13 +7,13 @@ from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 from dace.sdfg.graph import SubgraphView
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N]):
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
             in1 << A[2 * i]
             in2 << A[2 * i + 1]
@@ -21,7 +21,7 @@ def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.flo
 
             out = in1 + in2
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
             in1 << B[2 * i]
             in2 << B[2 * i + 1]
@@ -29,10 +29,10 @@ def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.flo
 
             out = in1 + in2
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
-            in1 << C[2 * i:2 * i + 2]
-            out1 >> D[2 * i:2 * i + 2]
+            in1 << C[2 * i : 2 * i + 2]
+            out1 >> D[2 * i : 2 * i + 2]
 
             out1[0] = in1[0] * in1[0]
             out1[1] = in1[1] * in1[1]
@@ -73,12 +73,13 @@ def _test_quantitatively(sdfg):
 def test_mimo():
     sdfg = mimo.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
+
     sdfg.apply_transformations_repeated(StateFusion, permissive=True)
     # merge the C array
     C1 = None
     C2 = None
     for node in sdfg.nodes()[0].nodes():
-        if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == 'C':
+        if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == "C":
             if not C1:
                 C1 = node
             elif not C2:
@@ -96,8 +97,14 @@ def test_mimo():
 def test_single_data_multiple_intermediate_accesses():
 
     @dace.program
-    def sdmi_accesses(ZSOLQA: dace.float64[1, 5, 5], ZEPSEC: dace.float64, ZQX: dace.float64[1, 137, 5],
-                      LLINDEX3: dace.bool[1, 5, 5], ZRATIO: dace.float64[1, 5], ZSINKSUM: dace.float64[1, 5]):
+    def sdmi_accesses(
+        ZSOLQA: dace.float64[1, 5, 5],
+        ZEPSEC: dace.float64,
+        ZQX: dace.float64[1, 137, 5],
+        LLINDEX3: dace.bool[1, 5, 5],
+        ZRATIO: dace.float64[1, 5],
+        ZSINKSUM: dace.float64[1, 5],
+    ):
 
         for i in dace.map[0:5]:
             ZSINKSUM[0, i] = 0.0
@@ -149,6 +156,6 @@ def test_single_data_multiple_intermediate_accesses():
     assert np.allclose(ref_ZSINKSUM, val_ZSINKSUM)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_mimo()
     test_single_data_multiple_intermediate_accesses()

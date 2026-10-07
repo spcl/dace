@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the PAPI counter performance instrumentation provider.
-    Used for collecting CPU performance counters. """
+"""Implements the PAPI counter performance instrumentation provider.
+Used for collecting CPU performance counters."""
 
 import dace
 from dace import dtypes, library, registry, symbolic
@@ -23,10 +23,18 @@ from typing import Dict, List, Optional, Set
 import warnings
 
 # Default sets of PAPI counters
-VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028', '0x40000021', '0x40000022', '0x40000023',
-                      '0x40000024')
-MEM_COUNTER_SET = ('PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS')
-CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
+VECTOR_COUNTER_SET = (
+    "0x40000025",
+    "0x40000026",
+    "0x40000027",
+    "0x40000028",
+    "0x40000021",
+    "0x40000022",
+    "0x40000023",
+    "0x40000024",
+)
+MEM_COUNTER_SET = ("PAPI_MEM_WCY", "PAPI_LD_INS", "PAPI_SR_INS")
+CACHE_COUNTER_SET = ("PAPI_CA_SNP", "PAPI_CA_SHR", "PAPI_CA_CLN", "PAPI_CA_ITV")
 
 
 @library.environment
@@ -41,7 +49,7 @@ class PAPI:
     cmake_packages = []
     cmake_variables = {}
     cmake_includes = []
-    cmake_libraries = ['papi']
+    cmake_libraries = ["papi"]
     cmake_compile_flags = []
     cmake_link_flags = []
 
@@ -55,13 +63,13 @@ class PAPI:
     def cmake_files():
         """The vectorization report as a CMake fragment (``papi_vectorization.cmake``), so CMake
         picks the per-compiler flag. Evaluated per build, so toggling the setting is honoured."""
-        if not Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
+        if not Config.get_bool("instrumentation", "papi", "vectorization_analysis"):
             return []
-        return ['papi_vectorization']
+        return ["papi_vectorization"]
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library('papi') is not None
+        return ctypes.util.find_library("papi") is not None
 
 
 def _unified_id(node_id: int, state_id: int) -> int:
@@ -74,13 +82,15 @@ def _unified_id(node_id: int, state_id: int) -> int:
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.PAPI_Counters)
 class PAPIInstrumentation(InstrumentationProvider):
-    """ Instrumentation provider that reports CPU performance counters using
-        the PAPI library. """
+    """Instrumentation provider that reports CPU performance counters using
+    the PAPI library."""
 
     _counters: Optional[Set[str]] = None
 
     perf_whitelist_schedules = [
-        dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential
+        dtypes.ScheduleType.CPU_Multicore,
+        dtypes.ScheduleType.CPU_Persistent,
+        dtypes.ScheduleType.Sequential,
     ]
 
     def __init__(self):
@@ -88,7 +98,8 @@ class PAPIInstrumentation(InstrumentationProvider):
         self._unique_counter = 0
         self.perf_should_instrument = False
         PAPIInstrumentation._counters = PAPIInstrumentation._counters or set(
-            ast.literal_eval(Config.get('instrumentation', 'papi', 'default_counters')))
+            ast.literal_eval(Config.get("instrumentation", "papi", "default_counters"))
+        )
 
     def writes_to_report(self) -> bool:
         return True
@@ -103,13 +114,13 @@ class PAPIInstrumentation(InstrumentationProvider):
         counters = PAPIUtils.available_counters()
         missing_counters = self._counters - set(counters.keys())
         if len(missing_counters) > 0:
-            warnings.warn('Skipping missing PAPI performance counters: %s' % missing_counters)
+            warnings.warn("Skipping missing PAPI performance counters: %s" % missing_counters)
         PAPIInstrumentation._counters &= set(counters.keys())
 
         # If no PAPI counters are available, disable PAPI
         if len(self._counters) == 0:
             self._papi_used = False
-            warnings.warn('No PAPI counters found. Disabling PAPI')
+            warnings.warn("No PAPI counters found. Disabling PAPI")
             return
 
         # Linking libpapi is declared by the PAPI environment, which the caller registers.
@@ -127,19 +138,22 @@ class PAPIInstrumentation(InstrumentationProvider):
             codegen.dispatcher.used_environments.add(PAPI.full_class_path())
 
             # Add instrumentation includes and initialize PAPI
-            global_stream.write('#include <dace/perf/papi.h>', sdfg)
+            global_stream.write("#include <dace/perf/papi.h>", sdfg)
             local_stream.write(
-                '''dace::perf::PAPI::init();
-dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(self._counters)), sdfg)
+                """dace::perf::PAPI::init();
+dace::perf::PAPIValueStore<%s> __perf_store (__state->report);"""
+                % (", ".join(self._counters)),
+                sdfg,
+            )
             # Get the measured overhead and take the minimum to compensate
-            if Config.get_bool('instrumentation', 'papi', 'overhead_compensation'):
+            if Config.get_bool("instrumentation", "papi", "overhead_compensation"):
                 local_stream.write("__perf_store.getMeasuredOverhead();", sdfg)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._papi_used:
             return
 
-        local_stream.write('__perf_store.flush();', sdfg)
+        local_stream.write("__perf_store.flush();", sdfg)
 
     def on_state_begin(self, sdfg, cfg, state, local_stream, global_stream):
         if not self._papi_used:
@@ -148,8 +162,20 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
             uid = _unified_id(-1, cfg.node_id(state))
             local_stream.write("__perf_store.markSuperSectionStart(%d);" % uid)
 
-    def on_copy_begin(self, sdfg, cfg, state, src_node, dst_node, edge, local_stream, global_stream, copy_shape,
-                      src_strides, dst_strides):
+    def on_copy_begin(
+        self,
+        sdfg,
+        cfg,
+        state,
+        src_node,
+        dst_node,
+        edge,
+        local_stream,
+        global_stream,
+        copy_shape,
+        src_strides,
+        dst_strides,
+    ):
         if not self._papi_used:
             return
 
@@ -173,8 +199,12 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
 
         perf_cpu_only = (src_storage in cpu_storage_types) and (dst_storage in cpu_storage_types)
 
-        self.perf_should_instrument = (not src_instrumented and not dst_instrumented and perf_cpu_only
-                                       and state.instrument == dace.InstrumentationType.PAPI_Counters)
+        self.perf_should_instrument = (
+            not src_instrumented
+            and not dst_instrumented
+            and perf_cpu_only
+            and state.instrument == dace.InstrumentationType.PAPI_Counters
+        )
 
         if self.perf_should_instrument is False:
             return
@@ -184,7 +214,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
         dst_nodedesc = dst_node.desc(sdfg)
         ctype = dst_nodedesc.dtype.ctype
 
-        fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(sym2cpp(dst_strides)))
+        fac3 = " * ".join(sym2cpp(copy_shape)) + " / " + "/".join(sym2cpp(dst_strides))
         copy_size = "sizeof(%s) * (%s)" % (ctype, fac3)
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
@@ -196,12 +226,12 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
             [src_node, dst_node],
         )
         local_stream.write(
-            '''
+            """
 dace::perf::{pcs} __perf_cpy_{nodeid}_{unique_id};
 auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(
     __perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size},
     dace::perf::ValueSetType::Copy);
-__perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
+__perf_cpy_{nodeid}_{unique_id}.enterCritical();""".format(
                 pcs=self.perf_counter_string(),
                 nodeid=node_id,
                 unique_id=unique_cpy_id,
@@ -237,8 +267,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         state_id = cfg.node_id(state)
         unified_id = _unified_id(state.node_id(node), state_id)
 
-        perf_should_instrument = (node.instrument == dace.InstrumentationType.PAPI_Counters
-                                  and not PAPIInstrumentation.has_surrounding_perfcounters(node, state))
+        perf_should_instrument = (
+            node.instrument == dace.InstrumentationType.PAPI_Counters
+            and not PAPIInstrumentation.has_surrounding_perfcounters(node, state)
+        )
         if not perf_should_instrument:
             return
 
@@ -250,8 +282,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                 node,
             )
             inner_stream.write(
-                'auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, '
-                '    %d, PAPI_thread_id(), 0);\n' % (node.label, node.label, unified_id),
+                "auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, "
+                "    %d, PAPI_thread_id(), 0);\n" % (node.label, node.label, unified_id),
                 cfg,
                 state_id,
                 node,
@@ -279,8 +311,12 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
                 # Add bytes moved
                 inner_stream.write(
-                    "__perf_store.addBytesMoved(%s);" %
-                    PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, cfg, state_id), cfg, state_id, node)
+                    "__perf_store.addBytesMoved(%s);"
+                    % PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, cfg, state_id),
+                    cfg,
+                    state_id,
+                    node,
+                )
 
     def on_scope_entry(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
@@ -375,8 +411,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # (instead of per-thread). This incurs additional overhead.
         if self.should_instrument_entry(node):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".format(id=unified_id)) +
-                self.perf_counter_start_measurement_string(
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".format(id=unified_id))
+                + self.perf_counter_start_measurement_string(
                     unified_id,
                     "__perf_tlp_{id}.getAndIncreaseCounter()".format(id=unified_id),
                     core_str="dace::perf::getThreadID()",
@@ -391,15 +427,14 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             # Nested SuperSections are not supported. Therefore, we mark the
             # outermost section and disallow internal scopes from creating it.
-            if not hasattr(node.map, '_can_be_supersection_start'):
+            if not hasattr(node.map, "_can_be_supersection_start"):
                 node.map._can_be_supersection_start = True
 
             children = PAPIUtils.all_maps(node, dfg)
             for x in children:
-                if not hasattr(x.map, '_can_be_supersection_start'):
+                if not hasattr(x.map, "_can_be_supersection_start"):
                     x.map._can_be_supersection_start = True
                 if x.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
-
                     x.map._can_be_supersection_start = False
                 elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
@@ -407,10 +442,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                     # Any other type (e.g., GPU) - not supported by PAPI.
                     x.map._can_be_supersection_start = False
 
-            if (node.map._can_be_supersection_start and not dace.sdfg.is_parallel(dfg)):
+            if node.map._can_be_supersection_start and not dace.sdfg.is_parallel(dfg):
                 return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
-        elif (getattr(node.map, '_can_be_supersection_start', False) and not dace.sdfg.is_parallel(dfg)):
+        elif getattr(node.map, "_can_be_supersection_start", False) and not dace.sdfg.is_parallel(dfg):
             return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
         # Otherwise, do nothing (empty string)
@@ -418,10 +453,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     @staticmethod
     def should_instrument_entry(map_entry: EntryNode) -> bool:
-        """ Returns True if this entry node should be instrumented. """
+        """Returns True if this entry node should be instrumented."""
         if map_entry.map.instrument != dace.InstrumentationType.PAPI_Counters:
             return False
-        if (map_entry.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules):
+        if map_entry.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules:
             return False
         try:
             cond = not map_entry.fence_instrumentation
@@ -431,12 +466,12 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     @staticmethod
     def has_surrounding_perfcounters(node, dfg: DataflowGraphView):
-        """ Returns true if there is a possibility that this node is part of a
-            section that is profiled. """
+        """Returns true if there is a possibility that this node is part of a
+        section that is profiled."""
         parent = dfg.entry_node(node)
 
         if isinstance(parent, MapEntry):
-            if (parent.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules):
+            if parent.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules:
                 return False
             return True
 
@@ -444,7 +479,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     @staticmethod
     def perf_counter_string_from_string_list(counterlist: [str]):
-        """ Creates a performance counter typename string. """
+        """Creates a performance counter typename string."""
         if isinstance(counterlist, str):
             print("Wrong format")
             counterlist = eval(counterlist)
@@ -456,32 +491,31 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         """
         return PAPIInstrumentation.perf_counter_string_from_string_list(self._counters)
 
-    def perf_counter_start_measurement_string(self,
-                                              unified_id: int,
-                                              iteration: str,
-                                              core_str: str = "PAPI_thread_id()"):
+    def perf_counter_start_measurement_string(
+        self, unified_id: int, iteration: str, core_str: str = "PAPI_thread_id()"
+    ):
         pcs = self.perf_counter_string()
-        return '''dace::perf::{counter_str} __perf_{id};
+        return """dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
 __perf_{id}.enterCritical();
-        '''.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
+        """.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
 
     @staticmethod
     def perf_counter_end_measurement_string(unified_id):
-        return '__perf_{id}.leaveCritical(__vs_{id});\n'.format(id=unified_id)
+        return "__perf_{id}.leaveCritical(__vs_{id});\n".format(id=unified_id)
 
     @staticmethod
     def perf_section_start_string(unified_id: int, size: str, in_size: str, core_str: str = "PAPI_thread_id()"):
-        return '''
-__perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (unified_id, size, in_size, core_str)
+        return """
+__perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);""" % (unified_id, size, in_size, core_str)
 
     @staticmethod
     def perf_supersection_start_string(unified_id):
-        return '__perf_store.markSuperSectionStart(%d);\n' % unified_id
+        return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
 
 class PAPIUtils(object):
-    """ General-purpose utilities for working with PAPI. """
+    """General-purpose utilities for working with PAPI."""
 
     @staticmethod
     def available_counters() -> Dict[str, int]:
@@ -493,21 +527,23 @@ class PAPIUtils(object):
                  mapping from counter name to the number of native hardware
                  events.
         """
-        if os.name == 'nt':
+        if os.name == "nt":
             return {}
 
         try:
-            p = subprocess.Popen("papi_avail -d -a | grep -E '^PAPI_'",
-                                 shell=True,
-                                 stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT,
-                                 universal_newlines=True)
+            p = subprocess.Popen(
+                "papi_avail -d -a | grep -E '^PAPI_'",
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
             stdout, _ = p.communicate(timeout=60)
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             return {}
 
         # Analyze counters
-        counters = [line.split('\t') for line in stdout.split('\n')]
+        counters = [line.split("\t") for line in stdout.split("\n")]
         result = {}
         for counter in counters:
             if len(counter) >= 3:
@@ -517,10 +553,16 @@ class PAPIUtils(object):
 
     @staticmethod
     def is_papi_used(sdfg: dace.SDFG) -> bool:
-        """ Returns True if any of the SDFG elements includes PAPI counter
-            instrumentation. """
-        instrumented_types = (SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.NestedSDFG, nodes.MapEntry,
-                              nodes.ConsumeEntry)
+        """Returns True if any of the SDFG elements includes PAPI counter
+        instrumentation."""
+        instrumented_types = (
+            SDFGState,
+            nodes.AccessNode,
+            nodes.Tasklet,
+            nodes.NestedSDFG,
+            nodes.MapEntry,
+            nodes.ConsumeEntry,
+        )
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
@@ -626,7 +668,7 @@ class PAPIUtils(object):
 
     @staticmethod
     def all_maps(map_entry: EntryNode, dfg: SubgraphView) -> List[EntryNode]:
-        """ Returns all scope entry nodes within a scope entry. """
+        """Returns all scope entry nodes within a scope entry."""
         state: dace.SDFGState = dfg.graph
         subgraph = state.scope_subgraph(map_entry, include_entry=False)
         return [n for n in subgraph.nodes() if isinstance(n, EntryNode)]
@@ -654,11 +696,10 @@ class PAPIUtils(object):
             _, uconn, v, _, memlet = edge
             dst_node = dfg.memlet_path(edge)[-1].dst
 
-            if (isinstance(node, nodes.CodeNode) and isinstance(dst_node, nodes.AccessNode)):
-
+            if isinstance(node, nodes.CodeNode) and isinstance(dst_node, nodes.AccessNode):
                 # If the memlet is pointing into an array in an inner scope,
                 # it will be handled by the inner scope.
-                if (scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(scope_dict, node, dst_node)):
+                if scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(scope_dict, node, dst_node):
                     continue
 
                 if not uconn:
@@ -677,10 +718,11 @@ class PAPIUtils(object):
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: DataflowGraphView, sdfg: dace.SDFG, cfg,
-                                  state_id: int) -> str:
-        """ Get the amount of bytes processed by `tasklet`. The formula is
-            sum(inedges * size) + sum(outedges * size) """
+    def get_tasklet_byte_accesses(
+        tasklet: nodes.CodeNode, dfg: DataflowGraphView, sdfg: dace.SDFG, cfg, state_id: int
+    ) -> str:
+        """Get the amount of bytes processed by `tasklet`. The formula is
+        sum(inedges * size) + sum(outedges * size)"""
         in_accum = []
         out_accum = []
         in_edges = dfg.in_edges(tasklet)
@@ -779,7 +821,8 @@ class PAPIUtils(object):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
-                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg, cfg, state_id))
+                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg, cfg, state_id)
+                )
             elif isinstance(node, nodes.AccessNode):
                 return 0
             else:

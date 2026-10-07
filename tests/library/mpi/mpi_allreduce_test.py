@@ -21,14 +21,12 @@ def make_sdfg(dtype):
     outbuf = state.add_access("outbuf")
     allreduce_node = mpi.nodes.allreduce.Allreduce("allreduce")
 
-    state.add_memlet_path(inbuf,
-                          allreduce_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inbuf, "0:n", num_accesses=n))
-    state.add_memlet_path(allreduce_node,
-                          outbuf,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(outbuf, "0:n", num_accesses=n))
+    state.add_memlet_path(
+        inbuf, allreduce_node, dst_conn="_inbuffer", memlet=Memlet.simple(inbuf, "0:n", num_accesses=n)
+    )
+    state.add_memlet_path(
+        allreduce_node, outbuf, src_conn="_outbuffer", memlet=Memlet.simple(outbuf, "0:n", num_accesses=n)
+    )
 
     return sdfg
 
@@ -36,12 +34,16 @@ def make_sdfg(dtype):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
-    pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
+        pytest.param("MPI", dace.float64, marks=pytest.mark.mpi),
+    ],
+)
 def test_mpi(implementation, dtype):
     from mpi4py import MPI as MPI4PY
+
     np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
@@ -61,7 +63,7 @@ def test_mpi(implementation, dtype):
     root = np.array([0], dtype=np.int32)
     mpi_sdfg(inbuf=A, outbuf=B, root=root, n=size)
     # now B should be an array of size, containing commsize
-    if (not np.allclose(B, np.full(size, commsize, dtype=np_dtype))):
+    if not np.allclose(B, np.full(size, commsize, dtype=np_dtype)):
         raise (ValueError("The received values are not what I expected on root."))
 
 

@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Simple program showing the DaCe Python interface via scalar multiplication and vector addition. """
+"""Simple program showing the DaCe Python interface via scalar multiplication and vector addition."""
 
 import argparse
 import dace
@@ -7,7 +7,7 @@ import numpy as np
 
 # Define a symbol so that the vectors could have arbitrary sizes and compile the code once
 # (this step is not necessary for arrays with known sizes)
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 # Define the data-centric program with type hints

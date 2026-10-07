@@ -1,10 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Predicate-based filtering with dynamic, explicit memlets in DaCe. """
+"""Predicate-based filtering with dynamic, explicit memlets in DaCe."""
+
 import argparse
 import dace
 import numpy as np
 
-N = dace.symbol('N', positive=True)
+N = dace.symbol("N", positive=True)
 
 
 @dace.program
@@ -20,7 +21,7 @@ def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: 
             r << ratio
 
             # The filter predicate is based on the ratio
-            filter = (a > r)
+            filter = a > r
 
             # If we should filter, writing `b = a` pushes `a` onto the stream
             if filter:
@@ -63,26 +64,26 @@ if __name__ == "__main__":
     filtered = regression(A, ratio)
 
     if len(filtered) != outsize[0]:
-        print(f'Difference in number of filtered items: {outsize[0]} (DaCe) vs. {len(filtered)} (numpy)')
+        print(f"Difference in number of filtered items: {outsize[0]} (DaCe) vs. {len(filtered)} (numpy)")
         totalitems = min(outsize[0], args.N)
-        print('DaCe:', B[:totalitems])
-        print('numpy:', filtered)
+        print("DaCe:", B[:totalitems])
+        print("numpy:", filtered)
         exit(1)
 
     # Sort the outputs
     filtered = np.sort(filtered)
-    B[:outsize[0]] = np.sort(B[:outsize[0]])
+    B[: outsize[0]] = np.sort(B[: outsize[0]])
 
     if len(filtered) == 0:
-        print('Success, nothing left in array')
+        print("Success, nothing left in array")
         exit(0)
 
-    diff = np.linalg.norm(filtered - B[:outsize[0]]) / float(outsize[0])
-    print('Difference:', diff)
+    diff = np.linalg.norm(filtered - B[: outsize[0]]) / float(outsize[0])
+    print("Difference:", diff)
     if diff > 1e-5:
         totalitems = min(outsize[0], args.N)
-        print('DaCe:', B[:totalitems])
-        print('numpy:', filtered)
+        print("DaCe:", B[:totalitems])
+        print("numpy:", filtered)
 
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

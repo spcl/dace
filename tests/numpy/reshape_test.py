@@ -1,14 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for reshaping and reinterpretation of existing arrays. """
+"""Tests for reshaping and reinterpretation of existing arrays."""
+
 import dace
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_reshape():
-    """ Array->View->Tasklet """
+    """Array->View->Tasklet"""
 
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
@@ -24,7 +25,7 @@ def test_reshape():
 
 
 def test_reshape_dst():
-    """ Tasklet->View->Array """
+    """Tasklet->View->Array"""
 
     @dace.program
     def reshpdst(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
@@ -39,19 +40,19 @@ def test_reshape_dst():
 
 
 def test_reshape_dst_explicit():
-    """ Tasklet->View->Array """
-    sdfg = dace.SDFG('reshapedst')
-    sdfg.add_array('A', [2, 3, 4], dace.float64)
-    sdfg.add_view('Bv', [2, 3, 4], dace.float64)
-    sdfg.add_array('B', [8, 3], dace.float64)
+    """Tasklet->View->Array"""
+    sdfg = dace.SDFG("reshapedst")
+    sdfg.add_array("A", [2, 3, 4], dace.float64)
+    sdfg.add_view("Bv", [2, 3, 4], dace.float64)
+    sdfg.add_array("B", [8, 3], dace.float64)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('compute', dict(i='0:2', j='0:3', k='0:4'))
-    t = state.add_tasklet('add', {'a'}, {'b'}, 'b = a + 1')
-    state.add_memlet_path(state.add_read('A'), me, t, dst_conn='a', memlet=dace.Memlet('A[i,j,k]'))
-    v = state.add_access('Bv')
-    state.add_memlet_path(t, mx, v, src_conn='b', memlet=dace.Memlet('Bv[i,j,k]'))
-    state.add_nedge(v, state.add_write('B'), dace.Memlet('B'))
+    me, mx = state.add_map("compute", dict(i="0:2", j="0:3", k="0:4"))
+    t = state.add_tasklet("add", {"a"}, {"b"}, "b = a + 1")
+    state.add_memlet_path(state.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet("A[i,j,k]"))
+    v = state.add_access("Bv")
+    state.add_memlet_path(t, mx, v, src_conn="b", memlet=dace.Memlet("Bv[i,j,k]"))
+    state.add_nedge(v, state.add_write("B"), dace.Memlet("B"))
     sdfg.validate()
 
     A = np.random.rand(2, 3, 4)
@@ -60,22 +61,22 @@ def test_reshape_dst_explicit():
     assert np.allclose(A + 1, np.reshape(B, [2, 3, 4]))
 
 
-@pytest.mark.parametrize('memlet_dst', (False, True))
+@pytest.mark.parametrize("memlet_dst", (False, True))
 def test_reshape_copy(memlet_dst):
     """
     Symmetric case of Array->View->Array. Should be translated to a reference
     and a copy.
     """
-    sdfg = dace.SDFG('reshpcpy')
-    sdfg.add_array('A', [2, 3], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
-    sdfg.add_view('Av', [6], dace.float64)
+    sdfg = dace.SDFG("reshpcpy")
+    sdfg.add_array("A", [2, 3], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
+    sdfg.add_view("Av", [6], dace.float64)
     state = sdfg.add_state()
-    r = state.add_read('A')
-    v = state.add_access('Av')
-    w = state.add_write('B')
-    state.add_edge(r, None, v, 'views', dace.Memlet(data='A'))
-    state.add_nedge(v, w, dace.Memlet(data='B' if memlet_dst else 'Av'))
+    r = state.add_read("A")
+    v = state.add_access("Av")
+    w = state.add_write("B")
+    state.add_edge(r, None, v, "views", dace.Memlet(data="A"))
+    state.add_nedge(v, w, dace.Memlet(data="B" if memlet_dst else "Av"))
     sdfg.validate()
 
     A = np.random.rand(2, 3)
@@ -85,21 +86,21 @@ def test_reshape_copy(memlet_dst):
 
 
 def test_reshape_copy_scoped():
-    """ Array->View->Array where one array is located within a map scope. """
-    sdfg = dace.SDFG('reshpcpy')
-    sdfg.add_array('A', [2, 3], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
-    sdfg.add_view('Av', [6], dace.float64)
-    sdfg.add_transient('tmp', [1], dace.float64)
+    """Array->View->Array where one array is located within a map scope."""
+    sdfg = dace.SDFG("reshpcpy")
+    sdfg.add_array("A", [2, 3], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
+    sdfg.add_view("Av", [6], dace.float64)
+    sdfg.add_transient("tmp", [1], dace.float64)
     state = sdfg.add_state()
-    r = state.add_read('A')
-    me, mx = state.add_map('reverse', dict(i='0:6'))
-    v = state.add_access('Av')
-    t = state.add_access('tmp')
-    w = state.add_write('B')
-    state.add_edge_pair(me, v, r, dace.Memlet('A[0:2, 0:3]'), dace.Memlet('A[0:2, 0:3]'))
-    state.add_nedge(v, t, dace.Memlet('Av[i]'))
-    state.add_memlet_path(t, mx, w, memlet=dace.Memlet('B[6 - i - 1]'))
+    r = state.add_read("A")
+    me, mx = state.add_map("reverse", dict(i="0:6"))
+    v = state.add_access("Av")
+    t = state.add_access("tmp")
+    w = state.add_write("B")
+    state.add_edge_pair(me, v, r, dace.Memlet("A[0:2, 0:3]"), dace.Memlet("A[0:2, 0:3]"))
+    state.add_nedge(v, t, dace.Memlet("Av[i]"))
+    state.add_memlet_path(t, mx, w, memlet=dace.Memlet("B[6 - i - 1]"))
     sdfg.validate()
 
     A = np.random.rand(2, 3)
@@ -109,7 +110,7 @@ def test_reshape_copy_scoped():
 
 
 def test_reshape_subset():
-    """ Tests reshapes on subsets of arrays. """
+    """Tests reshapes on subsets of arrays."""
 
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[12]):
@@ -125,21 +126,23 @@ def test_reshape_subset():
 
 
 def test_reshape_subset_explicit():
-    """ Tests reshapes on subsets of arrays. """
-    sdfg = dace.SDFG('reshp')
-    sdfg.add_array('A', [2, 3, 4], dace.float64)
-    sdfg.add_array('B', [12], dace.float64)
-    sdfg.add_view('Av', [12], dace.float64)
+    """Tests reshapes on subsets of arrays."""
+    sdfg = dace.SDFG("reshp")
+    sdfg.add_array("A", [2, 3, 4], dace.float64)
+    sdfg.add_array("B", [12], dace.float64)
+    sdfg.add_view("Av", [12], dace.float64)
     state = sdfg.add_state()
 
-    state.add_mapped_tasklet('compute',
-                             dict(i='0:12'),
-                             dict(a=dace.Memlet('Av[i]'), b=dace.Memlet('B[i]')),
-                             'out = a + b',
-                             dict(out=dace.Memlet('B[i]')),
-                             external_edges=True)
-    v = next(n for n in state.source_nodes() if n.data == 'Av')
-    state.add_nedge(state.add_read('A'), v, dace.Memlet('A[1, 0:3, 0:4]'))
+    state.add_mapped_tasklet(
+        "compute",
+        dict(i="0:12"),
+        dict(a=dace.Memlet("Av[i]"), b=dace.Memlet("B[i]")),
+        "out = a + b",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
+    v = next(n for n in state.source_nodes() if n.data == "Av")
+    state.add_nedge(state.add_read("A"), v, dace.Memlet("A[1, 0:3, 0:4]"))
 
     A = np.random.rand(2, 3, 4)
     B = np.random.rand(12)
@@ -189,9 +192,11 @@ def test_reinterpret_invalid():
         C[:] += 1
 
     A = np.random.rand(5).astype(np.float32)
-    with pytest.raises(ValueError,
-                       match="When changing to a larger dtype, its size must be a divisor of the total size "
-                       "in bytes of the last axis of the array."):
+    with pytest.raises(
+        ValueError,
+        match="When changing to a larger dtype, its size must be a divisor of the total size "
+        "in bytes of the last axis of the array.",
+    ):
         reint_invalid(A)
 
 
@@ -210,11 +215,13 @@ def test_reinterpret_symbolic_stride_uses_int_floor():
 
     sdfg = reint.to_sdfg(simplify=False)
     exprs = [
-        str(e) for d in sdfg.arrays.values() if isinstance(d, dace.data.View)
+        str(e)
+        for d in sdfg.arrays.values()
+        if isinstance(d, dace.data.View)
         for e in (*d.shape, *d.strides, d.total_size)
     ]
-    assert any('int_floor' in e for e in exprs), exprs
-    assert not any('floor' in e.replace('int_floor', '') for e in exprs), exprs
+    assert any("int_floor" in e for e in exprs), exprs
+    assert not any("floor" in e.replace("int_floor", "") for e in exprs), exprs
 
 
 if __name__ == "__main__":

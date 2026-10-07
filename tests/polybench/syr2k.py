@@ -2,10 +2,10 @@
 import dace
 import polybench
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -13,7 +13,7 @@ sizes = [{M: 20, N: 30}, {M: 60, N: 80}, {M: 200, N: 240}, {M: 1000, N: 1200}, {
 
 args = [([N, N], datatype), ([N, M], datatype), ([N, M], datatype), ([1], datatype), ([1], datatype)]
 
-outputs = [(0, 'C')]
+outputs = [(0, "C")]
 
 
 def init_array(C, A, B, alpha, beta, n, m):
@@ -35,7 +35,7 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
     def mult_c_rows(i: _[0:N]):
 
         @dace.map
-        def mult_c_cols(j: _[0:i + 1]):
+        def mult_c_cols(j: _[0 : i + 1]):
             ic << C[i, j]
             ib << beta
             oc >> C[i, j]
@@ -45,7 +45,7 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
     def compute(i: _[0:N], k: _[0:M]):
 
         @dace.map
-        def compute_elem(j: _[0:i + 1]):
+        def compute_elem(j: _[0 : i + 1]):
             ialpha << alpha
             ia << A[i, k]
             iat << A[j, k]
@@ -55,5 +55,5 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
             oc = ialpha * iat * ib + ialpha * ibt * ia
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     polybench.main(sizes, args, outputs, init_array, syr2k)

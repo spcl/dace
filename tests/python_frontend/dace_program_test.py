@@ -9,15 +9,15 @@ import time
 
 
 def _program_name(function) -> str:
-    """ Replicates the behavior of DaCe in determining the SDFG label. """
-    result = ''
-    if function.__module__ is not None and function.__module__ != '__main__':
-        result += function.__module__.replace('.', '_') + '_'
+    """Replicates the behavior of DaCe in determining the SDFG label."""
+    result = ""
+    if function.__module__ is not None and function.__module__ != "__main__":
+        result += function.__module__.replace(".", "_") + "_"
     return result + function.__name__
 
 
 def _build_folder(name: str) -> str:
-    """ Replicates the behavior of DaCe in determining the build folder. """
+    """Replicates the behavior of DaCe in determining the build folder."""
     return dace.SDFG(name).build_folder
 
 
@@ -40,15 +40,15 @@ def test_recreate_sdfg():
     a = np.random.rand(10)
     assert np.allclose(a + 1, very_unique_program_321(a))
 
-    assert os.path.exists(os.path.join(build_folder, 'program.sdfgz'))
-    sdfg = dace.SDFG.from_file(os.path.join(build_folder, 'program.sdfgz'))
+    assert os.path.exists(os.path.join(build_folder, "program.sdfgz"))
+    sdfg = dace.SDFG.from_file(os.path.join(build_folder, "program.sdfgz"))
 
     # Replace the SDFG with the one we just created
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
-            node.code.as_string = re.sub(r'\b1\b', '2', node.code.as_string)
+            node.code.as_string = re.sub(r"\b1\b", "2", node.code.as_string)
 
-    sdfg.save(os.path.join(build_folder, 'program.sdfgz'), compress=True)
+    sdfg.save(os.path.join(build_folder, "program.sdfgz"), compress=True)
 
     # Now run the same program again, but this time with the SDFG already created
     @dace.program(recreate_sdfg=False)
@@ -79,18 +79,18 @@ def test_regenerate_code():
     assert np.allclose(a + 3, very_unique_program_432(a))
 
     # Source code
-    source_filename = os.path.join(build_folder, 'src', 'cpu', program_name + '.cpp')
+    source_filename = os.path.join(build_folder, "src", "cpu", program_name + ".cpp")
     assert os.path.exists(source_filename)
 
     # Rewrite source code
-    with open(source_filename, 'r') as f:
+    with open(source_filename, "r") as f:
         source = f.read()
-        source = re.sub(r'\b3\b', '4', source)
+        source = re.sub(r"\b3\b", "4", source)
 
     # Make sure file sets to be "changed on disk"
     time.sleep(2)
 
-    with open(source_filename, 'w') as f:
+    with open(source_filename, "w") as f:
         f.write(source)
 
     # Now run the same program again, but this time with the modified code (ensures it is recompiled)
@@ -102,6 +102,6 @@ def test_regenerate_code():
     assert np.allclose(a + 4, very_unique_program_432(a))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_recreate_sdfg()
     test_regenerate_code()

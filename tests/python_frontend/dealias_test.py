@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-''' Tests dealising of the SDFG produced by the Python frontend. '''
+"""Tests dealising of the SDFG produced by the Python frontend."""
 
 import dace
 import numpy as np
@@ -29,7 +29,7 @@ def test_simplify_mmm():
     X = np.random.rand(size, size).astype(np.float32)
     Y = np.random.rand(size, size).astype(np.float32)
     Z = np.zeros((size, size), dtype=np.float32)
-    S = np.zeros((1, ), dtype=np.float32)
+    S = np.zeros((1,), dtype=np.float32)
 
     sdfg = mmm_dace.to_sdfg(simplify=False)
     sdfg(X=X, Y=Y, Z=Z, S=S)
@@ -46,7 +46,7 @@ def test_simplify_mmm():
     X = np.random.rand(size, size).astype(np.float32)
     Y = np.random.rand(size, size).astype(np.float32)
     Z = np.zeros((size, size), dtype=np.float32)
-    S = np.zeros((1, ), dtype=np.float32)
+    S = np.zeros((1,), dtype=np.float32)
 
     sdfg(X=X, Y=Y, Z=Z, S=S)
 

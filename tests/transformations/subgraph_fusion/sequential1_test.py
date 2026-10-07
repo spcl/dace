@@ -3,7 +3,7 @@ import dace
 import numpy as np
 from util import fusion
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program

@@ -8,6 +8,7 @@ recipe any later SDFG of the same shape can run directly, with no CMake and no N
 Advisory: a recording that does not describe the program being built is rejected and the caller
 falls back to a full CMake build.
 """
+
 import json
 import os
 import shutil
@@ -16,11 +17,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Sequence
 
 #: Fields of a compile-database entry that carry paths.
-FIELDS = ('directory', 'command', 'file', 'output')
+FIELDS = ("directory", "command", "file", "output")
 
 
 def entry_path(cache_root: str, key: str) -> str:
-    return os.path.join(cache_root, 'commands', key + '.json')
+    return os.path.join(cache_root, "commands", key + ".json")
 
 
 def load(cache_root: str, key: str) -> Optional[List[Dict[str, str]]]:
@@ -37,10 +38,10 @@ def publish(cache_root: str, key: str, entries: Sequence[Dict[str, str]]) -> Non
     path = entry_path(cache_root, key)
     if not entries or os.path.exists(path):
         return
-    staging = f'{path}.{os.getpid()}'
+    staging = f"{path}.{os.getpid()}"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(staging, 'w') as fp:
+        with open(staging, "w") as fp:
             json.dump(list(entries), fp)
         os.rename(staging, path)  # atomic, and loses harmlessly to a concurrent publisher
     except OSError:
@@ -61,13 +62,14 @@ def drop(cache_root: str, key: str) -> None:
 def capture(build_folder: str) -> List[Dict[str, str]]:
     """The commands Ninja just ran, or ``[]`` if they cannot be read."""
     try:
-        report = subprocess.run(['ninja', '-t', 'compdb'], cwd=build_folder, capture_output=True, text=True,
-                                check=True).stdout
+        report = subprocess.run(
+            ["ninja", "-t", "compdb"], cwd=build_folder, capture_output=True, text=True, check=True
+        ).stdout
         entries = json.loads(report)
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
     # Commandless rules are phony; the build.ninja rule reruns CMake, which is what this skips.
-    return [e for e in entries if e.get('command') and e.get('output') != 'build.ninja']
+    return [e for e in entries if e.get("command") and e.get("output") != "build.ninja"]
 
 
 def rewrite(entries: Sequence[Dict[str, str]], pairs: Sequence[Sequence[str]]) -> List[Dict[str, str]]:
@@ -83,17 +85,19 @@ def rewrite(entries: Sequence[Dict[str, str]], pairs: Sequence[Sequence[str]]) -
     return out
 
 
-def template(entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str,
-             program_name: str) -> List[Dict[str, str]]:
+def template(
+    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str
+) -> List[Dict[str, str]]:
     """Replace this program's identity with placeholders, leaving a recipe for its whole shape.
 
     Longest-first, since the build folder lies inside the program folder.
     """
-    return rewrite(entries, [(build_folder, '$BUILD'), (program_folder, '$PROG'), (program_name, '$NAME')])
+    return rewrite(entries, [(build_folder, "$BUILD"), (program_folder, "$PROG"), (program_name, "$NAME")])
 
 
-def accepts(entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str,
-            files: Sequence[str]) -> Optional[List[Dict[str, str]]]:
+def accepts(
+    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str, files: Sequence[str]
+) -> Optional[List[Dict[str, str]]]:
     """Substitute this program into ``entries``, or ``None`` if the recording is not about it.
 
     Every path in a recorded command came from one of the three placeholders, so a substitution that
@@ -102,9 +106,9 @@ def accepts(entries: Sequence[Dict[str, str]], build_folder: str, program_folder
     Rejecting here rather than in :func:`replay` is what lets the caller tell a recipe that never ran
     from one that failed halfway and left a build folder to clean up.
     """
-    concrete = rewrite(entries, [('$BUILD', build_folder), ('$PROG', program_folder), ('$NAME', program_name)])
-    src_folder = os.path.join(program_folder, 'src')
-    compiled = {os.path.relpath(e['file'], src_folder) for e in concrete if e.get('file', '').startswith(src_folder)}
+    concrete = rewrite(entries, [("$BUILD", build_folder), ("$PROG", program_folder), ("$NAME", program_name)])
+    src_folder = os.path.join(program_folder, "src")
+    compiled = {os.path.relpath(e["file"], src_folder) for e in concrete if e.get("file", "").startswith(src_folder)}
     return concrete if compiled == {os.path.normpath(f) for f in files} else None
 
 
@@ -112,9 +116,9 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
     """Run an accepted recipe. ``False`` means it failed partway and the build folder needs clearing."""
 
     def run(entry: Dict[str, str]) -> bool:
-        directory = entry.get('directory') or build_folder
-        os.makedirs(os.path.join(directory, os.path.dirname(entry['output'])), exist_ok=True)
-        return subprocess.run(entry['command'], shell=True, cwd=directory, capture_output=True).returncode == 0
+        directory = entry.get("directory") or build_folder
+        os.makedirs(os.path.join(directory, os.path.dirname(entry["output"])), exist_ok=True)
+        return subprocess.run(entry["command"], shell=True, cwd=directory, capture_output=True).returncode == 0
 
     # An entry reading a file no other entry produces is a source compile, so those all run at once.
     # The rest consume what the build makes -- objects, and under CUDA separable compilation a device
@@ -123,12 +127,12 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
     # just-built static library (the nanobind extension links libnanobind-static.a) is declared
     # before the archive it consumes. An entry whose command mentions another pending entry's output
     # therefore waits for that entry; anything unresolvable falls back to declared order.
-    produced = {e['output'] for e in entries}
-    compiles = [e for e in entries if e.get('file') not in produced]
-    remaining = [e for e in entries if e.get('file') in produced]
+    produced = {e["output"] for e in entries}
+    compiles = [e for e in entries if e.get("file") not in produced]
+    remaining = [e for e in entries if e.get("file") in produced]
     ordered = []
     while remaining:
-        ready = [e for e in remaining if not any(o is not e and o['output'] in e['command'] for o in remaining)]
+        ready = [e for e in remaining if not any(o is not e and o["output"] in e["command"] for o in remaining)]
         if not ready:
             ready = [remaining[0]]
         ordered.extend(ready)
@@ -152,8 +156,8 @@ def write_compile_commands(compiles: Sequence[Dict[str, str]], build_folder: str
     Without it a build folder reached by a cache hit has no compile database, so clangd stops
     working on generated code on precisely the builds we do most often.
     """
-    database = [{key: entry[key] for key in ('directory', 'command', 'file')} for entry in compiles]
-    with open(os.path.join(build_folder, 'compile_commands.json'), 'w') as fh:
+    database = [{key: entry[key] for key in ("directory", "command", "file")} for entry in compiles]
+    with open(os.path.join(build_folder, "compile_commands.json"), "w") as fh:
         json.dump(database, fh, indent=2)
 
 

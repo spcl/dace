@@ -19,9 +19,9 @@ def test():
 
     saoptest(A, 10, B)
     diff = np.linalg.norm(B - (50 * A))
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

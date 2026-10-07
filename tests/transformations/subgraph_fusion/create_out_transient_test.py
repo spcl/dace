@@ -4,7 +4,7 @@ import numpy as np
 
 from util import fusion
 
-N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
+N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
 
 @dace.program
