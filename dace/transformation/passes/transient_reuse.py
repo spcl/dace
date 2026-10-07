@@ -22,6 +22,7 @@ class TransientReuse(ppl.Pass):
     verbose = properties.Property(
         dtype=bool,
         default=False,
+        category="Diagnostics",
         desc="Print information about the memory reduction.",
     )
 
@@ -38,7 +39,7 @@ class TransientReuse(ppl.Pass):
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
-            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+            memory_before += sdfg.arrays[a].total_size_in_bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
 
@@ -166,7 +167,7 @@ class TransientReuse(ppl.Pass):
         if self.verbose:
             memory_after = 0
             for a in sdfg.arrays:
-                memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+                memory_after += sdfg.arrays[a].total_size_in_bytes
             print("memory before: ", memory_before, "B")
             print("memory after: ", memory_after, "B")
             print("memory savings: ", memory_before - memory_after, "B")

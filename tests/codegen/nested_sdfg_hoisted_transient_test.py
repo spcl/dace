@@ -21,7 +21,7 @@ if not hasattr(dace.ScheduleType, "HoistingTestLoop"):
         """A sequential loop in which CPU heap memory cannot be allocated."""
 
         def __init__(self, frame_codegen, sdfg):
-            self.frame = frame_codegen
+            self._frame = frame_codegen
             self.dispatcher = frame_codegen.dispatcher
             self.dispatcher.register_map_dispatcher(dace.ScheduleType.HoistingTestLoop, self)
 
@@ -36,7 +36,7 @@ if not hasattr(dace.ScheduleType, "HoistingTestLoop"):
                     state_id,
                     entry_node,
                 )
-            self.frame.allocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
             self.dispatcher.dispatch_subgraph(
                 sdfg, cfg, scope, state_id, function_stream, callsite_stream, skip_entry_node=True
             )

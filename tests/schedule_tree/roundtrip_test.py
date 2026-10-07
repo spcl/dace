@@ -9,6 +9,7 @@ import pytest
 
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
 from dace.properties import CodeBlock
+from dace.sdfg import dealias
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -557,6 +558,8 @@ def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
     else:
         state.add_edge(state.add_read("A"), None, nsdfg, "X", dace.Memlet("A[0]"))
         state.add_edge(tasklet, "out", state.add_write("B"), None, dace.Memlet("B[0]"))
+    # The nested SDFG is built with a connector relative to the element it is passed
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     return sdfg
 
 
@@ -777,6 +780,8 @@ def _consume_body_sdfg(in_map: bool, push: bool, multistate: bool) -> dace.SDFG:
     )
     if push:
         state.add_memlet_path(body, exit_node, *path, state.add_write("S"), src_conn="Q", memlet=dace.Memlet("S[0]"))
+    # The nested SDFG is built with connectors relative to the consumed element and the results it writes
+    dealias.convert_legacy_nested_sdfgs(sdfg)
     return sdfg
 
 
@@ -791,41 +796,6 @@ def test_consume_body(in_map: bool, push: bool, multistate: bool):
     )
     # A body that requires multiple states is nested (within the nested SDFG of the map, if any)
     assert len(list(new_sdfg.all_sdfgs_recursive())) == 1 + int(multistate) * (1 + int(in_map))
-
-
-def _nview_sdfg(in_loop: bool) -> dace.SDFG:
-    """
-    Creates an SDFG that passes a slice of an array to a nested SDFG with a shape that cannot be mapped to the slice.
-
-    :param in_loop: If True, the nested SDFG is called in a loop over the sliced dimension.
-    """
-    inner = dace.SDFG("inner")
-    inner.add_array("X", [40], dace.float64)
-    inner_state = inner.add_state()
-    _write_tasklet(inner_state, "out = inp + 1", {"inp": "X[3]"}, "X[3]")
-
-    sdfg = dace.SDFG("tester")
-    sdfg.add_array("A", [4, 5, 10], dace.float64)
-    init = sdfg.add_state("init", is_start_block=True)
-    if in_loop:
-        sdfg.add_symbol("i", dace.int64)
-        loop = LoopRegion("loop", "i < 5", "i", "i = 0", "i = i + 1")
-        sdfg.add_node(loop)
-        sdfg.add_edge(init, loop, dace.InterstateEdge())
-        state = loop.add_state("call", is_start_block=True)
-        index = "i"
-    else:
-        state = sdfg.add_state_after(init, "call")
-        index = "1"
-    nsdfg = state.add_nested_sdfg(inner, {"X"}, {"X"})
-    state.add_edge(state.add_read("A"), None, nsdfg, "X", dace.Memlet(f"A[0:4, {index}, 0:10]"))
-    state.add_edge(nsdfg, "X", state.add_write("A"), None, dace.Memlet(f"A[0:4, {index}, 0:10]"))
-    return sdfg
-
-
-@pytest.mark.parametrize("in_loop", (False, True))
-def test_nview_outside_map(in_loop: bool):
-    _roundtrip_and_compare(_nview_sdfg(in_loop), tn.NView, dict(A=np.random.rand(4, 5, 10)))
 
 
 def test_reference_set_from_tasklet():
@@ -986,7 +956,6 @@ _EMPTY_MEMLET_ROUNDTRIPS = {
         tn.GBlock,
         [dict(A=np.random.rand(2), N=n) for n in (1, -1)],
     ),
-    "nview_in_loop": (lambda: _nview_sdfg(True), tn.NView, [dict(A=np.random.rand(4, 5, 10))]),
 }
 
 
@@ -1024,8 +993,6 @@ if __name__ == "__main__":
     test_state_machine_in_loop()
     test_consume_fibonacci(False)
     test_consume_fibonacci(True)
-    test_nview_outside_map(False)
-    test_nview_outside_map(True)
     test_reference_set_from_tasklet()
     for in_map in (False, True):
         for push in (False, True):

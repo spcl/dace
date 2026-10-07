@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -62,7 +62,9 @@ def test_augassign_wcr():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (
+                    isinstance(edge.src, dace.nodes.Tasklet) or isinstance(edge.dst, dace.nodes.Tasklet)
+                ):
                     wcr_count += 1
     assert wcr_count == 1
 
@@ -83,7 +85,9 @@ def test_augassign_wcr2():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (
+                    isinstance(edge.src, dace.nodes.Tasklet) or isinstance(edge.dst, dace.nodes.Tasklet)
+                ):
                     wcr_count += 1
     assert wcr_count == 2
 
@@ -107,7 +111,9 @@ def test_augassign_wcr3():
     for sdfg in test_sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (
+                    isinstance(edge.src, dace.nodes.Tasklet) or isinstance(edge.dst, dace.nodes.Tasklet)
+                ):
                     wcr_count += 1
     assert wcr_count == 2
 
@@ -189,6 +195,23 @@ def test_augassign_scalar_in_map():
     assert np.allclose(a, ref)
 
 
+def test_augassign_loop_in_map():
+    """An augmented assignment in a loop inside a map reads and writes different elements of the same row."""
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+
+    @dace.program
+    def prefix_sum(A: dace.float64[N, M]):
+        for i in dace.map[0:N]:
+            for j in range(1, M):
+                A[i, j] += A[i, j - 1]
+
+    A = np.random.rand(4, 6)
+    ref = np.cumsum(A, axis=1)
+    prefix_sum(A)
+    assert np.allclose(A, ref)
+
+
 if __name__ == "__main__":
     test_augassign_wcr()
     test_augassign_wcr2()
@@ -197,3 +220,4 @@ if __name__ == "__main__":
     test_augassign_no_wcr()
     test_augassign_no_wcr2()
     test_augassign_scalar_in_map()
+    test_augassign_loop_in_map()

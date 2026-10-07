@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -31,6 +31,8 @@ nsdfg_node = state.add_nested_sdfg(nsdfg, {"local"}, {"local", "m"})
 state.add_memlet_path(L_in, me, nsdfg_node, memlet=dace.Memlet.simple("L", "i"), dst_conn="local")
 state.add_memlet_path(nsdfg_node, mx, L_out, memlet=dace.Memlet.simple("L", "i"), src_conn="local")
 state.add_memlet_path(nsdfg_node, mx, M_out, memlet=dace.Memlet.simple("M", "i"), src_conn="m")
+
+nsdfg_node.integrate_into_parent()
 
 
 def test():

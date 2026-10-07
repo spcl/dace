@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for NumPy ufuncs.
 """
@@ -18,6 +18,7 @@ from dace.frontend.python.replacements.utils import (
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import InterstateEdge, Memlet, SDFG, SDFGState
 from dace import dtypes, data, symbolic, nodes
+from dace.sdfg import dealias
 
 import ast
 import copy
@@ -1461,6 +1462,8 @@ def _create_subgraph(
                     n = state.add_write(arg)
                     conn, idx = nested_sdfg_outputs[arg]
                     state.add_memlet_path(codenode, mx, n, memlet=Memlet("{a}[{i}]".format(a=n, i=idx)), src_conn=conn)
+
+                dealias.integrate_nested_sdfg(nested_sdfg)
                 return
 
         input_memlets = dict()
@@ -2016,6 +2019,7 @@ def implement_ufunc_accumulate(
         codenode, mx, w, memlet=Memlet("{a}[{i}]".format(a=outputs[0], i=output_idx)), src_conn=outconn
     )
 
+    dealias.integrate_nested_sdfg(nested_sdfg)
     return outputs
 
 

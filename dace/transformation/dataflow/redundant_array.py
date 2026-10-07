@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement a redundant array removal transformation."""
 
 import copy
@@ -11,7 +11,7 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import dealias, SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
@@ -662,6 +662,15 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
+        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow
+        to_integrate = [
+            e.src
+            for e in graph.in_edges(in_array)
+            if isinstance(e.src, nodes.NestedSDFG)
+            and e.src_conn in e.src.sdfg.arrays
+            and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
+        ]
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
@@ -798,6 +807,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
+                # Set explicitly: in a self-copy (``B -> A -> B``) the data name alone cannot tell the sides apart
+                e3.data._is_data_src = src_is_data
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -830,6 +841,9 @@ class RedundantArray(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
         except ValueError:  # Already in use (e.g., with Views)
             pass
+
+        for nsdfg_node in to_integrate:
+            dealias.integrate_nested_sdfg(nsdfg_node.sdfg)
 
 
 class RedundantSecondArray(pm.SingleStateTransformation):
@@ -1269,6 +1283,50 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             graph.remove_node(in_array)
 
 
+def _connector_describes_view(connector_desc: data.Data, view_desc: data.Data, viewed_desc: data.Data) -> bool:
+    """
+    Checks whether a nested SDFG connector describes a view but not the container behind it.
+
+    Removing the view moves the connector onto the viewed container without moving the memlets
+    inside, which are written in the view's coordinates.
+
+    :param connector_desc: The descriptor of the connector inside the nested SDFG.
+    :param view_desc: The descriptor of the view.
+    :param viewed_desc: The descriptor of the container it views.
+    :return: True if removing the view would leave the connector describing the wrong container.
+    """
+    return connector_desc.is_equivalent(view_desc) and not connector_desc.is_equivalent(viewed_desc)
+
+
+def _view_carries_a_connector(
+    state: SDFGState,
+    edges: List[graph.MultiConnectorEdge[mm.Memlet]],
+    view_desc: data.Data,
+    viewed_desc: data.Data,
+    from_source: bool,
+) -> bool:
+    """
+    Checks whether a nested SDFG on the far end of ``edges`` describes the view rather than the
+    container behind it (see ``_connector_describes_view``).
+
+    :param state: The state the view lives in.
+    :param edges: The edges between the view and the nested SDFGs that use it.
+    :param view_desc: The descriptor of the view about to be removed.
+    :param viewed_desc: The descriptor of the container it views.
+    :param from_source: True if the nested SDFGs write the view, False if they read it.
+    :return: True if removing the view would leave a connector describing the wrong container.
+    """
+    for edge in edges:
+        for leaf in state.memlet_tree(edge).leaves():
+            node = leaf.src if from_source else leaf.dst
+            connector = leaf.src_conn if from_source else leaf.dst_conn
+            if not isinstance(node, nodes.NestedSDFG) or connector not in node.sdfg.arrays:
+                continue
+            if _connector_describes_view(node.sdfg.arrays[connector], view_desc, viewed_desc):
+                return True
+    return False
+
+
 class SqueezeViewRemove(pm.SingleStateTransformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -1322,6 +1380,9 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
                 dst_conn = e.dst_conn
                 if dst_conn in e.dst.out_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.out_edges(out_array), out_desc, in_desc, False):
+            return False
 
         return True
 
@@ -1408,6 +1469,9 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
                 src_conn = e.src_conn
                 if src_conn in e.src.in_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.in_edges(in_array), in_desc, out_desc, True):
+            return False
 
         return True
 
@@ -1551,6 +1615,8 @@ class RedundantReadSlice(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
+                            if _connector_describes_view(ndesc, out_desc, in_desc):
                                 return False
 
         return True
@@ -1704,6 +1770,8 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                             ndesc = source_node.sdfg.arrays[source_conn]
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
                                 return False
+                            if _connector_describes_view(ndesc, in_desc, out_desc):
+                                return False
 
         return True
 
@@ -1768,6 +1836,31 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                 pass
 
 
+def _is_identity_view(view_desc: data.Data, viewed_desc: data.Data, subset: subsets.Subset) -> bool:
+    """
+    Says whether a view is the container it views: all of it, laid out the same way.
+
+    Removing such a view only renames the data its memlets refer to. Their subsets stay as they are, so every node
+    they reach -- a library node included -- receives exactly what it did before.
+
+    :param view_desc: The descriptor of the view.
+    :param viewed_desc: The descriptor of the container it views.
+    :param subset: The part of the container the view covers.
+    :return: True if the view and the container are interchangeable.
+    """
+    if not isinstance(view_desc, data.Array) or not isinstance(viewed_desc, data.Array):
+        return False
+    if view_desc.dtype != viewed_desc.dtype or len(view_desc.shape) != len(viewed_desc.shape):
+        return False
+    for a, b in zip(
+        (*view_desc.shape, *view_desc.strides, *view_desc.offset),
+        (*viewed_desc.shape, *viewed_desc.strides, *viewed_desc.offset),
+    ):
+        if (a == b) != True:
+            return False
+    return subset == subsets.Range.from_array(viewed_desc)
+
+
 class RemoveSliceView(pm.SingleStateTransformation):
     """Removes views which can be represented by slicing (e.g., A[i, :, j, None])."""
 
@@ -1813,17 +1906,21 @@ class RemoveSliceView(pm.SingleStateTransformation):
         ########################################################
         # Syntactic feasibility: ensure memlets reach managable node types (access nodes, tasklets, nested SDFGs if
         # strides match) rather than library nodes, which may behave in a custom manner based on the memlet shape.
+        # A view that is the whole container leaves the memlets' shapes as they are, and library nodes with them.
         if not permissive:
+            identity = _is_identity_view(desc, viewed.desc(sdfg), subset)
             for e in non_view_edges:
                 for sink in state.memlet_tree(e).leaves():
                     sink_node = sink.dst if is_src else sink.src
                     sink_conn = sink.dst_conn if is_src else sink.src_conn
-                    if isinstance(sink_node, nodes.LibraryNode):
+                    if isinstance(sink_node, nodes.LibraryNode) and not identity:
                         return False
                     if isinstance(sink_node, nodes.NestedSDFG):
                         if sink_conn in sink_node.sdfg.arrays:
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+                            if _connector_describes_view(ndesc, desc, viewed.desc(sdfg)):
                                 return False
 
         ########################################################
@@ -1879,14 +1976,14 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     #   * Unsqueezed dimensions are ignored (should always be 0)
                     #   * Squeezed dimensions remain as they were in original subset
                     if e.data.subset is not None:
-                        e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                        e.data.subset = sdutil.compose_view_subset(mapping, subset, e.data.subset)
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
 
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
-                        e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+                        e.data.other_subset = sdutil.compose_view_subset(mapping, subset, e.data.other_subset)
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.other_subset = copy.deepcopy(subset)
@@ -1903,24 +2000,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Remove view node
         state.remove_node(self.view)
-
-    def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
-        """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
-
-        Offset-and-size is not composition. Reading only ``min_element``/``size`` discards the edge
-        subset's own STEP and re-derives the end as ``offset + size - 1``, turning a strided window
-        into a contiguous one holding the same number of elements: ``a[0:N, 0:N][:, 0:N:2]`` folded
-        into ``a[0:N, 0:N//2]``, so the program read the first half of every row instead of its even
-        columns. The step is also missing from the offset, so a strided view of a strided view came
-        out wrong twice over.
-        """
-        new_subset: List[Tuple[int, int, int]] = subset.ndrange()
-        for vdim, adim in mapping.items():
-            rb, re, rs = new_subset[adim]
-            vb, ve, vs = edge_subset.ranges[vdim]
-            new_subset[adim] = (rb + rs * vb, rb + rs * ve, rs * vs)
-
-        return subsets.Range(new_subset)
 
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):

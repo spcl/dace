@@ -128,7 +128,8 @@ def test_dealias_nested_call():
     def tester(a: dace.float64[40], b: dace.float64[40]):
         nester(b[1:21], a[10:30])
 
-    sdfg = tester.to_sdfg(simplify=False)
+    # Simplification inlines the callee, which composes its accesses with the slices of the call
+    sdfg = tester.to_sdfg(simplify=True)
     inline_control_flow_regions(sdfg)
     sdfg.apply_transformations_repeated(RemoveSliceView)
 
@@ -152,7 +153,8 @@ def test_dealias_nested_call_samearray():
     def tester(a: dace.float64[40]):
         nester(a[1:21], a[10:30])
 
-    sdfg = tester.to_sdfg(simplify=False)
+    # Simplification inlines the callee, which composes its accesses with the slices of the call
+    sdfg = tester.to_sdfg(simplify=True)
     inline_control_flow_regions(sdfg)
     sdfg.apply_transformations_repeated(RemoveSliceView)
 
@@ -216,6 +218,8 @@ def test_dealias_interstate_edge():
     state.add_edge(ra, None, nsdfg_node, "B", dace.Memlet("A[1:20]"))
     state.add_edge(rb, None, nsdfg_node, "A", dace.Memlet("B[2:17]"))
 
+    nsdfg_node.integrate_into_parent()
+
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
@@ -247,6 +251,7 @@ def test_dealias_interstate_edge_scalar_connector():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {"a": None, "b": None}, {})
     state.add_edge(state.add_read("A"), None, nsdfg_node, "a", dace.Memlet("A[3]"))
     state.add_edge(state.add_read("B"), None, nsdfg_node, "b", dace.Memlet("B[7]"))
+    nsdfg_node.integrate_into_parent()
 
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
@@ -278,6 +283,7 @@ def test_dealias_interstate_edge_scalar_connector_samearray():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {"a": None, "b": None}, {})
     state.add_edge(state.add_read("A"), None, nsdfg_node, "a", dace.Memlet("A[3]"))
     state.add_edge(state.add_read("A"), None, nsdfg_node, "b", dace.Memlet("A[7]"))
+    nsdfg_node.integrate_into_parent()
 
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
@@ -292,7 +298,7 @@ def test_dealias_interstate_edge_scalar_connector_samearray():
 def test_dealias_interstate_edge_scalar_connector_in_map():
     """
     Frontend-generated variant: the condition of an ``if`` inside a map reads an array element, which the frontend
-    passes into the nested SDFG through a scalar connector and evaluates on an inter-state edge.
+    reads into a symbol that the condition then compares.
     """
 
     @dace.program
@@ -312,7 +318,7 @@ def test_dealias_interstate_edge_scalar_connector_in_map():
         assigns = [n for n in stree.preorder_traversal() if isinstance(n, tn.AssignNode)]
         assert len(assigns) == 1
         assert expected in assigns[0].value.as_string
-        assert stree.as_string().count(f"({expected} > ") == 1
+        assert stree.as_string().count(f"({assigns[0].name} > ") == 1
 
 
 if __name__ == "__main__":

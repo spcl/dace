@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module provides a function to change the stride in a given SDFG"""
 
 from typing import List, Union, Tuple
@@ -6,7 +6,7 @@ import sympy
 
 import dace
 from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, nodes, SDFGState
+from dace.sdfg import SDFG, dealias, nodes, SDFGState
 from dace.data import Array, Scalar
 from dace.memlet import Memlet
 
@@ -216,5 +216,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
                 changed_stride_state.add_memlet_path(
                     nsdfg, changed_stride_state.add_access(dname), src_conn=dname, memlet=Memlet(data=dname)
                 )
+
+    dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
     return new_sdfg

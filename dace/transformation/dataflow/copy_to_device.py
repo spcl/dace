@@ -1,10 +1,10 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes and functions that implement copying a nested SDFG
 and its dependencies to a given device."""
 
 from copy import deepcopy as dcpy
-from dace import data, properties, symbolic, dtypes
-from dace.sdfg import nodes, SDFG
+from dace import data, properties, subsets, symbolic, dtypes
+from dace.sdfg import dealias, nodes, SDFG
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
@@ -31,7 +31,7 @@ class CopyToDevice(transformation.SingleStateTransformation):
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     storage = properties.EnumProperty(
-        dtype=dtypes.StorageType, desc="Nested SDFG storage", default=dtypes.StorageType.Default
+        dtype=dtypes.StorageType, category="Memory", desc="Nested SDFG storage", default=dtypes.StorageType.Default
     )
 
     @staticmethod
@@ -115,6 +115,9 @@ class CopyToDevice(transformation.SingleStateTransformation):
             state.add_edge(src, src_conn, data_node, None, to_data_mm)
             state.add_edge(data_node, None, dst, dst_conn, from_data_mm)
 
+            # The connector now reads the device copy
+            dealias.rebase_connector(nested_sdfg, dst_conn, subsets.Range.from_indices(offset))
+
         for _, edge in enumerate(state.out_edges(nested_sdfg)):
             src, src_conn, dst, dst_conn, memlet = edge
             dataname = memlet.data
@@ -158,6 +161,9 @@ class CopyToDevice(transformation.SingleStateTransformation):
             state.remove_edge(edge)
             state.add_edge(src, src_conn, data_node, None, to_data_mm)
             state.add_edge(data_node, None, dst, dst_conn, from_data_mm)
+
+            # The connector now writes the device copy
+            dealias.rebase_connector(nested_sdfg, src_conn, subsets.Range.from_indices(offset))
 
         # Change storage for all data inside nested SDFG to device.
         change_storage(nested_sdfg.sdfg, storage)

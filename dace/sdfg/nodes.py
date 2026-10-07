@@ -3,6 +3,8 @@
 dataflow multigraph representation."""
 
 import ast
+import contextlib
+import contextvars
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -40,17 +42,62 @@ import warnings
 # -----------------------------------------------------------------------------
 
 
+def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+    """
+    Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
+    bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
+    default type for an expression rebuilt from a string, e.g., after deserialization). They take precedence over
+    the symbols defined at a node, which also report such instances, e.g., from the shapes of data descriptors.
+
+    :param sdfg: The SDFG, or None.
+    :return: A dictionary mapping constant names to their types; the innermost SDFG's constants take precedence.
+    """
+    result = {}
+    while sdfg is not None:
+        for name, (desc, _) in sdfg.constants_prop.items():
+            if isinstance(desc, dace.data.Scalar) and name not in result:
+                result[name] = desc.dtype
+        sdfg = sdfg.parent_sdfg
+    return result
+
+
+_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict["dace.SDFG", Set[str]]]] = contextvars.ContextVar(
+    "nested_used_symbols_memo", default=None
+)
+
+
+@contextlib.contextmanager
+def memoize_nested_used_symbols():
+    """
+    Within this context, ``NestedSDFG.used_symbols(all_symbols=False)`` computes the used symbols of each nested SDFG
+    at most once, rather than on every query of an enclosing SDFG.
+
+    :return: A context manager yielding the memo, which maps nested SDFGs to their used symbols (and may be seeded).
+    :note: Only valid if no nested SDFG is modified after its used symbols are first queried in the context.
+    """
+    memo = _nested_used_symbols_memo.get()
+    if memo is not None:
+        yield memo
+        return
+    memo = {}
+    token = _nested_used_symbols_memo.set(memo)
+    try:
+        yield memo
+    finally:
+        _nested_used_symbols_memo.reset(token)
+
+
 @make_properties
 class Node(object):
     """Base node class."""
 
     in_connectors = DictProperty(
-        key_type=str, value_type=dtypes.typeclass, desc="A set of input connectors for this node."
+        key_type=str, value_type=dtypes.typeclass, category="General", desc="A set of input connectors for this node."
     )
     out_connectors = DictProperty(
-        key_type=str, value_type=dtypes.typeclass, desc="A set of output connectors for this node."
+        key_type=str, value_type=dtypes.typeclass, category="General", desc="A set of output connectors for this node."
     )
-    guid = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -207,11 +254,18 @@ class Node(object):
         :param connector_name: The name of the connector to remove.
         :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(
+                f"Tried to remove `{connector_name}` from the in-connectors of node {str(self)}", stacklevel=1
+            )
+            return False
 
-        if connector_name in self.in_connectors:
-            connectors = self.in_connectors
-            del connectors[connector_name]
-            self.in_connectors = connectors
+        if connector_name not in self.in_connectors:
+            return False
+
+        connectors = self.in_connectors
+        del connectors[connector_name]
+        self.in_connectors = connectors
         return True
 
     def remove_out_connector(self, connector_name: str):
@@ -220,11 +274,18 @@ class Node(object):
         :param connector_name: The name of the connector to remove.
         :return: True if the operation was successful.
         """
+        if not connector_name:
+            warnings.warn(
+                f"Tried to remove `{connector_name}` from the out-connectors of node {str(self)}", stacklevel=1
+            )
+            return False
 
-        if connector_name in self.out_connectors:
-            connectors = self.out_connectors
-            del connectors[connector_name]
-            self.out_connectors = connectors
+        if connector_name not in self.out_connectors:
+            return False
+
+        connectors = self.out_connectors
+        del connectors[connector_name]
+        self.out_connectors = connectors
         return True
 
     def _next_connector_int(self) -> int:
@@ -274,6 +335,11 @@ class Node(object):
         scope entries) to their type."""
         return {}
 
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        """Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
+        without inferring their types."""
+        return set(self.new_symbols(sdfg, state, {}).keys())
+
     def infer_connector_types(self, sdfg, state):
         """
         Infers and fills remaining connectors (i.e., set to None) with their
@@ -289,16 +355,18 @@ class Node(object):
 class AccessNode(Node):
     """A node that accesses data in the SDFG. Denoted by a circular shape."""
 
-    setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo = DebugInfoProperty(allow_none=True)
-    data = DataProperty(desc="Data (array, stream, scalar) to access")
+    setzero = Property(dtype=bool, category="Memory", desc="Initialize to zero", default=False)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
+    data = DataProperty(category="General", desc="Data (array, stream, scalar) to access")
 
     instrument = EnumProperty(
         dtype=dtypes.DataInstrumentationType,
+        category="Instrumentation",
         desc="Instrument data contents at this access",
         default=dtypes.DataInstrumentationType.No_Instrumentation,
     )
     instrument_condition = CodeProperty(
+        category="Instrumentation",
         desc="Condition under which to trigger the instrumentation",
         default=CodeBlock("1", language=dtypes.Language.CPP),
     )
@@ -381,14 +449,20 @@ class CodeNode(Node):
     dependencies. May either be a tasklet or a nested SDFG, and
     denoted by an octagonal shape."""
 
-    label = Property(dtype=str, desc="Name of the CodeNode")
+    label = Property(dtype=str, category="General", desc="Name of the CodeNode")
     location = DictProperty(
         key_type=str,
-        value_type=dace.symbolic.pystr_to_symbolic,
-        desc="Full storage location identifier (e.g., rank, GPU ID)",
+        value_type=str,
+        category="Scheduling",
+        desc="Full storage location identifier (e.g., rank, GPU ID). Values are always stored and "
+        'serialized as strings, which may encode a constant (e.g., "0"), a symbolic expression '
+        '(e.g., "N - 1"), or a range in subset notation (e.g., "0:N"); consumers parse them.',
     )
     environments = SetProperty(
-        str, desc="Environments required by CMake to build and run this code node.", default=set()
+        str,
+        category="Code Generation",
+        desc="Environments required by CMake to build and run this code node.",
+        default=set(),
     )
 
     def __init__(self, label="", location=None, inputs=None, outputs=None):
@@ -415,21 +489,30 @@ class Tasklet(CodeNode):
     language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
-    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
+    code = CodeProperty(category="Semantics", desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(
+        element_type=str, category="Code Generation", desc="Fields that are added to the global state"
+    )
     code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution", default=CodeBlock("", dtypes.Language.CPP)
+        category="Code Generation",
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP),
     )
     code_init = CodeProperty(
-        desc="Extra code that is called on DaCe runtime initialization", default=CodeBlock("", dtypes.Language.CPP)
+        category="Code Generation",
+        desc="Extra code that is called on DaCe runtime initialization",
+        default=CodeBlock("", dtypes.Language.CPP),
     )
     code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup", default=CodeBlock("", dtypes.Language.CPP)
+        category="Code Generation",
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP),
     )
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
@@ -437,6 +520,7 @@ class Tasklet(CodeNode):
         dtype=bool,
         allow_none=True,
         default=None,
+        category="Semantics",
         desc="If True, this tasklet calls a function that may have "
         "additional side effects on the system state (e.g., callback). "
         "Defaults to None, which lets the framework make assumptions based on "
@@ -444,6 +528,7 @@ class Tasklet(CodeNode):
     )
     ignored_symbols = SetProperty(
         element_type=str,
+        category="Semantics",
         desc="A set of symbols to ignore when computing "
         "the symbols used by this tasklet. Used to skip certain symbols in non-Python "
         "tasklets, where only string analysis is possible; and to skip globals in Python "
@@ -611,29 +696,40 @@ class NestedSDFG(CodeNode):
     """
 
     # NOTE: We cannot use SDFG as the type because of an import loop
-    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
+    sdfg = SDFGReferenceProperty(category="General", desc="The SDFG", allow_none=True)
     ext_sdfg_path = Property(
-        dtype=str, default=None, allow_none=True, desc="Path to a file containing the SDFG for this nested SDFG"
+        dtype=str,
+        default=None,
+        allow_none=True,
+        category="General",
+        desc="Path to a file containing the SDFG for this nested SDFG",
     )
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=sp.Basic,
+        category="General",
         desc="Mapping between internal symbols and their values, expressed as symbolic expressions",
     )
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
+    is_collapsed = Property(
+        dtype=bool, category="General", desc="Show this node/scope/state as collapsed", default=False
+    )
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
     no_inline = Property(
-        dtype=bool, desc="If True, this nested SDFG will not be inlined during simplification", default=False
+        dtype=bool,
+        category="General",
+        desc="If True, this nested SDFG will not be inlined during simplification",
+        default=False,
     )
 
-    unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+    unique_name = Property(dtype=str, category="Code Generation", desc="Unique name of the SDFG", default="")
 
     def __init__(
         self,
@@ -660,6 +756,21 @@ class NestedSDFG(CodeNode):
             self.sdfg.parent_nsdfg_node = self
             self.sdfg.parent = context
             self.sdfg.parent_sdfg = context.sdfg if context else None
+
+            # Integrate nested SDFG into its parent SDFG
+            self.integrate_into_parent()
+
+    def integrate_into_parent(self):
+        """
+        Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
+        the nested SDFG are shared with the parent SDFG.
+
+        For more information, see ``dace.sdfg.dealias.integrate_nested_sdfg()``.
+        """
+        if self.sdfg is not None:
+            from dace.sdfg import dealias  # Avoid import loop
+
+            dealias.integrate_nested_sdfg(self.sdfg)
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -708,7 +819,13 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            memo = _nested_used_symbols_memo.get()
+            if memo is None:
+                internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            else:
+                if self.sdfg not in memo:
+                    memo[self.sdfg] = self.sdfg.used_symbols(all_symbols=False)
+                internally_used_symbols = memo[self.sdfg]
             keys_to_use &= internally_used_symbols
 
         # Translate the internal symbols back to their external counterparts.
@@ -738,7 +855,9 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
+    def validate(
+        self, sdfg: "dace.SDFG", state: "dace.SDFGState", references: Optional[Set[int]] = None, **context: bool
+    ):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -756,7 +875,10 @@ class NestedSDFG(CodeNode):
                 raise ValueError("Parent SDFG not properly set for nested SDFG node")
 
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
-            for conn in connectors:
+            # Connector descriptors are compared as if written in the parent's symbols (see ``Data.is_equivalent``)
+            replacements = dace.symbolic.symbol_replacements(self.symbol_mapping)
+            connector_symbols: Set[str] = set()
+            for conn in sorted(connectors):
                 if conn in self.sdfg.symbols:
                     raise ValueError(
                         f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
@@ -767,6 +889,36 @@ class NestedSDFG(CodeNode):
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                         "Example: parameter passed to a function without a matching array within it."
                     )
+
+                # The internal data descriptor is written in the nested SDFG's symbols. Without a symbol of the
+                # nested SDFG for every name it uses, it cannot be compared with the external one.
+                inner_desc = self.sdfg.arrays[conn]
+                desc_symbols = {str(s) for s in inner_desc.free_symbols}
+                connector_symbols |= desc_symbols
+                undeclared = sorted(desc_symbols - self.sdfg.symbols.keys())
+                if undeclared:
+                    raise ValueError(
+                        f'Connector "{conn}" has a data descriptor ({inner_desc}) that uses symbols '
+                        f"{undeclared}, which are not symbols of the nested SDFG. Add them to the nested "
+                        "SDFG and to the symbol mapping."
+                    )
+                unmapped = sorted(desc_symbols - self.symbol_mapping.keys())
+                if unmapped:
+                    raise ValueError(
+                        f'Connector "{conn}" has a data descriptor ({inner_desc}) that uses symbols '
+                        f"{unmapped}, which are not in the symbol mapping of the nested SDFG node."
+                    )
+
+                # Verify that the internal data descriptor, restated in the symbols of the parent SDFG, is equivalent
+                # to the external data descriptor connected to the connector.
+                edge = next(iter(state.edges_by_connector(self, conn)))
+                if not inner_desc.is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=replacements):
+                    raise ValueError(
+                        f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
+                        f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
+                        f"{sdfg.arrays[edge.data.data]}). If a reinterpretation or a subset is needed, use a view."
+                    )
+
             for dname, desc in self.sdfg.arrays.items():
                 if not desc.transient and dname not in connectors:
                     raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
@@ -795,10 +947,17 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError("Missing symbols on nested SDFG: %s" % (missing_symbols))
+            # A mapped symbol is given its value by the node, but its type by the nested SDFG
+            undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
+            if undeclared_symbols:
+                raise ValueError(f"Symbols {undeclared_symbols} are mapped into the nested SDFG but not declared in it")
+
+            # The shapes of connector descriptors are not "used" by the nested SDFG, but they are given by the mapping
+            symbols |= connector_symbols
             extra_symbols = self.symbol_mapping.keys() - symbols
             if len(extra_symbols) > 0:
                 # TODO: Elevate to an error?
@@ -884,7 +1043,7 @@ class MapEntry(EntryNode):
         return self._map
 
     @map.setter
-    def map(self, val):
+    def map(self, val: "Map"):
         self._map = val
 
     def __str__(self):
@@ -909,11 +1068,15 @@ class MapEntry(EntryNode):
                 result[e.dst_conn] = self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype
 
         # Add map params
-        known = {**symbols, **result}
+        known = {**symbols, **_constant_types(sdfg), **result}
         for p, rng in zip(self._map.params, self._map.range):
             result[p] = infer_iteration_symbol_type(rng[0], rng[1], symbols=known)
 
         return result
+
+    def new_symbol_names(self, sdfg, state) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
     def used_symbols_within_scope(self, parent_state: "dace.SDFGState", all_symbols: bool = False) -> Set[str]:
         """
@@ -929,7 +1092,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_sdfg, parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -1040,23 +1203,31 @@ class Map(object):
     """
 
     # List of (editable) properties
-    label = Property(dtype=str, desc="Label of the map")
-    params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
-    schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
-    unroll = Property(dtype=bool, desc="Map unrolling")
+    label = Property(dtype=str, category="General", desc="Label of the map")
+    params = ListProperty(element_type=str, category="Semantics", desc="Mapped parameters")
+    range = RangeProperty(category="Semantics", desc="Ranges of map parameters", default=sbs.Range([]))
+    schedule = EnumProperty(
+        dtype=dtypes.ScheduleType, category="Scheduling", desc="Map schedule", default=dtypes.ScheduleType.Default
+    )
+    unroll = Property(dtype=bool, category="Scheduling", desc="Map unrolling")
     unroll_factor = Property(
         dtype=int,
         allow_none=True,
         default=0,
+        category="Scheduling",
         desc="How much iterations should be unrolled. To prevent unrolling, set this value to 1.",
     )
-    collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    collapse = Property(
+        dtype=int, default=1, category="Scheduling", desc="How many dimensions to collapse into the parallel range"
+    )
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
+    is_collapsed = Property(
+        dtype=bool, category="General", desc="Show this node/scope/state as collapsed", default=False
+    )
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
@@ -1064,18 +1235,21 @@ class Map(object):
     omp_num_threads = Property(
         dtype=int,
         default=0,
+        category="Scheduling",
         desc="Number of OpenMP threads executing the Map",
         serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
     )
     omp_schedule = EnumProperty(
         dtype=dtypes.OMPScheduleType,
         default=dtypes.OMPScheduleType.Default,
+        category="Scheduling",
         desc="OpenMP schedule {static, dynamic, guided}",
         serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
     )
     omp_chunk_size = Property(
         dtype=int,
         default=0,
+        category="Scheduling",
         desc="OpenMP schedule chunk size",
         serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
     )
@@ -1084,6 +1258,7 @@ class Map(object):
         element_type=int,
         default=None,
         allow_none=True,
+        category="Scheduling",
         desc="GPU kernel block size",
         serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES,
     )
@@ -1091,6 +1266,7 @@ class Map(object):
     gpu_launch_bounds = Property(
         dtype=str,
         default="0",
+        category="Code Generation",
         desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
         "enables the statement if block size is not symbolic, and any other value "
         "(including tuples) sets it explicitly.",
@@ -1100,6 +1276,7 @@ class Map(object):
     gpu_min_warps_per_eu = Property(
         dtype=int,
         default=0,
+        category="Code Generation",
         desc="Minimum number of warps per execution unit for GPU kernel",
         serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES,
     )
@@ -1107,15 +1284,19 @@ class Map(object):
     gpu_maxnreg = Property(
         dtype=int,
         default=0,
+        category="Code Generation",
         desc="Maximum number of registers per thread for GPU kernel",
         serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES,
     )
 
-    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+    gpu_force_syncthreads = Property(
+        dtype=bool, category="Scheduling", desc="Force a call to the __syncthreads for the map", default=False
+    )
 
     allow_chiplet_threadblock_distribution = Property(
         dtype=bool,
         default=True,
+        category="Scheduling",
         desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
         "(see the `compiler.cuda.chiplet_number` configuration entry)",
         serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock),
@@ -1268,7 +1449,9 @@ class ConsumeEntry(EntryNode):
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
-        result[self._consume.pe_index] = infer_iteration_symbol_type(self._consume.num_pes, symbols=symbols)
+        result[self._consume.pe_index] = infer_iteration_symbol_type(
+            self._consume.num_pes, symbols={**symbols, **_constant_types(sdfg)}
+        )
 
         # Add dynamic inputs
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
@@ -1346,17 +1529,24 @@ class Consume(object):
     stream until a given quiescence condition is reached."""
 
     # Properties
-    label = Property(dtype=str, desc="Name of the consume node")
-    pe_index = Property(dtype=str, desc="Processing element identifier")
-    num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
-    condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
-    schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
-    chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
-    debuginfo = DebugInfoProperty(allow_none=True)
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+    label = Property(dtype=str, category="General", desc="Name of the consume node")
+    pe_index = Property(dtype=str, category="Semantics", desc="Processing element identifier")
+    num_pes = SymbolicProperty(category="Scheduling", desc="Number of processing elements", default=1)
+    condition = CodeProperty(category="Semantics", desc="Quiescence condition", allow_none=True, default=None)
+    schedule = EnumProperty(
+        dtype=dtypes.ScheduleType, category="Scheduling", desc="Consume schedule", default=dtypes.ScheduleType.Default
+    )
+    chunksize = Property(
+        dtype=int, category="Scheduling", desc="Maximal size of elements to consume at a time", default=1
+    )
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
+    is_collapsed = Property(
+        dtype=bool, category="General", desc="Show this node/scope/state as collapsed", default=False
+    )
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
@@ -1418,10 +1608,11 @@ def full_class_path(cls_or_obj: Union[type, object]):
 
 @make_properties
 class LibraryNode(CodeNode):
-    name = Property(dtype=str, desc="Name of node")
+    name = Property(dtype=str, category="General", desc="Name of node")
     implementation = LibraryImplementationProperty(
         dtype=str,
         allow_none=True,
+        category="Code Generation",
         desc=(
             "Which implementation this library node will expand into."
             "Must match a key in the list of possible implementations."
@@ -1429,14 +1620,16 @@ class LibraryNode(CodeNode):
     )
     schedule = EnumProperty(
         dtype=dtypes.ScheduleType,
+        category="Scheduling",
         desc="If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
         default=dtypes.ScheduleType.Default,
     )
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
     # Codegen dispatches ``on_node_begin``/``on_node_end`` for a library node like any other code
     # node, and expansion carries this onto whatever the node expands into.
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )

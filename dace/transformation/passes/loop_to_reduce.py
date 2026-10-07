@@ -71,6 +71,7 @@ class LoopToReduce(ppl.Pass):
     permissive = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Enable extractors that make semantic assumptions about input "
         "data (e.g. the ``any``/``all`` conditional-const-assign pattern "
         "which assumes the guard array is 0/1-valued).",
@@ -111,7 +112,9 @@ def _one_elem(subset) -> Optional[int]:
 
 
 def _uses(subset: subsets.Subset, sym: sympy.Symbol) -> bool:
-    return subset is not None and any(symbolic.pystr_to_symbolic(str(e)) == sym for e in subset.free_symbols)
+    # By name: ``free_symbols`` already yields names, and re-minting them would compare a default-typed
+    # instance against one carrying the loop variable's own dtype.
+    return subset is not None and str(sym) in subset.free_symbols
 
 
 def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:

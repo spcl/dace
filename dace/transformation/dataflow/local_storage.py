@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement transformations relating to streams
 and transient nodes."""
 
@@ -8,7 +8,7 @@ from abc import ABC
 
 from dace import symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -25,12 +25,20 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
     node_b = xf.PatternNode(nodes.Node)
 
     array = Property(
-        dtype=str, desc="Array to create local storage for (if empty, first available)", default=None, allow_none=True
+        dtype=str,
+        category="Parameters",
+        desc="Array to create local storage for (if empty, first available)",
+        default=None,
+        allow_none=True,
     )
 
-    prefix = Property(dtype=str, default="trans_", allow_none=True, desc="Prefix for new data node")
+    prefix = Property(
+        dtype=str, default="trans_", allow_none=True, category="Parameters", desc="Prefix for new data node"
+    )
 
-    create_array = Property(dtype=bool, default=True, desc="if false, it does not create a new array.", allow_none=True)
+    create_array = Property(
+        dtype=bool, default=True, category="Memory", desc="if false, it does not create a new array.", allow_none=True
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -104,19 +112,30 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
         from_data_mm = copy.deepcopy(invariant_memlet)
         offset = subsets.Range.from_indices([r[0] for r in invariant_memlet.subset])
 
+        # The copy between the original array and the local storage only covers the part of the local storage
+        # given by the original subset, which can be smaller than the local storage (e.g., on a partial tile).
+        local_subset = copy.deepcopy(invariant_memlet.subset)
+        local_subset.offset(offset, True)
+
         # Reconnect, assuming one edge to the access node
         graph.remove_edge(original_edge)
         if propagate_forward:
+            to_data_mm.other_subset = local_subset
             graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
             new_edge = graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
         else:
+            from_data_mm.other_subset = local_subset
             new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
 
         # Offset all edges in the memlet tree (including the new edge)
-        for edge in graph.memlet_tree(new_edge):
+        moved = list(graph.memlet_tree(new_edge))
+        for edge in moved:
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
+
+        # A nested SDFG consumer moves to the local copy's origin
+        dealias.rebase_reconnected_edges(moved, offset)
 
         return data_node
 
