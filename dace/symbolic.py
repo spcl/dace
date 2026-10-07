@@ -78,19 +78,25 @@ class _SymbolDTypeContext(threading.local):
         # a sort on one of the hottest paths in the compiler.
         self.key_stack: List[AuthorityKey] = [AuthorityKey.of(())]
 
+    def prepare(self, authority: Dict[str, 'dtypes.typeclass']) -> Tuple[types.MappingProxyType, 'AuthorityKey']:
+        """The stack level and fingerprint ``push`` would add for ``authority``; a caller pushing the same authority
+        many times prepares it once and pushes it with :meth:`push_prepared`."""
+        level = types.MappingProxyType({n: dt for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)})
+        return level, AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+
+    def push_prepared(self, prepared: Tuple[types.MappingProxyType, 'AuthorityKey']) -> types.MappingProxyType:
+        """Adds a level :meth:`prepare` built."""
+        self.ctx_stack.append(prepared[0])
+        self.key_stack.append(prepared[1])
+        return self.ctx_stack[-1]
+
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
         Adds a new level of authoritative dtype to the context.
 
         :param authority: Mapping from symbol name to its authoritative dtype.
         """
-        new_stack_level = types.MappingProxyType({
-            n: dt
-            for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
-        })
-        self.ctx_stack.append(new_stack_level)
-        self.key_stack.append(AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items()))))
-        return self.ctx_stack[-1]
+        return self.push_prepared(self.prepare(authority))
 
     def pop(self) -> "_SymbolDTypeContext":
         """Remove the current active level of authoritative dtype."""
@@ -149,13 +155,18 @@ def declared_symbol_dtype(name: str) -> Optional['dtypes.typeclass']:
     return _SERIALIZATION_SYMBOL_DTYPES.get().get(name)
 
 
+def prepare_serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
+    """``authority`` prepared once for repeated :func:`serialization_symbol_dtypes` scopes (``prepared=``)."""
+    return _SERIALIZATION_SYMBOL_DTYPES.prepare(authority)
+
+
 def symbol_dtype_authority_active() -> bool:
     """Whether an enclosing scope already declares the symbol dtypes that parsing uses."""
     return len(_SERIALIZATION_SYMBOL_DTYPES.ctx_stack) > 1
 
 
 @contextlib.contextmanager
-def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inherit: bool = False):
+def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inherit: bool = False, prepared=None):
     """
     Temporarily override, while serializing symbolic expressions, the dtype used for
     each scope-declared symbol, restoring the previous mapping on exit. Only concrete
@@ -164,10 +175,14 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass'], inheri
 
     :param authority: Mapping from symbol name to its authoritative dtype.
     :param inherit: Keep the enclosing level's entries that ``authority`` does not override.
+    :param prepared: ``authority`` already passed through :func:`prepare_serialization_symbol_dtypes`.
     """
-    if inherit:
-        authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
-    _SERIALIZATION_SYMBOL_DTYPES.push(authority)
+    if prepared is not None:
+        _SERIALIZATION_SYMBOL_DTYPES.push_prepared(prepared)
+    else:
+        if inherit:
+            authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
+        _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
     finally:

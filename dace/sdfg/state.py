@@ -1775,9 +1775,28 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         except (RuntimeError, ValueError, KeyError):
             authority_by_node = {}
 
+        # Nodes share a handful of authorities and every element asks for its own and its edges' node ids: prepare
+        # each authority once and index the nodes once, or a large state serializes in O(nodes * symbols + edges *
+        # nodes).
+        prepared: Dict[Tuple[int, ...], Any] = {}
+
+        def prepare(key: Tuple[int, ...], authority) -> Any:
+            if key not in prepared:
+                prepared[key] = symbolic.prepare_serialization_symbol_dtypes(authority)
+            return prepared[key]
+
+        self._frozen_node_ids = {n: i for i, n in enumerate(self.nodes())}
+        try:
+            return self.state_json(parent, scope_dict, authority_by_node, prepare)
+        finally:
+            self._frozen_node_ids = None
+
+    def state_json(self, parent, scope_dict, authority_by_node, prepare) -> Dict[str, Any]:
+        """The body of :meth:`to_json` once its scope authorities are resolved and its node order is frozen."""
         nodes_json = []
         for n in self.nodes():
-            with symbolic.serialization_symbol_dtypes(authority_by_node.get(n, self.sdfg.symbols)):
+            authority = authority_by_node.get(n, self.sdfg.symbols)
+            with symbolic.serialization_symbol_dtypes(authority, prepared=prepare((id(authority), ), authority)):
                 nodes_json.append(n.to_json(self))
 
         # An edge's memlet sees the symbols of both endpoints' scopes (the richer
@@ -1791,7 +1810,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             else:
                 # Looks names up as ``{**src_authority, **dst_authority}`` would, without copying
                 authority = collections.ChainMap(dst_authority, src_authority)
-            with symbolic.serialization_symbol_dtypes(authority):
+            key = (id(src_authority), id(dst_authority))
+            with symbolic.serialization_symbol_dtypes(authority, prepared=prepare(key, authority)):
                 edges_json.append(e.to_json(self))
 
         ret = {

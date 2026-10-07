@@ -687,7 +687,12 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         except StopIteration:
             raise NodeNotFoundError
 
+    #: ``{node: index}`` while a serialization holds the node order fixed; ``None`` otherwise.
+    _frozen_node_ids: Optional[Dict[NodeT, int]] = None
+
     def node_id(self, node: NodeT) -> int:
+        if self._frozen_node_ids is not None and node in self._frozen_node_ids:
+            return self._frozen_node_ids[node]
         try:
             return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
         except StopIteration:

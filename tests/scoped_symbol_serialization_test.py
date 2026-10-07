@@ -191,6 +191,25 @@ def test_bare_serialization_is_stable_across_a_load():
     assert rendered(sdfg) == rendered(restored)
 
 
+def test_a_state_serializes_its_edges_by_frozen_node_ids_and_releases_them():
+    """Edges name their endpoints by position; serialization indexes the nodes once instead of scanning per edge,
+    and a later mutation must see the live order again."""
+    sdfg = dace.SDFG('frozen_node_ids')
+    sdfg.add_array('A', [4], dace.float64)
+    state = sdfg.add_state()
+    read, write = state.add_read('A'), state.add_write('A')
+    tasklet = state.add_tasklet('t', {'a'}, {'b'}, 'b = a')
+    state.add_edge(read, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', write, None, dace.Memlet('A[1]'))
+    edges = state.to_json()['edges']
+    order = {node: str(index) for index, node in enumerate(state.nodes())}
+    assert sorted((e['src'], e['dst']) for e in edges) == sorted((order[e.src], order[e.dst]) for e in state.edges())
+    assert state._frozen_node_ids is None
+    state.remove_node(read)
+    assert state.node_id(tasklet) == state.nodes().index(tasklet) == 1
+
+
 if __name__ == '__main__':
     import pytest
     pytest.main([__file__, '-v'])
+    test_a_state_serializes_its_edges_by_frozen_node_ids_and_releases_them()
