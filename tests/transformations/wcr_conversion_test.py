@@ -578,3 +578,22 @@ def test_aug_assign_fissions_an_access_node_delta_when_the_accumulator_is_writte
     b = np.arange(8, dtype=np.float64)
     sdfg(acc=acc, b=b, k=3)
     assert acc[3] == 1.0 + 2.0 * b[3]
+
+
+def test_aug_assign_keeps_the_other_read_of_the_same_array():
+    """``A[i] = A[i - 1] + A[i]``: both operands read A, and only the one reading the written slice is the
+    accumulator. Taking the left operand instead dropped ``A[i - 1]`` from the sum."""
+    sdfg = dace.SDFG('aug_assign_same_array_other_slice')
+    sdfg.add_array('A', [8], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('carry', {'prev', 'cur'}, {'out'}, 'out = prev + cur')
+    read = state.add_read('A')
+    state.add_edge(read, None, tasklet, 'prev', dace.Memlet('A[3]'))
+    state.add_edge(read, None, tasklet, 'cur', dace.Memlet('A[4]'))
+    state.add_edge(tasklet, 'out', state.add_write('A'), None, dace.Memlet('A[4]'))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    remaining = [e.data.subset for e in state.in_edges(tasklet)]
+    assert [str(s) for s in remaining] == ['3'], remaining
+    a = np.arange(8, dtype=np.float64)
+    sdfg(A=a)
+    assert a[4] == 3.0 + 4.0

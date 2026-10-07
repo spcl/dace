@@ -449,7 +449,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 new_rhs = rhs.args[1] if rhs.args[0] is acc_arg else rhs.args[0]
             else:
                 op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-                if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
+
+                # The accumulator is the operand reading the written slice: in ``B[j] = B[j-1] + B[j]`` both
+                # operands read B, and taking the left one would drop ``B[j-1]`` from the sum.
+                def reads_written_slice(operand) -> bool:
+                    return (isinstance(operand, ast.Name) and operand.id in inconns
+                            and inedges[inconns.index(operand.id)].data.subset == outedge.data.subset)
+
+                if reads_written_slice(rhs.left):
                     inedge = inedges[inconns.index(rhs.left.id)]
                     new_rhs = rhs.right
                 else:
