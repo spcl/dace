@@ -166,23 +166,27 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
-            self.free_copy_connector_names(nsdfg)
+            inserted = 0
             for state in nsdfg.states():
-                count += self._replace_direct_copies(state)
-                count += self._replace_map_staging_copies(state)
+                inserted += self._replace_direct_copies(state)
+                inserted += self._replace_map_staging_copies(state)
+            if inserted:
+                self.free_copy_connector_names(nsdfg)
+            count += inserted
         return count if count > 0 else None
 
     @classmethod
     def free_copy_connector_names(cls, sdfg: SDFG) -> None:
         """Renames data named like a copy node's connectors, which a connector may not share a name with.
 
-        An expanded and inlined copy leaves its wrapper views behind under those names (``_cpy_in``), so a copy
-        inserted next to them would fail validation. Only those transients move: the wrapper of a copy expanded
-        but not inlined binds its connectors under the same names, and a renamed one is bound to nothing.
+        Called once an SDFG has received copies: an expanded and inlined copy leaves its wrapper views behind
+        under those names (``_cpy_in``), which the inserted copies' connectors may not share. Renaming the data
+        leaves those connectors alone. The wrapper of a copy expanded but not inlined receives no copy, so its
+        connector containers keep their names.
         """
         taken = [
             name for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
-            if name in sdfg.arrays and sdfg.arrays[name].transient
+            if name in sdfg.arrays
         ]
         if not taken:
             return
