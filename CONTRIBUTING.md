@@ -38,14 +38,14 @@ def example_function(param_a: str, *args: Optional[SDFG]) -> bool:
     ...
 ```
 
-For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use the [yapf](https://github.com/google/yapf) file formatter.
+For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use [ruff](https://docs.astral.sh/ruff/) as both the formatter (`ruff format`) and the linter (`ruff check`). Settings live in `ruff.toml`.
 **Please run `pre-commit` before making your pull request ready for review.**
 
 ```bash
 pre-commit run --all-files
 ```
 
-Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `yapf` as part of the `dev` dependency group. For contributors, we recommend to run
+Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `ruff` as part of the `dev` dependency group. For contributors, we recommend to run
 
 ```bash
 uv sync
@@ -61,6 +61,16 @@ pre-commit install
 ```
 
 to install the `git` hooks for this repository.
+
+### Bulk reformats and `git blame`
+
+Repository-wide reformats are listed in `.git-blame-ignore-revs`. GitHub applies that file
+automatically, so blame views on github.com already skip them. To get the same behavior
+locally, run once:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
 
 ## Tests
 

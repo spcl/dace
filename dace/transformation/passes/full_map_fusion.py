@@ -24,71 +24,86 @@ class FullMapFusion(ppl.Pass):
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are inner Maps, i.e., does not have top level scope.",
     )
 
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
+        category="Applicability",
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` then all intermediates will be classified as shared.",
     )
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` then all intermediates need to be 'exclusive', i.e., they will be removed by the fusion.",
     )
     require_all_intermediates = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
 
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
         default=True,
+        category="Parameters",
         desc="If `True`, the default, then allow vertical Map fusion, see `MapFusionVertical`.",
     )
     perform_horizontal_map_fusion = properties.Property(
         dtype=bool,
         default=True,
+        category="Parameters",
         desc="If `True`, the default, then also perform horizontal Map fusion, see `MapFusionHorizontal`.",
     )
 
     only_if_common_ancestor = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` restrict parallel map fusion to maps that have a direct common ancestor.",
     )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
     validate = properties.Property(
         dtype=bool,
         default=True,
+        category="Diagnostics",
         desc="If True, validates the SDFG after all transformations have been applied.",
     )
     validate_all = properties.Property(
-        dtype=bool, default=False, desc="If True, validates the SDFG after each transformation applies."
+        dtype=bool,
+        default=False,
+        category="Diagnostics",
+        desc="If True, validates the SDFG after each transformation applies.",
     )
 
     def __init__(

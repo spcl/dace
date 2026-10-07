@@ -6,7 +6,13 @@ import dace.library
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
+from dace.libraries.blas.blas_helpers import (
+    to_blastype,
+    check_access,
+    check_one_device,
+    dtype_to_cudadatatype,
+    to_cublas_computetype,
+)
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
 from .. import environments
 import warnings
@@ -48,16 +54,14 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         dtype_b = outer_array_b.dtype.type
         dtype_c = cdesc.dtype.type
 
-        if outer_array_a.storage != outer_array_b.storage:
-            raise ValueError("Input matrices must have same storage")
-        storage = outer_array_a.storage
+        check_one_device(outer_array_a, outer_array_b)
 
         # Create replacement SDFG
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=storage)
-        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=storage)
+        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdesc.storage)
 
         # Add an initialization state
         init_state = sdfg.add_state()
@@ -429,27 +433,38 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
     }
-    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
-    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
     alpha = properties.Property(
-        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+        allow_none=False,
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with A @ B before adding C",
     )
     beta = properties.Property(
-        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding C"
+        allow_none=False,
+        default=0,
+        category="Semantics",
+        desc="A scalar which will be multiplied with C before adding C",
     )
     algorithm = properties.Property(
         dtype=str,
         allow_none=True,
         default=None,
+        category="Code Generation",
         desc="If applicable, chooses the vendor-provided implementation (algorithm) for the multiplication",
     )
     accumulator_type = properties.TypeClassProperty(
-        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication"
+        default=None,
+        allow_none=True,
+        category="Semantics",
+        desc="Accumulator or intermediate storage type used in multiplication",
     )
     compute_type = properties.Property(
         default=None,
         dtype=str,
         allow_none=True,
+        category="Code Generation",
         desc="If applicable, overrides computation type (CUBLAS-specific, see ``cublasComputeType_t``)",
     )
 

@@ -581,12 +581,18 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
     alpha = properties.Property(
-        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+        allow_none=False,
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with A @ B before adding C",
     )
     beta = properties.Property(
-        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding C"
+        allow_none=False,
+        default=0,
+        category="Semantics",
+        desc="A scalar which will be multiplied with C before adding C",
     )
 
     def __init__(self, name, location=None, transB=False, alpha=1, beta=0):
