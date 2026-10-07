@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, declared: bool) -> bool:
     """ Whether a register array is declared on the stack rather than allocated on the heap. Under
-        ``StorageType.Register(dynamic=True)`` every size is, a symbolic one as a variable-length array; otherwise a
+        ``StorageType.Register(force=True)`` every size is, a symbolic one as a variable-length array; otherwise a
         constant size is up to ``compiler.max_stack_array_size`` bytes and a symbolic one never is. A VLA dies with
         its block, so a lifetime that outlives the block keeps the heap, and so does a split declare/allocate:
         ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and
@@ -35,12 +35,11 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
     """
     if nodedesc.storage != dtypes.StorageType.Register:
         return False
-    dynamic = dtypes.is_dynamic_register(nodedesc.storage) is True
+    force = nodedesc.storage.force
     if symbolic.issymbolic(arrsize, sdfg.constants):
-        return dynamic and not declared and lifetime in (dtypes.AllocationLifetime.Scope,
-                                                         dtypes.AllocationLifetime.State,
-                                                         dtypes.AllocationLifetime.SDFG)
-    if dynamic or isinstance(nodedesc.dtype, dtypes.opaque):
+        return force and not declared and lifetime in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State,
+                                                       dtypes.AllocationLifetime.SDFG)
+    if force or isinstance(nodedesc.dtype, dtypes.opaque):
         return True
     if isinstance(arrsize, symbolic.sympy.Basic):
         # By name: the constant's symbol may have another dtype than the one in the shape.
@@ -537,7 +536,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on the heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  '%s. To force allocation on the stack, set the '
+                                  'storage type to Register with force=True.' %
+                                  (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 else:
                     warnings.warn(f'Register array {name} with {cpp.sym2cpp(arrsize)} elements was allocated on the '
                                   'heap instead of the stack')

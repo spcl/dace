@@ -200,7 +200,7 @@ def test_pickling():
     """Templates, their instances and plain members pickle back to the same object; a nested dataclass alone does
     not, since the enum member took its name."""
     from dace.dtypes import StorageType
-    for member in (StorageType.Register, StorageType.Register(dynamic=True), StorageType.GPU_Shared(dynamic=False),
+    for member in (StorageType.Register, StorageType.Register(force=True), StorageType.GPU_Shared(dynamic=False),
                    StorageType.CPU_Heap):
         assert pickle.loads(pickle.dumps(member)) is member
 

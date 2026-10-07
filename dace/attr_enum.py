@@ -193,6 +193,10 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
             raise AttributeError(name)
         if self._dataclass_type is not None and not isinstance(self._value_, type):
             return getattr(self._value_, name)
+        # A template reads as its dataclass defaults
+        field = self._dataclass_type.__dataclass_fields__.get(name) if self._is_template else None
+        if field is not None and field.default is not dataclasses.MISSING:
+            return field.default
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def __eq__(self, other):

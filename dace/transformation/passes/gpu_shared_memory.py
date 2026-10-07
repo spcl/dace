@@ -247,7 +247,7 @@ class PlanSharedMemory(ppl.Pass):
                 desc = level_sdfg.arrays[name]
                 size = desc.total_size_in_bytes
                 is_symbolic = symbolic.issymbolic(size, level_sdfg.constants)
-                placement = dtypes.is_dynamic_shared(desc.storage)
+                placement = desc.storage.dynamic
                 if placement is False:
                     if is_symbolic:
                         raise ValueError(f'Shared memory container "{name}" of kernel "{kernel_label}" is placed in '
@@ -404,7 +404,7 @@ def is_dynamic_shared_memory_buffer(desc: dt.Data) -> bool:
     :return: True if the descriptor is such a buffer.
     """
     return (not isinstance(desc, dt.View) and desc.storage == dtypes.StorageType.GPU_Shared
-            and dtypes.is_dynamic_shared(desc.storage) is True)
+            and desc.storage.dynamic is True)
 
 
 def plan_gpu_shared_memory(sdfg: SDFG) -> Dict[nodes.MapEntry, KernelSharedMemory]:
