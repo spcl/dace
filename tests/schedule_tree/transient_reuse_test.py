@@ -226,6 +226,13 @@ def test_move_to_stack_planes_by_default():
     assert stree.containers['P'].storage == dace.StorageType.Register
 
 
+def test_move_to_stack_respects_max_stack_array_size():
+    """Code generation allocates register arrays above ``compiler.max_stack_array_size`` on the heap."""
+    stree = _tree([_write('P', 'A'), _read('P', 'B')])
+    with dace.config.set_temporary('compiler', 'max_stack_array_size', value=NI * NJ * 8 - 1):
+        assert move_small_transients_to_stack(stree) == 0
+
+
 if __name__ == '__main__':
     test_reuse_consecutive_planes()
     test_reuse_not_overlapping_lives()
@@ -242,3 +249,4 @@ if __name__ == '__main__':
     test_move_to_stack_zero_initialized()
     test_move_to_stack_respects_limits()
     test_move_to_stack_planes_by_default()
+    test_move_to_stack_respects_max_stack_array_size()
