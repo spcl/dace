@@ -185,6 +185,7 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
     gpu = properties.Property(
         dtype=bool,
         default=False,
+        category="Memory",
         desc="Use the GPU criteria: promote a GPU-storage scalar (keeping its storage) or a "
         "scalar written by a GPU map exit (forcing GPU_Global), rather than a written "
         "non-transient scalar with its storage left alone.",
@@ -192,6 +193,7 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
     non_transient_only = properties.Property(
         dtype=bool,
         default=True,
+        category="Applicability",
         desc="GPU only: the kernel-output rule promotes non-transient scalars "
         "only. A transient scalar written by a GPU map exit stays a Scalar -- "
         "the host never observes the value, so it can live in registers / "

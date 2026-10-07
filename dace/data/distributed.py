@@ -96,29 +96,34 @@ class ProcessGrid(DistributedDescriptor):
     property is used to select the root rank for purposed of collective communication (by default 0).
     """
 
-    name = Property(dtype=str, desc="The process-grid's name.")
-    is_subgrid = Property(dtype=bool, default=False, desc="If true, spawns sub-grids out of the parent process-grid.")
+    name = Property(dtype=str, category="General", desc="The process-grid's name.")
+    is_subgrid = Property(
+        dtype=bool, default=False, category="General", desc="If true, spawns sub-grids out of the parent process-grid."
+    )
     parent_grid = Property(
         dtype=str,
         allow_none=True,
         default=None,
+        category="General",
         desc="Name of the parent process-grid (mandatory if `is_subgrid` is true, otherwise ignored).",
     )
     color = ListProperty(
         int,
         allow_none=True,
         default=None,
+        category="General",
         desc="The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is "
         "dropped (mandatory if `is_subgrid` is true, otherwise ignored).",
     )
     exact_grid = SymbolicProperty(
         allow_none=True,
         default=None,
+        category="General",
         desc="If set then, out of all the sub-grids created, only the one that contains the "
         "rank with id `exact_grid` will be utilized for collective communication "
         "(optional if `is_subgrid` is true, otherwise ignored).",
     )
-    root = SymbolicProperty(default=0, desc="The root rank for collective communication.")
+    root = SymbolicProperty(default=0, category="General", desc="The root rank for collective communication.")
 
     def __init__(
         self,
@@ -286,13 +291,21 @@ class SubArray(DistributedDescriptor):
     a matrix to a 2D process-grid, but tile the matrix rows over the grid's columns, then `correspondence = [1, 0]`.
     """
 
-    name = Property(dtype=str, desc="The type's name.")
-    subshape = ShapeProperty(default=[], desc="The sub-array's shape.")
+    name = Property(dtype=str, category="General", desc="The type's name.")
+    subshape = ShapeProperty(default=[], category="General", desc="The sub-array's shape.")
     pgrid = Property(
-        dtype=str, allow_none=True, default=None, desc="Name of the process-grid where the data are distributed."
+        dtype=str,
+        allow_none=True,
+        default=None,
+        category="General",
+        desc="Name of the process-grid where the data are distributed.",
     )
     correspondence = ListProperty(
-        int, allow_none=True, default=None, desc="Correspondence of the array's indices to the process grid's indices."
+        int,
+        allow_none=True,
+        default=None,
+        category="General",
+        desc="Correspondence of the array's indices to the process grid's indices.",
     )
 
     def __init__(
@@ -453,9 +466,11 @@ class RedistrArray(DistributedDescriptor):
     TODO: Add reference to publication describing the redistribution scheme.
     """
 
-    name = Property(dtype=str, desc="The redistribution's name.")
-    array_a = Property(dtype=str, allow_none=True, default=None, desc="Sub-array that will be redistributed.")
-    array_b = Property(dtype=str, allow_none=True, default=None, desc="Output sub-array.")
+    name = Property(dtype=str, category="General", desc="The redistribution's name.")
+    array_a = Property(
+        dtype=str, allow_none=True, default=None, category="General", desc="Sub-array that will be redistributed."
+    )
+    array_b = Property(dtype=str, allow_none=True, default=None, category="General", desc="Output sub-array.")
 
     def __init__(self, name: str, array_a: str, array_b: str):
         self.name = name
