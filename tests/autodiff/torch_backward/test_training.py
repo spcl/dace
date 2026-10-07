@@ -65,7 +65,7 @@ def test_mnist():
     output_size = 10
 
     # initialize modules
-    # yapf: disable
+    # fmt: off
     model = nn.Sequential(nn.Linear(input_size, hidden_sizes[0]),
                           nn.ReLU(),
                           nn.Linear(hidden_sizes[0], hidden_sizes[1]),
@@ -81,6 +81,7 @@ def test_mnist():
                                nn.Linear(hidden_sizes[1], output_size),
                                nn.LayerNorm(output_size),
                                nn.LogSoftmax(dim=1))
+    # fmt: on
 
     # check forward pass using loss
     images = torch.randn(64, 784)
