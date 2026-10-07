@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the results of a kernel whose thread-blocks are distributed over the chiplets of a GPU. """
+"""Tests the results of a kernel whose thread-blocks are distributed over the chiplets of a GPU."""
 
 import math
 
@@ -21,13 +21,18 @@ _RALSDCP = 2821.0
 CHIPLETS = 6
 
 # The arrays the kernel modifies in place, and therefore the ones that are compared
-ARRAYS = ('zqx_l', 'zqx_i', 'zqx_v', 'za', 'ptend_q', 'ptend_t')
+ARRAYS = ("zqx_l", "zqx_i", "zqx_v", "za", "ptend_q", "ptend_t")
 
 
 @dace.program
-def cloudsc_tidy_branch(zqx_l: dace.float64[KLEV, KLON], zqx_i: dace.float64[KLEV, KLON],
-                        zqx_v: dace.float64[KLEV, KLON], za: dace.float64[KLEV, KLON],
-                        ptend_q: dace.float64[KLEV, KLON], ptend_t: dace.float64[KLEV, KLON]):
+def cloudsc_tidy_branch(
+    zqx_l: dace.float64[KLEV, KLON],
+    zqx_i: dace.float64[KLEV, KLON],
+    zqx_v: dace.float64[KLEV, KLON],
+    za: dace.float64[KLEV, KLON],
+    ptend_q: dace.float64[KLEV, KLON],
+    ptend_t: dace.float64[KLEV, KLON],
+):
     # cloudsc_bottom_lower.F90: "Tidy up very small cloud cover or total
     # cloud water" — guarded read-modify-write over several arrays (the
     # CLOUDSC-characteristic conditional accumulation pattern).
@@ -57,12 +62,12 @@ def _random_inputs():
     """
     rng = np.random.default_rng(42)
     return {
-        'zqx_l': rng.random((KLEV, KLON)) * 2 * _RLMIN,
-        'zqx_i': rng.random((KLEV, KLON)) * 2 * _RLMIN,
-        'zqx_v': rng.random((KLEV, KLON)),
-        'za': rng.random((KLEV, KLON)) * 2 * _RAMIN,
-        'ptend_q': rng.random((KLEV, KLON)),
-        'ptend_t': rng.random((KLEV, KLON)),
+        "zqx_l": rng.random((KLEV, KLON)) * 2 * _RLMIN,
+        "zqx_i": rng.random((KLEV, KLON)) * 2 * _RLMIN,
+        "zqx_v": rng.random((KLEV, KLON)),
+        "za": rng.random((KLEV, KLON)) * 2 * _RAMIN,
+        "ptend_q": rng.random((KLEV, KLON)),
+        "ptend_t": rng.random((KLEV, KLON)),
     }
 
 
@@ -78,36 +83,36 @@ def _reference(inputs):
     zqadj_i = zqx_i * _ZQTMST
 
     expected = {
-        'zqx_l': np.where(taken, 0.0, zqx_l),
-        'zqx_i': np.where(taken, 0.0, zqx_i),
-        'zqx_v': np.where(taken, (zqx_v + zqx_l) + zqx_i, zqx_v),
-        'za': np.where(taken, 0.0, za),
-        'ptend_q': np.where(taken, (ptend_q + zqadj_l) + zqadj_i, ptend_q),
-        'ptend_t': np.where(taken, (ptend_t - _RALVDCP * zqadj_l) - _RALSDCP * zqadj_i, ptend_t),
+        "zqx_l": np.where(taken, 0.0, zqx_l),
+        "zqx_i": np.where(taken, 0.0, zqx_i),
+        "zqx_v": np.where(taken, (zqx_v + zqx_l) + zqx_i, zqx_v),
+        "za": np.where(taken, 0.0, za),
+        "ptend_q": np.where(taken, (ptend_q + zqadj_l) + zqadj_i, ptend_q),
+        "ptend_t": np.where(taken, (ptend_t - _RALVDCP * zqadj_l) - _RALSDCP * zqadj_i, ptend_t),
     }
     return expected, taken
 
 
 def _setup():
-    """ Returns the inputs, the expected results, and a fresh copy of the inputs to compute into. """
+    """Returns the inputs, the expected results, and a fresh copy of the inputs to compute into."""
     inputs = _random_inputs()
     expected, taken = _reference(inputs)
 
     # Neither branch of the guard may be dead, otherwise the kernel is trivially correct
-    assert 0.2 < taken.mean() < 0.8, f'the guard is taken for {taken.mean():.1%} of the points'
+    assert 0.2 < taken.mean() < 0.8, f"the guard is taken for {taken.mean():.1%} of the points"
 
     return {name: inputs[name].copy() for name in ARRAYS}, expected
 
 
 def _assert_results(actual, expected, context):
     for name in ARRAYS:
-        assert np.allclose(actual[name], expected[name]), f'{name} differs {context}'
+        assert np.allclose(actual[name], expected[name]), f"{name} differs {context}"
 
 
 def test_cloudsc_tidy_branch_cpu():
     args, expected = _setup()
     cloudsc_tidy_branch(**args)
-    _assert_results(args, expected, 'on the CPU')
+    _assert_results(args, expected, "on the CPU")
 
 
 @pytest.mark.gpu
@@ -122,11 +127,11 @@ def test_cloudsc_tidy_branch_gpu_chiplet_distribution():
         args, expected = _setup()
 
         with dace.config.temporary_config():
-            dace.config.Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
+            dace.config.Config.set("compiler", "cuda", "chiplet_number", value=chiplets)
 
             sdfg = cloudsc_tidy_branch.to_sdfg(simplify=True)
             # Give every configuration its own build folder, so that they cannot share a binary
-            sdfg.name = f'cloudsc_tidy_branch_{chiplets}_chiplets'
+            sdfg.name = f"cloudsc_tidy_branch_{chiplets}_chiplets"
             auto_optimize(sdfg, dace.DeviceType.GPU)
 
             # The kernel has to remain one that the distribution applies to, otherwise the results
@@ -137,14 +142,14 @@ def test_cloudsc_tidy_branch_gpu_chiplet_distribution():
             if chiplets > 1:
                 code = sdfg.generate_code()[1].code
                 chunk = math.ceil((KLON // 32) / chiplets)
-                assert f'dim3({chunk * chiplets}, {KLEV}, 1)' in code
-                assert f'((blockIdx.x % {chiplets}) * {chunk} + blockIdx.x / {chiplets})' in code
+                assert f"dim3({chunk * chiplets}, {KLEV}, 1)" in code
+                assert f"((blockIdx.x % {chiplets}) * {chunk} + blockIdx.x / {chiplets})" in code
 
             sdfg(**args)
 
-        _assert_results(args, expected, f'on the GPU over {chiplets} chiplet(s)')
+        _assert_results(args, expected, f"on the GPU over {chiplets} chiplet(s)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cloudsc_tidy_branch_cpu()
     test_cloudsc_tidy_branch_gpu_chiplet_distribution()

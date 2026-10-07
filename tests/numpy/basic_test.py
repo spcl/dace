@@ -57,11 +57,11 @@ def test_gemm():
 
     realC = 1.0 * (A @ B) + 1.0 * origC
     diff = np.linalg.norm(C - realC) / (M * N)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_add()
     test_add_11dim()
     test_gemm()

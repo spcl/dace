@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Code I/O stream that automates indentation and mapping of code to SDFG
-    nodes. """
+"""Code I/O stream that automates indentation and mapping of code to SDFG
+nodes."""
 
 import inspect
 from io import StringIO
@@ -10,14 +10,14 @@ from dace.sdfg.state import ControlFlowRegion
 
 
 class CodeIOStream(StringIO):
-    """ Code I/O stream that automates indentation and mapping of code to SDFG
-        nodes. """
+    """Code I/O stream that automates indentation and mapping of code to SDFG
+    nodes."""
 
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
         self._indent = base_indentation
-        self._spaces = int(Config.get('compiler', 'indentation_spaces'))
-        self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
+        self._spaces = int(Config.get("compiler", "indentation_spaces"))
+        self._lineinfo = Config.get_bool("compiler", "codegen_lineinfo")
 
     def write(self, contents, cfg: ControlFlowRegion = None, state_id: int = None, node_id: int = None) -> None:
         # Delete single trailing newline, as this will be implicitly inserted
@@ -26,15 +26,15 @@ class CodeIOStream(StringIO):
             if contents[-1] == "\n":
                 lines = contents[:-1].split("\n")
             else:
-                lines = contents.split('\n')
+                lines = contents.split("\n")
         else:
             lines = contents
 
         # If SDFG/state/node location is given, annotate this line
         if cfg is not None:
-            location_identifier = '  ////__DACE:%d' % cfg.cfg_id
+            location_identifier = "  ////__DACE:%d" % cfg.cfg_id
             if state_id is not None:
-                location_identifier += ':' + str(state_id)
+                location_identifier += ":" + str(state_id)
                 if node_id is not None:
                     if not isinstance(node_id, list):
                         node_id = [node_id]
@@ -45,25 +45,25 @@ class CodeIOStream(StringIO):
                                 node_id[i] = state.node_id(nid)
                             except NodeNotFoundError:
                                 node_id[i] = -1
-                    location_identifier += ':' + ','.join([str(nid) for nid in node_id])
+                    location_identifier += ":" + ",".join([str(nid) for nid in node_id])
         else:
-            location_identifier = ''
+            location_identifier = ""
 
         # Annotate code generator line
         if self._lineinfo:
             caller = inspect.getframeinfo(inspect.stack()[1][0], context=0)
-            location_identifier += f'  ////__CODEGEN;{caller.filename};{caller.lineno}'
+            location_identifier += f"  ////__CODEGEN;{caller.filename};{caller.lineno}"
 
         # Write each line separately
         for line in lines:
-            opening_braces = line.count('{')
-            closing_braces = line.count('}')
+            opening_braces = line.count("{")
+            closing_braces = line.count("}")
 
             # Count closing braces before opening ones (e.g., for "} else {")
-            first_opening_brace = line.find('{')
+            first_opening_brace = line.find("{")
             initial_closing_braces = 0
             if first_opening_brace > 0:
-                initial_closing_braces = line[:first_opening_brace].count('}')
+                initial_closing_braces = line[:first_opening_brace].count("}")
             closing_braces -= initial_closing_braces
 
             brace_balance = opening_braces - closing_braces
@@ -74,21 +74,22 @@ class CodeIOStream(StringIO):
             if brace_balance < 0:
                 self._indent += brace_balance
 
-            codeline = self._indent * self._spaces * ' ' + line.strip()
+            codeline = self._indent * self._spaces * " " + line.strip()
 
             # Location identifier is written at character 81 and on, find out
             # how many spaces we need to add for that
             loc_spaces = max(80 - len(codeline), 2)
 
-            if location_identifier != '':
-                super(CodeIOStream, self).write(codeline + loc_spaces * ' ' + location_identifier + '\n')
+            if location_identifier != "":
+                super(CodeIOStream, self).write(codeline + loc_spaces * " " + location_identifier + "\n")
             else:  # avoid ending spaces (useful for OpenCL and multiline macros)
-                super(CodeIOStream, self).write(codeline + '\n')
+                super(CodeIOStream, self).write(codeline + "\n")
             if brace_balance > 0:
                 self._indent += brace_balance
 
             # If indentation failed, warn user
             if self._indent < -1:
-                super(CodeIOStream, self).write('///WARNING: Indentation failure! This probably ' +
-                                                'indicates an error in the SDFG.\n')
+                super(CodeIOStream, self).write(
+                    "///WARNING: Indentation failure! This probably " + "indicates an error in the SDFG.\n"
+                )
                 self._indent = 0

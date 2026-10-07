@@ -9,24 +9,24 @@ from dace.memlet import Memlet
 def test():
     """Thread-local stream test"""
 
-    N = dp.symbol('N')
-    sdfg = SDFG('tlstream')
-    sdfg.add_transient('la', [10], dp.float32)
-    sdfg.add_stream('ls', dp.float32, 1, transient=True)
-    sdfg.add_stream('gs', dp.float32, 1, transient=True)
-    sdfg.add_array('ga', [N], dp.float32)
-    state = sdfg.add_state('doit')
+    N = dp.symbol("N")
+    sdfg = SDFG("tlstream")
+    sdfg.add_transient("la", [10], dp.float32)
+    sdfg.add_stream("ls", dp.float32, 1, transient=True)
+    sdfg.add_stream("gs", dp.float32, 1, transient=True)
+    sdfg.add_array("ga", [N], dp.float32)
+    state = sdfg.add_state("doit")
 
-    localarr = state.add_access('la')
-    localstream = state.add_access('ls')
-    globalstream = state.add_access('gs')
-    globalarr = state.add_access('ga')
+    localarr = state.add_access("la")
+    localstream = state.add_access("ls")
+    globalstream = state.add_access("gs")
+    globalarr = state.add_access("ga")
 
-    me, mx = state.add_map('par', dict(i='0:N'))
-    tasklet = state.add_tasklet('arange', set(), {'a'}, 'a = i')
+    me, mx = state.add_map("par", dict(i="0:N"))
+    tasklet = state.add_tasklet("arange", set(), {"a"}, "a = i")
 
     state.add_nedge(me, tasklet, Memlet())
-    state.add_edge(tasklet, 'a', localstream, None, Memlet.from_array(localstream.data, localstream.desc(sdfg)))
+    state.add_edge(tasklet, "a", localstream, None, Memlet.from_array(localstream.data, localstream.desc(sdfg)))
     state.add_nedge(localstream, localarr, Memlet.from_array(localarr.data, localarr.desc(sdfg)))
     state.add_nedge(localarr, mx, Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
     state.add_nedge(mx, globalstream, Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
@@ -40,7 +40,7 @@ def test():
 
     code_nonspec = sdfg.generate_code()
 
-    assert 'Threadlocal' in code_nonspec[0].code
+    assert "Threadlocal" in code_nonspec[0].code
 
     func = sdfg.compile()
     func(ga=output, N=N)

@@ -16,7 +16,7 @@ def test_simple():
 
 def test_locals():
     a = 1
-    b = 'aa'
+    b = "aa"
     c = 3
     A = np.random.rand(4)
     B = np.random.rand(4)
@@ -91,7 +91,7 @@ def test_dynamic_output_wcr():
     B = np.zeros([1], dtype=np.int32)
 
     # Count number of elements >= 0.5
-    for i in dace.map[0:A.shape[0]]:
+    for i in dace.map[0 : A.shape[0]]:
         with dace.tasklet:
             a << A[i]
             b >> B(-1, lambda a, b: a + b)
@@ -102,7 +102,7 @@ def test_dynamic_output_wcr():
     assert B[0] == expected
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple()
     test_locals()
     test_wcr()

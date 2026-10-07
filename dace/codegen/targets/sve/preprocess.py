@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Preprocessing: This module is responsible for preprocessing a graph to detect some SVE-specific constructs.
-    Currently, it is only used for fused operations.
+Preprocessing: This module is responsible for preprocessing a graph to detect some SVE-specific constructs.
+Currently, it is only used for fused operations.
 """
 
 import ast
@@ -11,7 +11,6 @@ import dace.dtypes
 
 
 class SVEBinOpFuser(ast.NodeTransformer):
-
     def __init__(self, defined_symbols):
         self.defined_symbols = defined_symbols
 
@@ -43,17 +42,17 @@ class SVEBinOpFuser(ast.NodeTransformer):
 
         if parent_op == ast.Add:
             if left_op == ast.Mult:
-                name = '__svmad_'
+                name = "__svmad_"
                 args = [t.left.left, t.left.right, t.right]
             elif right_op == ast.Mult:
-                name = '__svmla_'
+                name = "__svmla_"
                 args = [t.left, t.right.left, t.right.right]
         elif parent_op == ast.Sub:
             if left_op == ast.Mult:
-                name = '__svmsb_'
+                name = "__svmsb_"
                 args = [t.left.left, t.left.right, t.right]
             elif right_op == ast.Mult:
-                name = '__svmls_'
+                name = "__svmls_"
                 args = [t.left, t.right.left, t.right.right]
 
         # Fused ops need at least two of three arguments to be a vector

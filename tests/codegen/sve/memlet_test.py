@@ -2,8 +2,8 @@
 import dace
 from tests.codegen.sve.common import get_code
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def test_contiguous_map():
@@ -18,8 +18,8 @@ def test_contiguous_map():
 
     code = get_code(program)
 
-    assert 'svld1(' in code
-    assert 'svst1(' in code
+    assert "svld1(" in code
+    assert "svst1(" in code
 
 
 def test_stride_map():
@@ -34,9 +34,9 @@ def test_stride_map():
 
     code = get_code(program)
 
-    assert 'svld1_gather' in code
-    assert 'svst1_scatter' in code
-    assert '(0, 2)' in code
+    assert "svld1_gather" in code
+    assert "svst1_scatter" in code
+    assert "(0, 2)" in code
 
 
 def test_fake_stride():
@@ -52,10 +52,10 @@ def test_fake_stride():
     code = get_code(program)
 
     # Load is contiguous even though it doesn't look like it
-    assert 'svld1(' in code
+    assert "svld1(" in code
 
     # Store is stride
-    assert 'svst1_scatter' in code
+    assert "svst1_scatter" in code
 
 
 def test_matrix_stride():
@@ -71,10 +71,10 @@ def test_matrix_stride():
     code = get_code(program)
 
     # Contiguous load of entries
-    assert 'svld1' in code
+    assert "svld1" in code
     # Stride N store
-    assert 'svst1_scatter' in code
-    assert '(0, N)' in code
+    assert "svst1_scatter" in code
+    assert "(0, N)" in code
 
 
 def test_indirect_load_explicit():
@@ -90,7 +90,7 @@ def test_indirect_load_explicit():
 
     code = get_code(program)
 
-    assert 'svld1_gather_index' in code
+    assert "svld1_gather_index" in code
 
 
 def test_indirect_load_implicit():
@@ -106,4 +106,4 @@ def test_indirect_load_implicit():
     code = get_code(program)
 
     # This is still an indirect load (uses Indirection tasklet)
-    assert 'svld1_gather_index' in code
+    assert "svld1_gather_index" in code
