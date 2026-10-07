@@ -15,7 +15,8 @@ def allocation_lines(sdfg: dace.SDFG, name: str):
         stripped = line.strip()
         if re.search(r'\bfor\s*\(', stripped):
             depth += 1
-        if re.search(rf'\b{re.escape(name)}\b', stripped) and ('new ' in stripped or 'malloc(' in stripped):
+        if re.search(rf'\b{re.escape(name)}\b', stripped) and ('new ' in stripped or 'aligned_new_array<' in stripped
+                                                               or 'malloc(' in stripped):
             hits.append(depth)
         depth = max(0, depth - stripped.count('}'))
     return hits

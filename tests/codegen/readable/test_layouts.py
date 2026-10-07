@@ -258,7 +258,7 @@ def test_strided_stencil(require_experimental):
 
 
 def test_alignment(require_experimental):
-    """Case 6: heap transient allocated with the same aligned ``new[]`` as the legacy generator."""
+    """Case 6: heap transient allocated with the same aligned array allocation as the legacy generator."""
     rng = np.random.default_rng(42)
     n = 200
     base = dict(A=rng.random(n), B=np.zeros(n))
@@ -267,10 +267,9 @@ def test_alignment(require_experimental):
     _, experimental = assert_bit_exact(build, 'aligned', base)
     assert np.array_equal(experimental['B'], (base['A'] + 1.0) * 2.0)
 
-    # The experimental generator allocates T with aligned operator new[] (T = new (std::align_val_t(64)) T[...]).
     code = experimental_code(build, 'aligned_inspect')
-    assert any('T = new ' in line and 'align_val_t' in line for line in code.splitlines()), \
-        'experimental codegen did not use an aligned new[] for T'
+    assert any('T = dace::aligned_new_array<double>(' in line and ', 128)' in line for line in code.splitlines()), \
+        'experimental codegen did not allocate T aligned to its 128 bytes'
 
 
 if __name__ == '__main__':
