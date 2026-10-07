@@ -133,46 +133,47 @@ def _compile_no_copynd(sdfg: dace.SDFG):
     return sdfg.compile()
 
 
-def test_copy_pure_cpu():
-    """Pure (mapped tasklet) expansion on CPU_Heap -> CPU_Heap."""
+def _helper_test_copy(implementation: str, node_name: str, storage: dace.dtypes.StorageType, backend):
+    """Helper method to run `storage` -> `storage` tests with fixed sizes using `backend` to check correctness"""
     sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="150:200", name="A"),
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="50:100", name="B"),
-        implementation="MappedTasklet",
-        name="copy_pure_cpu",
+        _ArraySpec(shape=[200], storage=storage, subset="150:200", name="A"),
+        _ArraySpec(shape=[200], storage=storage, subset="50:100", name="B"),
+        implementation=implementation,
+        name=node_name,
     )
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
     exe = _compile_no_copynd(sdfg)
 
-    A = np.ones(200, dtype=np.float64)
-    B = np.zeros(200, dtype=np.float64)
+    A = backend.arange(200, dtype=backend.float64)
+    B = backend.zeros(200, dtype=backend.float64)
     exe(A=A, B=B)
 
-    np.testing.assert_array_equal(B[50:100], A[150:200])
-    assert np.all(B[:50] == 0)
-    assert np.all(B[100:] == 0)
+    backend.testing.assert_array_equal(B[50:100], A[150:200])
+    assert backend.all(B[:50] == 0)
+    assert backend.all(B[100:] == 0)
+
+
+def _helper_test_copy_cpu(implementation: str, node_name: str):
+    """Helper method to run `CPU_Heap` -> `CPU_Heap` tests."""
+    _helper_test_copy(implementation, node_name, dace.dtypes.StorageType.CPU_Heap, np)
+
+
+def _helper_test_copy_gpu(implementation: str, node_name: str):
+    """Helper method to run `GPU_Global` -> `GPU_Global` tests."""
+    cp = pytest.importorskip("cupy")
+    _helper_test_copy(implementation, node_name, dace.dtypes.StorageType.GPU_Global, cp)
+
+
+def test_copy_cpu_pure():
+    """Pure (mapped tasklet) expansion on CPU_Heap -> CPU_Heap."""
+    _helper_test_copy_cpu(implementation="MappedTasklet", node_name="copy_cpu_pure")
 
 
 def test_copy_cpu_memcpy():
     """CPU expansion (std::memcpy) on CPU_Heap -> CPU_Heap."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="150:200", name="A"),
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, subset="50:100", name="B"),
-        implementation="MemcpyCPU",
-        name="copy_cpu_memcpy",
-    )
-    sdfg.validate()
-    sdfg.expand_library_nodes()
-    sdfg.validate()
-    exe = _compile_no_copynd(sdfg)
-
-    A = np.arange(200, dtype=np.float64)
-    B = np.zeros(200, dtype=np.float64)
-    exe(A=A, B=B)
-
-    np.testing.assert_array_equal(B[50:100], A[150:200])
+    _helper_test_copy_cpu(implementation="MemcpyCPU", node_name="copy_cpu_memcpy", )
 
 
 def test_copy_cpu_memcpy_non_trivially_copyable():
@@ -445,51 +446,15 @@ def test_copy_strided_step_2_cpu_same_rank():
 
 
 @pytest.mark.gpu
-def test_copy_pure_gpu():
+def test_copy_gpu_pure():
     """Pure (mapped tasklet) expansion on GPU_Global -> GPU_Global."""
-    import cupy as cp
-
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="150:200", name="gpu_A"),
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="50:100", name="gpu_B"),
-        implementation="MappedTasklet",
-        name="copy_pure_gpu",
-    )
-    sdfg.validate()
-    sdfg.expand_library_nodes()
-    sdfg.validate()
-    exe = _compile_no_copynd(sdfg)
-
-    A = cp.ones(200, dtype=cp.float64)
-    B = cp.zeros(200, dtype=cp.float64)
-    exe(gpu_A=A, gpu_B=B)
-
-    cp.testing.assert_array_equal(B[50:100], A[150:200])
-    assert cp.all(B[:50] == 0)
-    assert cp.all(B[100:] == 0)
+    _helper_test_copy_gpu("MappedTasklet", "copy_gpu_pure")
 
 
 @pytest.mark.gpu
 def test_copy_cuda_d2d():
     """CUDA expansion (cudaMemcpyDeviceToDevice) on GPU_Global -> GPU_Global."""
-    import cupy as cp
-
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="150:200", name="gpu_A"),
-        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.GPU_Global, subset="50:100", name="gpu_B"),
-        implementation="MemcpyCUDA1D",
-        name="copy_cuda_d2d",
-    )
-    sdfg.validate()
-    sdfg.expand_library_nodes()
-    sdfg.validate()
-    exe = _compile_no_copynd(sdfg)
-
-    A = cp.arange(200, dtype=cp.float64)
-    B = cp.zeros(200, dtype=cp.float64)
-    exe(gpu_A=A, gpu_B=B)
-
-    cp.testing.assert_array_equal(B[50:100], A[150:200])
+    _helper_test_copy_gpu("MemcpyCUDA1D", "copy_cuda_d2d")
 
 
 @pytest.mark.gpu
