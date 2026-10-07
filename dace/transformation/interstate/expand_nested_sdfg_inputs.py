@@ -169,14 +169,16 @@ def keeps_absolute_index(
     A constant ``lo`` inside the inner extent is relative even when it equals the window start
     (``A[4, 1:3]`` written at inner ``[0, 1]``)."""
     # A subscript reparsed from text and a map-range offset name one iterator with different dtypes
-    lo_expr, offset_expr = symbolic.equalize_symbols_across(sympy.sympify(lo), sympy.sympify(offset))
-    if as_expr(lo_expr) - as_expr(offset_expr) != 0:
+    lo_expr, offset_expr = symbolic.equalize_symbols_across(
+        symbolic.pystr_to_symbolic(lo), symbolic.pystr_to_symbolic(offset)
+    )
+    if lo_expr - offset_expr != 0:
         return False
     in_extent = (
         lo_expr.is_Integer
-        and as_expr(lo_expr) >= 0
+        and lo_expr >= 0
         and dim < len(inner_shape)
-        and bool((sympy.sympify(inner_shape[dim]) - lo_expr).is_positive)
+        and bool((symbolic.pystr_to_symbolic(inner_shape[dim]) - lo_expr).is_positive)
     )
     return not in_extent
 
