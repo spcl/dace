@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from dace.frontend.ml.onnx import ONNXModel
 
 # blocklist of nondeterministic ops
-# yapf: disable
+# fmt: off
 NONDETERMINISTIC_OPS = {'ONNXDropout',
                         'ONNXGradient',
                         'ONNXGraphCall',
@@ -36,7 +36,7 @@ NONDETERMINISTIC_OPS = {'ONNXDropout',
                         'ONNXScan',
                         'ONNXTreeEnsembleClassifier',
                         'ONNXTreeEnsembleRegressor'}
-# yapf: enable
+# fmt: on
 
 
 @make_properties
